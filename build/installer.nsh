@@ -4,9 +4,12 @@
 
 !macro preInit
   SetShellVarContext current
-  StrCpy $InstDir "$LOCALAPPDATA\Programs\FreeFlow"
   SetRegView 64
-  WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$InstDir"
+  ReadRegStr $R0 HKCU "${INSTALL_REGISTRY_KEY}" "InstallLocation"
   SetRegView 32
-  WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$InstDir"
+  StrCmp $R0 "" 0 +2
+  ReadRegStr $R0 HKCU "${INSTALL_REGISTRY_KEY}" "InstallLocation"
+  StrCmp $R0 "" 0 +2
+  StrCpy $R0 "$LOCALAPPDATA\Programs\FreeFlow"
+  StrCpy $InstDir "$R0"
 !macroend
