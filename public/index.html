@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FreeFlow</title>
+    <style>
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+        background: transparent;
+      }
+
+      body.app-booting {
+        overflow: hidden;
+        background: #09111d;
+      }
+
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 220ms ease, visibility 220ms ease;
+      }
+
+      body.app-booting .boot-splash {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .boot-splash::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(69, 162, 255, 0.14), transparent 26%),
+          radial-gradient(circle at 82% 78%, rgba(126, 248, 201, 0.1), transparent 24%),
+          linear-gradient(180deg, rgba(10, 18, 30, 0.98), rgba(9, 17, 29, 0.99));
+      }
+
+      .boot-splash-panel {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        justify-items: center;
+        gap: 14px;
+        width: min(100vw - 64px, 380px);
+        padding: 34px 28px;
+      }
+
+      .boot-splash-logo {
+        width: 88px;
+        height: 88px;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 26px rgba(74, 145, 255, 0.22));
+      }
+
+      .boot-splash-copy {
+        display: grid;
+        gap: 0;
+        justify-items: center;
+        text-align: center;
+      }
+
+      .boot-splash-title {
+        color: #f5f8ff;
+        font: 700 38px/1.04 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      body.app-booting .page-shell {
+        opacity: 0 !important;
+        visibility: hidden !important;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./ui.tokens.css" />
+    <link rel="stylesheet" href="./ui.shell.css" />
+  </head>
+  <body class="app-booting boot-shape-lock">
+    <div class="boot-splash" aria-hidden="true">
+      <div class="boot-splash-panel">
+        <img class="boot-splash-logo" src="./assets/brand/FreeFlow_logo.svg" alt="FreeFlow" />
+        <div class="boot-splash-copy">
+          <strong class="boot-splash-title">FreeFlow</strong>
+        </div>
+      </div>
+    </div>
+    <div class="page-shell">
+      <div id="desktop-window-bar" class="desktop-window-bar"></div>
+      <div id="desktop-status-banner" class="desktop-status-banner is-hidden" aria-live="polite">
+        <span class="desktop-status-dot"></span>
+        <span id="desktop-status-banner-text">固定中</span>
+      </div>
+      <div id="desktop-shell-controls" class="desktop-shell-controls is-hidden">
+        <button id="desktop-refresh-btn" class="desktop-shell-btn" type="button" title="刷新界面">刷新</button>
+        <button id="desktop-fullscreen-btn" class="desktop-shell-btn" type="button" title="切换全屏">全屏</button>
+        <div class="desktop-shell-menu-wrap">
+          <button id="desktop-menu-btn" class="desktop-shell-btn" type="button" title="更多控制">更多</button>
+          <div id="desktop-menu-panel" class="desktop-menu-panel is-hidden">
+            <div class="desktop-menu-group">
+              <div class="desktop-menu-group-title">Window</div>
+              <button id="desktop-pin-btn" class="desktop-menu-item" data-icon="PIN" type="button" title="切换固定">固定</button>
+              <button id="desktop-minimize-btn" class="desktop-menu-item" data-icon="MIN" type="button" title="最小化">最小化</button>
+            </div>
+            <div class="desktop-menu-separator"></div>
+            <div class="desktop-menu-group">
+              <div class="desktop-menu-group-title">Mode</div>
+              <button id="desktop-clickthrough-btn" class="desktop-menu-item" data-icon="FULL" type="button" title="切换完全穿透模式">完全穿透</button>
+            </div>
+            <div class="desktop-menu-separator"></div>
+            <div class="desktop-menu-group">
+              <div class="desktop-menu-group-title">App</div>
+              <button id="desktop-close-btn" class="desktop-menu-item desktop-menu-item-danger" data-icon="EXIT" type="button" title="关闭">关闭</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="app-global-shell-actions" aria-label="全局界面操作">
+        <button id="conversation-settings-btn" class="conversation-more-btn" type="button" title="设置" aria-label="设置">
+          <span class="conversation-shell-trigger-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M10.2 2.6h3.6l.55 2.22c.36.11.71.26 1.04.43l2.1-1.18 2.55 2.54-1.2 2.1c.18.34.33.69.44 1.06l2.22.54v3.62l-2.22.55c-.11.36-.26.71-.44 1.04l1.2 2.1-2.55 2.56-2.1-1.2c-.33.18-.68.33-1.04.44l-.55 2.22h-3.6l-.55-2.22a7.77 7.77 0 0 1-1.05-.44l-2.1 1.2-2.55-2.56 1.2-2.1a7.4 7.4 0 0 1-.44-1.04L2.6 13.8v-3.62l2.22-.54c.11-.37.26-.72.44-1.06l-1.2-2.1 2.55-2.54 2.1 1.18c.34-.17.69-.32 1.05-.43l.54-2.22ZM12 8.4A3.6 3.6 0 1 0 12 15.6 3.6 3.6 0 0 0 12 8.4Z" />
+            </svg>
+          </span>
+        </button>
+        <div class="conversation-shell-menu-wrap app-global-shell-menu-wrap">
+          <button id="conversation-shell-more" class="conversation-more-btn" type="button" title="更多" aria-label="更多">
+            <span class="conversation-shell-trigger-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <circle cx="5" cy="12" r="1.9" />
+                <circle cx="12" cy="12" r="1.9" />
+                <circle cx="19" cy="12" r="1.9" />
+              </svg>
+            </span>
+          </button>
+          <div id="conversation-shell-menu" class="conversation-shell-menu is-hidden">
+            <button id="conversation-shell-pin-btn" class="conversation-shell-menu-item" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M8.5 3.5h7l-.9 4.2 2.7 3.1v1.2h-4.1v5.4l-1.2 3.1-1.2-3.1V12H6.8v-1.2l2.7-3.1-.9-4.2Z" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">固定界面</span>
+            </button>
+            <button id="conversation-shell-fullscreen-btn" class="conversation-shell-menu-item" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 4h7v2H6v5H4V4Zm10 0h6v7h-2V6h-4V4ZM4 13h2v5h5v2H4v-7Zm14 0h2v7h-7v-2h5v-5Z" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">开启全屏</span>
+            </button>
+            <button id="conversation-shell-swap-btn" class="conversation-shell-menu-item" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M7 7h11l-2.5-2.5M17 17H6l2.5 2.5M18 7l-3 3m-9 7 3-3" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">左右换位</span>
+            </button>
+            <button id="conversation-shell-clickthrough-btn" class="conversation-shell-menu-item" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M10.5 4.5a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.96 14.28l4.13 4.14 1.41-1.42-4.13-4.13A8 8 0 0 0 10.5 2.5Z" />
+                  <path d="M10.5 7v7m-3.5-3.5h7" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">穿透</span>
+            </button>
+            <button id="conversation-shell-refresh-btn" class="conversation-shell-menu-item" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M19.5 6.5V11H15M18.6 11A6.6 6.6 0 1 1 12 5.4c2.08 0 3.93.96 5.14 2.47" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">刷新</span>
+            </button>
+            <button id="conversation-shell-close-btn" class="conversation-shell-menu-item conversation-shell-menu-item-danger" type="button">
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M6 6l12 12M18 6 6 18" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">关闭</span>
+            </button>
+            <div id="conversation-shell-clickthrough-note" class="conversation-shell-menu-note">穿透模式开启后，可按 `Ctrl+Shift+X` 退出或恢复。</div>
+          </div>
+        </div>
+      </div>
+      <div class="ambient ambient-a"></div>
+      <div class="ambient ambient-b"></div>
+      <div class="ambient ambient-c"></div>
+
+      <main class="workspace">
+        <aside class="side-panel glass-panel">
+          <header class="sidebar-top">
+            <div class="sidebar-heading sidebar-heading-compact">
+              <div class="brand-block brand-block-compact">
+                <div class="brand-chip">CONTROL</div>
+                <h1 id="brand-name">FreeFlow</h1>
+                <p id="brand-subtitle" class="brand-copy">自由画布与 AI 工作台</p>
+              </div>
+              <button id="toggle-left-pane-btn" class="ghost-btn compact-btn pane-toggle-btn" type="button">收起菜单</button>
+            </div>
+
+          </header>
+
+          <div class="side-panel-body">
+            <div class="side-panel-scroll" tabindex="0" aria-label="控制菜单滚动区域">
+              <section class="panel-card overview-card overview-card-hero" data-sidebar-section="overview">
+                <div class="panel-head">
+                  <div>
+                    <div class="eyebrow">工作台</div>
+                    <strong class="panel-title">控制中心</strong>
+                  </div>
+                  <div class="live-badge">
+                    <span class="live-badge-dot"></span>
+                    <span>LIVE</span>
+                  </div>
+                </div>
+
+                <label class="mode-toggle mode-toggle-block">
+                  <input id="agent-mode-toggle" type="checkbox" />
+                  <span>管家模式</span>
+                </label>
+
+                <div class="overview-quick-grid">
+                  <div class="overview-stat">
+                    <span class="label">默认模型</span>
+                    <strong id="default-model">读取中</strong>
+                  </div>
+                  <div class="overview-stat">
+                    <span class="label">服务状态</span>
+                    <strong id="connection-status">检测中</strong>
+                  </div>
+                  <div class="overview-stat overview-stat-wide">
+                    <span class="label">响应方式</span>
+                    <strong id="response-mode-label">同步 / 非流式</strong>
+                  </div>
+                </div>
+
+                <div class="status-pill" id="status-pill">
+                  <span class="status-dot"></span>
+                  <span id="status-text">正在检查本地模型服务</span>
+                </div>
+              </section>
+
+              <section class="panel-card sidebar-section" data-sidebar-section="customize">
+                <div class="sidebar-section-header">
+                  <div class="menu-summary-copy">
+                    <div class="eyebrow">Customize</div>
+                    <strong class="panel-title">界面定制</strong>
+                    <div id="customize-summary" class="menu-summary-note">工作台名称与副标题</div>
+                  </div>
+                </div>
+                  <div class="sidebar-section-body">
+                    <label class="settings-field">
+                      <span class="label">工作台名称</span>
+                      <input id="app-name-input" class="panel-input" type="text" maxlength="40" placeholder="例如 Obsidian Air" />
+                    </label>
+                    <label class="settings-field">
+                      <span class="label">副标题</span>
+                      <input id="app-subtitle-input" class="panel-input" type="text" maxlength="80" placeholder="例如 自由画布与 AI 工作台" />
+                    </label>
+                    <label class="settings-field">
+                      <span class="label">画布保存地址</span>
+                      <input
+                        id="canvas-board-path-input"
+                        class="panel-input"
+                        type="text"
+                        maxlength="400"
+                        placeholder="例如 D:\\workspace\\canvas-board.json"
+                      />
+                      <span class="field-inline-note">支持绝对路径；相对路径会相对于当前项目根目录解析。</span>
+                    </label>
+                      <div class="settings-action-row">
+                        <button id="canvas-board-path-browse-btn" class="ghost-btn compact-btn" type="button">选择文件</button>
+                        <button id="canvas-board-path-open-btn" class="ghost-btn compact-btn" type="button">打开位置</button>
+                      </div>
+                      <label class="settings-field">
+                        <span class="label">导出图片保存地址</span>
+                        <input
+                          id="canvas-image-path-input"
+                          class="panel-input"
+                          type="text"
+                          maxlength="400"
+                          placeholder="例如 D:\\workspace\\importImage"
+                        />
+                        <span class="field-inline-note">留空时默认使用当前画布目录下的 importImage 文件夹。</span>
+                      </label>
+                      <div class="settings-action-row">
+                        <button id="canvas-image-path-browse-btn" class="ghost-btn compact-btn" type="button">选择文件夹</button>
+                        <button id="canvas-image-path-open-btn" class="ghost-btn compact-btn" type="button">打开位置</button>
+                      </div>
+                      <div class="mini-context">
+                        <span class="label">上下文占用</span>
+                        <strong id="context-ratio">0%</strong>
+                      </div>
+                  </div>
+                </section>
+
+              <section class="panel-card sidebar-section" data-sidebar-section="clipboard">
+                <div class="sidebar-section-header">
+                  <div class="menu-summary-copy">
+                    <div class="eyebrow">剪贴板</div>
+                    <strong class="panel-title">剪贴板保留区</strong>
+                    <div id="clipboard-summary" class="menu-summary-note">等待剪贴板内容</div>
+                  </div>
+                  <span class="sidebar-section-meta" id="clipboard-count">0 条内容</span>
+                </div>
+                <div class="sidebar-section-body clipboard-body">
+                  <div class="clipboard-toolbar">
+                    <label class="model-select-wrap clipboard-mode-wrap">
+                      <span>模式</span>
+                      <select id="clipboard-mode-select">
+                        <option value="manual">手动存储</option>
+                        <option value="auto">队列自动保存</option>
+                      </select>
+                    </label>
+                    <button id="clipboard-capture-btn" class="ghost-btn compact-btn" type="button">手动入队</button>
+                  </div>
+                  <div class="clipboard-toolbar clipboard-toolbar-secondary">
+                    <div class="pill-note" id="clipboard-status-pill">等待剪贴板内容</div>
+                    <button id="clipboard-clear-btn" class="ghost-btn compact-btn" type="button">清空队列</button>
+                  </div>
+                  <div id="clipboard-list" class="clipboard-list"></div>
+                </div>
+              </section>
+
+              <section class="panel-card sidebar-section" data-sidebar-section="sessions">
+                <div class="sidebar-section-header">
+                  <div class="menu-summary-copy">
+                    <div class="eyebrow">Sessions</div>
+                    <strong class="panel-title">会话历史</strong>
+                    <div id="history-summary" class="menu-summary-note">最近会话</div>
+                  </div>
+                  <span class="sidebar-section-meta" id="history-count">0 个会话</span>
+                </div>
+                <div class="sidebar-section-body history-menu-body">
+                  <div class="history-menu-actions">
+                    <button id="clear-history-btn" class="ghost-btn compact-btn" type="button">清空</button>
+                  </div>
+                  <div id="history-list" class="history-list"></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </aside>
+
+        <div id="left-pane-resizer" class="pane-resizer" role="separator" aria-label="调整对话区宽度"></div>
+
+        <section class="desktop-clear-stage canvas-stage" aria-label="无限画布工作区">
+          <div class="stage-panel-controls" data-stage-panel-controls="left" aria-label="左侧面板控制">
+            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="left" title="关闭左侧面板" aria-label="关闭左侧面板"></button>
+            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="left" title="拖动左侧面板" aria-label="拖动左侧面板"></button>
+            <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="left" title="恢复左侧默认位置" aria-label="恢复左侧默认位置"></button>
+          </div>
+          <button id="left-pane-y-resizer" class="pane-edge-y-resizer is-left-pane" type="button" aria-label="上下移动左侧界面"></button>
+            <div class="canvas-shell canvas-shell-static">
+              <header class="canvas-engine-bar" aria-label="左侧画布引擎切换">
+              </header>
+
+            <div id="canvas-engine-stage" class="canvas-engine-stage" aria-label="左侧画布工作区">
+              <div id="canvas-canvas2d-host" class="canvas-engine-surface" aria-label="Canvas2D 画布宿主"></div>
+            </div>
+          </div>
+        </section>
+
+        <div id="right-pane-resizer" class="pane-resizer" role="separator" aria-label="调整控制菜单宽度"></div>
+
+        <section class="conversation-panel glass-panel chat-sidebar">
+          <div class="stage-panel-controls" data-stage-panel-controls="right" aria-label="右侧面板控制">
+            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="right" title="关闭右侧面板" aria-label="关闭右侧面板"></button>
+            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="right" title="拖动右侧面板" aria-label="拖动右侧面板"></button>
+            <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="right" title="恢复右侧默认位置" aria-label="恢复右侧默认位置"></button>
+          </div>
+          <button id="right-pane-y-resizer" class="pane-edge-y-resizer is-right-pane" type="button" aria-label="上下移动右侧界面"></button>
+          <header class="conversation-header">
+            <div class="conversation-header-topline">
+              <div class="right-panel-window-controls">
+                <div id="right-panel-window-strip" class="right-panel-window-strip" role="tablist" aria-label="右侧窗口调度">
+                  <span id="right-panel-window-slider" class="right-panel-window-slider" aria-hidden="true"></span>
+                  <button
+                    id="right-panel-tab-assistant"
+                    class="right-panel-window-tab is-active"
+                    type="button"
+                    role="tab"
+                    aria-selected="true"
+                    data-right-panel-view="assistant"
+                  >
+                    调用AI助手
+                  </button>
+                  <button
+                    id="right-panel-tab-screen"
+                    class="right-panel-window-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected="false"
+                    data-right-panel-view="screen"
+                  >
+                    AI镜像
+                  </button>
+                </div>
+                <button
+                  id="right-panel-switch-lock-btn"
+                  class="right-panel-switch-lock-btn"
+                  type="button"
+                  aria-pressed="false"
+                  aria-label="锁定界面切换"
+                  title="锁定界面切换"
+                >
+                  <span class="right-panel-switch-lock-icon right-panel-switch-lock-icon-closed" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M7 10V8a5 5 0 0 1 10 0v2" />
+                      <rect x="5" y="10" width="14" height="10" rx="3" ry="3" />
+                    </svg>
+                  </span>
+                  <span class="right-panel-switch-lock-icon right-panel-switch-lock-icon-open" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M16 10V8a4 4 0 0 0-7.2-2.4" />
+                      <rect x="5" y="10" width="14" height="10" rx="3" ry="3" />
+                    </svg>
+                  </span>
+                </button>
+                <div id="screen-source-header-slot" class="screen-source-header-slot is-hidden">
+                  <details id="screen-source-header-menu" class="screen-source-header-menu">
+                    <summary class="conversation-pill" title="映射控制">映射控制</summary>
+                    <div class="screen-source-header-panel">
+                      <div id="screen-source-toolbar" class="screen-source-toolbar">
+                        <label class="screen-source-picker">
+                          <span class="label">映射目标</span>
+                          <details id="screen-source-select-menu" class="screen-source-select-menu">
+                            <summary
+                              id="screen-source-select-trigger"
+                              class="screen-source-select-trigger"
+                              aria-label="选择映射目标"
+                            >
+                              <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
+                              <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true">⌄</span>
+                            </summary>
+                            <div
+                              id="screen-source-select-panel"
+                              class="canvas2d-engine-menu canvas2d-engine-menu-wide screen-source-select-panel"
+                              role="listbox"
+                              aria-label="映射目标列表"
+                            ></div>
+                          </details>
+                          <input id="screen-source-select" class="screen-source-select-input" type="hidden" />
+                          <span class="screen-source-picker-note">当前支持豆包、DeepSeek、千问、WPS AI、文心一言、秘塔写作猫、Kimi月之暗面，后续适配更多 AI 镜像</span>
+                        </label>
+                        <div id="screen-source-inline-actions" class="screen-source-actions">
+                          <button
+                            id="screen-source-refresh-btn"
+                            class="ghost-btn compact-btn"
+                            type="button"
+                            data-screen-source-action="refresh"
+                          >
+                            刷新目标
+                          </button>
+                          <button
+                            id="screen-source-refresh-embed-btn"
+                            class="ghost-btn compact-btn"
+                            type="button"
+                            data-screen-source-action="refresh-embed"
+                            hidden
+                          >
+                            刷新嵌入
+                          </button>
+                          <button
+                            id="screen-source-embed-toggle-btn"
+                            class="ghost-btn compact-btn"
+                            type="button"
+                            data-screen-source-action="embed-toggle"
+                          >
+                            开始嵌入
+                          </button>
+                        </div>
+                      </div>
+                      <div class="screen-source-header-meta">
+                        <label class="compact-select screen-source-render-mode">
+                          <span>渲染方式</span>
+                          <select id="screen-source-render-mode-select" aria-label="选择 AI 镜像渲染方式">
+                            <option value="win32">Win32 原生嵌入</option>
+                            <option value="webcontentsview">WebContentsView</option>
+                          </select>
+                        </label>
+                        <label class="compact-select screen-source-fit-mode">
+                          <span>适配模式</span>
+                          <select id="screen-source-fit-mode-select" aria-label="选择嵌入适配模式">
+                            <option value="fill">强制拉满</option>
+                            <option value="cover">铺满裁边</option>
+                            <option value="contain">完整显示</option>
+                          </select>
+                        </label>
+                        <div id="screen-source-status-pill" class="pill-note">未启动</div>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </div>
+            <div class="conversation-heading">
+              <div class="conversation-title-stack">
+                <h2 id="conversation-title">新会话</h2>
+                <div id="conversation-mode-pill" class="conversation-mode-pill">同步 / 非流式</div>
+                <input
+                  id="conversation-title-input"
+                  class="panel-input conversation-title-input is-hidden"
+                  type="text"
+                  maxlength="40"
+                  placeholder="输入会话名称"
+                />
+              </div>
+            </div>
+            <div class="conversation-actions">
+              <button id="clear-btn" class="ghost-btn compact-btn" type="button">新会话</button>
+              <button id="drawer-toggle-btn" class="ghost-btn compact-btn drawer-inline-btn" type="button">系统设置</button>
+              <button id="save-session-rename-btn" class="primary-btn compact-btn is-hidden" type="button">保存</button>
+              <button id="cancel-session-rename-btn" class="ghost-btn compact-btn is-hidden" type="button">取消</button>
+              <details class="chat-utility-menu">
+                <summary class="ghost-btn compact-btn">工具面板</summary>
+                <div class="chat-utility-panel">
+                  <button id="clipboard-save-chat-btn" class="ghost-btn compact-btn" type="button">保存剪贴板</button>
+                  <button id="rename-session-btn" class="ghost-btn compact-btn" type="button">编辑名称</button>
+                  <button id="toggle-right-pane-btn" class="ghost-btn compact-btn pane-toggle-btn" type="button">收起对话</button>
+                </div>
+              </details>
+            </div>
+          </header>
+
+          <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI镜像窗口">
+            <div class="screen-source-stage">
+              <div id="screen-source-shell-wrap" class="screen-source-shell-wrap">
+                <div class="screen-source-preview-shell">
+                  <video id="screen-source-video" class="screen-source-video" autoplay muted playsinline></video>
+                  <div id="screen-source-empty" class="screen-source-empty">
+                    <div class="screen-source-empty-shell">
+                      <div id="screen-source-loader-host" class="screen-source-loader-host" aria-hidden="true"></div>
+                      <div class="screen-source-empty-copy">
+                        <strong id="screen-source-empty-title">等待映射</strong>
+                        <p id="screen-source-empty-text">打开映射控制，选择映射目标。</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="screen-source-shell-outline" aria-hidden="true">
+                  <div class="screen-source-frame-handle is-north" data-screen-source-resize="n"></div>
+                  <div class="screen-source-frame-handle is-east" data-screen-source-resize="e"></div>
+                  <div class="screen-source-frame-handle is-south" data-screen-source-resize="s"></div>
+                  <div class="screen-source-frame-handle is-west" data-screen-source-resize="w"></div>
+                  <div class="screen-source-frame-handle is-north-east" data-screen-source-resize="ne"></div>
+                  <div class="screen-source-frame-handle is-south-east" data-screen-source-resize="se"></div>
+                  <div class="screen-source-frame-handle is-south-west" data-screen-source-resize="sw"></div>
+                  <div class="screen-source-frame-handle is-north-west" data-screen-source-resize="nw"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div id="thread-viewport" class="thread-viewport" aria-live="polite">
+            <div id="chat-log" class="chat-log"></div>
+          </div>
+
+          <form id="chat-form" class="composer glass-inset">
+            <div class="composer-top">
+              <div class="composer-input-shell">
+                <div id="composer-attachments" class="composer-attachments is-hidden" aria-label="当前附件"></div>
+                <textarea
+                  id="prompt-input"
+                  rows="1"
+                  maxlength="4000"
+                  placeholder="给 FreeFlow 发送消息..."
+                ></textarea>
+              </div>
+            </div>
+
+              <div class="composer-bar">
+                <div class="composer-hint">Enter 发送，Shift + Enter 换行，支持从画布中粘贴文字，图片，文件等元素。</div>
+                <div class="composer-actions">
+                  <button
+                    id="composer-thinking-btn"
+                    class="ghost-btn composer-thinking-btn is-hidden"
+                    type="button"
+                    aria-pressed="false"
+                    aria-label="切换 Thinking"
+                    title="切换 Thinking"
+                  >
+                    <span class="composer-thinking-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M9 18h6" />
+                        <path d="M10 21h4" />
+                        <path d="M8.5 14.5c-1.55-1.17-2.5-3.02-2.5-5.1A6 6 0 0 1 12 3.4a6 6 0 0 1 6 6c0 2.08-.95 3.93-2.5 5.1-.56.42-.86 1.02-.86 1.66V17h-5.28v-.84c0-.64-.3-1.24-.86-1.66Z" />
+                      </svg>
+                    </span>
+                  </button>
+                  <button id="stop-btn" class="ghost-btn" type="button" disabled>停止</button>
+                  <button id="send-btn" class="primary-btn" type="submit">发送</button>
+                </div>
+              </div>
+            </form>
+        </section>
+        <div id="stage-restore-dock" class="stage-restore-dock is-hidden">
+          <button id="stage-restore-btn" class="ghost-btn compact-btn" type="button">恢复默认布局</button>
+        </div>
+      </main>
+
+      <div id="desktop-pass-through-hint" class="desktop-pass-through-hint is-hidden" aria-live="polite">
+        <span class="desktop-pass-through-label">完全穿透中</span>
+        <span id="desktop-pass-through-copy" class="desktop-pass-through-copy">按 Ctrl+Shift+X 退出</span>
+      </div>
+
+      <div id="global-overlay-layer" class="global-overlay-layer" aria-hidden="false"></div>
+
+      <div id="drawer-backdrop" class="drawer-backdrop"></div>
+
+      <aside id="insight-drawer" class="insight-drawer glass-panel" aria-hidden="true">
+        <header class="drawer-header">
+          <div>
+            <div class="eyebrow">系统设置</div>
+            <h3>系统设置</h3>
+            <p class="drawer-copy">集中管理布局与主题设置。</p>
+          </div>
+          <button id="drawer-close-btn" class="ghost-btn compact-btn" type="button">关闭</button>
+        </header>
+
+        <div class="insight-panel">
+          <details class="drawer-group">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">AI Dispatch</div>
+                <strong class="panel-title">AI 模型调用</strong>
+                <div id="runtime-summary" class="menu-summary-note">模型读取中</div>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <section class="usage-card ai-control-card">
+                <div class="panel-head">
+                  <div class="section-title">AI 调用控制中心</div>
+                  <div class="pill-note">名称 / 模型 / 服务配置</div>
+                </div>
+                <div class="ai-control-static-warning">该功能正在测试中，尚未开发完成，请谨慎使用！</div>
+                <label class="settings-field">
+                  <span class="label">AI 助手名称</span>
+                  <input
+                    id="conversation-app-name-input"
+                    class="panel-input"
+                    type="text"
+                    maxlength="40"
+                    value="FreeFlow"
+                    aria-label="设置 AI 助手名称"
+                  />
+                </label>
+                <div class="ai-control-grid">
+                  <label class="model-select-wrap">
+                    <span>模型</span>
+                    <select id="model-select"></select>
+                  </label>
+                  <label class="model-select-wrap">
+                    <span>设备</span>
+                    <select id="device-mode-select"></select>
+                  </label>
+                  <label class="model-select-wrap">
+                    <span>输出</span>
+                    <select id="output-mode-select">
+                      <option value="nonstream">同步 / 非流式</option>
+                      <option value="stream">流式输出</option>
+                    </select>
+                  </label>
+                  <label id="thinking-toggle-wrap" class="mode-toggle is-hidden">
+                    <input id="thinking-toggle" type="checkbox" />
+                    <span>Thinking</span>
+                  </label>
+                </div>
+                <details id="ai-control-session-menu" class="ai-control-session-menu">
+                  <summary class="ai-control-session-trigger">
+                    <span class="ai-control-session-trigger-label">对话与历史</span>
+                    <span class="secondary-menu-indicator">菜单</span>
+                  </summary>
+                  <div class="ai-control-session-panel">
+                    <div class="ai-control-session-actions">
+                      <button id="ai-control-new-session-btn" class="ghost-btn compact-btn" type="button">新建对话</button>
+                    </div>
+                    <div class="ai-control-session-history-head">
+                      <strong>历史聊天记录</strong>
+                      <span id="ai-control-history-count" class="pill-note">0 个会话</span>
+                    </div>
+                    <div id="ai-control-history-list" class="ai-control-history-list"></div>
+                  </div>
+                </details>
+                <section class="usage-card budget-card ai-control-context-card">
+                  <div class="panel-head">
+                    <div class="section-title">上下文额度</div>
+                    <button id="refresh-storage-btn" class="ghost-btn compact-btn" type="button">刷新空间</button>
+                  </div>
+                  <div class="budget-topline">
+                    <span>估算占用</span>
+                    <strong id="context-summary">0 / 4096 tokens</strong>
+                  </div>
+                  <div class="progress-track">
+                    <div id="context-progress" class="progress-fill"></div>
+                  </div>
+                  <div class="budget-grid">
+                    <div class="metric-card">
+                      <span class="label">已用</span>
+                      <strong id="context-used">0</strong>
+                    </div>
+                    <div class="metric-card">
+                      <span class="label">剩余</span>
+                      <strong id="context-remaining">4096</strong>
+                    </div>
+                    <div class="metric-card">
+                      <span class="label">消息数</span>
+                      <strong id="message-count">0</strong>
+                    </div>
+                  </div>
+                  <div class="ai-control-context-controls">
+                    <label class="model-select-wrap">
+                      <span>预设额度</span>
+                      <select id="context-limit-select"></select>
+                    </label>
+                    <label class="model-select-wrap">
+                      <span>手动输入</span>
+                      <input id="context-limit-input" class="panel-input" type="number" min="256" step="256" placeholder="例如 8192" />
+                    </label>
+                    <button id="context-limit-apply-btn" class="ghost-btn compact-btn" type="button">应用额度</button>
+                  </div>
+                  <p id="context-limit-hint" class="panel-note">当前模型可用窗口会随模型切换自动更新。</p>
+                  <div id="context-breakdown" class="context-breakdown"></div>
+                </section>
+                <div id="conversation-model-menu" class="conversation-model-control-shell">
+                  <div class="conversation-model-panel conversation-model-panel-inline">
+                    <div class="conversation-model-panel-head">
+                      <strong>模型源与调用配置</strong>
+                      <button id="conversation-model-guide-btn" class="conversation-model-guide-btn" type="button" title="导入模型说明">?</button>
+                    </div>
+                    <div id="conversation-model-groups" class="conversation-model-groups"></div>
+                    <div id="conversation-model-guide" class="conversation-model-guide is-hidden">
+                      <strong>导入模型说明</strong>
+                      <p>本地模型可先安装 Ollama，然后执行 `ollama pull 模型名`，再点击本地模型右侧刷新按钮读取已安装模型。</p>
+                      <p>云端模型可在云端模型右侧打开配置菜单，直接填写接口、API Key 与模型名并刷新应用。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </details>
+
+          <details class="drawer-group">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">Workbench & Canvas</div>
+                <strong class="panel-title">工作台与画布</strong>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <section class="usage-card">
+                <div class="panel-head">
+                  <div class="section-title">工作台与画布</div>
+                  <div class="pill-note">名称 / 保存地址</div>
+                </div>
+                <label class="settings-field">
+                  <span class="label">工作台名称</span>
+                  <input id="drawer-app-name-input" class="panel-input" type="text" maxlength="40" placeholder="例如 Obsidian Air" />
+                </label>
+                <label class="settings-field">
+                  <span class="label">副标题</span>
+                  <input id="drawer-app-subtitle-input" class="panel-input" type="text" maxlength="80" placeholder="例如 自由画布与 AI 工作台" />
+                </label>
+                <label class="settings-field">
+                  <span class="label">画布保存地址</span>
+                  <input
+                    id="drawer-canvas-board-path-input"
+                    class="panel-input"
+                    type="text"
+                    maxlength="400"
+                    placeholder="例如 D:\\workspace\\canvas-board.json"
+                  />
+                  <span class="field-inline-note">支持绝对路径；相对路径会相对于当前项目根目录解析。</span>
+                </label>
+                  <div class="settings-action-row">
+                    <button id="drawer-canvas-board-path-browse-btn" class="ghost-btn compact-btn" type="button">选择文件</button>
+                    <button id="drawer-canvas-board-path-open-btn" class="ghost-btn compact-btn" type="button">打开位置</button>
+                  </div>
+                  <label class="settings-field">
+                    <span class="label">导出图片保存地址</span>
+                    <input
+                      id="drawer-canvas-image-path-input"
+                      class="panel-input"
+                      type="text"
+                      maxlength="400"
+                      placeholder="例如 D:\\workspace\\importImage"
+                    />
+                    <span class="field-inline-note">留空时默认使用当前画布目录下的 importImage 文件夹。</span>
+                  </label>
+                  <div class="settings-action-row">
+                    <button id="drawer-canvas-image-path-browse-btn" class="ghost-btn compact-btn" type="button">选择文件夹</button>
+                    <button id="drawer-canvas-image-path-open-btn" class="ghost-btn compact-btn" type="button">打开位置</button>
+                  </div>
+                </section>
+              </div>
+            </details>
+
+          <details class="drawer-group">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">Theme</div>
+                <strong class="panel-title">主题设置</strong>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <div id="theme-settings-panel-host"></div>
+            </div>
+          </details>
+
+          <details class="drawer-group">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">Shortcuts</div>
+                <strong class="panel-title">全局快捷键</strong>
+                <div id="shortcut-settings-summary" class="menu-summary-note">完全穿透快捷键</div>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <section class="usage-card">
+                <div class="panel-head">
+                  <div class="section-title">完全穿透快捷键</div>
+                  <div class="pill-note">全局生效</div>
+                </div>
+                <label class="settings-field">
+                  <span class="label">快捷键组合</span>
+                  <input
+                    id="clickthrough-shortcut-input"
+                    class="panel-input"
+                    type="text"
+                    maxlength="60"
+                    placeholder="例如 Ctrl+Shift+X"
+                  />
+                  <span id="clickthrough-shortcut-note" class="field-inline-note">
+                    当前用于切换完全穿透，支持 Ctrl / Shift / Alt / Cmd 与字母数字组合。
+                  </span>
+                </label>
+                <div class="settings-action-row">
+                  <button id="clickthrough-shortcut-save-btn" class="ghost-btn compact-btn" type="button">保存快捷键</button>
+                  <button id="clickthrough-shortcut-reset-btn" class="ghost-btn compact-btn" type="button">恢复默认</button>
+                </div>
+                <div id="clickthrough-shortcut-status" class="panel-note">当前快捷键：Ctrl+Shift+X</div>
+              </section>
+            </div>
+          </details>
+
+          <details class="drawer-group is-hidden">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">权限管理</div>
+                <strong class="panel-title">权限与目录</strong>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <section id="permissions-section" class="usage-card">
+                <div class="panel-head">
+                  <div class="section-title">本地管家权限</div>
+                  <button id="save-permissions-btn" class="ghost-btn compact-btn" type="button">保存权限</button>
+                </div>
+                <div id="permission-grid" class="permission-grid"></div>
+                <p class="panel-note">高风险能力默认关闭。只有你手动开启并保存后，AI 才能执行对应本地动作。</p>
+              </section>
+
+              <section class="usage-card">
+                <div class="panel-head">
+                  <div class="section-title">授权目录</div>
+                  <button id="refresh-permissions-btn" class="ghost-btn compact-btn" type="button">刷新</button>
+                </div>
+                <div id="allowed-root-list" class="context-breakdown"></div>
+                <div class="inline-form">
+                  <input id="root-path-input" class="panel-input" type="text" placeholder="新增授权目录，例如 D:\Work" />
+                  <button id="add-root-btn" class="ghost-btn compact-btn" type="button">添加</button>
+                </div>
+              </section>
+            </div>
+          </details>
+
+          <details class="drawer-group is-hidden">
+            <summary class="drawer-group-summary">
+              <div>
+                <div class="eyebrow">系统能力</div>
+                <strong class="panel-title">系统动作</strong>
+              </div>
+              <span class="secondary-menu-indicator">详情</span>
+            </summary>
+            <div class="drawer-group-body">
+              <section class="usage-card">
+                <div class="panel-head">
+                  <div class="section-title">系统与桌面</div>
+                  <button id="refresh-system-btn" class="ghost-btn compact-btn" type="button">刷新监控</button>
+                </div>
+                <div id="system-stats" class="context-breakdown"></div>
+                <div class="action-grid">
+                  <button class="ghost-btn compact-btn control-action-btn" type="button" data-action="organize_desktop">整理桌面</button>
+                  <button class="ghost-btn compact-btn control-action-btn" type="button" data-action="launch_app" data-app="notepad">打开记事本</button>
+                  <button class="ghost-btn compact-btn control-action-btn" type="button" data-action="close_app" data-app="notepad">关闭记事本</button>
+                  <button class="ghost-btn compact-btn control-action-btn" type="button" data-action="repair_task" data-task="flush_dns">刷新 DNS</button>
+                </div>
+              </section>
+            </div>
+          </details>
+        </div>
+      </aside>
+
+      <button id="insight-drawer-handle" class="drawer-handle" type="button" aria-expanded="false">系统设置</button>
+
+      <button id="restore-left-pane-btn" class="pane-restore-btn is-hidden" type="button">展开菜单</button>
+      <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right is-hidden" type="button">展开对话</button>
+    </div>
+
+    <template id="message-template">
+      <article class="message">
+        <div class="message-bubble">
+          <div class="message-meta">
+            <span class="message-role"></span>
+            <div class="message-meta-right">
+              <span class="message-badge"></span>
+              <span class="message-time"></span>
+              <details class="message-menu">
+                <summary class="message-menu-trigger" aria-label="消息菜单" title="消息菜单">•••</summary>
+                <div class="message-menu-panel">
+                  <button class="message-menu-item message-menu-item-danger" type="button" data-delete-message>
+                    删除这条对话
+                  </button>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="message-content"></div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="./src/canvas-office-app.js"></script>
+    <script type="module" src="./assets/canvas2d-ui/current/canvas2d-ui.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

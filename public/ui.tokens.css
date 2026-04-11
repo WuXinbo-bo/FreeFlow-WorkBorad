@@ -1,0 +1,27 @@
+:root {
+  color-scheme: dark;
+  --ui-bg: #060e20;
+  --ui-surface-board: rgba(9, 19, 40, 0.78);
+  --ui-surface-panel: rgba(15, 24, 42, 0.68);
+  --ui-surface-card: rgba(25, 37, 64, 0.76);
+  --ui-surface-overlay: rgba(31, 43, 73, 0.82);
+  --ui-text: rgb(var(--app-text-rgb) / 1);
+  --ui-text-muted: rgb(var(--app-text-rgb) / 0.74);
+  --ui-text-soft: rgb(var(--app-text-rgb) / 0.72);
+  --ui-primary: rgb(var(--app-button-rgb) / 1);
+  --ui-primary-strong: rgb(var(--app-button-strong-rgb) / 1);
+  --ui-tertiary: #c890ff;
+  --ui-success: #7fdab3;
+  --ui-warning: #efc887;
+  --ui-danger: #ff9097;
+  --ui-outline: rgba(64, 72, 93, 0.16);
+  --ui-ghost: rgba(255, 255, 255, 0.08);
+  --ui-radius-panel: 30px;
+  --ui-radius-card: 24px;
+  --ui-radius-chip: 999px;
+  --ui-shadow-panel: 0 36px 90px rgba(8, 14, 28, 0.28);
+  --ui-shadow-card: 0 18px 48px rgba(8, 14, 28, 0.18);
+  --ui-shadow-glow: 0 0 28px rgb(var(--app-accent-rgb) / 0.16);
+  --ui-blur-panel: blur(30px);
+  --ui-blur-card: blur(22px);
+}

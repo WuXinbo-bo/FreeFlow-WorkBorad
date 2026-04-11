@@ -1,0 +1,118 @@
+{
+  "name": "freeflow-workboard",
+  "version": "1.0.0-rc",
+  "productName": "FreeFlow",
+  "description": "一站式打造属于你的专属办公白板",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:web": "node server.js",
+    "start:desktop": "set \"ELECTRON_RUN_AS_NODE=\" && electron .",
+    "build:canvas-office": "node scripts/build-canvas-office.js",
+    "build:canvas2d-ui": "node scripts/build-canvas2d-ui.js",
+    "build:icons": "node scripts/generate-app-icons.js",
+    "prepare:desktop-build": "node scripts/prepare-desktop-build.js",
+    "check:desktop-packaging": "node scripts/check-desktop-packaging.js",
+    "check:desktop-upgrade": "node scripts/check-desktop-upgrade.js",
+    "pack:win": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --dir --win nsis",
+    "pack:win:local": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --dir --win nsis",
+    "dist:portable": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win portable",
+    "dist:portable:local": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win portable",
+    "dist:win": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable",
+    "dist:win:local": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable"
+  },
+  "keywords": [],
+  "author": "Wu Xinbo",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "file-type": "^22.0.0",
+    "koffi": "^2.15.2",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "electron": "^41.1.1",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.0",
+    "playwright": "^1.59.1",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.34.2"
+  },
+  "build": {
+    "appId": "com.wuxinbo.freeflow",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "src/backend/**/*",
+      "scripts/prepare-desktop-build.js",
+      "scripts/check-desktop-packaging.js",
+      "server.js",
+      "package.json",
+      ".env.example",
+      "!data/**/*",
+      "!release/**/*",
+      "!public/assets/excalidraw/**/*",
+      "!public/src/features/canvas/_archive/**/*",
+      "!desktop-agent/**/*",
+      "!tmp/**/*",
+      "!docs/**/*",
+      "!build/icon.png"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/koffi/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "data/FreeFlow教程画布.json",
+        "to": "presets/tutorial-board.json"
+      },
+      {
+        "from": "public/assets/tutorial-group.png",
+        "to": "presets/tutorial-assets/tutorial-group.png"
+      },
+      {
+        "from": "build/README.md",
+        "to": "presets/tutorial-assets/README.md"
+      }
+    ],
+    "npmRebuild": true,
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-v${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "FreeFlow",
+      "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "${productName}-v${version}-${arch}-portable.${ext}"
+    }
+  }
+}
