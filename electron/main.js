@@ -37,6 +37,7 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.0-rc";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
@@ -259,6 +260,36 @@ function resolveTutorialAssetTemplatePaths() {
   };
 }
 
+function getTutorialBoardVersionMarkerPath() {
+  return path.join(DATA_DIR, "tutorial-board-template-version.json");
+}
+
+async function readTutorialBoardVersionMarker() {
+  try {
+    const raw = await fs.promises.readFile(getTutorialBoardVersionMarkerPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      version: String(parsed?.version || "").trim(),
+      filePath: String(parsed?.filePath || "").trim(),
+    };
+  } catch {
+    return {
+      version: "",
+      filePath: "",
+    };
+  }
+}
+
+async function writeTutorialBoardVersionMarker(filePath = "") {
+  const payload = {
+    version: TUTORIAL_BOARD_TEMPLATE_VERSION,
+    filePath: String(filePath || "").trim(),
+    updatedAt: Date.now(),
+  };
+  await fs.promises.mkdir(DATA_DIR, { recursive: true });
+  await fs.promises.writeFile(getTutorialBoardVersionMarkerPath(), JSON.stringify(payload, null, 2), "utf8");
+}
+
 async function ensureTutorialAssetTargets(targetDir) {
   const templates = resolveTutorialAssetTemplatePaths();
   const imageDir = path.join(targetDir, "importImage");
@@ -336,24 +367,30 @@ async function ensureTutorialBoardFile() {
   const targetDir = CANVAS_BOARD_DIR;
   const targetPath = path.join(targetDir, DEFAULT_TUTORIAL_BOARD_NAME);
   let created = false;
+  let updated = false;
 
   await fs.promises.mkdir(targetDir, { recursive: true });
+  const marker = await readTutorialBoardVersionMarker();
+  const tutorialBoardExists = fs.existsSync(targetPath);
+  const shouldRefreshTutorialBoard = !tutorialBoardExists || marker.version !== TUTORIAL_BOARD_TEMPLATE_VERSION;
 
-  try {
-    await fs.promises.access(targetPath, fs.constants.F_OK);
-  } catch {
+  if (shouldRefreshTutorialBoard) {
+    created = !tutorialBoardExists;
+    updated = tutorialBoardExists;
     await fs.promises.copyFile(templatePath, targetPath);
-    created = true;
   }
 
   const assetTargets = await ensureTutorialAssetTargets(targetDir);
   await rewriteTutorialBoardAssetPaths(targetPath, assetTargets);
+  await writeTutorialBoardVersionMarker(targetPath);
 
   return {
     ok: true,
     templatePath,
     filePath: targetPath,
     created,
+    updated,
+    version: TUTORIAL_BOARD_TEMPLATE_VERSION,
   };
 }
 
