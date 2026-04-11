@@ -260,6 +260,36 @@ function resolveTutorialAssetTemplatePaths() {
   };
 }
 
+function getMimeFromAssetPath(filePath = "") {
+  const ext = path.extname(String(filePath || "")).trim().toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".bmp") return "image/bmp";
+  if (ext === ".svg") return "image/svg+xml";
+  return "image/png";
+}
+
+async function readTutorialAssetDataUrls(assetTargets = {}) {
+  const imagePath = String(assetTargets?.image || "").trim();
+  if (!imagePath) {
+    return {
+      image: "",
+    };
+  }
+
+  try {
+    const buffer = await fs.promises.readFile(imagePath);
+    return {
+      image: `data:${getMimeFromAssetPath(imagePath)};base64,${buffer.toString("base64")}`,
+    };
+  } catch {
+    return {
+      image: "",
+    };
+  }
+}
+
 function getTutorialBoardVersionMarkerPath() {
   return path.join(DATA_DIR, "tutorial-board-template-version.json");
 }
@@ -333,6 +363,7 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
   } catch {
     return;
   }
+  const assetDataUrls = await readTutorialAssetDataUrls(assetTargets);
 
   const items = Array.isArray(board?.items) ? board.items : [];
   for (const item of items) {
@@ -340,16 +371,46 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
       continue;
     }
 
-    if (item.type === "image" && String(item.name || "").trim().toLowerCase() === "tutorial-group.png" && assetTargets.image) {
-      if (item.sourcePath !== assetTargets.image) {
-        item.sourcePath = assetTargets.image;
-        changed = true;
+    if (item.type === "image" && assetTargets.image) {
+      const itemName = String(item.name || "").trim().toLowerCase();
+      const sourceBaseName = path.basename(String(item.sourcePath || "")).trim().toLowerCase();
+      const shouldRewriteTutorialImage =
+        itemName === "tutorial-group.png" ||
+        itemName === "group (3).png" ||
+        sourceBaseName === "tutorial-group.png" ||
+        sourceBaseName.startsWith("group (3).png-");
+
+      if (shouldRewriteTutorialImage) {
+        if (item.name !== "tutorial-group.png") {
+          item.name = "tutorial-group.png";
+          changed = true;
+        }
+        if (item.source !== "blob") {
+          item.source = "blob";
+          changed = true;
+        }
+        if (item.sourcePath) {
+          item.sourcePath = "";
+          changed = true;
+        }
+        if (item.fileId) {
+          item.fileId = "";
+          changed = true;
+        }
+        if (assetDataUrls.image && item.dataUrl !== assetDataUrls.image) {
+          item.dataUrl = assetDataUrls.image;
+          changed = true;
+        }
       }
     }
 
     if (item.type === "fileCard" && String(item.fileName || item.name || "").trim().toLowerCase() === "readme.md" && assetTargets.file) {
       if (item.sourcePath !== assetTargets.file) {
         item.sourcePath = assetTargets.file;
+        changed = true;
+      }
+      if (item.fileId) {
+        item.fileId = "";
         changed = true;
       }
     }

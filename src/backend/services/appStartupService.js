@@ -92,6 +92,7 @@ async function ensureAppStartupState(options = {}) {
   let tutorialBoard = null;
   let initialBoardPath = "";
   let shouldOpenStartupTutorial = false;
+  let tutorialBoardPath = "";
 
   if (
     nextSettings.canvasLastOpenedBoardPath &&
@@ -109,12 +110,18 @@ async function ensureAppStartupState(options = {}) {
     settingsChanged = true;
   }
 
-  if (nextSettings.canvasLastOpenedBoardPath) {
-    initialBoardPath = nextSettings.canvasLastOpenedBoardPath;
-  } else if (!nextSettings.hasShownStartupTutorial && typeof ensureTutorialBoardFile === "function") {
+  if (typeof ensureTutorialBoardFile === "function") {
     tutorialBoard = await ensureTutorialBoardFile().catch(() => null);
     if (tutorialBoard?.ok && tutorialBoard.filePath && (await pathExists(tutorialBoard.filePath))) {
-      initialBoardPath = normalizeFilePath(tutorialBoard.filePath);
+      tutorialBoardPath = normalizeFilePath(tutorialBoard.filePath);
+    }
+  }
+
+  if (nextSettings.canvasLastOpenedBoardPath) {
+    initialBoardPath = nextSettings.canvasLastOpenedBoardPath;
+  } else if (!nextSettings.hasShownStartupTutorial && tutorialBoardPath) {
+    if (await pathExists(tutorialBoardPath)) {
+      initialBoardPath = tutorialBoardPath;
       shouldOpenStartupTutorial = true;
       nextSettings.hasShownStartupTutorial = true;
       settingsChanged = true;
@@ -140,7 +147,7 @@ async function ensureAppStartupState(options = {}) {
       canvasImageSavePath: persistedSettings.canvasImageSavePath,
       lastOpenedBoardPath: persistedSettings.canvasLastOpenedBoardPath,
       initialBoardPath,
-      tutorialBoardPath: tutorialBoard?.filePath || "",
+      tutorialBoardPath,
       shouldOpenStartupTutorial,
       hasShownStartupTutorial: persistedSettings.hasShownStartupTutorial,
       initializedAt: Date.now(),

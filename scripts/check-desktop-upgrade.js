@@ -50,7 +50,7 @@ async function writeJson(filePath, payload) {
   await fsp.writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
-async function runScenario({ name, missingRecentBoard = false }) {
+async function runScenario({ name, missingRecentBoard = false, hasShownStartupTutorial = false }) {
   const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "freeflow-upgrade-"));
   const homeDir = path.join(tempRoot, "FreeFlow");
   const appDataDir = path.join(homeDir, "AppData");
@@ -76,6 +76,7 @@ async function runScenario({ name, missingRecentBoard = false }) {
     canvasTitle: "FreeFlow 工作白板",
     canvasBoardSavePath: boardDir,
     canvasLastOpenedBoardPath: missingRecentBoard ? recentBoardPath : recentBoardPath,
+    hasShownStartupTutorial,
     canvasImageSavePath: path.join(boardDir, "importImage"),
     textColor: "#123456",
     dialogColor: "#f0f0f0",
@@ -147,12 +148,16 @@ async function runScenario({ name, missingRecentBoard = false }) {
   const sessionService = requireFresh("../src/backend/services/sessionService");
   const canvasBoardService = requireFresh("../src/backend/services/canvasBoardService");
 
+  let ensureTutorialBoardFileCallCount = 0;
   const startupContext = await ensureAppStartupState({
-    ensureTutorialBoardFile: async () => ({
+    ensureTutorialBoardFile: async () => {
+      ensureTutorialBoardFileCallCount += 1;
+      return {
       ok: true,
       filePath: tutorialBoardPath,
       created: false,
-    }),
+      };
+    },
   });
 
   const uiSettings = await uiSettingsService.readUiSettingsStore();
@@ -174,6 +179,8 @@ async function runScenario({ name, missingRecentBoard = false }) {
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `${name}: 历史会话未保留`);
   assert(boardInfo.board.schemaVersion === 1, `${name}: 老画布未纳入 schemaVersion`);
   assert(boardInfo.board.items[0]?.text?.includes(missingRecentBoard ? "教程画布" : "我的旧画布"), `${name}: 老画布未正常读取`);
+  assert(ensureTutorialBoardFileCallCount === 1, `${name}: 教程画布刷新链路未执行`);
+  assert(startupContext.startup.tutorialBoardPath === tutorialBoardPath, `${name}: 教程画布路径未回传`);
 
   if (missingRecentBoard) {
     assert(
@@ -191,6 +198,8 @@ async function runScenario({ name, missingRecentBoard = false }) {
     name,
     tempRoot,
     initialBoardPath: startupContext.startup.initialBoardPath,
+    tutorialBoardPath: startupContext.startup.tutorialBoardPath,
+    ensureTutorialBoardFileCallCount,
     usedTutorialFallback: startupContext.startup.usedTutorialFallback,
   };
 }
@@ -201,12 +210,13 @@ async function main() {
     const result = await runScenario({
       name: scenarioName,
       missingRecentBoard: scenarioName === "tutorial-fallback",
+      hasShownStartupTutorial: scenarioName === "legacy-user-template-refresh",
     });
     console.log(JSON.stringify(result));
     return;
   }
 
-  const scenarios = ["recent-board-preserved", "tutorial-fallback"];
+  const scenarios = ["recent-board-preserved", "tutorial-fallback", "legacy-user-template-refresh"];
   const results = [];
 
   for (const name of scenarios) {

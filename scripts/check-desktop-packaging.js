@@ -31,6 +31,56 @@ const REQUIRED_PATHS = [
   "public/assets/canvas-office/current/canvas-office-ui.js",
 ];
 
+function validateTutorialBoardTemplate() {
+  const tutorialBoardPath = path.join(DATA_DIR, "FreeFlow教程画布.json");
+  if (!fs.existsSync(tutorialBoardPath)) {
+    console.error("[check-desktop-packaging] 缺少教程画布模板: data/FreeFlow教程画布.json");
+    hasError = true;
+    return;
+  }
+
+  let board = null;
+  try {
+    board = JSON.parse(fs.readFileSync(tutorialBoardPath, "utf8").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    console.error(`[check-desktop-packaging] 教程画布模板 JSON 无法解析: ${error.message}`);
+    hasError = true;
+    return;
+  }
+
+  const imageItems = Array.isArray(board?.items) ? board.items.filter((item) => item?.type === "image") : [];
+  if (!imageItems.length) {
+    console.error("[check-desktop-packaging] 教程画布模板缺少图片项");
+    hasError = true;
+    return;
+  }
+
+  for (const item of imageItems) {
+    const itemId = String(item?.id || "<unknown>").trim();
+    const dataUrl = String(item?.dataUrl || "").trim();
+    const source = String(item?.source || "").trim();
+    const sourcePath = String(item?.sourcePath || "").trim();
+    const fileId = String(item?.fileId || "").trim();
+
+    if (source !== "blob") {
+      console.error(`[check-desktop-packaging] 教程图片 ${itemId} 未使用内嵌 blob 资源`);
+      hasError = true;
+    }
+    if (!dataUrl.startsWith("data:image/")) {
+      console.error(`[check-desktop-packaging] 教程图片 ${itemId} 缺少内嵌 dataUrl`);
+      hasError = true;
+    }
+    if (sourcePath) {
+      console.error(`[check-desktop-packaging] 教程图片 ${itemId} 不应依赖 sourcePath`);
+      hasError = true;
+    }
+    if (fileId) {
+      console.error(`[check-desktop-packaging] 教程图片 ${itemId} 不应保留 fileId`);
+      hasError = true;
+    }
+  }
+}
+
 let hasError = false;
 let hasWarning = false;
 
@@ -39,7 +89,7 @@ function toPosix(value) {
 }
 
 function loadPackageJson() {
-  return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
+  return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8").replace(/^\uFEFF/, ""));
 }
 
 function collectDataFiles(currentDir, relativePrefix = "") {
@@ -106,6 +156,7 @@ for (const resource of extraResources) {
 }
 
 const dataFiles = collectDataFiles(DATA_DIR);
+validateTutorialBoardTemplate();
 const suspiciousDataFiles = dataFiles.filter((entry) => {
   if (entry.relativePath === "FreeFlow教程画布.json") {
     return false;
