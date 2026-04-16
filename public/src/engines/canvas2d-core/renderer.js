@@ -133,22 +133,75 @@ function drawHandles(ctx, element, view) {
 }
 
 function drawBackground(ctx, width, height, view, options = {}) {
-  const { fill = "#ffffff", grid = true } = options || {};
+  const { fill = "#ffffff", grid = true, pattern = grid ? "dots" : "none" } = options || {};
   ctx.save();
   if (fill && fill !== "transparent") {
     ctx.fillStyle = fill;
     ctx.fillRect(0, 0, width, height);
   }
-  if (grid) {
-    const step = 18 * Math.max(0.4, Number(view?.scale) || 1);
-    const offsetX = ((Number(view?.offsetX || 0) % step) + step) % step;
-    const offsetY = ((Number(view?.offsetY || 0) % step) + step) % step;
+  const resolvedPattern = String(pattern || (grid ? "dots" : "none")).trim().toLowerCase();
+  const scale = Math.max(0.4, Number(view?.scale) || 1);
+  const step = 18 * scale;
+  const offsetX = ((Number(view?.offsetX || 0) % step) + step) % step;
+  const offsetY = ((Number(view?.offsetY || 0) % step) + step) % step;
+  if (resolvedPattern === "dots") {
     ctx.fillStyle = "rgba(76, 110, 245, 0.18)";
     for (let x = offsetX; x < width; x += step) {
       for (let y = offsetY; y < height; y += step) {
         ctx.fillRect(x, y, 1.6, 1.6);
       }
     }
+  } else if (resolvedPattern === "grid") {
+    ctx.strokeStyle = "rgba(76, 110, 245, 0.16)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = offsetX; x < width; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+    }
+    for (let y = offsetY; y < height; y += step) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    ctx.stroke();
+  } else if (resolvedPattern === "lines") {
+    const lineStep = step * 1.6;
+    const lineOffsetY = ((Number(view?.offsetY || 0) % lineStep) + lineStep) % lineStep;
+    ctx.strokeStyle = "rgba(76, 110, 245, 0.14)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let y = lineOffsetY; y < height; y += lineStep) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    ctx.stroke();
+  } else if (resolvedPattern === "engineering") {
+    const majorStep = step * 5;
+    const majorOffsetX = ((Number(view?.offsetX || 0) % majorStep) + majorStep) % majorStep;
+    const majorOffsetY = ((Number(view?.offsetY || 0) % majorStep) + majorStep) % majorStep;
+    ctx.strokeStyle = "rgba(76, 110, 245, 0.08)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = offsetX; x < width; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+    }
+    for (let y = offsetY; y < height; y += step) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(37, 99, 235, 0.16)";
+    ctx.beginPath();
+    for (let x = majorOffsetX; x < width; x += majorStep) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+    }
+    for (let y = majorOffsetY; y < height; y += majorStep) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -282,8 +335,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
         allowLocalFileAccess,
         backgroundStyle,
         renderTextInCanvas,
+        pixelRatio,
       }) {
-        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
         const width = canvas.width / dpr;
         const height = canvas.height / dpr;
         ctx.save();

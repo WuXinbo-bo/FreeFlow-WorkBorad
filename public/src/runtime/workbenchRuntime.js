@@ -314,6 +314,14 @@ function normalizeUiSettings(payload = {}) {
       ? payload.canvasLastOpenedBoardPath.trim()
       : "";
   const hasShownStartupTutorial = Boolean(payload.hasShownStartupTutorial);
+  const lastTutorialIntroVersion =
+    typeof payload.lastTutorialIntroVersion === "string" && payload.lastTutorialIntroVersion.trim()
+      ? payload.lastTutorialIntroVersion.trim()
+      : "";
+  const dismissedTutorialIntroVersion =
+    typeof payload.dismissedTutorialIntroVersion === "string" && payload.dismissedTutorialIntroVersion.trim()
+      ? payload.dismissedTutorialIntroVersion.trim()
+      : "";
   const canvasImageSavePath =
     typeof payload.canvasImageSavePath === "string" && payload.canvasImageSavePath.trim()
       ? payload.canvasImageSavePath.trim()
@@ -327,6 +335,8 @@ function normalizeUiSettings(payload = {}) {
     canvasBoardSavePath: normalizeCanvasBoardSavePathValue(canvasBoardSavePath).slice(0, 400),
     canvasLastOpenedBoardPath: normalizeCanvasLastOpenedBoardPathValue(canvasLastOpenedBoardPath).slice(0, 400),
     hasShownStartupTutorial,
+    lastTutorialIntroVersion: lastTutorialIntroVersion.slice(0, 80),
+    dismissedTutorialIntroVersion: dismissedTutorialIntroVersion.slice(0, 80),
     canvasImageSavePath: normalizeCanvasImageSavePathValue(canvasImageSavePath).slice(0, 400),
     ...theme,
   };
@@ -1551,6 +1561,14 @@ const globalTutorialHost = mountGlobalTutorialHost({
   },
   onFinalShapeChange: () => {
     desktopWindowShapeScheduler.requestFinalShapeSync(48);
+  },
+  onIntroDismiss: () => {
+    void persistStartupTutorialIntroSettings();
+  },
+  onIntroDismissVersion: () => {
+    void persistStartupTutorialIntroSettings({
+      dismissedTutorialIntroVersion: getStartupTutorialIntroVersion(),
+    });
   },
 });
 bindDesktopWindowShapeAutoSync();
@@ -3166,6 +3184,65 @@ function writeUiSettingsCache(payload = {}) {
   }
 }
 
+function getStartupTutorialIntroVersion() {
+  return String(CONFIG.startupTutorialIntroVersion || "").trim();
+}
+
+function shouldAutoShowStartupTutorialIntro() {
+  const introVersion = getStartupTutorialIntroVersion();
+  if (!introVersion) {
+    return false;
+  }
+  const startup = getStartupContext()?.startup || {};
+  const shouldOpenStartupTutorial = Boolean(startup?.shouldOpenStartupTutorial);
+  const hasShownStartupTutorial = Boolean(state.uiSettings?.hasShownStartupTutorial);
+  const lastIntroVersion = String(state.uiSettings?.lastTutorialIntroVersion || "").trim();
+  const dismissedIntroVersion = String(state.uiSettings?.dismissedTutorialIntroVersion || "").trim();
+
+  if (dismissedIntroVersion === introVersion) {
+    return false;
+  }
+  if (shouldOpenStartupTutorial) {
+    return true;
+  }
+  if (!hasShownStartupTutorial) {
+    return true;
+  }
+  return lastIntroVersion !== introVersion;
+}
+
+async function persistStartupTutorialIntroSettings(overrides = {}) {
+  const introVersion = getStartupTutorialIntroVersion();
+  const payload = buildUiSettingsPayload({
+    hasShownStartupTutorial: true,
+    lastTutorialIntroVersion: overrides.lastTutorialIntroVersion ?? introVersion,
+    dismissedTutorialIntroVersion:
+      overrides.dismissedTutorialIntroVersion ?? state.uiSettings?.dismissedTutorialIntroVersion ?? "",
+  });
+  writeUiSettingsCache(payload);
+
+  try {
+    const response = await fetch(API_ROUTES.uiSettings, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readJsonResponse(response, "界面设置");
+    if (!response.ok || !data.ok) {
+      throw new Error(data.details || data.error || "保存界面设置失败");
+    }
+    state.uiSettings = normalizeUiSettings({
+      ...payload,
+      ...data,
+    });
+    writeUiSettingsCache(state.uiSettings);
+    applyUiSettings();
+  } catch {
+    state.uiSettings = normalizeUiSettings(payload);
+    writeUiSettingsCache(state.uiSettings);
+  }
+}
+
 function syncCanvasLastOpenedBoardPathState(nextPath) {
   const cleanPath = normalizeCanvasLastOpenedBoardPathValue(nextPath);
   if (!cleanPath || cleanPath === getCanvasLastOpenedBoardPath()) {
@@ -4473,6 +4550,18 @@ function buildUiSettingsPayload(overrides = {}) {
       overrides.canvasLastOpenedBoardPath ??
       cached.canvasLastOpenedBoardPath ??
       state.uiSettings?.canvasLastOpenedBoardPath,
+    hasShownStartupTutorial:
+      overrides.hasShownStartupTutorial ??
+      cached.hasShownStartupTutorial ??
+      state.uiSettings?.hasShownStartupTutorial,
+    lastTutorialIntroVersion:
+      overrides.lastTutorialIntroVersion ??
+      cached.lastTutorialIntroVersion ??
+      state.uiSettings?.lastTutorialIntroVersion,
+    dismissedTutorialIntroVersion:
+      overrides.dismissedTutorialIntroVersion ??
+      cached.dismissedTutorialIntroVersion ??
+      state.uiSettings?.dismissedTutorialIntroVersion,
     canvasImageSavePath:
       overrides.canvasImageSavePath ??
       canvasImagePathInputEl?.value ??
@@ -4834,6 +4923,13 @@ async function bootstrap() {
     DESKTOP_SHELL?.notifyRendererReady?.();
   } catch {
     // Ignore desktop boot readiness signal failures.
+  }
+
+  if (shouldAutoShowStartupTutorialIntro()) {
+    globalTutorialHost.openIntro();
+    void persistStartupTutorialIntroSettings({
+      dismissedTutorialIntroVersion: "",
+    });
   }
 
   try {
@@ -5342,6 +5438,7 @@ function renderPanelLayoutSide(side) {
   const yResizer = getStagePanelYResizer(side);
   if (!panelState || !element) return;
 
+  const dockSide = panelState.dockSide === "right" ? "right" : "left";
   const isHidden = Boolean(panelState.hidden || panelState.collapsed);
   element.style.left = `${Math.round(Number(panelState.x) || 0)}px`;
   element.style.top = `${Math.round(Number(panelState.y) || 0)}px`;
@@ -5352,7 +5449,7 @@ function renderPanelLayoutSide(side) {
   element.classList.toggle("is-pane-collapsed", Boolean(panelState.collapsed));
 
   if (resizer) {
-    const resizerLeft = side === "right"
+    const resizerLeft = dockSide === "right"
       ? Math.round(Number(panelState.x) || 0) - (PANEL_RESIZER_SIZE - PANEL_RESIZER_CORNER_OFFSET)
       : Math.round((Number(panelState.x) || 0) + (Number(panelState.width) || 0) - PANEL_RESIZER_CORNER_OFFSET);
     resizer.style.left = `${resizerLeft}px`;
@@ -5360,12 +5457,14 @@ function renderPanelLayoutSide(side) {
     resizer.style.width = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.height = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.zIndex = String(Math.max(2, Number(panelState.zIndex) || 2) + 1);
-    resizer.classList.toggle("is-left-corner", side === "right");
+    resizer.classList.toggle("is-left-corner", dockSide === "right");
     resizer.classList.toggle("is-hidden", isHidden);
   }
 
   if (yResizer) {
     yResizer.style.zIndex = String(Math.max(2, Number(panelState.zIndex) || 2) + 2);
+    yResizer.classList.toggle("is-left-pane", dockSide === "left");
+    yResizer.classList.toggle("is-right-pane", dockSide === "right");
     yResizer.classList.toggle("is-hidden", isHidden || !shouldShowPaneVerticalHandle(side));
   }
 }
@@ -5527,8 +5626,15 @@ function beginStagePanelMove(side, event) {
 function syncPaneVisibility({ syncShape = true } = {}) {
   if (!workspaceEl) return;
 
-  workspaceEl.classList.toggle("left-collapsed", state.leftPanelCollapsed);
-  workspaceEl.classList.toggle("right-collapsed", state.rightPanelCollapsed);
+  const leftDockPanelKey = getPanelKeyByDockSide("left");
+  const rightDockPanelKey = getPanelKeyByDockSide("right");
+  const leftDockPanel = state.panelLayout?.[leftDockPanelKey];
+  const rightDockPanel = state.panelLayout?.[rightDockPanelKey];
+  const leftDockCollapsed = Boolean(leftDockPanel?.collapsed || leftDockPanel?.hidden);
+  const rightDockCollapsed = Boolean(rightDockPanel?.collapsed || rightDockPanel?.hidden);
+
+  workspaceEl.classList.toggle("left-collapsed", leftDockCollapsed);
+  workspaceEl.classList.toggle("right-collapsed", rightDockCollapsed);
   sidePanelEl?.classList.toggle("is-collapsed", state.leftPanelCollapsed);
   conversationPanel?.classList.toggle("is-collapsed", state.rightPanelCollapsed);
   desktopClearStageEl?.classList.toggle("is-pane-collapsed", state.leftPanelCollapsed);
@@ -5672,6 +5778,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
   }
   bringPanelToFront(side);
 
+  const dockSide = panel.dockSide === "right" ? "right" : "left";
   const initialWidth = Number(panel.width) || getDefaultPanelFrame(side, panel).width;
   const initialHeight = Number(panel.height) || getDefaultPanelFrame(side, panel).height;
   const initialX = Number(panel.x) || 0;
@@ -5686,7 +5793,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const handleMove = (event) => {
     const deltaX = event.clientX - startX;
     const deltaY = event.clientY - startY;
-    if (side === "right") {
+    if (dockSide === "right") {
       const proposedWidth = clampPaneWidth(initialWidth - deltaX, minWidth, Math.min(sideMaxWidth, Math.max(minWidth, initialRight)));
       panel.width = proposedWidth;
       panel.x = Math.round(initialRight - proposedWidth);

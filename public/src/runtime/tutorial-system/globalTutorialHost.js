@@ -221,6 +221,116 @@ function resolvePanelStyle(layerRect, targetRect, placement = "bottom", panelSiz
 function createCenterMarkup(snapshot) {
   const items = createGlobalTutorialEntryItems(snapshot?.config || null);
   const centerView = String(snapshot?.centerView || "root").trim().toLowerCase();
+  if (centerView === "intro-later") {
+    return `
+      <div
+        class="canvas2d-tutorial-layer global-tutorial-layer"
+        data-shape-include="true"
+        data-shape-padding="0"
+      >
+        <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
+        <div
+          class="canvas2d-tutorial-center global-tutorial-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="教程入口提示"
+          data-shape-include="true"
+          data-shape-padding="8"
+          style="width:min(560px, calc(100vw - 48px)); padding:32px 32px 26px; border-radius:30px;"
+        >
+          <div class="canvas2d-tutorial-center-header" style="margin-bottom: 18px;">
+            <div>
+              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(100,116,139,0.92); margin-bottom: 10px;">
+                Tutorial
+              </div>
+              <div class="canvas2d-tutorial-center-title" style="font-size: 30px; line-height: 1.08; font-weight: 800; letter-spacing: -0.03em;">
+                后续入口
+              </div>
+            </div>
+          </div>
+          <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section" style="display:flex; flex-direction:column; gap:14px;">
+            <div
+              class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary is-static"
+              style="padding: 22px 22px; border-radius: 24px; background: linear-gradient(180deg, rgba(248,250,252,0.98) 0%, rgba(241,245,249,0.96) 100%); border: 1px solid rgba(148,163,184,0.18); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);"
+            >
+              <span style="font-size: 16px; line-height: 1.9; white-space: normal; color: rgba(51,65,85,0.92);">
+                若后续需要使用教程，可随时点击画布右上角三点菜单，进入「教程中心」查看完整引导～
+              </span>
+            </div>
+            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group" style="margin-top: 2px;">
+              <button
+                type="button"
+                class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                data-global-tutorial-later-confirm
+                style="min-height: 60px; border-radius: 20px; font-size: 18px; font-weight: 700; justify-content: center; background: rgba(15,23,42,0.92); color: #f8fafc;"
+              >
+                <span>我知道了</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (centerView === "intro") {
+    return `
+      <div
+        class="canvas2d-tutorial-layer global-tutorial-layer"
+        data-shape-include="true"
+        data-shape-padding="0"
+      >
+        <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
+        <div
+          class="canvas2d-tutorial-center global-tutorial-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="欢迎使用 FreeFlow"
+          data-shape-include="true"
+          data-shape-padding="8"
+          style="width:min(620px, calc(100vw - 48px)); padding:34px 34px 28px; border-radius:32px;"
+        >
+          <div class="canvas2d-tutorial-center-header" style="margin-bottom: 22px;">
+            <div>
+              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(100,116,139,0.92); margin-bottom: 10px;">
+                Welcome
+              </div>
+              <div class="canvas2d-tutorial-center-title" style="font-size: 40px; line-height: 1.04; font-weight: 800; letter-spacing: -0.035em;">
+                欢迎使用 FreeFlow
+              </div>
+              <div class="canvas2d-tutorial-center-subtitle" style="margin-top: 10px; font-size: 16px; line-height: 1.8; color: rgba(71,85,105,0.92);">
+                随时点击画布内右上角三点菜单，再次进入「教程中心」～
+              </div>
+            </div>
+          </div>
+          <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section" style="display:flex; flex-direction:column; gap:14px;">
+            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
+              <button
+                type="button"
+                class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                data-global-tutorial-open-center
+                style="min-height: 132px; border-radius: 28px; padding: 24px 28px; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 100%); color: #f8fafc; box-shadow: 0 18px 42px rgba(15,23,42,0.16);"
+              >
+                <span style="font-size: 24px; font-weight: 800; line-height: 1.12; letter-spacing: -0.015em; text-align: center;">教程中心</span>
+                <span class="canvas2d-engine-menu-meta" style="font-size: 14px; line-height: 1.8; white-space: normal; color: rgba(226,232,240,0.72); text-align: center; max-width: 460px; margin-top: 8px;">
+                  点击后立即进入完整教程内容，查看主界面教程、画布教程、AI 镜像教程与快捷键说明。
+                </span>
+              </button>
+            </div>
+            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
+              <button
+                type="button"
+                class="canvas2d-engine-menu-item"
+                data-global-tutorial-dismiss-intro
+                style="min-height: 58px; border-radius: 20px; justify-content: center; font-size: 16px; font-weight: 700; background: rgba(248,250,252,0.96); color: rgba(30,41,59,0.9); border: 1px solid rgba(148,163,184,0.18);"
+              >
+                <span>稍后再看</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   if (centerView === "shortcut-guide") {
     return `
       <div
@@ -364,7 +474,13 @@ function createOverlayMarkup(snapshot) {
   `;
 }
 
-export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalShapeChange } = {}) {
+export function mountGlobalTutorialHost({
+  overlayRoot,
+  onShapeChange,
+  onFinalShapeChange,
+  onIntroDismiss,
+  onIntroDismissVersion,
+} = {}) {
   const host = ensureHostElement(overlayRoot);
   const runtime = createGlobalTutorialRuntime();
   const requestShapeSync = typeof onShapeChange === "function" ? onShapeChange : () => {};
@@ -387,6 +503,10 @@ export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalSha
 
   function closeCenter() {
     runtime.closeCenter();
+  }
+
+  function openIntro() {
+    runtime.setCenterView("intro");
   }
 
   function startMeasureLoop() {
@@ -496,6 +616,10 @@ export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalSha
       });
     });
     host.querySelector(".global-tutorial-backdrop")?.addEventListener("click", () => {
+      const centerView = String(snapshot?.centerView || "").trim().toLowerCase();
+      if (centerView === "intro" || centerView === "intro-later") {
+        return;
+      }
       if (snapshot.centerOpen) {
         closeCenter();
         return;
@@ -504,6 +628,14 @@ export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalSha
     });
     host.querySelectorAll("[data-global-tutorial-action]").forEach((button) => {
       button.addEventListener("click", () => handleAction(button.getAttribute("data-global-tutorial-action")));
+    });
+    host.querySelector("[data-global-tutorial-open-center]")?.addEventListener("click", () => runtime.setCenterView("root"));
+    host.querySelector("[data-global-tutorial-dismiss-intro]")?.addEventListener("click", () => {
+      runtime.setCenterView("intro-later");
+    });
+    host.querySelector("[data-global-tutorial-later-confirm]")?.addEventListener("click", () => {
+      onIntroDismiss?.();
+      closeCenter();
     });
     host.querySelector("[data-global-tutorial-back-root]")?.addEventListener("click", () => runtime.setCenterView("root"));
     host.querySelector("[data-global-tutorial-prev]")?.addEventListener("click", () => runtime.goToPreviousStep());
@@ -542,6 +674,10 @@ export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalSha
   if (host) {
     unsubscribeStore = runtime.subscribe(() => render());
     unsubscribeBus = subscribeTutorialUiEvent((detail) => {
+      if (detail?.type === TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_INTRO) {
+        openIntro();
+        return;
+      }
       if (detail?.type === TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_CENTER) {
         runtime.openCenter();
         return;
@@ -557,6 +693,10 @@ export function mountGlobalTutorialHost({ overlayRoot, onShapeChange, onFinalSha
 
   return {
     runtime,
+    openIntro,
+    openCenter() {
+      runtime.openCenter();
+    },
     destroy() {
       stopMeasureLoop();
       unsubscribeBus();

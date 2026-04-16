@@ -73,6 +73,8 @@ export function createInitialState() {
       canvasBoardSavePath: "",
       canvasLastOpenedBoardPath: "",
       hasShownStartupTutorial: false,
+      lastTutorialIntroVersion: "",
+      dismissedTutorialIntroVersion: "",
       canvasImageSavePath: "",
       ...DEFAULT_THEME_SETTINGS,
     },

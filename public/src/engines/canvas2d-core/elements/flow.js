@@ -1,4 +1,4 @@
-import { createId, htmlToPlainText, normalizeRichHtml, sanitizeText } from "../utils.js";
+import { createId, htmlToPlainText, normalizeRichHtml, normalizeRichHtmlInlineFontSizes, sanitizeText } from "../utils.js";
 import { FLOW_NODE_TEXT_LAYOUT, measureRichTextBox } from "../rendererText.js";
 import { normalizeTextFontSize } from "./text.js";
 
@@ -47,7 +47,7 @@ export function getFlowNodeMinSize(element = {}, options = {}) {
 }
 
 export function createFlowNodeElement(point, html = "", plainText = "") {
-  const cleanHtml = normalizeRichHtml(html || "");
+  const cleanHtml = normalizeRichHtmlInlineFontSizes(html || "");
   const cleanText = sanitizeText(plainText || htmlToPlainText(cleanHtml));
   const base = {
     id: createId("flow"),
@@ -77,7 +77,7 @@ export function normalizeFlowNodeElement(element = {}) {
     element.html || "",
     element.plainText || element.text || ""
   );
-  const nextHtml = normalizeRichHtml(element.html ?? base.html ?? "");
+  const nextHtml = normalizeRichHtmlInlineFontSizes(element.html ?? base.html ?? "");
   const nextPlainText = sanitizeText(element.plainText ?? element.text ?? htmlToPlainText(nextHtml) ?? base.plainText ?? "");
   const next = {
     ...base,

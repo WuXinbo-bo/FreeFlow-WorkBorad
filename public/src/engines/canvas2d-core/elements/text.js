@@ -1,5 +1,14 @@
-import { buildTextTitle, clamp, createId, htmlToPlainText, normalizeRichHtml, sanitizeText } from "../utils.js";
-import { measureRichTextBox, TEXT_LINE_HEIGHT_RATIO } from "../rendererText.js";
+import {
+  buildTextTitle,
+  clamp,
+  createId,
+  htmlToPlainText,
+  normalizeRichHtml,
+  normalizeRichHtmlInlineFontSizes,
+  sanitizeText,
+} from "../utils.js";
+import { TEXT_LINE_HEIGHT_RATIO } from "../rendererText.js";
+import { measureTextElementLayout } from "../textLayout/measureTextElementLayout.js";
 
 export const TEXT_WRAP_MODE_MANUAL = "manual";
 export const TEXT_RESIZE_MODE_AUTO_WIDTH = "auto-width";
@@ -66,40 +75,53 @@ export function getTextMinSize(element = {}, options = {}) {
   const plainText = sanitizeText(element.plainText || element.text || htmlToPlainText(html));
   const fontSize = normalizeTextFontSize(element.fontSize ?? options.fontSize ?? 20, options.fontSize ?? 20);
   const resizeMode = normalizeTextResizeMode(element.textResizeMode, element.wrapMode);
-
-  if (resizeMode !== TEXT_RESIZE_MODE_WRAP) {
-    return measureTextBox(plainText, {
-      minWidth: 80,
-      maxWidth: 720,
-      fontSize,
-    });
-  }
-
   const widthHint = Math.max(80, Number(options.widthHint ?? element.width ?? 80) || 80);
-  const richSize = measureRichTextBox({
+  const measured = measureTextElementLayout({
     html,
-    text: plainText,
-    width: widthHint,
+    plainText,
     fontSize,
-    scale: 1,
+    resizeMode,
+    widthHint,
+    maxWidth: 720,
     lineHeightRatio: TEXT_LINE_HEIGHT_RATIO,
     fontWeight: "500",
     boldWeight: "700",
   });
+  if (measured?.frameWidth && measured?.frameHeight) {
+    return {
+      width: resizeMode === TEXT_RESIZE_MODE_WRAP ? widthHint : measured.frameWidth,
+      height: measured.frameHeight,
+    };
+  }
 
   return {
-    width: widthHint,
-    height: Math.max(
-      40,
-      Math.ceil(Number(richSize?.height || 0) || measureTextBox(plainText, { minWidth: 80, maxWidth: widthHint, fontSize }).height)
-    ),
+    width:
+      resizeMode === TEXT_RESIZE_MODE_WRAP
+        ? widthHint
+        : measureTextBox(plainText, {
+            minWidth: 80,
+            maxWidth: 720,
+            fontSize,
+          }).width,
+    height: Math.max(40, measureTextBox(plainText, { minWidth: 80, maxWidth: widthHint, fontSize }).height),
   };
 }
 
 export function createTextElement(point, text = "", html = "") {
-  const cleanHtml = normalizeRichHtml(html || "");
+  const cleanHtml = normalizeRichHtmlInlineFontSizes(html || "");
   const cleanText = sanitizeText(text || htmlToPlainText(cleanHtml));
-  const metrics = measureTextBox(cleanText);
+  const metrics = getTextMinSize(
+    {
+      html: cleanHtml,
+      plainText: cleanText,
+      text: cleanText,
+      fontSize: 20,
+      textResizeMode: TEXT_RESIZE_MODE_AUTO_WIDTH,
+    },
+    {
+      fontSize: 20,
+    }
+  );
   return {
     id: createId("text"),
     type: "text",
@@ -132,7 +154,7 @@ export function normalizeTextElement(element = {}) {
   const metrics = getTextMinSize(
     {
       ...element,
-      html: normalizeRichHtml(element.html || base.html || ""),
+      html: normalizeRichHtmlInlineFontSizes(element.html || base.html || ""),
       plainText: nextText,
       text: nextText,
       fontSize: nextFontSize,
@@ -147,14 +169,14 @@ export function normalizeTextElement(element = {}) {
     textResizeMode === TEXT_RESIZE_MODE_WRAP
       ? Math.max(80, Number(element.width ?? 0) || metrics.width)
       : Math.max(80, metrics.width);
-  const nextHeight = Math.max(40, Number(element.height ?? 0) || metrics.height);
+  const nextHeight = Math.max(40, metrics.height);
   return {
     ...base,
     ...element,
     id: String(element.id || base.id),
     type: "text",
     text: nextText,
-    html: normalizeRichHtml(element.html || base.html || ""),
+    html: normalizeRichHtmlInlineFontSizes(element.html || base.html || ""),
     plainText: sanitizeText(element.plainText || nextText || htmlToPlainText(element.html || base.html || "")),
     wrapMode: normalizeTextWrapMode(element.wrapMode || base.wrapMode),
     textResizeMode,

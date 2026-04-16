@@ -37,7 +37,7 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.0-rc";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.1-rc";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
@@ -1864,6 +1864,25 @@ ipcMain.handle("desktop-shell:pick-text-save-path", async (_event, payload) => {
     defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-text.txt"),
     filters: [
       { name: "文本文件", extensions: ["txt"] },
+      { name: "所有文件", extensions: ["*"] },
+    ],
+    properties: ["showOverwriteConfirmation"],
+  });
+
+  return {
+    canceled: result.canceled,
+    filePath: result.filePath || "",
+  };
+});
+
+ipcMain.handle("desktop-shell:pick-pdf-save-path", async (_event, payload) => {
+  const defaultName = String(payload?.defaultName || "").trim();
+  const result = await dialog.showSaveDialog(mainWindow || undefined, {
+    title: "导出 PDF",
+    buttonLabel: "保存 PDF",
+    defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-board.pdf"),
+    filters: [
+      { name: "PDF 文件", extensions: ["pdf"] },
       { name: "所有文件", extensions: ["*"] },
     ],
     properties: ["showOverwriteConfirmation"],

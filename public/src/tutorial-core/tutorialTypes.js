@@ -1,4 +1,4 @@
-export const TUTORIAL_VERSION = "1.0.0-rc";
+export const TUTORIAL_VERSION = "1.0.1-rc";
 
 export const TUTORIAL_IDS = Object.freeze({
   MAIN_SHELL: "main-shell",
@@ -26,6 +26,7 @@ export const TUTORIAL_EVENT_TYPES = Object.freeze({
   ITEM_CREATED: "item-created",
   ALIGNMENT_SNAP_TRIGGERED: "alignment-snap-triggered",
   TEXT_EDITED: "text-edited",
+  OPEN_GLOBAL_TUTORIAL_INTRO: "open-global-tutorial-intro",
   OPEN_GLOBAL_TUTORIAL_CENTER: "open-global-tutorial-center",
   START_GLOBAL_TUTORIAL: "start-global-tutorial",
   START_CANVAS_TUTORIAL: "start-canvas-tutorial",

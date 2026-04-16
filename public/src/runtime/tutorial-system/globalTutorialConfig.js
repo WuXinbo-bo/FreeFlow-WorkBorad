@@ -1,4 +1,4 @@
-import { TUTORIAL_IDS } from "../../tutorial-core/tutorialTypes.js";
+import { TUTORIAL_IDS, TUTORIAL_VERSION } from "../../tutorial-core/tutorialTypes.js";
 import { MAIN_SHELL_TUTORIAL_CHAPTERS, MAIN_SHELL_TUTORIAL_DEFINITION } from "../../engines/canvas2d-core/tutorial-system/tutorials/mainShellTutorial.js";
 import { AI_MIRROR_TUTORIAL_CHAPTERS, AI_MIRROR_TUTORIAL_DEFINITION } from "../../engines/canvas2d-core/tutorial-system/tutorials/aiMirrorTutorial.js";
 
@@ -131,7 +131,7 @@ export function getGlobalTutorialChapters(tutorialId) {
 
 export function createGlobalTutorialConfig() {
   return {
-    version: "0.8.1",
+    version: TUTORIAL_VERSION,
     tutorials: GLOBAL_TUTORIAL_DEFINITIONS.map((item) => ({
       ...item,
       chapterIds: Array.isArray(item.chapterIds) ? [...item.chapterIds] : [],

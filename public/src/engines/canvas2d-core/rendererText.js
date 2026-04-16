@@ -129,7 +129,8 @@ function fontForRun(runStyle, baseFontSize, scale = 1, options = {}) {
   const fontSize = Math.max(10, rawFont) * Math.max(0.1, Number(scale) || 1);
   const weight = runStyle.bold ? String(options.boldWeight || "600") : String(options.fontWeight || "500");
   const fontStyle = runStyle.italic ? "italic" : "normal";
-  return `${fontStyle} ${weight} ${Math.max(1, fontSize)}px "Segoe UI", "PingFang SC", sans-serif`;
+  const fontFamily = '"Segoe UI", "PingFang SC", sans-serif';
+  return `${fontStyle} ${weight} ${Math.max(1, fontSize)}px ${fontFamily}`;
 }
 
 function createLine(baseFontSize, scaleValue, lineHeightRatio) {
@@ -313,7 +314,8 @@ export function drawRichTextInBox(ctx, {
       if (highlight) {
         ctx.save();
         ctx.fillStyle = highlightColor;
-        ctx.fillRect(cursorX, cursorY + 2, segmentWidth, Math.max(4, line.height - 4));
+        const boxHeight = Math.max(4, line.height - 4);
+        ctx.fillRect(cursorX, cursorY + 2, segmentWidth, boxHeight);
         ctx.restore();
       }
       ctx.fillStyle = style.color || color || "#0f172a";

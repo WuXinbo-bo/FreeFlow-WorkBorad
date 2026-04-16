@@ -1,6 +1,21 @@
 import { MAX_SCALE, MIN_SCALE } from "./constants.js";
 
 export const CANVAS_TEXT_LINE_HEIGHT_RATIO = 1.3;
+export const INLINE_FONT_SIZE_ATTR = "data-ff-font-size";
+const RICH_TEXT_INLINE_FONT_SIZE_ATTR = "data-ff-font-size";
+const RICH_TEXT_CLEANUP_STYLE_PROPERTIES = [
+  "lineHeight",
+  "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "padding",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+];
 
 export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -96,6 +111,37 @@ function hasMeaningfulHtmlContent(element) {
   return Boolean(element.querySelector("img,video,canvas,svg,iframe,embed,object"));
 }
 
+function normalizeRichFontSizeValue(value, fallback = 0) {
+  const numericValue = Number(String(value || "").replace(/px$/i, ""));
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    const numericFallback = Number(fallback);
+    return Number.isFinite(numericFallback) && numericFallback > 0 ? numericFallback : 0;
+  }
+  return numericValue;
+}
+
+function normalizeRichHtmlElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+
+  const logicalFontSize = normalizeRichFontSizeValue(element.getAttribute(RICH_TEXT_INLINE_FONT_SIZE_ATTR), 0);
+  if (logicalFontSize > 0) {
+    element.setAttribute(RICH_TEXT_INLINE_FONT_SIZE_ATTR, String(logicalFontSize));
+    element.style.fontSize = `${logicalFontSize}px`;
+  }
+
+  RICH_TEXT_CLEANUP_STYLE_PROPERTIES.forEach((property) => {
+    if (element.style[property]) {
+      element.style[property] = "";
+    }
+  });
+
+  if (!element.getAttribute("style")) {
+    element.removeAttribute("style");
+  }
+}
+
 export function normalizeRichHtml(value = "") {
   const raw = sanitizeHtml(value);
   if (!raw) {
@@ -115,46 +161,8 @@ export function normalizeRichHtml(value = "") {
     replacement.innerHTML = node.innerHTML;
     node.replaceWith(replacement);
   });
-  template.content.querySelectorAll("[style]").forEach((node) => {
-    if (!(node instanceof HTMLElement)) {
-      return;
-    }
-    if (node.style.lineHeight) {
-      node.style.lineHeight = "";
-    }
-    if (node.style.margin) {
-      node.style.margin = "";
-    }
-    if (node.style.marginTop) {
-      node.style.marginTop = "";
-    }
-    if (node.style.marginRight) {
-      node.style.marginRight = "";
-    }
-    if (node.style.marginBottom) {
-      node.style.marginBottom = "";
-    }
-    if (node.style.marginLeft) {
-      node.style.marginLeft = "";
-    }
-    if (node.style.padding) {
-      node.style.padding = "";
-    }
-    if (node.style.paddingTop) {
-      node.style.paddingTop = "";
-    }
-    if (node.style.paddingRight) {
-      node.style.paddingRight = "";
-    }
-    if (node.style.paddingBottom) {
-      node.style.paddingBottom = "";
-    }
-    if (node.style.paddingLeft) {
-      node.style.paddingLeft = "";
-    }
-    if (!node.getAttribute("style")) {
-      node.removeAttribute("style");
-    }
+  template.content.querySelectorAll("*").forEach((node) => {
+    normalizeRichHtmlElement(node);
   });
   template.content.querySelectorAll("div,li").forEach((node) => {
     if (!(node instanceof HTMLElement)) {
@@ -172,6 +180,48 @@ export function normalizeRichHtml(value = "") {
     template.content.removeChild(tail);
   }
   return template.innerHTML.trim();
+}
+
+export function normalizeRichHtmlInlineFontSizes(value = "", baseFontSize = 20) {
+  const normalized = normalizeRichHtml(value || "");
+  if (!normalized.trim() || typeof document === "undefined") {
+    return normalized;
+  }
+  const logicalBase = Math.max(8, Number(baseFontSize || 20) || 20);
+  const template = document.createElement("template");
+  template.innerHTML = normalized;
+  template.content.querySelectorAll("*").forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    let logicalSize = Number.parseFloat(String(node.getAttribute(INLINE_FONT_SIZE_ATTR) || ""));
+    const rawFontSize = String(node.style.fontSize || "").trim().toLowerCase();
+    if (!Number.isFinite(logicalSize) || logicalSize <= 0) {
+      if (rawFontSize.endsWith("em")) {
+        const ratio = Number.parseFloat(rawFontSize);
+        if (Number.isFinite(ratio) && ratio > 0) {
+          logicalSize = logicalBase * ratio;
+        }
+      } else if (rawFontSize.endsWith("px")) {
+        const numeric = Number.parseFloat(rawFontSize);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          logicalSize = numeric;
+        }
+      }
+    }
+    if (Number.isFinite(logicalSize) && logicalSize > 0) {
+      node.setAttribute(INLINE_FONT_SIZE_ATTR, String(Math.round(logicalSize * 100) / 100));
+    } else {
+      node.removeAttribute(INLINE_FONT_SIZE_ATTR);
+    }
+    if (node.style.fontSize) {
+      node.style.fontSize = "";
+    }
+    if (!node.getAttribute("style")) {
+      node.removeAttribute("style");
+    }
+  });
+  return template.innerHTML;
 }
 
 export function htmlToPlainText(value = "") {

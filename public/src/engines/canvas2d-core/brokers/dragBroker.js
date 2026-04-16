@@ -1,4 +1,4 @@
-import { getFileName } from "../utils.js";
+import { getFileName, normalizeRichHtmlInlineFontSizes } from "../utils.js";
 
 function isImagePath(path = "") {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || "").trim());
@@ -69,7 +69,10 @@ export function createDragBroker({
   }
 
   function createElementsFromHtml(html, anchorPoint) {
-    const cleanHtml = typeof sanitizeHtml === "function" ? sanitizeHtml(html) : String(html || "");
+    const cleanHtml =
+      typeof normalizeRichHtmlInlineFontSizes === "function"
+        ? normalizeRichHtmlInlineFontSizes(html)
+        : String(html || "");
     const plainText = typeof htmlToPlainText === "function" ? htmlToPlainText(cleanHtml) : String(cleanHtml || "");
     if (!plainText.trim() && !cleanHtml.trim()) {
       return [];

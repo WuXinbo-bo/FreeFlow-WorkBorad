@@ -69,13 +69,33 @@ function NodeIcon() {
   );
 }
 
-function ScissorIcon() {
+function ShareIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <circle cx="7" cy="7" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="7" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M9.2 9.2l8 6.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M9.2 14.8l8-6.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M14.8 6.4h3.8v3.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10.1 13.9 18.6 5.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.2 8.2H7.4a2.8 2.8 0 0 0-2.8 2.8v5.6a2.8 2.8 0 0 0 2.8 2.8H13a2.8 2.8 0 0 0 2.8-2.8v-.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -123,7 +143,7 @@ function clamp(value, min, max) {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.0.0-rc" },
+  { label: "版本号", value: "v1.0.1-rc" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },
@@ -135,29 +155,6 @@ const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "版权声明", value: "Copyright © 2026 WuXinbo. All rights reserved." },
 ]);
 
-const ABOUT_CANVAS_LICENSE_ITEMS = Object.freeze([
-  {
-    label: "非商业使用",
-    value: "允许个人学习、研究、教学、非营利开源项目、个人演示与非商业展示免费使用、复制、修改和分发。",
-  },
-  {
-    label: "保留要求",
-    value: "在软件副本或主要部分中，必须保留 FreeFlow 的版权声明与许可说明。",
-  },
-  {
-    label: "商业使用",
-    value: "任何公司、企业、收费软件、付费服务、客户项目、商业化分发或其他盈利用途，均必须事先获得版权所有者书面授权。",
-  },
-  {
-    label: "授权联系",
-    value: "1806598228@qq.com / w1806598228@163.com",
-  },
-  {
-    label: "免责声明",
-    value: "本软件按“原样”提供，不附带任何明示或暗示担保；作者不对因使用本软件产生的任何索赔、损害或其他责任负责。",
-  },
-]);
-
 const ABOUT_CANVAS_INFO_ITEMS = Object.freeze(ABOUT_CANVAS_ITEMS.slice(0, 3));
 const ABOUT_CANVAS_CONTACT_ITEMS = Object.freeze(ABOUT_CANVAS_ITEMS.slice(3));
 
@@ -167,6 +164,40 @@ const ALIGNMENT_SNAP_THRESHOLD_OPTIONS = Object.freeze([
   { value: 10, label: "宽松" },
   { value: 12, label: "更宽松" },
 ]);
+
+const BOARD_BACKGROUND_OPTIONS = Object.freeze([
+  { value: "none", label: "无背景" },
+  { value: "dots", label: "点阵" },
+  { value: "grid", label: "方格" },
+  { value: "lines", label: "横线" },
+  { value: "engineering", label: "工程网格" },
+]);
+
+function resolvePdfExportProgress(statusText = "") {
+  const text = String(statusText || "").trim();
+  if (!text) {
+    return 8;
+  }
+  if (text.includes("准备画布资源")) {
+    return 16;
+  }
+  if (text.includes("预加载图片资源")) {
+    return 34;
+  }
+  if (text.includes("渲染离屏画布")) {
+    return 58;
+  }
+  if (text.includes("生成 PDF")) {
+    return 74;
+  }
+  if (text.includes("保存") || text.includes("文件路径") || text.includes("导出 PDF")) {
+    return 90;
+  }
+  if (text.includes("已导出")) {
+    return 100;
+  }
+  return 24;
+}
 
 function Canvas2DControls({ engine }) {
   const bridge = useMemo(() => createCanvas2DReactBridge(engine), [engine]);
@@ -182,14 +213,21 @@ function Canvas2DControls({ engine }) {
   const [tutorialSnapshot, setTutorialSnapshot] = useState(() => tutorialRuntime.getSnapshot());
   const [drawMenuOpen, setDrawMenuOpen] = useState(false);
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false);
+  const [capturePdfMenuOpen, setCapturePdfMenuOpen] = useState(false);
+  const [capturePngMenuOpen, setCapturePngMenuOpen] = useState(false);
+  const [captureIncludeBackground, setCaptureIncludeBackground] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [fileMenuOpen, setFileMenuOpen] = useState(true);
   const [pathMenuOpen, setPathMenuOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
+  const [backgroundMenuOpen, setBackgroundMenuOpen] = useState(false);
   const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
   const [saveToast, setSaveToast] = useState("");
   const [saveToastVisible, setSaveToastVisible] = useState(false);
+  const [pdfExportBusy, setPdfExportBusy] = useState(false);
+  const [pdfExportHint, setPdfExportHint] = useState("正在生成 PDF...");
+  const [pdfExportKind, setPdfExportKind] = useState("PDF");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -284,6 +322,8 @@ function Canvas2DControls({ engine }) {
       }
       setDrawMenuOpen(false);
       setCaptureMenuOpen(false);
+      setCapturePdfMenuOpen(false);
+      setCapturePngMenuOpen(false);
       setMenuOpen(false);
       setSearchOpen(false);
     }
@@ -302,6 +342,16 @@ function Canvas2DControls({ engine }) {
     return () => clearTimeout(timer);
   }, [snapshot?.boardSaveToastAt, snapshot?.boardSaveToastMessage]);
 
+  useEffect(() => {
+    if (!pdfExportBusy) {
+      return;
+    }
+    const nextHint = String(snapshot?.statusText || "").trim();
+    if (nextHint) {
+      setPdfExportHint(nextHint);
+    }
+  }, [pdfExportBusy, snapshot?.statusText]);
+
   const activeTool = snapshot?.tool || "select";
   const viewScale = Number(snapshot?.board?.view?.scale || 1);
   const zoomPercent = Math.round(viewScale * 100);
@@ -317,6 +367,9 @@ function Canvas2DControls({ engine }) {
   const boardFilePath = String(snapshot?.boardFilePath || "").trim();
   const canvasImageSavePath = String(snapshot?.canvasImageSavePath || "").trim();
   const autosaveEnabled = snapshot?.boardAutosaveEnabled !== false;
+  const boardBackgroundPattern = String(snapshot?.board?.preferences?.backgroundPattern || "dots")
+    .trim()
+    .toLowerCase() || "dots";
   const alignmentSnapConfig = snapshot?.alignmentSnapConfig || null;
   const alignmentSnapEnabled = alignmentSnapConfig?.enabled !== false;
   const alignmentSnapShowGuides = alignmentSnapConfig?.showGuides !== false;
@@ -325,6 +378,7 @@ function Canvas2DControls({ engine }) {
     ? new Date(snapshot.boardAutosaveAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
     : "";
   const boardTitle = boardDirty ? `${boardDisplayName} *` : boardDisplayName;
+  const pdfExportProgress = useMemo(() => resolvePdfExportProgress(pdfExportHint), [pdfExportHint]);
   const searchResults = useMemo(
     () => buildCanvasSearchResults(snapshot?.board?.items || [], deferredSearchQuery, 10),
     [snapshot?.board?.items, deferredSearchQuery]
@@ -505,12 +559,61 @@ function Canvas2DControls({ engine }) {
     }
   };
 
+  const handlePdfExport = async (scale = 2) => {
+    setCaptureMenuOpen(false);
+    setCapturePdfMenuOpen(false);
+    setCapturePngMenuOpen(false);
+    setPdfExportKind("PDF");
+    setPdfExportHint("正在生成 PDF...");
+    setPdfExportBusy(true);
+    try {
+      const result = await bridge.exportBoardAsPdf({
+        scale,
+        background: "white",
+        includeGrid: false,
+        includeBackground: captureIncludeBackground,
+      });
+      if (result?.canceled) {
+        showToast("PDF 导出已取消");
+      } else if (result?.ok === false && result?.message) {
+        showToast(result.message);
+      }
+    } finally {
+      setPdfExportBusy(false);
+    }
+  };
+
+  const handlePngExport = async (scale = 2) => {
+    setCaptureMenuOpen(false);
+    setCapturePdfMenuOpen(false);
+    setCapturePngMenuOpen(false);
+    setPdfExportKind("PNG");
+    setPdfExportHint("正在生成 PNG...");
+    setPdfExportBusy(true);
+    try {
+      const result = await bridge.exportBoardAsPng({
+        scale,
+        background: "white",
+        includeGrid: false,
+        includeBackground: captureIncludeBackground,
+      });
+      if (result?.canceled) {
+        showToast("PNG 导出已取消");
+      } else if (result?.ok === false && result?.message) {
+        showToast(result.message);
+      }
+    } finally {
+      setPdfExportBusy(false);
+    }
+  };
+
   const closeMenu = () => {
     setMenuOpen(false);
     setFileMenuOpen(true);
     setPathMenuOpen(false);
     setExportMenuOpen(false);
     setAlignmentSnapMenuOpen(false);
+    setBackgroundMenuOpen(false);
   };
 
   return (
@@ -707,13 +810,22 @@ function Canvas2DControls({ engine }) {
             <button
               type="button"
               className={`canvas2d-engine-tool${captureMenuOpen ? " is-active" : ""}`}
-              onClick={() => setCaptureMenuOpen((value) => !value)}
+              onClick={() => {
+                setCaptureMenuOpen((value) => {
+                  const next = !value;
+                  if (!next) {
+                    setCapturePdfMenuOpen(false);
+                    setCapturePngMenuOpen(false);
+                  }
+                  return next;
+                });
+              }}
               aria-haspopup="menu"
               aria-expanded={captureMenuOpen}
               title="截图"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <ScissorIcon />
+                <ShareIcon />
               </span>
               <span className="canvas2d-engine-tool-shortcut">P</span>
             </button>
@@ -721,15 +833,99 @@ function Canvas2DControls({ engine }) {
               <div className="canvas2d-engine-menu" role="menu">
                 <button
                   type="button"
+                  className={`canvas2d-engine-menu-item${captureIncludeBackground ? " is-active" : ""}`}
+                  role="menuitemcheckbox"
+                  aria-checked={captureIncludeBackground}
+                  onClick={() => setCaptureIncludeBackground((value) => !value)}
+                >
+                  <span>导出时带背景</span>
+                  <span className="canvas2d-engine-menu-meta">{captureIncludeBackground ? "开" : "关"}</span>
+                </button>
+                <button
+                  type="button"
                   className="canvas2d-engine-menu-item"
                   role="menuitem"
                   onClick={() => {
                     void bridge.startCanvasCapture();
                     setCaptureMenuOpen(false);
+                    setCapturePdfMenuOpen(false);
+                    setCapturePngMenuOpen(false);
                   }}
                 >
                   <span>画布截图</span>
                 </button>
+                <button
+                  type="button"
+                  className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePdfMenuOpen ? " is-active" : ""}`}
+                  role="menuitem"
+                  onClick={() => {
+                    setCapturePngMenuOpen(false);
+                    setCapturePdfMenuOpen((value) => !value);
+                  }}
+                >
+                  <span>导出 PDF</span>
+                  <ChevronIcon open={capturePdfMenuOpen} />
+                </button>
+                {capturePdfMenuOpen ? (
+                  <div className="canvas2d-engine-menu-group">
+                    <button
+                      type="button"
+                      className="canvas2d-engine-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        void handlePdfExport(2);
+                      }}
+                    >
+                      <span>标准</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="canvas2d-engine-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        void handlePdfExport(3);
+                      }}
+                    >
+                      <span>高清</span>
+                    </button>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePngMenuOpen ? " is-active" : ""}`}
+                  role="menuitem"
+                  onClick={() => {
+                    setCapturePdfMenuOpen(false);
+                    setCapturePngMenuOpen((value) => !value);
+                  }}
+                >
+                  <span>导出 PNG</span>
+                  <ChevronIcon open={capturePngMenuOpen} />
+                </button>
+                {capturePngMenuOpen ? (
+                  <div className="canvas2d-engine-menu-group">
+                    <button
+                      type="button"
+                      className="canvas2d-engine-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        void handlePngExport(2);
+                      }}
+                    >
+                      <span>标准</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="canvas2d-engine-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        void handlePngExport(3);
+                      }}
+                    >
+                      <span>高清</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -970,6 +1166,50 @@ function Canvas2DControls({ engine }) {
                   ) : null}
                   <button
                     type="button"
+                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${backgroundMenuOpen ? " is-active" : ""}`}
+                    role="menuitem"
+                    aria-expanded={backgroundMenuOpen}
+                    onClick={() => setBackgroundMenuOpen((value) => !value)}
+                  >
+                    <span>画布背景</span>
+                    <ChevronIcon open={backgroundMenuOpen} />
+                  </button>
+                  {backgroundMenuOpen ? (
+                    <div className="canvas2d-engine-menu-group">
+                      {BOARD_BACKGROUND_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`canvas2d-engine-menu-item${boardBackgroundPattern === option.value ? " is-active" : ""}`}
+                          role="menuitemradio"
+                          aria-checked={boardBackgroundPattern === option.value}
+                          onClick={() => {
+                            void bridge.setBoardBackgroundPattern(option.value);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          <span className="canvas2d-engine-menu-meta">
+                            {boardBackgroundPattern === option.value ? "当前" : ""}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="canvas2d-engine-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      closeMenu();
+                      dispatchTutorialUiEvent({
+                        type: TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_INTRO,
+                      });
+                    }}
+                  >
+                    <span>使用说明</span>
+                  </button>
+                  <button
+                    type="button"
                     className="canvas2d-engine-menu-item"
                     data-tutorial-target="tutorial-entry"
                     role="menuitem"
@@ -1023,17 +1263,6 @@ function Canvas2DControls({ engine }) {
                               ) : (
                                 <span className="canvas2d-engine-menu-about-value">{item.value}</span>
                               )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="canvas2d-engine-menu-about-block">
-                        <div className="canvas2d-engine-menu-subtitle">版权与协议</div>
-                        <div className="canvas2d-engine-menu-about-list">
-                          {ABOUT_CANVAS_LICENSE_ITEMS.map((item) => (
-                            <div key={item.label} className="canvas2d-engine-menu-about-row">
-                              <span className="canvas2d-engine-menu-about-label">{item.label}：</span>
-                              <span className="canvas2d-engine-menu-about-value">{item.value}</span>
                             </div>
                           ))}
                         </div>
@@ -1103,6 +1332,75 @@ function Canvas2DControls({ engine }) {
         onPrevious={() => tutorialRuntime.goToPreviousStep()}
         onSkip={() => tutorialRuntime.skipCurrentStep()}
       />
+
+      {pdfExportBusy ? (
+        <div className="canvas2d-pdf-export-overlay" role="status" aria-live="polite" aria-label="PDF 导出中">
+          <div
+            className="canvas2d-pdf-export-dialog"
+            style={{
+              width: "min(420px, calc(100vw - 48px))",
+              padding: "24px 24px 20px",
+              borderRadius: "28px",
+              background: "rgba(255, 255, 255, 0.94)",
+              boxShadow: "0 24px 80px rgba(15, 23, 42, 0.18)",
+              border: "1px solid rgba(148, 163, 184, 0.18)",
+              backdropFilter: "blur(20px)",
+            }}
+          >
+            <div className="canvas2d-pdf-export-spinner" aria-hidden="true" />
+            <div className="canvas2d-pdf-export-title">正在准备导出 {pdfExportKind}</div>
+            <div className="canvas2d-pdf-export-text">{pdfExportHint || `正在生成 ${pdfExportKind}...`}</div>
+            <div
+              className="canvas2d-pdf-export-progress"
+              aria-label={`${pdfExportKind} 导出进度 ${pdfExportProgress}%`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pdfExportProgress}
+              role="progressbar"
+              style={{
+                marginTop: "16px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "8px",
+                  fontSize: "13px",
+                  color: "#475569",
+                  fontWeight: 600,
+                }}
+              >
+                <span>导出进度</span>
+                <span>{pdfExportProgress}%</span>
+              </div>
+              <div
+                style={{
+                  position: "relative",
+                  overflow: "hidden",
+                  height: "10px",
+                  borderRadius: "999px",
+                  background: "rgba(148, 163, 184, 0.22)",
+                  boxShadow: "inset 0 1px 2px rgba(15, 23, 42, 0.08)",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${pdfExportProgress}%`,
+                    height: "100%",
+                    borderRadius: "999px",
+                    background: "linear-gradient(90deg, #2563eb 0%, #06b6d4 55%, #22c55e 100%)",
+                    boxShadow: "0 0 18px rgba(37, 99, 235, 0.28)",
+                    transition: "width 220ms ease",
+                  }}
+                />
+              </div>
+            </div>
+            <div className="canvas2d-pdf-export-meta">完成后将继续进入文件保存界面</div>
+          </div>
+        </div>
+      ) : null}
 
       <div className={`canvas2d-save-toast${saveToastVisible ? "" : " is-hidden"}`} role="status">
         {saveToast}

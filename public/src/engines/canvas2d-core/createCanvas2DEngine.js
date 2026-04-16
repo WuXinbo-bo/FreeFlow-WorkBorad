@@ -44,6 +44,7 @@ import {
   TEXT_RESIZE_MODE_WRAP,
   TEXT_WRAP_MODE_MANUAL,
 } from "./elements/text.js";
+import { measureTextElementLayout } from "./textLayout/measureTextElementLayout.js";
 import { createRichTextAdapter } from "./editors/richTextAdapter.js";
 import { createLightImageEditor } from "./editors/lightImageEditor.js";
 import { syncFloatingToolbarLayout } from "./editors/floatingToolbarLayout.js";
@@ -78,8 +79,10 @@ import {
   getFileExtension,
   getFileName,
   htmlToPlainText,
+  INLINE_FONT_SIZE_ATTR,
   isEditableElement,
   normalizeRichHtml,
+  normalizeRichHtmlInlineFontSizes,
   readFileAsDataUrl,
   readImageDimensions,
   sanitizeHtml,
@@ -87,6 +90,11 @@ import {
   resolveImageSource,
 } from "./utils.js";
 import { createImageModule } from "./imageModule.js";
+import {
+  getExportBounds as getCanvasExportBounds,
+  renderBoardToCanvas as renderExportBoardToCanvas,
+} from "./export/renderBoardToCanvas.js";
+import { buildExportReadyBoardItems } from "./export/buildExportReadyBoardItems.js";
 import { CONFIG } from "../../config/app.config.js";
 import { API_ROUTES, readJsonResponse } from "../../api/http.js";
 
@@ -110,6 +118,13 @@ const TEXT_STYLE_PRESETS = Object.freeze({
     fontWeight: "700",
   },
 });
+const BOARD_BACKGROUND_PATTERNS = new Set(["none", "dots", "grid", "lines", "engineering"]);
+const RICH_SELECTION_FONT_SIZE_PRESETS = Object.freeze([8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48]);
+
+function normalizeBoardBackgroundPattern(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return BOARD_BACKGROUND_PATTERNS.has(normalized) ? normalized : "dots";
+}
 
 function getMatchingTextPresetName(fontSize) {
   const size = Math.round(Number(fontSize || 0));
@@ -156,64 +171,29 @@ function applyRichEditorLayoutStyles(editor, item, scale) {
 }
 
 function getEditingTextBoxMetrics(editor, item, view, plainText = "") {
-  const scale = Math.max(0.1, Number(view?.scale || 1));
   const fontSize = Math.max(12, Number(item?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE);
   const isWrapText = isWrapTextItem(item);
-  const fallback = getTextMinSize(
-    {
-      ...item,
-      plainText,
-      text: plainText,
-      fontSize,
-      textResizeMode: isWrapText ? TEXT_RESIZE_MODE_WRAP : TEXT_RESIZE_MODE_AUTO_WIDTH,
-    },
-    {
-      widthHint: isWrapText ? Number(item?.width || 0) || 80 : undefined,
-      fontSize,
-    }
-  );
-  if (!(editor instanceof HTMLDivElement)) {
-    return fallback;
-  }
-
-  const previousWidth = editor.style.width;
-  const previousHeight = editor.style.height;
-  editor.style.width = isWrapText ? `${Math.max(1, Number(item?.width || 1) * scale)}px` : "max-content";
-  editor.style.height = "auto";
-
-  const measuredWidth = isWrapText
-    ? Math.max(80, Number(item?.width || 0) || fallback.width)
-    : Math.max(
-        80,
-        Math.min(
-          TEXT_EDIT_MAX_WIDTH,
-          Math.ceil(Math.max(editor.scrollWidth || 0, editor.getBoundingClientRect?.().width || 0) / scale)
-        )
-      );
-
-  const lineCount = Math.max(1, String(plainText || "").split("\n").length);
-  const lineHeight = Math.max(22, fontSize * TEXT_LINE_HEIGHT_RATIO);
-  const measuredHeight = Math.max(
-    40,
-    Math.ceil(
-      Math.max(
-        editor.scrollHeight || 0,
-        editor.getBoundingClientRect?.().height || 0,
-        lineCount * lineHeight
-      ) / scale
-    )
-  );
-
-  editor.style.width = previousWidth;
-  editor.style.height = previousHeight;
+  const measured = measureTextElementLayout({
+    html: editor?.innerHTML || item?.html || "",
+    plainText,
+    fontSize,
+    resizeMode: isWrapText ? TEXT_RESIZE_MODE_WRAP : TEXT_RESIZE_MODE_AUTO_WIDTH,
+    widthHint: isWrapText ? Number(item?.width || 0) || 80 : undefined,
+    maxWidth: TEXT_EDIT_MAX_WIDTH,
+    lineHeightRatio: TEXT_LINE_HEIGHT_RATIO,
+    fontWeight: "500",
+    boldWeight: "700",
+    editorElement: editor,
+    scale: Number(view?.scale || 1),
+  });
 
   return {
-    width: measuredWidth || fallback.width,
-    height: measuredHeight || fallback.height,
+    width: Math.max(80, Math.ceil(Number(measured?.frameWidth || 0) || 80)),
+    height: Math.max(40, Math.ceil(Number(measured?.frameHeight || 0) || 40)),
   };
 }
 
-function syncEditingRichEditorFrame(editor, item, view) {
+  function syncEditingRichEditorFrame(editor, item, view) {
   if (!(editor instanceof HTMLDivElement) || !item) {
     return;
   }
@@ -226,6 +206,7 @@ function syncEditingRichEditorFrame(editor, item, view) {
   editor.style.height = `${Math.max(1, Number(item.height || 1) * scale)}px`;
   editor.style.fontSize = `${Math.max(1, Number(item.fontSize || DEFAULT_TEXT_FONT_SIZE) * scale)}px`;
   applyRichEditorLayoutStyles(editor, item, scale);
+  applyInlineFontSizingToContainer(editor, scale);
 }
 
 function getCanvasOfficeEngineMode() {
@@ -606,6 +587,27 @@ function buildTextPresetHtml(item, preset) {
   return `<div style="${style}">${template.innerHTML || escapeHtml(plainText)}</div>`;
 }
 
+function applyInlineFontSizingToContainer(container, scale = 1) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+  const safeScale = Math.max(0.1, Number(scale || 1));
+  container.querySelectorAll(`[${INLINE_FONT_SIZE_ATTR}]`).forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    const logicalSize = Number.parseFloat(String(node.getAttribute(INLINE_FONT_SIZE_ATTR) || ""));
+    if (!Number.isFinite(logicalSize) || logicalSize <= 0) {
+      node.style.fontSize = "";
+      if (!node.getAttribute("style")) {
+        node.removeAttribute("style");
+      }
+      return;
+    }
+    node.style.fontSize = `${Math.max(1, Math.round(logicalSize * safeScale * 100) / 100)}px`;
+  });
+}
+
 export function createCanvas2DEngine(options = {}) {
   const useLocalFileSystem = typeof globalThis?.desktopShell?.writeFile === "function";
   const store = createCanvas2DStore({ ...options, disableLocalStorage: useLocalFileSystem });
@@ -615,7 +617,7 @@ export function createCanvas2DEngine(options = {}) {
 
   state.board.items = state.board.items.map((item) => {
     if (item?.type === "text") {
-      const html = normalizeRichHtml(item.html || "");
+      const html = normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || DEFAULT_TEXT_FONT_SIZE);
       const plainText = sanitizeText(item.plainText || item.text || htmlToPlainText(html));
       return {
         ...item,
@@ -628,7 +630,7 @@ export function createCanvas2DEngine(options = {}) {
       };
     }
     if (item?.type === "flowNode") {
-      const html = normalizeRichHtml(item.html || "");
+      const html = normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || 18);
       const plainText = sanitizeText(item.plainText || htmlToPlainText(html));
       return {
         ...item,
@@ -838,6 +840,7 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   const getAllowLocalFileAccess = () => state.board?.preferences?.allowLocalFileAccess !== false;
+  const getBoardBackgroundPattern = () => normalizeBoardBackgroundPattern(state.board?.preferences?.backgroundPattern);
   const imageModule = createImageModule();
   const shapeModule = createShapeModule();
   const flowModule = createFlowModule({
@@ -949,6 +952,7 @@ export function createCanvas2DEngine(options = {}) {
     editor: null,
     richEditor: null,
     richToolbar: null,
+    richSelectionToolbar: null,
     richDisplayHost: null,
     imageToolbar: null,
     fileMemoEditor: null,
@@ -1041,6 +1045,10 @@ export function createCanvas2DEngine(options = {}) {
         alignmentSnap: state.alignmentSnap,
         alignmentSnapConfig: state.alignmentSnapConfig,
         allowLocalFileAccess: getAllowLocalFileAccess(),
+        backgroundStyle: {
+          fill: "#ffffff",
+          pattern: getBoardBackgroundPattern(),
+        },
         renderTextInCanvas: RENDER_TEXT_IN_CANVAS,
       });
       syncEditorLayout();
@@ -1109,6 +1117,34 @@ export function createCanvas2DEngine(options = {}) {
     state.statusText = String(text || "");
     state.statusTone = tone;
     store.emit();
+  }
+
+  function waitForUiPaint() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        setTimeout(resolve, 0);
+      });
+    });
+  }
+
+  async function mapWithConcurrency(items = [], iteratee, concurrency = 4) {
+    const list = Array.isArray(items) ? items : [];
+    const task = typeof iteratee === "function" ? iteratee : async (value) => value;
+    const limit = Math.max(1, Math.floor(Number(concurrency) || 1));
+    const results = new Array(list.length);
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < list.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await task(list[index], index);
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(limit, Math.max(1, list.length)) }, () => worker());
+    await Promise.all(workers);
+    return results;
   }
 
   function readUiSettingsCache() {
@@ -1612,21 +1648,6 @@ export function createCanvas2DEngine(options = {}) {
       return boardLoadInFlight;
     }
     boardLoadInFlight = (async () => {
-      const settingsPath = await resolveCanvasBoardSavePath();
-      const boardFolder = resolveBoardFolderPath(settingsPath);
-      if (boardFolder) {
-        const pickedName = getFileName(targetPath);
-        const enforcedPath = joinPath(boardFolder, pickedName);
-        if (enforcedPath && enforcedPath !== targetPath) {
-          if (typeof globalThis?.desktopShell?.readFile === "function") {
-            const readResult = await globalThis.desktopShell.readFile(targetPath);
-            if (readResult?.ok) {
-              await globalThis.desktopShell.writeFile(enforcedPath, readResult.text || "");
-              targetPath = enforcedPath;
-            }
-          }
-        }
-      }
       if (typeof globalThis?.desktopShell?.pathExists === "function") {
         const exists = await globalThis.desktopShell.pathExists(targetPath);
         if (!exists) {
@@ -1938,7 +1959,12 @@ export function createCanvas2DEngine(options = {}) {
       const loaded = await loadBoardFromPath(state.boardFilePath, { silent: true });
       if (!loaded && fallbackPath && fallbackPath !== state.boardFilePath) {
         setBoardFilePath(fallbackPath, { emit: false, updateSettings: false });
-        await loadBoardFromPath(fallbackPath, { silent: true });
+        const fallbackLoaded = await loadBoardFromPath(fallbackPath, { silent: true });
+        if (!fallbackLoaded) {
+          setStatus("当前画布加载失败，已停留在空白画布", "warning");
+        }
+      } else if (!loaded && state.boardFilePath) {
+        setStatus("当前画布加载失败，已停留在空白画布", "warning");
       }
     }
     void ensureImportImageFolderExists();
@@ -2383,6 +2409,60 @@ export function createCanvas2DEngine(options = {}) {
       refs.surface.appendChild(refs.richToolbar);
     }
 
+    refs.richSelectionToolbar = refs.surface.querySelector("#canvas2d-rich-selection-toolbar");
+    if (!(refs.richSelectionToolbar instanceof HTMLDivElement)) {
+      refs.richSelectionToolbar = document.createElement("div");
+      refs.richSelectionToolbar.id = "canvas2d-rich-selection-toolbar";
+      refs.richSelectionToolbar.className = "canvas2d-rich-toolbar canvas2d-rich-selection-toolbar is-hidden";
+      refs.richSelectionToolbar.innerHTML = `
+        <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+        <div class="canvas2d-rich-size-control" data-size-control>
+          <button type="button" class="canvas2d-rich-size-trigger" data-action="toggle-font-size-panel" title="字号">
+            <span class="canvas2d-rich-size-value" data-role="font-size-label">16</span>
+            <span class="canvas2d-rich-size-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="canvas2d-rich-size-panel is-hidden" data-role="font-size-panel">
+            <div class="canvas2d-rich-size-panel-head">
+              <span class="canvas2d-rich-size-panel-label">字号</span>
+              <span class="canvas2d-rich-size-panel-hint">Size</span>
+            </div>
+            <div class="canvas2d-rich-size-stepper">
+              <button type="button" class="canvas2d-rich-btn canvas2d-rich-size-step" data-action="font-size-step-down" title="减小字号">−</button>
+              <input
+                type="number"
+                class="canvas2d-rich-size-input"
+                data-action="selection-font-size-input"
+                min="8"
+                step="1"
+                value="16"
+                inputmode="numeric"
+                aria-label="输入字号"
+              />
+              <button type="button" class="canvas2d-rich-btn canvas2d-rich-size-step" data-action="font-size-step-up" title="增大字号">+</button>
+            </div>
+            <div class="canvas2d-rich-size-presets" data-role="font-size-presets">
+              ${RICH_SELECTION_FONT_SIZE_PRESETS.map(
+                (size) =>
+                  `<button type="button" class="canvas2d-rich-size-preset" data-action="font-size-preset" data-size="${size}" title="${size}">
+                    <span class="canvas2d-rich-size-preset-size">${size}</span>
+                    <span class="canvas2d-rich-size-preset-preview" style="font-size: ${Math.max(12, Math.min(size, 26))}px;">Aa</span>
+                  </button>`
+              ).join("")}
+            </div>
+          </div>
+        </div>
+        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#0f172a" title="黑色"></button>
+        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#dc2626" title="红色"></button>
+        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#2563eb" title="蓝色"></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="link" title="链接">🔗</button>
+      `;
+      refs.surface.appendChild(refs.richSelectionToolbar);
+    }
+
     refs.imageToolbar = lightImageEditor.mount(refs.surface);
 
     refs.ctx = refs.canvas.getContext("2d", { alpha: true });
@@ -2396,6 +2476,7 @@ export function createCanvas2DEngine(options = {}) {
     if (!hasEditing) {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
+      refs.richSelectionToolbar?.classList.add("is-hidden");
       refs.fileMemoEditor?.classList.add("is-hidden");
       refs.imageMemoEditor?.classList.add("is-hidden");
       lastEditorItemId = null;
@@ -2453,32 +2534,269 @@ export function createCanvas2DEngine(options = {}) {
       });
     }
     if (lastRichEditorItemId !== item.id) {
-      richTextAdapter?.setContent(item.html || "", item.plainText || item.text || "");
+      richTextAdapter?.setContent(
+        normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
+        item.plainText || item.text || ""
+      );
     }
     lastRichEditorItemId = item.id;
     richFontSize = normalizeRichEditorFontSize(item.fontSize || 20, 20);
     syncRichTextFontSize();
     richTextAdapter?.setBaseFontSize?.(richFontSize, { normalize: false });
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.editor?.classList.add("is-hidden");
     refs.richEditor.classList.remove("is-hidden");
+    syncRichTextToolbar();
   }
 
-  function syncRichTextToolbar() {
+  function getActiveRichEditingItem() {
+    if (!state.editingId || (state.editingType !== "text" && state.editingType !== "flow-node")) {
+      return null;
+    }
+    return (
+      state.board.items.find(
+        (entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode")
+      ) || null
+    );
+  }
+
+  function getRichTextSelectionState() {
+    const editingItem = getActiveRichEditingItem();
+    const snapshot = richTextAdapter?.getSelectionSnapshot?.() || null;
+    const hasExpandedSelection = Boolean(
+      editingItem &&
+        snapshot?.inside &&
+        !snapshot?.collapsed &&
+        snapshot?.rect &&
+        Number(snapshot.rect.width || 0) >= 0 &&
+        Number(snapshot.rect.height || 0) >= 0
+    );
+    return {
+      editingItem,
+      snapshot,
+      hasExpandedSelection,
+      formatState: richTextAdapter?.getFormatState?.() || {},
+    };
+  }
+
+  function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null } = {}) {
+    if (!(toolbar instanceof HTMLDivElement)) {
+      return;
+    }
+    const logicalSelectionFontSize = Math.max(
+      8,
+      Math.round(
+        ((Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
+          Math.max(0.1, Number(state.board.view?.scale || 1))) *
+          100
+      ) / 100
+    );
+    toolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
+      const action = button.getAttribute("data-action");
+      if (action === "bold") {
+        button.classList.toggle("is-active", Boolean(formatState.bold));
+      } else if (action === "italic") {
+        button.classList.toggle("is-active", Boolean(formatState.italic));
+      } else if (action === "underline") {
+        button.classList.toggle("is-active", Boolean(formatState.underline));
+      } else if (action === "strike") {
+        button.classList.toggle("is-active", Boolean(formatState.strike));
+      } else if (action === "highlight") {
+        button.classList.toggle("is-active", Boolean(formatState.highlight));
+      } else if (action === "unordered-list") {
+        button.classList.toggle("is-active", Boolean(formatState.unorderedList));
+      } else if (action === "ordered-list") {
+        button.classList.toggle("is-active", Boolean(formatState.orderedList));
+      } else if (action === "align-left") {
+        button.classList.toggle("is-active", (formatState.align || "left") === "left");
+      } else if (action === "align-center") {
+        button.classList.toggle("is-active", formatState.align === "center");
+      } else if (action === "align-right") {
+        button.classList.toggle("is-active", formatState.align === "right");
+      }
+    });
+    toolbar.querySelectorAll('[data-action="preset"]').forEach((input) => {
+      if (!(input instanceof HTMLSelectElement)) {
+        return;
+      }
+      input.value = editingItem ? getMatchingTextPresetName(editingItem.fontSize || richFontSize) : "body";
+    });
+    toolbar.querySelectorAll('[data-action="font-size"]').forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      input.value = String(normalizeRichEditorFontSize(richFontSize || 20, 20));
+    });
+    toolbar.querySelectorAll('[data-role="font-size-label"]').forEach((label) => {
+      label.textContent = String(Math.round(logicalSelectionFontSize));
+    });
+    toolbar.querySelectorAll('[data-action="selection-font-size-input"]').forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      const nextValue = String(Math.round(logicalSelectionFontSize));
+      if (input.value !== nextValue) {
+        input.value = nextValue;
+      }
+    });
+    toolbar.querySelectorAll('[data-action="font-size-preset"]').forEach((button) => {
+      const size = Number(button.getAttribute("data-size") || 0);
+      button.classList.toggle("is-active", size === Math.round(logicalSelectionFontSize));
+    });
+    if (toolbar === refs.richSelectionToolbar) {
+      requestAnimationFrame(() => centerActiveRichSelectionFontSizePreset());
+    }
+  }
+
+  function getRichSelectionFontSizeControl() {
+    return refs.richSelectionToolbar?.querySelector?.("[data-size-control]") || null;
+  }
+
+  function centerActiveRichSelectionFontSizePreset() {
+    const control = getRichSelectionFontSizeControl();
+    if (!(control instanceof HTMLElement) || !control.classList.contains("is-open")) {
+      return;
+    }
+    const container = control.querySelector('[data-role="font-size-presets"]');
+    const activePreset = control.querySelector('[data-action="font-size-preset"].is-active');
+    if (!(container instanceof HTMLElement) || !(activePreset instanceof HTMLElement)) {
+      return;
+    }
+    const targetTop =
+      activePreset.offsetTop - Math.max(0, Math.round((container.clientHeight - activePreset.offsetHeight) / 2));
+    container.scrollTop = Math.max(0, targetTop);
+  }
+
+  function closeRichSelectionFontSizePanel() {
+    const control = getRichSelectionFontSizeControl();
+    if (!(control instanceof HTMLElement)) {
+      return;
+    }
+    control.classList.remove("is-open");
+    control.querySelectorAll('[data-role="font-size-panel"]').forEach((panel) => panel.classList.add("is-hidden"));
+  }
+
+  function toggleRichSelectionFontSizePanel(force) {
+    const control = getRichSelectionFontSizeControl();
+    if (!(control instanceof HTMLElement)) {
+      return;
+    }
+    const nextOpen = typeof force === "boolean" ? force : !control.classList.contains("is-open");
+    control.classList.toggle("is-open", nextOpen);
+    control.querySelectorAll('[data-role="font-size-panel"]').forEach((panel) =>
+      panel.classList.toggle("is-hidden", !nextOpen)
+    );
+    if (nextOpen) {
+      requestAnimationFrame(() => centerActiveRichSelectionFontSizePreset());
+    }
+  }
+
+  function getActiveRichSelectionFontSize() {
+    const input = refs.richSelectionToolbar?.querySelector?.('[data-action="selection-font-size-input"]');
+    if (input instanceof HTMLInputElement) {
+      const value = Number(input.value || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.max(8, Math.round(value));
+      }
+    }
+    const label = refs.richSelectionToolbar?.querySelector?.('[data-role="font-size-label"]');
+    if (label instanceof HTMLElement) {
+      const value = Number(label.textContent || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.max(8, Math.round(value));
+      }
+    }
+    const formatState = richTextAdapter?.getFormatState?.() || {};
+    const logicalValue =
+      (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
+      Math.max(0.1, Number(state.board.view?.scale || 1));
+    return Math.max(8, Math.round(logicalValue || 16));
+  }
+
+  function applyRichSelectionFontSize(nextSize) {
+    const value = Math.max(8, Math.round(Number(nextSize || 0) || 0));
+    if (!Number.isFinite(value) || value <= 0) {
+      return;
+    }
+    const renderedSize =
+      value * Math.max(0.1, Number(state.board.view?.scale || 1));
+    applyRichTextCommand("fontSize", {
+      logicalSize: value,
+      renderedSize,
+    });
+  }
+
+  function stepRichSelectionFontSize(delta) {
+    const current = getActiveRichSelectionFontSize();
+    applyRichSelectionFontSize(current + delta);
+  }
+
+  function applyRichSelectionFontSizeFromInput(input) {
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const value = Number(input.value || 0);
+    if (value > 0) {
+      applyRichSelectionFontSize(value);
+    }
+  }
+
+  function positionRichSelectionToolbar(toolbar, { rect = null, point = null } = {}) {
+    if (!(toolbar instanceof HTMLDivElement) || !(refs.surface instanceof HTMLDivElement)) {
+      return;
+    }
+    const hostRect = refs.surface.getBoundingClientRect();
+    const margin = 8;
+    const gap = 10;
+    const width = Math.max(1, toolbar.offsetWidth || toolbar.getBoundingClientRect().width || 0);
+    const height = Math.max(1, toolbar.offsetHeight || toolbar.getBoundingClientRect().height || 0);
+    let anchorCenterX = hostRect.width / 2;
+    let anchorTop = margin;
+    let anchorBottom = margin;
+    let preferBelow = false;
+    if (point) {
+      anchorCenterX = Number(point.clientX || 0) - hostRect.left;
+      anchorTop = Number(point.clientY || 0) - hostRect.top;
+      anchorBottom = anchorTop;
+      preferBelow = true;
+    } else if (rect) {
+      anchorCenterX = ((Number(rect.left || 0) + Number(rect.right || 0)) / 2) - hostRect.left;
+      anchorTop = Number(rect.top || 0) - hostRect.top;
+      anchorBottom = Number(rect.bottom || 0) - hostRect.top;
+    }
+    let left = Math.round(anchorCenterX - width / 2);
+    let top = Math.round(anchorTop - height - gap);
+    if (preferBelow || top < margin) {
+      top = Math.round(anchorBottom + gap);
+    }
+    const maxLeft = Math.max(margin, hostRect.width - width - margin);
+    const maxTop = Math.max(margin, hostRect.height - height - margin);
+    left = Math.max(margin, Math.min(left, maxLeft));
+    top = Math.max(margin, Math.min(top, maxTop));
+    toolbar.style.left = `${left}px`;
+    toolbar.style.top = `${top}px`;
+  }
+
+  function syncRichTextToolbar(options = {}) {
     if (!(refs.richToolbar instanceof HTMLDivElement)) {
+      return;
+    }
+    if (!(refs.richSelectionToolbar instanceof HTMLDivElement)) {
       return;
     }
     if (!isInteractiveMode()) {
       refs.richToolbar.classList.add("is-hidden");
+      refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichSelectionFontSizePanel();
       return;
     }
-    const editingItem =
-      state.editingId && (state.editingType === "text" || state.editingType === "flow-node")
-        ? state.board.items.find((entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode"))
-        : null;
+    const { editingItem, snapshot, hasExpandedSelection, formatState } = getRichTextSelectionState();
     const shouldShow = state.tool === "text" || Boolean(editingItem);
     if (!shouldShow || !refs.surface) {
       refs.richToolbar.classList.add("is-hidden");
+      refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichSelectionFontSizePanel();
       return;
     }
     refs.richToolbar.classList.remove("is-hidden");
@@ -2498,38 +2816,22 @@ export function createCanvas2DEngine(options = {}) {
           input.value = "body";
         }
       });
+      refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichSelectionFontSizePanel();
       return;
     }
-    const formatState = richTextAdapter?.getFormatState?.() || {};
-    refs.richToolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
-      const action = button.getAttribute("data-action");
-      if (action === "bold") {
-        button.classList.toggle("is-active", Boolean(formatState.bold));
-      } else if (action === "italic") {
-        button.classList.toggle("is-active", Boolean(formatState.italic));
-      } else if (action === "underline") {
-        button.classList.toggle("is-active", Boolean(formatState.underline));
-      } else if (action === "strike") {
-        button.classList.toggle("is-active", Boolean(formatState.strike));
-      } else if (action === "unordered-list") {
-        button.classList.toggle("is-active", Boolean(formatState.unorderedList));
-      } else if (action === "ordered-list") {
-        button.classList.toggle("is-active", Boolean(formatState.orderedList));
-      } else if (action === "align-left") {
-        button.classList.toggle("is-active", (formatState.align || "left") === "left");
-      } else if (action === "align-center") {
-        button.classList.toggle("is-active", formatState.align === "center");
-      } else if (action === "align-right") {
-        button.classList.toggle("is-active", formatState.align === "right");
-      }
-    });
-    const presetValue = getMatchingTextPresetName(editingItem.fontSize || richFontSize);
-    refs.richToolbar.querySelectorAll('[data-action="preset"]').forEach((input) => {
-      if (input instanceof HTMLSelectElement && input.value !== presetValue) {
-        input.value = presetValue;
-      }
-    });
-    syncRichTextFontSize();
+    syncRichToolbarButtons(refs.richToolbar, formatState, { editingItem });
+    syncRichToolbarButtons(refs.richSelectionToolbar, formatState, { editingItem });
+    if (hasExpandedSelection) {
+      refs.richSelectionToolbar.classList.remove("is-hidden");
+      positionRichSelectionToolbar(refs.richSelectionToolbar, {
+        rect: snapshot?.rect || null,
+        point: options?.point || null,
+      });
+    } else {
+      refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichSelectionFontSizePanel();
+    }
   }
 
   function syncRichTextFontSize() {
@@ -2548,7 +2850,10 @@ export function createCanvas2DEngine(options = {}) {
     if (!item || item.type !== "text" || !(refs.richEditor instanceof HTMLDivElement)) {
       return;
     }
-    const html = normalizeRichHtml(richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "");
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
+      item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE
+    );
     const plainText = sanitizeText(htmlToPlainText(html));
     const nextSize = getEditingTextBoxMetrics(refs.richEditor, item, state.board.view, plainText);
     item.html = html;
@@ -2559,6 +2864,45 @@ export function createCanvas2DEngine(options = {}) {
     item.width = Math.max(80, Math.ceil(Number(nextSize?.width || 0) || 80));
     item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+  }
+
+  function syncEditingFlowNodeState(item) {
+    if (!item || item.type !== "flowNode" || !(refs.richEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
+      item.fontSize || richFontSize || 18
+    );
+    const plainText = sanitizeText(htmlToPlainText(html));
+    item.html = html;
+    item.plainText = plainText;
+    item.fontSize = normalizeRichEditorFontSize(item.fontSize || richFontSize || 18, 18);
+    const minNodeSize = getFlowNodeMinSize(item, { widthHint: item.width });
+    item.width = Math.max(Number(item.width || 0) || 0, minNodeSize.width);
+    item.height = Math.max(Number(item.height || 0) || 0, minNodeSize.height);
+    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+  }
+
+  function syncActiveRichEditingItemState({ emit = true, refreshToolbar = true } = {}) {
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return null;
+    }
+    if (item.type === "text") {
+      syncEditingTextItemSize(item);
+    } else if (item.type === "flowNode") {
+      syncEditingFlowNodeState(item);
+    }
+    if (emit) {
+      syncBoard({ persist: false, emit: true });
+    } else {
+      scheduleRender();
+    }
+    if (refreshToolbar) {
+      requestAnimationFrame(() => syncRichTextToolbar());
+    }
+    return item;
   }
 
   function syncImageToolbar() {
@@ -2641,12 +2985,13 @@ export function createCanvas2DEngine(options = {}) {
       const fontSize = Math.max(12, Number(item.fontSize || 18)) * scale;
       const padding = item.type === "flowNode" ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
       const lineHeightRatio = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
-      const html = normalizeRichHtml(item.html || "");
+      const html = normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || DEFAULT_TEXT_FONT_SIZE);
       if (html.trim()) {
         if (node.dataset.html !== html) {
           node.innerHTML = html;
           node.dataset.html = html;
         }
+        applyInlineFontSizingToContainer(node, scale);
       } else {
         const text = item.plainText || item.text || "";
         if (node.dataset.text !== text) {
@@ -2698,11 +3043,13 @@ export function createCanvas2DEngine(options = {}) {
     syncRichTextFontSize();
     richTextAdapter?.setBaseFontSize?.(richFontSize, { normalize: false });
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
     syncBoard({ persist: false, emit: true });
     requestAnimationFrame(() => {
       refs.richEditor?.focus();
+      syncRichTextToolbar();
     });
     return true;
   }
@@ -2723,6 +3070,7 @@ export function createCanvas2DEngine(options = {}) {
       richTextAdapter = createRichTextAdapter(refs.richEditor, {
         onCommit: commitRichEdit,
         onCancel: cancelRichEdit,
+        onSelectionChange: syncRichTextToolbar,
       });
     }
     if (!editBaselineSnapshot) {
@@ -2731,7 +3079,10 @@ export function createCanvas2DEngine(options = {}) {
     state.editingId = item.id;
     state.editingType = "flow-node";
     state.board.selectedIds = [item.id];
-    richTextAdapter?.setContent(item.html || "", item.plainText || "");
+    richTextAdapter?.setContent(
+      normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || 18),
+      item.plainText || ""
+    );
     lastRichEditorItemId = item.id;
     richFontSize = normalizeRichEditorFontSize(item.fontSize || 18, 18);
     syncRichTextFontSize();
@@ -2742,6 +3093,7 @@ export function createCanvas2DEngine(options = {}) {
     syncBoard({ persist: false, emit: true });
     requestAnimationFrame(() => {
       refs.richEditor?.focus();
+      syncRichTextToolbar();
     });
     return true;
   }
@@ -2768,7 +3120,10 @@ export function createCanvas2DEngine(options = {}) {
       return false;
     }
     const before = editBaselineSnapshot || takeHistorySnapshot(state);
-    const html = normalizeRichHtml(richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "");
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
+      item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE
+    );
     const plainText = htmlToPlainText(html);
     if (!plainText.trim()) {
       state.board.items = state.board.items.filter((entry) => {
@@ -2844,7 +3199,10 @@ export function createCanvas2DEngine(options = {}) {
       return false;
     }
     const before = editBaselineSnapshot || takeHistorySnapshot(state);
-    const html = normalizeRichHtml(richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "");
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
+      item.fontSize || richFontSize || 18
+    );
     const plainText = htmlToPlainText(html);
     if (!plainText.trim()) {
       state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
@@ -3510,30 +3868,10 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function getExportBounds(items = []) {
-    const boundsList = items
-      .map((item) => (item?.type === "flowEdge" ? getFlowEdgeBounds(item) : getElementBounds(item)))
-      .filter(Boolean);
-    if (!boundsList.length) {
-      return null;
-    }
-    const result = boundsList.reduce(
-      (acc, bounds) => {
-        acc.left = Math.min(acc.left, bounds.left);
-        acc.top = Math.min(acc.top, bounds.top);
-        acc.right = Math.max(acc.right, bounds.right);
-        acc.bottom = Math.max(acc.bottom, bounds.bottom);
-        return acc;
-      },
-      { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity }
-    );
-    if (!Number.isFinite(result.left) || !Number.isFinite(result.top) || !Number.isFinite(result.right) || !Number.isFinite(result.bottom)) {
-      return null;
-    }
-    return {
-      ...result,
-      width: Math.max(1, result.right - result.left),
-      height: Math.max(1, result.bottom - result.top),
-    };
+    return getCanvasExportBounds(items, {
+      getElementBounds,
+      getFlowEdgeBounds,
+    });
   }
 
   function getCardPairId(item, itemMap = new Map()) {
@@ -3585,46 +3923,347 @@ export function createCanvas2DEngine(options = {}) {
 
   function renderItemsToCanvas(items = [], options = {}) {
     const exportItems = collectCardLinkedItems(items);
-    const bounds = getExportBounds(exportItems);
+    return renderExportBoardToCanvas(exportItems, {
+      renderer,
+      getElementBounds,
+      getFlowEdgeBounds,
+      allowLocalFileAccess: getAllowLocalFileAccess(),
+      backgroundFill: options.backgroundFill ?? "transparent",
+      backgroundGrid: Boolean(options.backgroundGrid),
+      backgroundPattern: options.backgroundPattern,
+      renderTextInCanvas: true,
+      scale: options.scale ?? 1,
+    });
+  }
+
+  function resolveExportBackgroundPattern(options = {}) {
+    if (options?.includeBackground === false) {
+      return "none";
+    }
+    return normalizeBoardBackgroundPattern(options?.backgroundPattern || getBoardBackgroundPattern());
+  }
+
+  function getSelectionSceneBounds(selectionRect = null) {
+    const start = selectionRect?.start || selectionRect?.current || null;
+    const current = selectionRect?.current || selectionRect?.start || null;
+    if (!start || !current) {
+      return null;
+    }
+    const left = Math.min(Number(start.x || 0), Number(current.x || 0));
+    const top = Math.min(Number(start.y || 0), Number(current.y || 0));
+    const right = Math.max(Number(start.x || 0), Number(current.x || 0));
+    const bottom = Math.max(Number(start.y || 0), Number(current.y || 0));
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top),
+    };
+  }
+
+  function doBoundsIntersect(a, b) {
+    if (!a || !b) {
+      return false;
+    }
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+  }
+
+  function collectItemsInSceneBounds(bounds, items = state.board.items) {
+    if (!bounds || !Array.isArray(items) || !items.length) {
+      return [];
+    }
+    const matches = items.filter((item) => {
+      if (!item) {
+        return false;
+      }
+      const itemBounds = item.type === "flowEdge" ? getFlowEdgeBounds(item) : getElementBounds(item);
+      return doBoundsIntersect(itemBounds, bounds);
+    });
+    return collectCardLinkedItems(matches);
+  }
+
+  async function renderSceneBoundsToCanvas(bounds, options = {}) {
     if (!bounds) {
       return null;
     }
-    const padding = Math.max(12, Math.round(Math.min(bounds.width, bounds.height) * 0.04));
-    const width = Math.max(1, bounds.right - bounds.left + padding * 2);
-    const height = Math.max(1, bounds.bottom - bounds.top + padding * 2);
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(width * dpr));
-    canvas.height = Math.max(1, Math.round(height * dpr));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
+    const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+    const exportLabel = String(options.exportLabel || "导出").trim() || "导出";
+    if (reportProgress) {
+      await reportProgress("正在准备画布资源...");
+    }
+    const selectedItems = collectItemsInSceneBounds(bounds, state.board.items);
+    if (!selectedItems.length) {
       return null;
     }
-    const view = createView({
-      scale: 1,
-      offsetX: -bounds.left + padding,
-      offsetY: -bounds.top + padding,
-    });
-    renderer.render({
-      ctx,
-      canvas,
-      view,
-      items: exportItems,
-      selectedIds: [],
-      hoverId: null,
-      selectionRect: null,
-      draftElement: null,
-      editingId: null,
-      imageEditState: null,
-      flowDraft: null,
+    const hydratedItems = await hydrateImageItems(selectedItems);
+    const exportItems = buildExportReadyBoardItems(hydratedItems);
+    if (reportProgress) {
+      await reportProgress("正在预加载图片资源...");
+    }
+    await preloadImagesForItems(exportItems);
+    if (reportProgress) {
+      await reportProgress("正在渲染离屏画布...");
+    }
+    const baseRenderOptions = {
+      renderer,
+      getElementBounds,
+      getFlowEdgeBounds,
       allowLocalFileAccess: getAllowLocalFileAccess(),
-      backgroundStyle: {
-        fill: options.backgroundFill ?? "transparent",
-        grid: Boolean(options.backgroundGrid),
-      },
+      backgroundFill: options.backgroundFill ?? "#ffffff",
+      backgroundGrid: Boolean(options.backgroundGrid),
+      backgroundPattern: options.backgroundPattern,
       renderTextInCanvas: true,
+      scale: options.scale ?? 1,
+      devicePixelRatio: 1,
+      exportBounds: bounds,
+    };
+    const initialRenderResult = renderExportBoardToCanvas(exportItems, baseRenderOptions);
+    const isOversizedExport =
+      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
+      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
+    if (!isOversizedExport) {
+      return initialRenderResult;
+    }
+    const requestedWidth = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasWidth || 0) || 1));
+    const requestedHeight = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasHeight || 0) || 1));
+    const requestedPixels = Math.max(1, Math.round(Number(initialRenderResult?.requestedTotalPixels || 0) || 1));
+    const continueExport =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(
+            [
+              `当前${exportLabel}尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。`,
+              "",
+              `目标画布像素：${requestedWidth} × ${requestedHeight}`,
+              `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
+              "",
+              "是否仍然继续导出？",
+            ].join("\n")
+          )
+        : false;
+    if (!continueExport) {
+      return {
+        canceled: true,
+        code: options.cancelCode || "PNG_EXPORT_CANCELED",
+      };
+    }
+    if (reportProgress) {
+      await reportProgress(`正在按大尺寸继续${exportLabel}...`);
+    }
+    return renderExportBoardToCanvas(exportItems, {
+      ...baseRenderOptions,
+      allowUnsafeSize: true,
     });
-    return { canvas, width, height };
+  }
+
+  async function renderBoardToCanvas(options = {}) {
+    const reportProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+    const exportLabel = String(options.exportLabel || "导出").trim() || "导出";
+    if (reportProgress) {
+      await reportProgress("正在准备画布资源...");
+    }
+    const hydratedItems = await hydrateImageItems(state.board.items);
+    const exportItems = buildExportReadyBoardItems(hydratedItems);
+    if (reportProgress) {
+      await reportProgress("正在预加载图片资源...");
+    }
+    await preloadImagesForItems(exportItems);
+    if (reportProgress) {
+      await reportProgress("正在渲染离屏画布...");
+    }
+    const baseRenderOptions = {
+      renderer,
+      getElementBounds,
+      getFlowEdgeBounds,
+      allowLocalFileAccess: getAllowLocalFileAccess(),
+      backgroundFill: options.backgroundFill ?? "#ffffff",
+      backgroundGrid: Boolean(options.backgroundGrid),
+      backgroundPattern: options.backgroundPattern,
+      renderTextInCanvas: true,
+      scale: options.scale ?? 1,
+      devicePixelRatio: 1,
+    };
+    const initialRenderResult = renderExportBoardToCanvas(exportItems, baseRenderOptions);
+    const isOversizedPdfExport =
+      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
+      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
+    if (!isOversizedPdfExport) {
+      return initialRenderResult;
+    }
+
+    const requestedWidth = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasWidth || 0) || 1));
+    const requestedHeight = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasHeight || 0) || 1));
+    const requestedPixels = Math.max(1, Math.round(Number(initialRenderResult?.requestedTotalPixels || 0) || 1));
+    const continueExport =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(
+            [
+              `当前${exportLabel}尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。`,
+              "",
+              `目标画布像素：${requestedWidth} × ${requestedHeight}`,
+              `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
+              "",
+              "是否仍然继续导出？",
+            ].join("\n")
+          )
+        : false;
+    if (!continueExport) {
+      return {
+        canceled: true,
+        code: "PDF_EXPORT_CANCELED",
+      };
+    }
+    if (reportProgress) {
+      await reportProgress(`正在按大尺寸继续${exportLabel}...`);
+    }
+    return renderExportBoardToCanvas(exportItems, {
+      ...baseRenderOptions,
+      allowUnsafeSize: true,
+    });
+  }
+
+  async function exportBoardAsPdf(options = {}) {
+    try {
+      setStatus("正在生成 PDF...");
+      await waitForUiPaint();
+      const { exportBoardAsPdf: runPdfExport } = await import("./export/exportBoardAsPdf.js");
+      const result = await runPdfExport(
+        (renderOptions) =>
+          renderBoardToCanvas({
+            ...renderOptions,
+            backgroundPattern: resolveExportBackgroundPattern(options),
+            exportLabel: "PDF 导出",
+            onProgress: async (message) => {
+              setStatus(message);
+              await waitForUiPaint();
+            },
+          }),
+        options,
+        {
+          defaultFileName: getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
+        }
+      );
+      if (result?.ok) {
+        setStatus(result.message || "PDF 已导出");
+        return result;
+      }
+      if (result?.canceled) {
+        setStatus("PDF 导出已取消", "warning");
+        return result;
+      }
+      setStatus(result?.message || "导出失败", "warning");
+      return result;
+    } catch (error) {
+      const message = error?.message || "导出失败";
+      setStatus(message, "warning");
+      return {
+        ok: false,
+        canceled: false,
+        code: "PDF_EXPORT_UNKNOWN_ERROR",
+        message,
+        fileName: "",
+        filePath: "",
+        bytes: 0,
+        pageWidth: 0,
+        pageHeight: 0,
+        scaleApplied: 0,
+      };
+    }
+  }
+
+  async function exportBoardAsPng(options = {}) {
+    try {
+      setStatus("正在生成 PNG...");
+      await waitForUiPaint();
+      const renderResult = await renderBoardToCanvas({
+        scale: options.scale,
+        backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+        backgroundGrid: options.includeGrid,
+        backgroundPattern: resolveExportBackgroundPattern(options),
+        exportLabel: "PNG 导出",
+        onProgress: async (message) => {
+          setStatus(message);
+          await waitForUiPaint();
+        },
+      });
+      if (renderResult?.canceled) {
+        setStatus("PNG 导出已取消", "warning");
+        return {
+          ok: false,
+          canceled: true,
+          code: renderResult.code || "PNG_EXPORT_CANCELED",
+          message: "",
+          fileName: "",
+          filePath: "",
+          bytes: 0,
+        };
+      }
+      if (renderResult?.errorCode) {
+        const message = renderResult.errorMessage || "PNG 导出失败";
+        setStatus(message, "warning");
+        return {
+          ok: false,
+          canceled: false,
+          code: renderResult.errorCode,
+          message,
+          fileName: "",
+          filePath: "",
+          bytes: 0,
+        };
+      }
+      const dataUrl = renderResult?.canvas?.toDataURL?.("image/png") || "";
+      const saveResult = await saveDataUrlAsImage(dataUrl, {
+        defaultName: getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
+      });
+      if (saveResult?.ok) {
+        setStatus(saveResult.message || "PNG 已导出");
+        return {
+          ok: true,
+          canceled: false,
+          code: "PNG_EXPORT_OK",
+          message: saveResult.message || "PNG 已导出",
+          fileName: `${getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board")}.png`,
+          filePath: String(saveResult.path || "").trim(),
+          bytes: Number(saveResult.size) || 0,
+        };
+      }
+      if (saveResult?.canceled) {
+        setStatus("PNG 导出已取消", "warning");
+        return {
+          ok: false,
+          canceled: true,
+          code: "PNG_EXPORT_CANCELED",
+          message: "",
+          fileName: "",
+          filePath: "",
+          bytes: 0,
+        };
+      }
+      const message = saveResult?.error || "PNG 导出失败";
+      setStatus(message, "warning");
+      return {
+        ok: false,
+        canceled: false,
+        code: "PNG_EXPORT_WRITE_FAILED",
+        message,
+        fileName: "",
+        filePath: "",
+        bytes: 0,
+      };
+    } catch (error) {
+      const message = error?.message || "PNG 导出失败";
+      setStatus(message, "warning");
+      return {
+        ok: false,
+        canceled: false,
+        code: "PNG_EXPORT_UNKNOWN_ERROR",
+        message,
+        fileName: "",
+        filePath: "",
+        bytes: 0,
+      };
+    }
   }
 
   function captureCanvasRegionToDataUrl(rect = null, sourceCanvas = null) {
@@ -3760,39 +4399,44 @@ export function createCanvas2DEngine(options = {}) {
 
   async function hydrateImageItems(items = []) {
     const list = Array.isArray(items) ? items : [];
-    const next = [];
-    for (const item of list) {
-      if (!item || item.type !== "image") {
-        next.push(item);
-        continue;
-      }
-      if (item.dataUrl) {
-        next.push(item);
-        continue;
-      }
-      const sourcePath = String(item.sourcePath || "").trim();
-      if (!sourcePath || typeof globalThis?.desktopShell?.readFileBase64 !== "function") {
-        next.push(item);
-        continue;
-      }
-      try {
-        const result = await globalThis.desktopShell.readFileBase64(sourcePath);
-        if (!result?.ok || !result?.data) {
-          next.push(item);
-          continue;
+    const readCache = new Map();
+    return mapWithConcurrency(
+      list,
+      async (item) => {
+        if (!item || item.type !== "image") {
+          return item;
         }
-        const mime = String(result.mime || "image/png");
-        const dataUrl = `data:${mime};base64,${result.data}`;
-        next.push({
-          ...item,
-          dataUrl,
-          source: "blob",
-        });
-      } catch {
-        next.push(item);
-      }
-    }
-    return next;
+        if (item.dataUrl) {
+          return item;
+        }
+        const sourcePath = String(item.sourcePath || "").trim();
+        if (!sourcePath || typeof globalThis?.desktopShell?.readFileBase64 !== "function") {
+          return item;
+        }
+        try {
+          if (!readCache.has(sourcePath)) {
+            readCache.set(
+              sourcePath,
+              globalThis.desktopShell.readFileBase64(sourcePath).catch(() => null)
+            );
+          }
+          const result = await readCache.get(sourcePath);
+          if (!result?.ok || !result?.data) {
+            return item;
+          }
+          const mime = String(result.mime || "image/png");
+          const dataUrl = `data:${mime};base64,${result.data}`;
+          return {
+            ...item,
+            dataUrl,
+            source: "blob",
+          };
+        } catch {
+          return item;
+        }
+      },
+      4
+    );
   }
 
   function getExportAnchor(items = []) {
@@ -3917,12 +4561,57 @@ export function createCanvas2DEngine(options = {}) {
       if (!items.length) {
         return false;
       }
-      const hydratedItems = await hydrateImageItems(items);
-      await preloadImagesForItems(hydratedItems);
-      const renderResult = renderItemsToCanvas(hydratedItems, {
+      const exportItems = collectCardLinkedItems(items);
+      const exportBounds = getExportBounds(exportItems);
+      if (!exportBounds) {
+        setStatus("导出失败：无法确定导出范围");
+        return false;
+      }
+      const hydratedItems = await hydrateImageItems(exportItems);
+      const preparedItems = buildExportReadyBoardItems(hydratedItems);
+      await preloadImagesForItems(preparedItems);
+      const baseRenderOptions = {
+        renderer,
+        getElementBounds,
+        getFlowEdgeBounds,
+        allowLocalFileAccess: getAllowLocalFileAccess(),
         backgroundFill: options.forceWhiteBackground ? "#ffffff" : "transparent",
         backgroundGrid: false,
-      });
+        renderTextInCanvas: true,
+        scale: options.scale ?? 1,
+        devicePixelRatio: 1,
+        exportBounds,
+      };
+      let renderResult = renderExportBoardToCanvas(preparedItems, baseRenderOptions);
+      const isOversizedExport =
+        renderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
+        renderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
+      if (isOversizedExport) {
+        const requestedWidth = Math.max(1, Math.round(Number(renderResult?.requestedCanvasWidth || 0) || 1));
+        const requestedHeight = Math.max(1, Math.round(Number(renderResult?.requestedCanvasHeight || 0) || 1));
+        const requestedPixels = Math.max(1, Math.round(Number(renderResult?.requestedTotalPixels || 0) || 1));
+        const continueExport =
+          typeof window !== "undefined" && typeof window.confirm === "function"
+            ? window.confirm(
+                [
+                  "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
+                  "",
+                  `目标画布像素：${requestedWidth} × ${requestedHeight}`,
+                  `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
+                  "",
+                  "是否仍然继续导出？",
+                ].join("\n")
+              )
+            : false;
+        if (!continueExport) {
+          setStatus("图片导出已取消", "warning");
+          return false;
+        }
+        renderResult = renderExportBoardToCanvas(preparedItems, {
+          ...baseRenderOptions,
+          allowUnsafeSize: true,
+        });
+      }
       if (!renderResult?.canvas) {
         setStatus("导出失败：无法生成图像");
         return false;
@@ -3988,28 +4677,41 @@ export function createCanvas2DEngine(options = {}) {
       const hasDrag = start && current && hasDragExceededThreshold(start, current, 6);
       let dataUrl = "";
       let anchorPoint = getCenterScenePoint();
-      const hydratedItems = await hydrateImageItems(state.board.items);
-      await preloadImagesForItems(hydratedItems);
-      const viewportCanvas = renderViewportToCanvas(hydratedItems, state.board.view);
-      if (!viewportCanvas?.canvas) {
-        setStatus("截图失败");
-        return;
-      }
       if (hasDrag) {
-        const startScreen = sceneToScreen(state.board.view, start);
-        const currentScreen = sceneToScreen(state.board.view, current);
-        const rect = {
-          left: Math.min(startScreen.x, currentScreen.x),
-          top: Math.min(startScreen.y, currentScreen.y),
-          width: Math.abs(startScreen.x - currentScreen.x),
-          height: Math.abs(startScreen.y - currentScreen.y),
-        };
-        dataUrl = captureCanvasRegionToDataUrl(rect, viewportCanvas.canvas);
+        const selectionBounds = getSelectionSceneBounds({
+          start,
+          current,
+        });
+        const renderResult = await renderSceneBoundsToCanvas(selectionBounds, {
+          backgroundFill: "transparent",
+          backgroundGrid: false,
+          exportLabel: "截图导出",
+          cancelCode: "CAPTURE_EXPORT_CANCELED",
+          onProgress: async (message) => {
+            setStatus(message);
+            await waitForUiPaint();
+          },
+        });
+        if (renderResult?.canceled) {
+          return;
+        }
+        if (!renderResult?.canvas) {
+          setStatus(renderResult?.errorMessage || "截图失败");
+          return;
+        }
+        dataUrl = safeCanvasToDataUrl(renderResult.canvas);
         anchorPoint = {
           x: Math.max(start.x, current.x) + 24,
           y: Math.min(start.y, current.y),
         };
       } else {
+        const hydratedItems = await hydrateImageItems(state.board.items);
+        await preloadImagesForItems(hydratedItems);
+        const viewportCanvas = renderViewportToCanvas(hydratedItems, state.board.view);
+        if (!viewportCanvas?.canvas) {
+          setStatus("截图失败");
+          return;
+        }
         dataUrl = safeCanvasToDataUrl(viewportCanvas.canvas);
       }
       if (!dataUrl) {
@@ -4055,6 +4757,20 @@ export function createCanvas2DEngine(options = {}) {
 
   function toggleLocalFileAccess() {
     setLocalFileAccess(!getAllowLocalFileAccess());
+  }
+
+  function setBoardBackgroundPattern(pattern = "dots") {
+    const next = normalizeBoardBackgroundPattern(pattern);
+    if (!state.board.preferences || typeof state.board.preferences !== "object") {
+      state.board.preferences = {
+        allowLocalFileAccess: getAllowLocalFileAccess(),
+        backgroundPattern: next,
+      };
+    } else {
+      state.board.preferences.backgroundPattern = next;
+    }
+    syncBoard({ persist: true, emit: true });
+    setStatus(`画布背景已切换为${next === "none" ? "无背景" : next === "dots" ? "点阵" : next === "grid" ? "方格" : next === "lines" ? "横线" : "工程网格"}`);
   }
 
   function cancelTextEdit() {
@@ -6183,6 +6899,8 @@ export function createCanvas2DEngine(options = {}) {
         } else {
           richTextAdapter.command("unlink");
         }
+        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+        syncActiveRichEditingItemState();
       });
       return;
     }
@@ -6192,57 +6910,52 @@ export function createCanvas2DEngine(options = {}) {
       }
       if (action === "bold") {
         richTextAdapter.command("bold");
-        return;
-      }
-      if (action === "italic") {
+      } else if (action === "italic") {
         richTextAdapter.command("italic");
-        return;
-      }
-      if (action === "underline") {
+      } else if (action === "underline") {
         richTextAdapter.command("underline");
-        return;
-      }
-      if (action === "strike") {
+      } else if (action === "strike") {
         richTextAdapter.command("strikeThrough");
-        return;
-      }
-      if (action === "unordered-list") {
+      } else if (action === "unordered-list") {
         richTextAdapter.command("insertUnorderedList");
-        return;
-      }
-      if (action === "ordered-list") {
+      } else if (action === "ordered-list") {
         richTextAdapter.command("insertOrderedList");
-        return;
-      }
-      if (action === "align-left") {
+      } else if (action === "align-left") {
         richTextAdapter.command("align", "left");
-        return;
-      }
-      if (action === "align-center") {
+      } else if (action === "align-center") {
         richTextAdapter.command("align", "center");
-        return;
-      }
-      if (action === "align-right") {
+      } else if (action === "align-right") {
         richTextAdapter.command("align", "right");
-        return;
-      }
-      if (action === "color") {
+      } else if (action === "color") {
         if (color) {
           richTextAdapter.command("foreColor", color);
         }
-      }
-      if (action === "highlight") {
+      } else if (action === "highlight") {
         richTextAdapter.command("highlight", "#fff4a3");
-      }
-      if (action === "fontSize") {
+      } else if (action === "fontSize") {
         if (color) {
           richTextAdapter.command("fontSize", color);
         }
       }
+      applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+      syncActiveRichEditingItemState();
     });
   }
 
   function onGlobalPointerDown(event) {
+    if (refs.richSelectionToolbar && event.target instanceof Element && !refs.richSelectionToolbar.contains(event.target)) {
+      const activeInput = document.activeElement;
+      if (
+        activeInput instanceof HTMLInputElement &&
+        refs.richSelectionToolbar.contains(activeInput) &&
+        activeInput.getAttribute("data-action") === "selection-font-size-input"
+      ) {
+        applyRichSelectionFontSizeFromInput(activeInput);
+      }
+    }
+    if (refs.richSelectionToolbar && event.target instanceof Element && !refs.richSelectionToolbar.contains(event.target)) {
+      closeRichSelectionFontSizePanel();
+    }
     if (refs.contextMenu?.classList.contains("is-hidden")) {
       return;
     }
@@ -6294,6 +7007,26 @@ export function createCanvas2DEngine(options = {}) {
       return;
     }
     event.preventDefault();
+    if (action === "toggle-font-size-panel") {
+      toggleRichSelectionFontSizePanel();
+      return;
+    }
+    if (action === "font-size-step-down") {
+      stepRichSelectionFontSize(-1);
+      return;
+    }
+    if (action === "font-size-step-up") {
+      stepRichSelectionFontSize(1);
+      return;
+    }
+    if (action === "font-size-preset") {
+      const size = Number(target.getAttribute("data-size") || 0);
+      if (size > 0) {
+        applyRichSelectionFontSize(size);
+        closeRichSelectionFontSizePanel();
+      }
+      return;
+    }
     if (action === "color") {
       const color = target.getAttribute("data-color");
       applyRichTextCommand(action, color);
@@ -6333,7 +7066,7 @@ export function createCanvas2DEngine(options = {}) {
         refs.richEditor.style.fontSize = `${Math.max(1, value * scale)}px`;
         applyRichEditorLayoutStyles(refs.richEditor, item, scale);
         richTextAdapter?.setBaseFontSize?.(value, { normalize: true });
-        scheduleRender();
+        syncActiveRichEditingItemState();
       }
     }
     syncRichTextFontSize();
@@ -6394,14 +7127,30 @@ export function createCanvas2DEngine(options = {}) {
       const plainText = htmlToPlainText(nextHtml);
       changed = true;
       if (item.type === "text") {
+        const nextResizeMode = getTextResizeMode(item);
+        const nextSize = getTextMinSize(
+          {
+            ...item,
+            html: sanitizeHtml(nextHtml),
+            plainText,
+            text: plainText,
+            textResizeMode: nextResizeMode,
+          },
+          {
+            widthHint: nextResizeMode === TEXT_RESIZE_MODE_WRAP ? Number(item.width || 0) || undefined : undefined,
+            fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+          }
+        );
         return {
           ...item,
           html: sanitizeHtml(nextHtml),
           plainText,
           text: plainText,
           wrapMode: item.wrapMode || TEXT_WRAP_MODE_MANUAL,
-          textResizeMode: getTextResizeMode(item),
+          textResizeMode: nextResizeMode,
           title: buildTextTitle(plainText || "文本"),
+          width: nextResizeMode === TEXT_RESIZE_MODE_WRAP ? Math.max(80, Number(item.width || 0) || nextSize.width) : nextSize.width,
+          height: nextSize.height,
         };
       }
       return {
@@ -6524,6 +7273,7 @@ export function createCanvas2DEngine(options = {}) {
         richTextAdapter.setContent(editingItem.html || "", editingItem.plainText || editingItem.text || "");
         richTextAdapter.setBaseFontSize?.(preset.fontSize, { normalize: true });
         syncRichTextFontSize();
+        syncEditingRichEditorFrame(refs.richEditor, editingItem, state.board.view);
       }
     }
     commitHistory(before, `设置${preset.label}`);
@@ -6712,22 +7462,160 @@ export function createCanvas2DEngine(options = {}) {
     }
     if (action === "preset" && target instanceof HTMLSelectElement) {
       applyTextPresetToSelection(target.value || "body");
+      return;
+    }
+    if (action === "selection-font-size-input" && target instanceof HTMLInputElement) {
+      if (event.type !== "change") {
+        return;
+      }
+      applyRichSelectionFontSizeFromInput(target);
+    }
+  }
+
+  function onRichSelectionToolbarWheel(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest?.("[data-size-control]")) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const deltaY = Number(event.deltaY || 0);
+    const legacyDelta = Number(event.wheelDelta || 0);
+    const resolvedDelta = deltaY !== 0 ? deltaY : legacyDelta !== 0 ? -legacyDelta : 0;
+    if (!resolvedDelta) {
+      return;
+    }
+    const step = resolvedDelta < 0 ? 1 : -1;
+    stepRichSelectionFontSize(step);
+  }
+
+  function onRichSelectionToolbarKeyDown(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!(target instanceof HTMLInputElement) || target.getAttribute("data-action") !== "selection-font-size-input") {
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyRichSelectionFontSizeFromInput(target);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      stepRichSelectionFontSize(1);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      stepRichSelectionFontSize(-1);
+    }
+  }
+
+  function onRichSelectionToolbarFocusOut(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!(target instanceof HTMLInputElement) || target.getAttribute("data-action") !== "selection-font-size-input") {
+      return;
+    }
+    applyRichSelectionFontSizeFromInput(target);
+  }
+
+  function onRichEditorContextMenu(event) {
+    const { hasExpandedSelection } = getRichTextSelectionState();
+    if (!hasExpandedSelection) {
+      return;
+    }
+    event.preventDefault();
+    hideContextMenu();
+    richTextAdapter?.captureSelection?.();
+    syncRichTextToolbar({
+      point: {
+        clientX: Number(event.clientX || 0),
+        clientY: Number(event.clientY || 0),
+      },
+    });
+  }
+
+  function onRichEditorPointerDown(event) {
+    if (Number(event.button) === 2) {
+      richTextAdapter?.captureSelection?.();
+      const { hasExpandedSelection } = getRichTextSelectionState();
+      if (hasExpandedSelection) {
+        event.preventDefault();
+        hideContextMenu();
+        syncRichTextToolbar({
+          point: {
+            clientX: Number(event.clientX || 0),
+            clientY: Number(event.clientY || 0),
+          },
+        });
+      }
     }
   }
 
   function onRichEditorWheel(event) {
-    if (!state.editingId || event.ctrlKey !== true) {
+    if (!(event.ctrlKey || event.metaKey)) {
+      return;
+    }
+    onWheel(event);
+  }
+
+  function onRichEditorCopy(event) {
+    if (!event.clipboardData) {
+      return;
+    }
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return;
+    }
+    const html =
+      richTextAdapter?.getSelectionHtml?.({
+        baseFontSize: item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE,
+      }) || "";
+    const text = sanitizeText(richTextAdapter?.getSelectionText?.() || "");
+    if (!html.trim() && !text.trim()) {
       return;
     }
     event.preventDefault();
-    const delta = event.deltaY || 0;
-    const step = delta < 0 ? 1 : -1;
-    setRichFontSize(richFontSize + step);
+    if (text.trim()) {
+      event.clipboardData.setData("text/plain", text);
+    }
+    if (html.trim()) {
+      event.clipboardData.setData("text/html", html);
+    }
+  }
+
+  function onRichEditorCut(event) {
+    if (!event.clipboardData) {
+      return;
+    }
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return;
+    }
+    const html =
+      richTextAdapter?.getSelectionHtml?.({
+        baseFontSize: item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE,
+      }) || "";
+    const text = sanitizeText(richTextAdapter?.getSelectionText?.() || "");
+    if (!html.trim() && !text.trim()) {
+      return;
+    }
+    event.preventDefault();
+    if (text.trim()) {
+      event.clipboardData.setData("text/plain", text);
+    }
+    if (html.trim()) {
+      event.clipboardData.setData("text/html", html);
+    }
+    richTextAdapter?.deleteSelection?.();
+    syncActiveRichEditingItemState();
   }
 
   function onRichEditorBlur(event) {
     const next = event?.relatedTarget instanceof Element ? event.relatedTarget : document.activeElement;
     if (refs.richToolbar && next && refs.richToolbar.contains(next)) {
+      return;
+    }
+    if (refs.richSelectionToolbar && next && refs.richSelectionToolbar.contains(next)) {
       return;
     }
     commitRichEdit();
@@ -6737,18 +7625,11 @@ export function createCanvas2DEngine(options = {}) {
     if (!state.editingId || !(refs.richEditor instanceof HTMLDivElement)) {
       return;
     }
-    if (state.editingType === "text") {
-      const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "text");
-      if (!item || isLockedText(item)) {
-        return;
-      }
-      syncEditingTextItemSize(item);
-      scheduleRender();
+    const item = getActiveRichEditingItem();
+    if (!item || (item.type === "text" && isLockedText(item)) || (item.type === "flowNode" && isLockedItem(item))) {
       return;
     }
-    if (state.editingType === "flow-node") {
-      scheduleRender();
-    }
+    syncActiveRichEditingItemState();
   }
 
   function onFileMemoBlur() {
@@ -7161,7 +8042,11 @@ export function createCanvas2DEngine(options = {}) {
     bind(refs.canvas, "paste", onPaste);
     bind(refs.richEditor, "blur", onRichEditorBlur);
     bind(refs.richEditor, "input", onRichEditorInput);
+    bind(refs.richEditor, "pointerdown", onRichEditorPointerDown, true);
+    bind(refs.richEditor, "copy", onRichEditorCopy);
+    bind(refs.richEditor, "cut", onRichEditorCut);
     bind(refs.richEditor, "wheel", onRichEditorWheel, { passive: false });
+    bind(refs.richEditor, "contextmenu", onRichEditorContextMenu);
     bind(refs.fileMemoEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.fileMemoEditor, "blur", onFileMemoBlur);
     bind(refs.fileMemoEditor, "input", onFileMemoInput);
@@ -7187,6 +8072,13 @@ export function createCanvas2DEngine(options = {}) {
     bind(refs.richToolbar, "pointerdown", onRichToolbarPointerDown, true);
     bind(refs.richToolbar, "input", onRichToolbarInput);
     bind(refs.richToolbar, "change", onRichToolbarInput);
+    bind(refs.richSelectionToolbar, "click", onRichToolbarClick);
+    bind(refs.richSelectionToolbar, "pointerdown", onRichToolbarPointerDown, true);
+    bind(refs.richSelectionToolbar, "input", onRichToolbarInput);
+    bind(refs.richSelectionToolbar, "change", onRichToolbarInput);
+    bind(refs.richSelectionToolbar, "wheel", onRichSelectionToolbarWheel, { passive: false, capture: true });
+    bind(refs.richSelectionToolbar, "keydown", onRichSelectionToolbarKeyDown);
+    bind(refs.richSelectionToolbar, "focusout", onRichSelectionToolbarFocusOut);
     bind(refs.imageToolbar, "click", onImageToolbarClick);
   }
 
@@ -7887,6 +8779,9 @@ export function createCanvas2DEngine(options = {}) {
     zoomToFit,
     focusOnBounds,
     startCanvasCapture,
+    renderBoardToCanvas,
+    exportBoardAsPdf,
+    exportBoardAsPng,
     addFlowNode() {
       return createFlowNode(getCenterScenePoint());
     },
@@ -7900,6 +8795,7 @@ export function createCanvas2DEngine(options = {}) {
     revealBoardInFolder,
     revealCanvasImageSavePath,
     pickCanvasImageSavePath,
+    setBoardBackgroundPattern,
     toggleAutosave() {
       setAutosaveEnabled(!state.boardAutosaveEnabled);
     },

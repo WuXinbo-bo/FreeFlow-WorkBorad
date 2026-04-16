@@ -29,8 +29,8 @@ export const CONFIG = {
   panelLayoutKey: "ai_worker_panel_layout_v1",
   panelLayoutVersion: 1,
   maxTitleLength: 26,
-  leftPanelDefaultWidth: 820,
-  rightPanelDefaultWidth: 390,
+  leftPanelDefaultWidth: 762,
+  rightPanelDefaultWidth: 667,
   leftPanelMinWidth: 0,
   leftPanelMaxWidth: 10000,
   rightPanelMinWidth: 0,
@@ -49,6 +49,7 @@ export const CONFIG = {
   canvasTextBoxDefaultFontSize: 18,
   canvasTextBoxMinFontSize: 14,
   canvasTextBoxMaxFontSize: 72,
+  startupTutorialIntroVersion: "1.0.1-rc",
 };
 
 const browserWindow = typeof window === "undefined" ? null : window;

@@ -393,8 +393,8 @@ button {
 }
 
 .workspace {
-  --left-panel-width: 330px;
-  --right-panel-width: 420px;
+  --left-panel-width: 762px;
+  --right-panel-width: 667px;
   position: relative;
   z-index: 1;
   display: grid;
@@ -6570,6 +6570,247 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   display: none !important;
 }
 
+.canvas2d-rich-selection-toolbar {
+  z-index: 46;
+  flex-wrap: nowrap;
+  gap: 5px;
+  padding: 5px 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.985);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.canvas2d-rich-selection-toolbar .canvas2d-rich-btn {
+  min-width: 30px;
+  min-height: 30px;
+}
+
+.canvas2d-rich-selection-toolbar .canvas2d-rich-btn[data-action="link"] {
+  padding: 0 8px;
+}
+
+.canvas2d-rich-size-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.canvas2d-rich-size-trigger {
+  min-width: 70px;
+  height: 32px;
+  padding: 0 11px 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.92)),
+    rgba(248, 250, 252, 0.92);
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.canvas2d-rich-size-trigger:hover {
+  transform: translateY(-1px);
+  border-color: rgba(96, 165, 250, 0.44);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(237, 244, 255, 0.95)),
+    rgba(248, 250, 252, 0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 10px 20px rgba(59, 130, 246, 0.12);
+}
+
+.canvas2d-rich-size-value {
+  min-width: 24px;
+  text-align: center;
+  letter-spacing: -0.02em;
+}
+
+.canvas2d-rich-size-caret {
+  font-size: 10px;
+  opacity: 0.64;
+}
+
+.canvas2d-rich-size-panel {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  z-index: 2;
+  transform: translateX(-50%);
+  width: 116px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 9px 9px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(244, 247, 252, 0.96)),
+    rgba(255, 255, 255, 0.985);
+  box-shadow:
+    0 18px 34px rgba(15, 23, 42, 0.16),
+    0 4px 10px rgba(148, 163, 184, 0.1);
+}
+
+.canvas2d-rich-size-panel::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.24);
+  border-left: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.98);
+  transform: translateX(-50%) rotate(45deg);
+  border-top-left-radius: 4px;
+}
+
+.canvas2d-rich-size-panel.is-hidden {
+  display: none !important;
+}
+
+.canvas2d-rich-size-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.canvas2d-rich-size-panel-label {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.canvas2d-rich-size-panel-hint {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.canvas2d-rich-size-stepper {
+  display: grid;
+  grid-template-columns: 30px 1fr 30px;
+  align-items: center;
+  gap: 6px;
+}
+
+.canvas2d-rich-size-step {
+  min-width: 30px !important;
+  min-height: 30px !important;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 10px;
+}
+
+.canvas2d-rich-size-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 11px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.92)),
+    rgba(248, 250, 252, 0.94);
+  color: #0f172a;
+  outline: none;
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: -0.02em;
+}
+
+.canvas2d-rich-size-input:focus {
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.canvas2d-rich-size-presets {
+  max-height: 252px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.canvas2d-rich-size-preset {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.92)),
+    rgba(248, 250, 252, 0.92);
+  color: #0f172a;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.canvas2d-rich-size-preset:hover {
+  transform: translateX(2px);
+  border-color: rgba(96, 165, 250, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(235, 244, 255, 0.94)),
+    rgba(226, 232, 240, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 8px 16px rgba(59, 130, 246, 0.1);
+}
+
+.canvas2d-rich-size-preset.is-active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(219, 234, 254, 0.92)),
+    rgba(219, 234, 254, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.canvas2d-rich-size-preset-size {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.canvas2d-rich-size-preset-preview {
+  color: #475569;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.canvas2d-rich-size-preset.is-active .canvas2d-rich-size-preset-preview {
+  color: #1d4ed8;
+}
+
 .canvas2d-image-toolbar {
   position: absolute;
   z-index: 44;
@@ -8174,6 +8415,69 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-save-toast.is-hidden {
   opacity: 0;
   transform: translate(-50%, 8px);
+}
+
+.canvas2d-pdf-export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  display: grid;
+  place-items: center;
+  background: rgba(248, 250, 252, 0.2);
+  backdrop-filter: blur(4px);
+}
+
+.canvas2d-pdf-export-dialog {
+  width: min(320px, calc(100vw - 40px));
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 20px 22px;
+  border: 1px solid rgba(203, 213, 225, 0.96);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 22px 54px rgba(15, 23, 42, 0.18),
+    0 8px 18px rgba(15, 23, 42, 0.08);
+  text-align: center;
+}
+
+.canvas2d-pdf-export-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 2.5px solid rgba(191, 219, 254, 0.92);
+  border-top-color: #2563eb;
+  animation: canvas2d-pdf-export-spin 0.9s linear infinite;
+}
+
+.canvas2d-pdf-export-title {
+  color: #0f172a;
+  font-size: 0.98rem;
+  font-weight: 800;
+}
+
+.canvas2d-pdf-export-text {
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.canvas2d-pdf-export-meta {
+  color: rgba(100, 116, 139, 0.92);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+@keyframes canvas2d-pdf-export-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .canvas2d-export-drag-icon {

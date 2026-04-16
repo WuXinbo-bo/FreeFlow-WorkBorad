@@ -30,6 +30,12 @@ export function createCanvas2DReactBridge(engine) {
     startCanvasCapture() {
       return engine?.startCanvasCapture?.();
     },
+    exportBoardAsPdf(options) {
+      return engine?.exportBoardAsPdf?.(options);
+    },
+    exportBoardAsPng(options) {
+      return engine?.exportBoardAsPng?.(options);
+    },
     addFlowNode() {
       engine?.addFlowNode?.();
     },
@@ -62,6 +68,9 @@ export function createCanvas2DReactBridge(engine) {
     },
     pickCanvasImageSavePath() {
       return engine?.pickCanvasImageSavePath?.();
+    },
+    setBoardBackgroundPattern(pattern) {
+      return engine?.setBoardBackgroundPattern?.(pattern);
     },
     toggleAutosave() {
       return engine?.toggleAutosave?.();

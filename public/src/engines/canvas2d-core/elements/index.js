@@ -7,6 +7,14 @@ import { normalizeFileCardElement } from "./fileCard.js";
 import { isLinearShape, moveShapeElement, normalizeShapeElement } from "./shapes.js";
 import { getTextMinSize, normalizeTextElement, TEXT_RESIZE_MODE_WRAP } from "./text.js";
 
+function normalizeBoardBackgroundPattern(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["none", "dots", "grid", "lines", "engineering"].includes(normalized)) {
+    return normalized;
+  }
+  return "dots";
+}
+
 export function createEmptyBoard() {
   return {
     items: [],
@@ -14,6 +22,7 @@ export function createEmptyBoard() {
     view: clone(DEFAULT_VIEW),
     preferences: {
       allowLocalFileAccess: true,
+      backgroundPattern: "dots",
     },
   };
 }
@@ -66,6 +75,7 @@ export function normalizeBoard(input = {}) {
     preferences: {
       allowLocalFileAccess:
         typeof board.preferences?.allowLocalFileAccess === "boolean" ? board.preferences.allowLocalFileAccess : true,
+      backgroundPattern: normalizeBoardBackgroundPattern(board.preferences?.backgroundPattern),
     },
   };
 }

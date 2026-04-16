@@ -18,6 +18,8 @@ function getDefaultUiSettings() {
     canvasBoardSavePath: CANVAS_BOARD_DIR,
     canvasLastOpenedBoardPath: "",
     hasShownStartupTutorial: false,
+    lastTutorialIntroVersion: "",
+    dismissedTutorialIntroVersion: "",
     canvasImageSavePath: "",
     ...DEFAULT_THEME_SETTINGS,
     updatedAt: Date.now(),
@@ -50,6 +52,14 @@ function normalizeUiSettings(payload = {}) {
         ? payload.canvasLastOpenedBoardPath.trim().slice(0, 400)
         : defaults.canvasLastOpenedBoardPath,
     hasShownStartupTutorial: Boolean(payload.hasShownStartupTutorial),
+    lastTutorialIntroVersion:
+      typeof payload.lastTutorialIntroVersion === "string" && payload.lastTutorialIntroVersion.trim()
+        ? payload.lastTutorialIntroVersion.trim().slice(0, 80)
+        : defaults.lastTutorialIntroVersion,
+    dismissedTutorialIntroVersion:
+      typeof payload.dismissedTutorialIntroVersion === "string" && payload.dismissedTutorialIntroVersion.trim()
+        ? payload.dismissedTutorialIntroVersion.trim().slice(0, 80)
+        : defaults.dismissedTutorialIntroVersion,
     canvasImageSavePath:
       typeof payload.canvasImageSavePath === "string" && payload.canvasImageSavePath.trim()
         ? payload.canvasImageSavePath.trim().slice(0, 400)
