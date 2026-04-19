@@ -2,6 +2,22 @@ import { createId, fitSize, getFileName } from "../utils.js";
 import { getMemoLayout } from "../memoLayout.js";
 export { createFileCardElement, normalizeFileCardElement } from "./fileCard.js";
 
+export const IMAGE_STRUCTURED_IMPORT_KIND = "structured-import-v1";
+
+export function normalizeStructuredImageImportMeta(value = {}) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return {
+    kind: IMAGE_STRUCTURED_IMPORT_KIND,
+    sourceNodeType: String(value.sourceNodeType || "").trim() || "image",
+    canonicalFragment: value.canonicalFragment && typeof value.canonicalFragment === "object"
+      ? JSON.parse(JSON.stringify(value.canonicalFragment))
+      : null,
+    sourceMeta: value.sourceMeta && typeof value.sourceMeta === "object" ? { ...value.sourceMeta } : {},
+  };
+}
+
 export function createImageElement(file, point, dataUrl = "", dimensions = {}) {
   const size = fitSize(dimensions.width || 320, dimensions.height || 220, 420, 320);
   return {
@@ -34,6 +50,7 @@ export function createImageElement(file, point, dataUrl = "", dimensions = {}) {
     memo: "",
     memoVisible: false,
     createdAt: Date.now(),
+    structuredImport: null,
   };
 }
 
@@ -72,6 +89,7 @@ export function normalizeImageElement(element = {}) {
     },
     memo: String(element.memo ?? element.note ?? base.memo ?? ""),
     memoVisible: Boolean(element.memoVisible ?? base.memoVisible),
+    structuredImport: normalizeStructuredImageImportMeta(element.structuredImport),
   };
 }
 

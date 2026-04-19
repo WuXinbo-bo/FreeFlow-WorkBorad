@@ -1049,6 +1049,16 @@ function Canvas2DControls({ engine }) {
                         <span>打开画布位置</span>
                         <span className="canvas2d-engine-menu-meta">{formatPathLabel(boardFilePath, "未设置")}</span>
                       </button>
+                      <button
+                        type="button"
+                        className="canvas2d-engine-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void bridge.pickCanvasBoardSavePath();
+                        }}
+                      >
+                        <span>设置画布位置</span>
+                      </button>
                     </div>
                   ) : null}
                   <button

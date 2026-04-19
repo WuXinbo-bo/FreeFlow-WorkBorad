@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freeflow.local/schemas/input-descriptor-v1.json",
+  "title": "FreeFlow Structured Import Input Descriptor v1",
+  "type": "object",
+  "required": [
+    "version",
+    "descriptorId",
+    "channel",
+    "sourceKind",
+    "status",
+    "errorCode",
+    "createdAt",
+    "mimeTypes",
+    "tags",
+    "diagnostics",
+    "context",
+    "entries"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "1.0.0"
+    },
+    "descriptorId": {
+      "type": "string"
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "paste-native",
+        "paste-context-menu",
+        "drag-drop",
+        "internal-copy",
+        "programmatic"
+      ]
+    },
+    "sourceKind": {
+      "type": "string",
+      "enum": [
+        "plain-text",
+        "html",
+        "markdown",
+        "code",
+        "math-formula",
+        "image-resource",
+        "file-resource",
+        "internal-items",
+        "uri-list",
+        "mixed",
+        "unknown"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "partial",
+        "unsupported",
+        "error"
+      ]
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "none",
+        "empty-input",
+        "read-failed",
+        "unsupported-channel",
+        "unsupported-source-kind",
+        "unsupported-mime-type",
+        "invalid-descriptor",
+        "invalid-entry",
+        "missing-raw-payload",
+        "file-access-failed",
+        "clipboard-permission-denied",
+        "bridge-unavailable",
+        "payload-too-large"
+      ]
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "sourceApp": {
+      "type": "string"
+    },
+    "sourceUrl": {
+      "type": "string"
+    },
+    "sourceFilePath": {
+      "type": "string"
+    },
+    "mimeTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {}
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "origin",
+        "boardId",
+        "targetElementId",
+        "targetMode",
+        "pointer"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "boardId": {
+          "type": "string"
+        },
+        "targetElementId": {
+          "type": "string"
+        },
+        "targetMode": {
+          "type": "string"
+        },
+        "pointer": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "entryId",
+          "kind",
+          "status",
+          "errorCode",
+          "mimeType",
+          "name",
+          "size",
+          "charset",
+          "raw",
+          "meta"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "entryId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "html",
+              "markdown",
+              "code",
+              "math",
+              "image",
+              "file",
+              "uri",
+              "internal-payload",
+              "binary",
+              "unknown"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "partial",
+              "unsupported",
+              "error"
+            ]
+          },
+          "errorCode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "empty-input",
+              "read-failed",
+              "unsupported-channel",
+              "unsupported-source-kind",
+              "unsupported-mime-type",
+              "invalid-descriptor",
+              "invalid-entry",
+              "missing-raw-payload",
+              "file-access-failed",
+              "clipboard-permission-denied",
+              "bridge-unavailable",
+              "payload-too-large"
+            ]
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "charset": {
+            "type": "string"
+          },
+          "raw": {
+            "type": "object",
+            "required": [
+              "text",
+              "html",
+              "markdown",
+              "code",
+              "latex",
+              "mathml",
+              "officeFormula",
+              "uri",
+              "filePath",
+              "imageDataUrl",
+              "internalPayload",
+              "binaryBase64"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "text": { "type": "string" },
+              "html": { "type": "string" },
+              "markdown": { "type": "string" },
+              "code": { "type": "string" },
+              "latex": { "type": "string" },
+              "mathml": { "type": "string" },
+              "officeFormula": { "type": "string" },
+              "uri": { "type": "string" },
+              "filePath": { "type": "string" },
+              "imageDataUrl": { "type": "string" },
+              "internalPayload": {},
+              "binaryBase64": { "type": "string" }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "required": [
+              "language",
+              "extension",
+              "title",
+              "displayName",
+              "isExternal",
+              "isFromClipboardFile"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "language": { "type": "string" },
+              "extension": { "type": "string" },
+              "title": { "type": "string" },
+              "displayName": { "type": "string" },
+              "isExternal": { "type": "boolean" },
+              "isFromClipboardFile": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

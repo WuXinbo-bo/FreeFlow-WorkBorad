@@ -90,11 +90,19 @@ import {
   resolveImageSource,
 } from "./utils.js";
 import { createImageModule } from "./imageModule.js";
+import { createStructuredCanvasRenderer } from "./rendererStructured.js";
 import {
   getExportBounds as getCanvasExportBounds,
   renderBoardToCanvas as renderExportBoardToCanvas,
 } from "./export/renderBoardToCanvas.js";
 import { buildExportReadyBoardItems } from "./export/buildExportReadyBoardItems.js";
+import {
+  createInputDescriptor,
+  INPUT_CHANNELS,
+  INPUT_ENTRY_KINDS,
+  INPUT_SOURCE_KINDS,
+} from "./import/protocols/inputDescriptor.js";
+import { createStructuredImportRuntime } from "./import/runtime/createStructuredImportRuntime.js";
 import { CONFIG } from "../../config/app.config.js";
 import { API_ROUTES, readJsonResponse } from "../../api/http.js";
 
@@ -850,6 +858,7 @@ export function createCanvas2DEngine(options = {}) {
     shapeModule.createRenderer(),
     flowModule.createRenderer(),
     imageModule.createRenderer(),
+    createStructuredCanvasRenderer(),
   ];
   const pasteHandlers = [];
   const dragHandlers = [];
@@ -1018,6 +1027,12 @@ export function createCanvas2DEngine(options = {}) {
     createImageElement: imageModule.createElement,
     readImageDimensions,
     readFileAsDataUrl,
+  });
+  const structuredImportRuntime = createStructuredImportRuntime({
+    internalClipboardMime: CANVAS_CLIPBOARD_MIME,
+    readClipboardText: () => clipboardBroker.readSystemClipboardText(),
+    readClipboardFiles: () => clipboardBroker.readSystemClipboardFiles(),
+    getInternalPayload: () => clipboardBroker.getPayload(),
   });
 
   function isInteractiveMode() {
@@ -1600,7 +1615,15 @@ export function createCanvas2DEngine(options = {}) {
         return false;
       }
       targetPath = ensureJsonExtension(targetPath);
-      const payload = JSON.stringify(state.board, null, 2);
+      const payload = JSON.stringify(
+        structuredImportRuntime.serializeBoard(state.board, {
+          meta: {
+            boardFilePath: targetPath,
+          },
+        }),
+        null,
+        2
+      );
       const result = await globalThis.desktopShell.writeFile(targetPath, payload);
       if (!result?.ok) {
         if (!silent) {
@@ -1680,7 +1703,7 @@ export function createCanvas2DEngine(options = {}) {
         return false;
       }
       suppressDirtyTracking = true;
-      state.board = normalizeBoard(parsed);
+      state.board = structuredImportRuntime.deserializeBoard(parsed).board;
       state.board.selectedIds = [];
       state.history = createHistoryState();
       markHistoryBaseline(state.history, takeHistorySnapshot(state));
@@ -1909,6 +1932,35 @@ export function createCanvas2DEngine(options = {}) {
     setCanvasImageSavePath(nextPath, { updateSettings: true });
       setStatus("画布图片位置已更新");
     return nextPath;
+  }
+
+  async function pickCanvasBoardSavePath() {
+    if (typeof globalThis?.desktopShell?.pickDirectory !== "function") {
+      setStatus("当前环境不支持选择目录", "warning");
+      return "";
+    }
+    const defaultPath =
+      resolveBoardFolderPath(state.boardFilePath) ||
+      (await resolveCanvasBoardSavePath()) ||
+      "";
+    const result = await globalThis.desktopShell.pickDirectory({
+      defaultPath,
+    });
+    if (result?.canceled || !result?.filePath) {
+      return "";
+    }
+    const nextFolder = resolveBoardFolderPath(result.filePath);
+    if (!nextFolder) {
+      return "";
+    }
+    const currentName = isJsonFileName(getFileName(state.boardFilePath))
+      ? getFileName(state.boardFilePath)
+      : DEFAULT_BOARD_FILE_NAME;
+    const nextFilePath = joinPath(nextFolder, currentName);
+    setBoardFilePath(nextFilePath, { updateSettings: true });
+    setStatus("画布保存位置已更新");
+    void ensureImportImageFolderExists();
+    return nextFolder;
   }
 
   function onCanvasBoardPathChanged(event) {
@@ -4924,7 +4976,26 @@ export function createCanvas2DEngine(options = {}) {
       }
     }
     const copied = await clipboardBroker.copyItemsToClipboard(items);
-    state.clipboard = copied ? { ...copied, pasteCount: 0 } : copied;
+    const flowback = structuredImportRuntime.buildFlowbackPayload(items);
+    const externalOutput = flowback?.externalOutput || {};
+    const nextClipboard = copied
+      ? {
+          ...copied,
+          text: String(externalOutput.text || copied.text || ""),
+          html: String(externalOutput.html || copied.html || ""),
+          filePaths:
+            Array.isArray(externalOutput.filePaths) && externalOutput.filePaths.length
+              ? externalOutput.filePaths.slice()
+              : Array.isArray(copied.filePaths)
+                ? copied.filePaths.slice()
+                : [],
+          structuredFlowback: flowback,
+        }
+      : copied;
+    if (nextClipboard) {
+      clipboardBroker.setPayload(nextClipboard);
+    }
+    state.clipboard = nextClipboard ? { ...nextClipboard, pasteCount: 0 } : nextClipboard;
     if (fileBacked.length && fileBacked.length === items.length) {
       const hasPaths = (state.clipboard?.filePaths || []).length > 0;
       if (!hasPaths) {
@@ -5055,6 +5126,19 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   async function importFiles(files, anchorPoint = getCenterScenePoint()) {
+    const structuredDescriptor = buildProgrammaticFileDescriptor(files, anchorPoint);
+    if (structuredDescriptor) {
+      const handled = await tryStructuredImportDescriptor(structuredDescriptor, anchorPoint, {
+        reason: "导入文件",
+        statusText: `已导入 ${Array.isArray(files) ? files.length : 0} 个文件`,
+        context: {
+          origin: "engine-import-files",
+        },
+      });
+      if (handled) {
+        return true;
+      }
+    }
     const items = await dragBroker.createElementsFromFiles(files, anchorPoint);
     try {
       await persistImportedImages(items);
@@ -5067,6 +5151,107 @@ export function createCanvas2DEngine(options = {}) {
   function insertTextAt(anchorPoint, text) {
     const items = dragBroker.createElementsFromText(text, anchorPoint);
     return pushItems(items, { reason: "插入文本", statusText: "已插入文本" });
+  }
+
+  function buildStructuredImportContext(anchorPoint, extra = {}) {
+    const pointer =
+      anchorPoint && Number.isFinite(anchorPoint.x) && Number.isFinite(anchorPoint.y)
+        ? { x: Number(anchorPoint.x), y: Number(anchorPoint.y) }
+        : null;
+    return {
+      environment: "engine-live",
+      origin: String(extra.origin || "createCanvas2DEngine"),
+      boardId: String(state.boardFilePath || ""),
+      targetMode: String(state.mode || ""),
+      targetElementId: String(state.editingId || ""),
+      pointer,
+      tags: ["engine-live", "full-cutover"],
+      ...extra,
+    };
+  }
+
+  async function applyStructuredCommitResult(commitResult, { reason = "", statusText = "" } = {}) {
+    if (!commitResult?.ok || !Array.isArray(commitResult.items) || !commitResult.items.length) {
+      return false;
+    }
+    try {
+      await persistImportedImages(commitResult.items);
+    } catch {
+      // ignore import persistence failures
+    }
+    const before = takeHistorySnapshot(state);
+    state.board = normalizeBoard(commitResult.board || state.board);
+    void hydrateFileCardIds(commitResult.items);
+    commitHistory(before, reason || "结构化导入");
+    if (statusText) {
+      setStatus(statusText);
+    }
+    return true;
+  }
+
+  async function tryStructuredImportDescriptor(descriptor, anchorPoint, { reason = "", statusText = "", context = {} } = {}) {
+    if (!descriptor || descriptor.status === "error" || descriptor.status === "unsupported") {
+      return false;
+    }
+    try {
+      const result = await structuredImportRuntime.runDescriptor({
+        descriptor,
+        board: state.board,
+        anchorPoint,
+        context: buildStructuredImportContext(anchorPoint, context),
+      });
+      if (result?.pipeline === "structured" && result?.commitResult?.ok) {
+        return applyStructuredCommitResult(result.commitResult, { reason, statusText });
+      }
+    } catch {
+      // fall back to legacy pipeline
+    }
+    return false;
+  }
+
+  function buildProgrammaticFileDescriptor(files, anchorPoint) {
+    const entries = Array.isArray(files)
+      ? files
+          .map((file, index) => {
+            const filePath = typeof file?.path === "string" ? file.path : "";
+            const name = typeof file?.name === "string" ? file.name : "";
+            if (!filePath && !name) {
+              return null;
+            }
+            const mimeType = typeof file?.type === "string" ? file.type : "";
+            return {
+              entryId: `programmatic-file-${index}`,
+              kind: mimeType.startsWith("image/") ? INPUT_ENTRY_KINDS.IMAGE : INPUT_ENTRY_KINDS.FILE,
+              status: "ready",
+              mimeType,
+              name,
+              size: Number.isFinite(file?.size) ? Number(file.size) : null,
+              raw: {
+                filePath,
+              },
+              meta: {
+                displayName: name,
+              },
+            };
+          })
+          .filter(Boolean)
+      : [];
+    if (!entries.length) {
+      return null;
+    }
+    return createInputDescriptor({
+      descriptorId: `programmatic-file-${Date.now()}`,
+      channel: INPUT_CHANNELS.PROGRAMMATIC,
+      sourceKind: entries.some((entry) => entry.kind === INPUT_ENTRY_KINDS.IMAGE)
+        ? INPUT_SOURCE_KINDS.IMAGE_RESOURCE
+        : INPUT_SOURCE_KINDS.FILE_RESOURCE,
+      status: "ready",
+      context: {
+        origin: "engine-import-files",
+        pointer: anchorPoint,
+      },
+      entries,
+    });
   }
 
 
@@ -7718,29 +7903,46 @@ export function createCanvas2DEngine(options = {}) {
         anchor: scenePoint,
         state,
       });
-        if (result?.handled) {
-          if (Array.isArray(result.items) && result.items.length) {
-            try {
-              await persistImportedImages(result.items);
-            } catch {
-              // ignore import persistence failures
-            }
-            pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
+      if (result?.handled) {
+        if (Array.isArray(result.items) && result.items.length) {
+          try {
+            await persistImportedImages(result.items);
+          } catch {
+            // ignore import persistence failures
           }
-          return;
+          pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
         }
-      }
-      const result = await dragBroker.importFromDataTransfer(event.dataTransfer, scenePoint);
-      if (result?.handled && result.items?.length) {
-        try {
-          await persistImportedImages(result.items);
-        } catch {
-          // ignore import persistence failures
-        }
-        pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
         return;
       }
     }
+    const structuredHandled = await tryStructuredImportDescriptor(
+      structuredImportRuntime.dragGateway.fromDropEvent(event, {
+        origin: "engine-drop",
+        anchor: scenePoint,
+      }),
+      scenePoint,
+      {
+        reason: "拖拽导入",
+        statusText: "已通过新导入链路导入内容",
+        context: {
+          origin: "engine-drop",
+        },
+      }
+    );
+    if (structuredHandled) {
+      return;
+    }
+    const result = await dragBroker.importFromDataTransfer(event.dataTransfer, scenePoint);
+    if (result?.handled && result.items?.length) {
+      try {
+        await persistImportedImages(result.items);
+      } catch {
+        // ignore import persistence failures
+      }
+      pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
+      return;
+    }
+  }
 
   async function onCopy(event) {
     if (!isInteractiveMode() || !state.board.selectedIds.length) {
@@ -7791,43 +7993,60 @@ export function createCanvas2DEngine(options = {}) {
         anchor,
         state,
       });
-        if (result?.handled) {
-          event.preventDefault();
-          if (Array.isArray(result.items) && result.items.length) {
-            try {
-              await persistImportedImages(result.items);
-            } catch {
-              // ignore import persistence failures
-            }
-            pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+      if (result?.handled) {
+        event.preventDefault();
+        if (Array.isArray(result.items) && result.items.length) {
+          try {
+            await persistImportedImages(result.items);
+          } catch {
+            // ignore import persistence failures
           }
-          return;
+          pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
         }
-      }
-      const result = await dragBroker.importFromDataTransfer(event.clipboardData, anchor);
-      if (result?.handled && result.items?.length) {
-        event.preventDefault();
-        try {
-          await persistImportedImages(result.items);
-        } catch {
-          // ignore import persistence failures
-        }
-        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
         return;
       }
-
+    }
+    const structuredHandled = await tryStructuredImportDescriptor(
+      structuredImportRuntime.pasteGateway.fromClipboardEvent(event, {
+        origin: "engine-paste",
+        anchor,
+      }),
+      anchor,
+      {
+        reason: "粘贴内容",
+        statusText: "已通过新导入链路粘贴内容",
+        context: {
+          origin: "engine-paste",
+        },
+      }
+    );
+    if (structuredHandled) {
+      event.preventDefault();
+      return;
+    }
+    const result = await dragBroker.importFromDataTransfer(event.clipboardData, anchor);
+    if (result?.handled && result.items?.length) {
+      event.preventDefault();
+      try {
+        await persistImportedImages(result.items);
+      } catch {
+        // ignore import persistence failures
+      }
+      pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+      return;
+    }
     const filePaths = await clipboardBroker.readSystemClipboardFiles();
-      if (filePaths.length) {
-        event.preventDefault();
-        const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
-        try {
-          await persistImportedImages(items);
-        } catch {
-          // ignore import persistence failures
-        }
-        pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
-        return;
+    if (filePaths.length) {
+      event.preventDefault();
+      const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
+      try {
+        await persistImportedImages(items);
+      } catch {
+        // ignore import persistence failures
       }
+      pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+      return;
+    }
 
     const text = await clipboardBroker.readSystemClipboardText();
     if (text.trim()) {
@@ -7839,6 +8058,23 @@ export function createCanvas2DEngine(options = {}) {
   async function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
     if (await shouldUseInternalClipboard()) {
       return pasteInternalClipboard(anchorPoint);
+    }
+    const structuredHandled = await tryStructuredImportDescriptor(
+      await structuredImportRuntime.contextMenuPasteAdapter.createDescriptor({
+        origin: "engine-context-menu-paste",
+        anchor: anchorPoint,
+      }),
+      anchorPoint,
+      {
+        reason: "粘贴内容",
+        statusText: "已通过新导入链路粘贴内容",
+        context: {
+          origin: "engine-context-menu-paste",
+        },
+      }
+    );
+    if (structuredHandled) {
+      return true;
     }
     const { items } = await pasteFileCardsFromClipboard({ clipboardBroker, dragBroker, anchor: anchorPoint });
     if (items.length) {
@@ -8793,6 +9029,7 @@ export function createCanvas2DEngine(options = {}) {
     saveBoardAs,
     renameBoard,
     revealBoardInFolder,
+    pickCanvasBoardSavePath,
     revealCanvasImageSavePath,
     pickCanvasImageSavePath,
     setBoardBackgroundPattern,
@@ -8814,6 +9051,49 @@ export function createCanvas2DEngine(options = {}) {
     runCommand,
     getSnapshotData() {
       return clone(state.board);
+    },
+    searchStructuredItems(query, limit = 10) {
+      return structuredImportRuntime.buildSearchResults(state.board.items, query, limit);
+    },
+    buildStructuredExportSnapshot(options = {}) {
+      return structuredImportRuntime.buildExportSnapshot(state.board, options);
+    },
+    serializeStructuredBoard() {
+      return structuredImportRuntime.serializeBoard(state.board, {
+        meta: {
+          boardFilePath: state.boardFilePath,
+        },
+      });
+    },
+    getStructuredImportLogs() {
+      return structuredImportRuntime.getLogs();
+    },
+    clearStructuredImportLogs() {
+      structuredImportRuntime.clearLogs();
+    },
+    getStructuredImportSwitchConfig() {
+      return structuredImportRuntime.switchboard.getConfig();
+    },
+    setStructuredImportSwitchConfig(config = {}) {
+      return structuredImportRuntime.switchboard.setConfig(config);
+    },
+    updateStructuredImportSwitchConfig(patch = {}) {
+      return structuredImportRuntime.switchboard.updateConfig(patch);
+    },
+    getStructuredImportKillSwitchConfig() {
+      return structuredImportRuntime.killSwitch.getConfig();
+    },
+    setStructuredImportKillSwitchConfig(config = {}) {
+      return structuredImportRuntime.killSwitch.setConfig(config);
+    },
+    updateStructuredImportKillSwitchConfig(patch = {}) {
+      return structuredImportRuntime.killSwitch.updateConfig(patch);
+    },
+    buildStructuredFlowbackPayload(items = null) {
+      const targets = Array.isArray(items)
+        ? items
+        : state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+      return structuredImportRuntime.buildFlowbackPayload(targets);
     },
   };
 

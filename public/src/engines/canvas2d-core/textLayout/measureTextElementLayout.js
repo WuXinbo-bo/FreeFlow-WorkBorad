@@ -10,6 +10,10 @@ const DEFAULT_FONT_WEIGHT = "500";
 const DEFAULT_BOLD_WEIGHT = "700";
 const DEFAULT_FONT_FAMILY = '"Segoe UI", "PingFang SC", sans-serif';
 
+function isHTMLElement(value) {
+  return typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
+}
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -94,21 +98,21 @@ function applyMeasurementNodeStyles(node, { fontSize, lineHeightRatio, fontWeigh
 
 function normalizeMeasurementMarkup(node) {
   node.querySelectorAll("p, div, section, article").forEach((element) => {
-    if (!(element instanceof HTMLElement)) {
+    if (!isHTMLElement(element)) {
       return;
     }
     element.style.margin = "0";
     element.style.padding = "0";
   });
   node.querySelectorAll("ul, ol").forEach((element) => {
-    if (!(element instanceof HTMLElement)) {
+    if (!isHTMLElement(element)) {
       return;
     }
     element.style.margin = "0";
     element.style.paddingInlineStart = "1.25em";
   });
   node.querySelectorAll("li").forEach((element) => {
-    if (!(element instanceof HTMLElement)) {
+    if (!isHTMLElement(element)) {
       return;
     }
     element.style.margin = "0";
@@ -177,7 +181,7 @@ function measureWithEditorElement({
   minHeight,
   plainText,
 }) {
-  if (!(editorElement instanceof HTMLElement)) {
+  if (!isHTMLElement(editorElement)) {
     return null;
   }
   const scaleValue = Math.max(0.1, Number(scale) || 1);

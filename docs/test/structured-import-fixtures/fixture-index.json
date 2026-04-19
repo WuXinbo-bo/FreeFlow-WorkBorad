@@ -1,0 +1,122 @@
+[
+  {
+    "id": "PT-001",
+    "category": "plain-text",
+    "source_kind": "plain-text",
+    "entry_modes": ["paste", "drag"],
+    "file": "samples/plain-text/PT-001-basic-paragraphs.txt",
+    "notes": "多段落与空行基线样本。",
+    "current_chain_expectation": "通过纯文本路径直接落为单个 text 元素。",
+    "target_chain_expectation": "解析为 paragraph 序列，保留空行语义。"
+  },
+  {
+    "id": "HT-001",
+    "category": "html",
+    "source_kind": "html",
+    "entry_modes": ["paste", "drag"],
+    "file": "samples/html/HT-001-rich-inline-and-list.html",
+    "notes": "基础富文本、列表、链接、引用混合样本。",
+    "current_chain_expectation": "HTML 清洗后整体落入单个 text 元素，结构语义有限保留。",
+    "target_chain_expectation": "解析为 heading、paragraph、list、blockquote 等结构节点。"
+  },
+  {
+    "id": "MD-001",
+    "category": "markdown",
+    "source_kind": "markdown",
+    "entry_modes": ["paste", "drag"],
+    "file": "samples/markdown/MD-001-gfm-task-table-footnote.md",
+    "notes": "GFM 任务列表、表格、删除线、脚注、代码块混合样本。",
+    "current_chain_expectation": "当前主链默认会退化为纯文本或间接 HTML 结构，任务列表和脚注难保留。",
+    "target_chain_expectation": "源码直解析为 taskList、table、footnote、codeBlock 等节点。"
+  },
+  {
+    "id": "CD-001",
+    "category": "code",
+    "source_kind": "code",
+    "entry_modes": ["paste"],
+    "file": "samples/code/CD-001-python-snippet.txt",
+    "notes": "缩进、空行、注释、字符串混合的代码样本。",
+    "current_chain_expectation": "通常落为普通 text 元素。",
+    "target_chain_expectation": "解析为 codeBlock，保留缩进和语言信息。"
+  },
+  {
+    "id": "MT-001",
+    "category": "math",
+    "source_kind": "math-formula",
+    "entry_modes": ["paste"],
+    "file": "samples/math/MT-001-latex-inline-block.txt",
+    "notes": "包含行内与块级 LaTeX 公式的样本。",
+    "current_chain_expectation": "通常作为纯文本进入 text 元素。",
+    "target_chain_expectation": "识别为 mathInline / mathBlock 节点。"
+  },
+  {
+    "id": "WB-001",
+    "category": "web",
+    "source_kind": "web",
+    "entry_modes": ["paste"],
+    "file": "samples/web/WB-001-article-fragment.html",
+    "notes": "网页正文、提示框、列表与代码片段的混合文章片段。",
+    "current_chain_expectation": "网页正文与边角内容一并被清洗后压到单文本块。",
+    "target_chain_expectation": "正文抽取后只保留主要内容结构。"
+  },
+  {
+    "id": "OF-001",
+    "category": "office",
+    "source_kind": "office",
+    "entry_modes": ["paste"],
+    "file": "samples/office/OF-001-word-export-fragment.html",
+    "notes": "模拟 Office 导出的富文本片段，含多级标题、列表、表格。",
+    "current_chain_expectation": "经 HTML 路径清洗后结构部分损失。",
+    "target_chain_expectation": "Office parser 识别层级、列表和表格结构。"
+  },
+  {
+    "id": "MX-001",
+    "category": "mixed",
+    "source_kind": "html",
+    "entry_modes": ["paste", "drag"],
+    "file": "samples/mixed/MX-001-mixed-image-table-note.html",
+    "notes": "图文、表格、任务列表、引用混合场景。",
+    "current_chain_expectation": "作为单个 text 元素承载主要文本，图片资源需要另行处理。",
+    "target_chain_expectation": "按 block 顺序拆成 image、table、taskList、blockquote 等节点。"
+  },
+  {
+    "id": "IM-001",
+    "category": "image",
+    "source_kind": "files",
+    "entry_modes": ["drag", "paste"],
+    "file": "samples/image/IM-001-image-resource-sample.md",
+    "notes": "图片资源进入画布后的主线承接观察样本。",
+    "current_chain_expectation": "当前主链通常直接落为 image 元素。",
+    "target_chain_expectation": "仍保留 image 元素，但应进入统一导入主线和资源映射协议。"
+  },
+  {
+    "id": "FL-001",
+    "category": "file",
+    "source_kind": "files",
+    "entry_modes": ["drag", "context-menu-paste"],
+    "file": "samples/file/FL-001-file-card-sample.md",
+    "notes": "文件路径或文件对象进入画布后的文件卡片样本。",
+    "current_chain_expectation": "当前主链落为 fileCard 元素。",
+    "target_chain_expectation": "仍保留 fileCard 承接，但应纳入统一输入与复制协议。"
+  },
+  {
+    "id": "ND-001",
+    "category": "node",
+    "source_kind": "internal",
+    "entry_modes": ["internal-copy", "paste"],
+    "file": "samples/node/ND-001-flow-node-mixed-sample.md",
+    "notes": "新结构化内容与旧 flow 节点混用观察样本。",
+    "current_chain_expectation": "旧节点按原生元素复制粘贴。",
+    "target_chain_expectation": "第一阶段通过兼容层与新结构内容共存，暂不强制升级为 canonical 原生节点。"
+  },
+  {
+    "id": "DR-001",
+    "category": "drawing",
+    "source_kind": "internal",
+    "entry_modes": ["internal-copy"],
+    "file": "samples/drawing/DR-001-shape-edge-compat-sample.md",
+    "notes": "几何图形、连线、手绘类元素的兼容观察样本。",
+    "current_chain_expectation": "继续作为现有原生画布元素存在。",
+    "target_chain_expectation": "第一阶段不纳入结构化导入主线，仅纳入复制、导出、选中兼容观察。"
+  }
+]

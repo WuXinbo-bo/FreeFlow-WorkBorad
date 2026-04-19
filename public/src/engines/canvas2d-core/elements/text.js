@@ -14,6 +14,28 @@ export const TEXT_WRAP_MODE_MANUAL = "manual";
 export const TEXT_RESIZE_MODE_AUTO_WIDTH = "auto-width";
 export const TEXT_RESIZE_MODE_WRAP = "wrap";
 export const TEXT_MIN_FONT_SIZE = 12;
+export const TEXT_STRUCTURED_IMPORT_KIND = "structured-import-v1";
+
+export function normalizeStructuredTextImportMeta(value = {}) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const canonicalFragment = value.canonicalFragment && typeof value.canonicalFragment === "object"
+    ? JSON.parse(JSON.stringify(value.canonicalFragment))
+    : null;
+  const sourceMeta = value.sourceMeta && typeof value.sourceMeta === "object"
+    ? { ...value.sourceMeta }
+    : {};
+  const meta = {
+    kind: TEXT_STRUCTURED_IMPORT_KIND,
+    blockRole: String(value.blockRole || "").trim() || "paragraph",
+    sourceNodeType: String(value.sourceNodeType || "").trim() || "paragraph",
+    listRole: String(value.listRole || "").trim() || "",
+    canonicalFragment,
+    sourceMeta,
+  };
+  return meta;
+}
 
 export function normalizeTextFontSize(value, fallback = 20) {
   const numericValue = Number(value);
@@ -139,6 +161,7 @@ export function createTextElement(point, text = "", html = "") {
     color: "#0f172a",
     locked: false,
     createdAt: Date.now(),
+    structuredImport: null,
   };
 }
 
@@ -170,6 +193,7 @@ export function normalizeTextElement(element = {}) {
       ? Math.max(80, Number(element.width ?? 0) || metrics.width)
       : Math.max(80, metrics.width);
   const nextHeight = Math.max(40, metrics.height);
+  const structuredImport = normalizeStructuredTextImportMeta(element.structuredImport);
   return {
     ...base,
     ...element,
@@ -189,5 +213,6 @@ export function normalizeTextElement(element = {}) {
     color: String(element.color || base.color),
     locked: Boolean(element.locked ?? base.locked),
     createdAt: Number(element.createdAt) || base.createdAt,
+    structuredImport,
   };
 }

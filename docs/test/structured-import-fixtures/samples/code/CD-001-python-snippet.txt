@@ -1,0 +1,9 @@
+def normalize_items(items):
+    result = []
+
+    for item in items:
+        if item is None:
+            continue
+        result.append(item.strip())
+
+    return result

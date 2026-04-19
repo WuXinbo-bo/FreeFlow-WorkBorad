@@ -1,6 +1,22 @@
 import { createId, formatBytes, getFileBaseName, getFileExtension, getFileName } from "../utils.js";
 import { getMemoLayout } from "../memoLayout.js";
 
+export const FILE_CARD_STRUCTURED_IMPORT_KIND = "structured-import-v1";
+
+export function normalizeStructuredFileCardImportMeta(value = {}) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return {
+    kind: FILE_CARD_STRUCTURED_IMPORT_KIND,
+    sourceNodeType: String(value.sourceNodeType || "").trim() || "fileCard",
+    compatibilityFragment: value.compatibilityFragment && typeof value.compatibilityFragment === "object"
+      ? JSON.parse(JSON.stringify(value.compatibilityFragment))
+      : null,
+    sourceMeta: value.sourceMeta && typeof value.sourceMeta === "object" ? { ...value.sourceMeta } : {},
+  };
+}
+
 export function createFileCardElement(file, point) {
   const fileName = getFileName(file?.name || file?.path || "未命名文件");
   return {
@@ -23,6 +39,7 @@ export function createFileCardElement(file, point) {
     memo: "",
     memoVisible: false,
     createdAt: Date.now(),
+    structuredImport: null,
   };
 }
 
@@ -50,6 +67,7 @@ export function normalizeFileCardElement(element = {}) {
     marked: Boolean(element.marked ?? base.marked),
     memo: String(element.memo ?? element.note ?? base.memo ?? ""),
     memoVisible: Boolean(element.memoVisible ?? base.memoVisible),
+    structuredImport: normalizeStructuredFileCardImportMeta(element.structuredImport),
   };
 }
 

@@ -6,6 +6,9 @@ import { normalizeImageElement } from "./media.js";
 import { normalizeFileCardElement } from "./fileCard.js";
 import { isLinearShape, moveShapeElement, normalizeShapeElement } from "./shapes.js";
 import { getTextMinSize, normalizeTextElement, TEXT_RESIZE_MODE_WRAP } from "./text.js";
+import { normalizeCodeBlockElement, CODE_BLOCK_MIN_HEIGHT, CODE_BLOCK_MIN_WIDTH } from "./codeBlock.js";
+import { normalizeTableElement, TABLE_MIN_HEIGHT, TABLE_MIN_WIDTH } from "./table.js";
+import { normalizeMathElement, MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
 
 function normalizeBoardBackgroundPattern(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -38,6 +41,15 @@ export function normalizeElement(element = {}) {
   }
   if (type === "filecard" || type === "file") {
     return normalizeFileCardElement(element);
+  }
+  if (type === "codeblock" || type === "code") {
+    return normalizeCodeBlockElement(element);
+  }
+  if (type === "table") {
+    return normalizeTableElement(element);
+  }
+  if (type === "mathblock" || type === "mathinline" || type === "math") {
+    return normalizeMathElement(element);
   }
   if (type === "mindnode" || type === "mind") {
     return normalizeMindNodeElement(element);
@@ -173,6 +185,18 @@ export function resizeElement(element, handle, point) {
   if (element.type === "mindNode") {
     next.width = Math.max(160, next.width);
     next.height = Math.max(72, next.height);
+  }
+  if (element.type === "codeBlock") {
+    next.width = Math.max(CODE_BLOCK_MIN_WIDTH, next.width);
+    next.height = Math.max(CODE_BLOCK_MIN_HEIGHT, next.height);
+  }
+  if (element.type === "table") {
+    next.width = Math.max(TABLE_MIN_WIDTH, next.width);
+    next.height = Math.max(TABLE_MIN_HEIGHT, next.height);
+  }
+  if (element.type === "mathBlock" || element.type === "mathInline") {
+    next.width = Math.max(MATH_MIN_WIDTH, next.width);
+    next.height = Math.max(MATH_MIN_HEIGHT, next.height);
   }
   if (element.type === "flowNode") {
     const minSize = getFlowNodeMinSize(
