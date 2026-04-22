@@ -1,4 +1,5 @@
 import { getMemoLayout } from "./memoLayout.js";
+import { scaleSceneValue } from "./viewportMetrics.js";
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
   const nextRadius = Math.min(radius, width / 2, height / 2);
@@ -172,14 +173,14 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
     Math.max(layout.minFont, logicalHeight * layout.tagFontRatio),
     layout.maxFont - 2
   );
-  const paddingX = Math.max(layout.minPadding, logicalWidth * layout.paddingXRatio) * scale;
-  const paddingY = Math.max(layout.minPadding, logicalHeight * layout.paddingYRatio) * scale;
-  const tagWidth = Math.max(layout.minTagWidth, logicalWidth * layout.tagWidthRatio) * scale;
-  const tagHeight = Math.max(layout.minTagHeight, logicalHeight * layout.tagHeightRatio) * scale;
-  const nameFontSize = nameFontLogical * scale;
-  const metaFontSize = metaFontLogical * scale;
-  const tagFontSize = tagFontLogical * scale;
-  const lineHeight = Math.max(16, nameFontLogical * 1.2) * scale;
+  const paddingX = scaleSceneValue(view, Math.max(layout.minPadding, logicalWidth * layout.paddingXRatio));
+  const paddingY = scaleSceneValue(view, Math.max(layout.minPadding, logicalHeight * layout.paddingYRatio));
+  const tagWidth = scaleSceneValue(view, Math.max(layout.minTagWidth, logicalWidth * layout.tagWidthRatio));
+  const tagHeight = scaleSceneValue(view, Math.max(layout.minTagHeight, logicalHeight * layout.tagHeightRatio));
+  const nameFontSize = scaleSceneValue(view, nameFontLogical);
+  const metaFontSize = scaleSceneValue(view, metaFontLogical);
+  const tagFontSize = scaleSceneValue(view, tagFontLogical);
+  const lineHeight = scaleSceneValue(view, Math.max(16, nameFontLogical * 1.2));
 
   const memoLayout = getMemoLayout(element, { kind: "fileCard" });
   const memoX = memoLayout.left * scale + Number(view?.offsetX || 0);
@@ -201,10 +202,10 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
     ctx.stroke();
     const memoText = String(element.memo || "").trim();
     if (memoText) {
-      const memoPadding = memoLayout.padding * scale;
-      const memoFontSize = memoLayout.fontSize * scale;
-      const memoLineHeight = memoLayout.lineHeight * scale;
-      const memoTextWidth = memoLayout.textWidth * scale;
+    const memoPadding = scaleSceneValue(view, memoLayout.padding);
+    const memoFontSize = scaleSceneValue(view, memoLayout.fontSize);
+    const memoLineHeight = scaleSceneValue(view, memoLayout.lineHeight);
+    const memoTextWidth = scaleSceneValue(view, memoLayout.textWidth);
       ctx.fillStyle = "rgba(51, 65, 85, 0.92)";
       ctx.font = `500 ${memoFontSize}px "Segoe UI", "PingFang SC", sans-serif`;
       const memoLineCount = countWrappedTextLines(ctx, memoText, memoTextWidth, memoLayout.maxLines);

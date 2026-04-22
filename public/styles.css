@@ -6238,18 +6238,25 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   background: transparent;
   box-shadow: none;
   box-sizing: border-box;
-  font: inherit;
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+  font-weight: 500;
   line-height: 1.3;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
   overflow: visible;
+  caret-color: #0f172a;
+  transform-origin: top left;
 }
 
 .canvas-rich-editor.is-wrap-mode {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.canvas-rich-editor.is-fixed-size {
+  overflow: hidden;
 }
 
 .canvas-rich-editor.is-flow-node {
@@ -6294,6 +6301,170 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 .canvas2d-rich-item li::marker {
   font-size: 1em;
   line-height: inherit;
+}
+
+.canvas-rich-editor h1,
+.canvas2d-rich-item h1,
+.canvas-rich-editor h2,
+.canvas2d-rich-item h2,
+.canvas-rich-editor h3,
+.canvas2d-rich-item h3,
+.canvas-rich-editor h4,
+.canvas2d-rich-item h4,
+.canvas-rich-editor h5,
+.canvas2d-rich-item h5,
+.canvas-rich-editor h6,
+.canvas2d-rich-item h6,
+.canvas-rich-editor blockquote,
+.canvas2d-rich-item blockquote,
+.canvas-rich-editor pre,
+.canvas2d-rich-item pre,
+.canvas-rich-editor table,
+.canvas2d-rich-item table,
+.canvas-rich-editor thead,
+.canvas2d-rich-item thead,
+.canvas-rich-editor tbody,
+.canvas2d-rich-item tbody,
+.canvas-rich-editor tr,
+.canvas2d-rich-item tr,
+.canvas-rich-editor td,
+.canvas2d-rich-item td,
+.canvas-rich-editor th,
+.canvas2d-rich-item th {
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.canvas-rich-editor h1,
+.canvas2d-rich-item h1 {
+  font-size: 2.2em;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.canvas-rich-editor h2,
+.canvas2d-rich-item h2 {
+  font-size: 1.8em;
+  font-weight: 800;
+  line-height: 1.18;
+}
+
+.canvas-rich-editor h3,
+.canvas2d-rich-item h3 {
+  font-size: 1.55em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.canvas-rich-editor h4,
+.canvas2d-rich-item h4 {
+  font-size: 1.35em;
+  font-weight: 700;
+  line-height: 1.24;
+}
+
+.canvas-rich-editor h5,
+.canvas2d-rich-item h5 {
+  font-size: 1.18em;
+  font-weight: 700;
+}
+
+.canvas-rich-editor h6,
+.canvas2d-rich-item h6 {
+  font-size: 1.05em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.canvas-rich-editor blockquote,
+.canvas2d-rich-item blockquote {
+  padding-inline-start: 0.9em;
+  border-left: 3px solid rgba(148, 163, 184, 0.6);
+  color: rgba(51, 65, 85, 0.92);
+}
+
+.canvas-rich-editor code,
+.canvas2d-rich-item code {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.canvas-rich-editor code:not(pre code),
+.canvas2d-rich-item code:not(pre code) {
+  padding: 0.08em 0.36em;
+  border-radius: 0.45em;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.14);
+}
+
+.canvas-rich-editor pre,
+.canvas2d-rich-item pre {
+  padding: 0.6em 0.8em;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.canvas-rich-editor[data-ff-code-block-root="true"] {
+  padding: 0.6em 0.8em;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.canvas-rich-editor[data-ff-code-block-root="true"] div {
+  margin: 0;
+  font-family: inherit;
+}
+
+.canvas-rich-editor table,
+.canvas2d-rich-item table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.canvas-rich-editor td,
+.canvas2d-rich-item td,
+.canvas-rich-editor th,
+.canvas2d-rich-item th {
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  padding: 0.34em 0.46em;
+  vertical-align: top;
+}
+
+.canvas-rich-editor ul[data-ff-task-list],
+.canvas2d-rich-item ul[data-ff-task-list] {
+  list-style: none;
+  padding-inline-start: 0;
+}
+
+.canvas-rich-editor ul[data-ff-task-list] li,
+.canvas2d-rich-item ul[data-ff-task-list] li {
+  position: relative;
+  padding-inline-start: 1.45em;
+}
+
+.canvas-rich-editor ul[data-ff-task-list] li::before,
+.canvas2d-rich-item ul[data-ff-task-list] li::before {
+  content: "☐";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: rgba(71, 85, 105, 0.9);
+}
+
+.canvas-rich-editor hr,
+.canvas2d-rich-item hr {
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.55);
+  margin: 0.45em 0;
 }
 
   .canvas-rich-editor.is-hidden {
@@ -6343,6 +6514,74 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   }
 
   .canvas-image-memo-editor.is-hidden {
+    display: none !important;
+  }
+
+  .canvas-table-editor {
+    position: absolute;
+    z-index: 8;
+    border: 1px solid rgba(148, 163, 184, 0.38);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.985);
+    box-sizing: border-box;
+    overflow: auto;
+  }
+
+  .canvas-table-editor.is-hidden {
+    display: none !important;
+  }
+
+  .canvas-table-editor-scroll {
+    min-width: 100%;
+    min-height: 100%;
+  }
+
+  .canvas-table-editor-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font: 500 12px "Segoe UI", "PingFang SC", sans-serif;
+    color: #0f172a;
+  }
+
+  .canvas-table-editor-grid th,
+  .canvas-table-editor-grid td {
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.38);
+    vertical-align: top;
+    text-align: left;
+    background: rgba(255, 255, 255, 0.98);
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .canvas-table-editor-grid th {
+    font-weight: 700;
+    background: rgba(241, 245, 249, 0.98);
+  }
+
+  .canvas-table-editor-grid th.is-selected,
+  .canvas-table-editor-grid td.is-selected {
+    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.42);
+    background: rgba(239, 246, 255, 0.92);
+  }
+
+  .canvas-table-toolbar {
+    position: absolute;
+    z-index: 44;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+  }
+
+  .canvas-table-toolbar.is-hidden {
     display: none !important;
   }
 
@@ -6430,9 +6669,38 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     background: #dc2626;
   }
 
-  .canvas2d-context-menu-item.canvas2d-context-swatch[data-color="#2563eb"] {
-    background: #2563eb;
-  }
+.canvas2d-context-menu-item.canvas2d-context-swatch[data-color="#2563eb"] {
+  background: #2563eb;
+}
+
+.canvas2d-link-meta-tooltip {
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.canvas2d-link-meta-tooltip.is-hidden {
+  display: none;
+}
+
+.canvas2d-link-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.canvas2d-link-tooltip-desc {
+  color: #334155;
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.canvas2d-link-tooltip-state {
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
 
   .canvas2d-webgl-context-item {
     display: grid;
@@ -6999,19 +7267,89 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   display: none !important;
 }
 
+.canvas2d-math-display {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.canvas2d-math-display.is-hidden {
+  display: none !important;
+}
+
+.canvas2d-math-item {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 56px;
+  min-height: 28px;
+  color: rgba(15, 23, 42, 0.96);
+  pointer-events: none;
+  transform-origin: top left;
+}
+
+.canvas2d-math-item .katex-display {
+  margin: 0;
+}
+
+.canvas2d-math-item .katex {
+  font-size: 1em;
+}
+
+.canvas2d-math-item[data-math-render-state="fallback"],
+.canvas2d-math-item [data-math-render-state="fallback"] {
+  font: 600 0.78em/1.35 "Cambria Math", "Times New Roman", serif;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .canvas2d-rich-item {
   position: absolute;
+  box-sizing: border-box;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
+  overflow: visible;
   font: 500 18px "Segoe UI", "PingFang SC", sans-serif;
   line-height: 1.3;
+  pointer-events: none;
+}
+
+.canvas2d-rich-item a,
+.canvas2d-rich-item a[data-link-token="1"] {
+  pointer-events: auto;
+  cursor: pointer;
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 4px;
+  padding: 0 1px;
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.canvas2d-rich-item a[data-link-token="1"][data-link-state="error"] {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.08);
+  text-decoration-style: wavy;
+}
+
+.canvas2d-rich-item a:hover,
+.canvas2d-rich-item a[data-link-token="1"]:hover {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.14);
 }
 
 .canvas2d-rich-item.is-wrap-mode {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.canvas2d-rich-item.is-fixed-size {
+  overflow: hidden;
 }
 
 .canvas2d-rich-item.is-flow-node {

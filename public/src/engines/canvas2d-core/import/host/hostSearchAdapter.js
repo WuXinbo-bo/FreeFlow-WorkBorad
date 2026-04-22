@@ -63,9 +63,12 @@ export function buildHostSearchResults(items, query, limit = 10) {
 }
 
 function buildSearchFields(item) {
+  const linkMetaText = getLinkMetaText(item);
   const fields = [
     { key: "title", label: "标题", value: item?.title || item?.name || item?.fileName || "" },
     { key: "text", label: "正文", value: getBodyText(item) },
+    { key: "link", label: "链接", value: linkMetaText.urls },
+    { key: "linkMeta", label: "链接元数据", value: linkMetaText.meta },
     { key: "meta", label: "附加信息", value: getMetaText(item) },
     { key: "memo", label: "备忘录", value: item?.memo || "" },
   ]
@@ -119,6 +122,97 @@ function getMetaText(item) {
     return [item?.sourceFormat, item?.renderState].filter(Boolean).join(" ");
   }
   return "";
+}
+
+function getLinkMetaText(item) {
+  const sourceTokens = [
+    ...(Array.isArray(item?.structuredImport?.linkTokens) ? item.structuredImport.linkTokens : []),
+    ...(Array.isArray(item?.linkTokens) ? item.linkTokens : []),
+  ];
+  const normalizedTokens = sourceTokens
+    .map((token) => {
+      const url = String(token?.url || token?.href || token?.value || "").trim();
+      if (!url) return null;
+      const fallbackDomain = deriveDomainFromUrl(url);
+      return {
+        url,
+        domain: String(token?.domain || fallbackDomain || "").trim(),
+        kindHint: String(token?.kindHint || "").trim(),
+        fetchState: String(token?.fetchState || token?.state || "").trim(),
+      };
+    })
+    .filter(Boolean);
+
+  const metaCacheEntries = extractUrlMetaCacheEntries(item?.structuredImport?.urlMetaCache || item?.urlMetaCache);
+  const cacheEntries = metaCacheEntries.map(({ url, meta }) => {
+    const safeMeta = meta && typeof meta === "object" ? meta : {};
+    return [
+      url,
+      safeMeta?.title,
+      safeMeta?.description,
+      safeMeta?.siteName,
+      safeMeta?.domain,
+      safeMeta?.fetchState,
+      safeMeta?.status,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  });
+
+  const urls = normalizedTokens
+    .flatMap((token) => [token.url, token.domain, token.kindHint, token.fetchState])
+    .filter(Boolean)
+    .join(" ");
+
+  const meta = cacheEntries.join(" ");
+  return { urls, meta };
+}
+
+function extractUrlMetaCacheEntries(cache) {
+  if (!cache) {
+    return [];
+  }
+  if (cache instanceof Map) {
+    return Array.from(cache.entries()).map(([url, meta]) => ({ url: String(url || ""), meta: normalizeMetaValue(meta) }));
+  }
+  if (Array.isArray(cache)) {
+    return cache
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const url = String(entry.url || entry.href || "").trim();
+        if (!url) {
+          return null;
+        }
+        return { url, meta: normalizeMetaValue(entry.meta || entry) };
+      })
+      .filter(Boolean);
+  }
+  if (typeof cache === "object") {
+    return Object.entries(cache).map(([url, meta]) => ({ url: String(url || ""), meta: normalizeMetaValue(meta) }));
+  }
+  return [];
+}
+
+function normalizeMetaValue(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return value;
+}
+
+function deriveDomainFromUrl(value) {
+  const input = String(value || "").trim();
+  if (!input) {
+    return "";
+  }
+  try {
+    const parsed = new URL(input);
+    return parsed.hostname || "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeSearchText(value) {

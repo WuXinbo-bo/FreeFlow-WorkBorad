@@ -34,6 +34,7 @@ export function createInternalCompatibilityParser(options = {}) {
       INPUT_CHANNELS.INTERNAL_COPY,
       INPUT_CHANNELS.PASTE_NATIVE,
       INPUT_CHANNELS.PASTE_CONTEXT_MENU,
+      INPUT_CHANNELS.DRAG_DROP,
       INPUT_CHANNELS.PROGRAMMATIC,
     ],
     tags: ["builtin", "internal-payload", "legacy-compatible"],

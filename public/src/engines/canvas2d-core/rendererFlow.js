@@ -1,5 +1,6 @@
 import { getFlowNodeConnectors } from "./elements/flow.js";
 import { drawRichTextInBox, FLOW_NODE_TEXT_LAYOUT, getFlowNodeTextPadding } from "./rendererText.js";
+import { getElementScreenBounds, getScreenPoint, scaleSceneValue } from "./viewportMetrics.js";
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
   const nextRadius = Math.min(radius, width / 2, height / 2);
@@ -12,12 +13,12 @@ function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
   ctx.closePath();
 }
 
-function drawConnector(ctx, point, scale, active = false) {
-  const size = Math.max(4, 5 * scale);
+function drawConnector(ctx, point, active = false) {
+  const size = 5;
   ctx.save();
   ctx.fillStyle = active ? "rgba(37, 99, 235, 0.95)" : "rgba(148, 163, 184, 0.9)";
   ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-  ctx.lineWidth = Math.max(1, 1.2 * scale);
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
   ctx.arc(point.x, point.y, size, 0, Math.PI * 2);
   ctx.fill();
@@ -33,14 +34,13 @@ function drawFlowEdge(
   style = "solid",
   { selected = false, hover = false, arrowDirection = "forward" } = {}
 ) {
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const sx = fromPoint.x * scale + Number(view?.offsetX || 0);
-  const sy = fromPoint.y * scale + Number(view?.offsetY || 0);
-  const ex = toPoint.x * scale + Number(view?.offsetX || 0);
-  const ey = toPoint.y * scale + Number(view?.offsetY || 0);
+  const sx = getScreenPoint(view, fromPoint).x;
+  const sy = getScreenPoint(view, fromPoint).y;
+  const ex = getScreenPoint(view, toPoint).x;
+  const ey = getScreenPoint(view, toPoint).y;
   const showFocus = selected || hover;
   ctx.save();
-  ctx.lineWidth = Math.max(1.4, 1.8 * Math.max(0.6, scale));
+  ctx.lineWidth = Math.max(0.75, scaleSceneValue(view, 1.8));
   ctx.strokeStyle = "rgba(71, 85, 105, 0.9)";
   ctx.setLineDash(style === "dashed" ? [8, 6] : []);
   ctx.beginPath();
@@ -50,7 +50,7 @@ function drawFlowEdge(
   if (showFocus) {
     ctx.save();
     ctx.setLineDash([]);
-    ctx.lineWidth = Math.max(2, 2.4 * Math.max(0.6, scale));
+    ctx.lineWidth = 2.4;
     ctx.strokeStyle = selected ? "rgba(37, 99, 235, 0.95)" : "rgba(59, 130, 246, 0.5)";
     ctx.beginPath();
     ctx.moveTo(sx, sy);
@@ -65,7 +65,7 @@ function drawFlowEdge(
     const tailX = forward ? sx : ex;
     const tailY = forward ? sy : ey;
     const angle = Math.atan2(tipY - tailY, tipX - tailX);
-    const headSize = 12 * Math.max(0.6, scale);
+    const headSize = Math.max(6, scaleSceneValue(view, 12));
     ctx.beginPath();
     ctx.moveTo(tipX, tipY);
     ctx.lineTo(tipX - headSize * Math.cos(angle - Math.PI / 6), tipY - headSize * Math.sin(angle - Math.PI / 6));
@@ -78,11 +78,11 @@ function drawFlowEdge(
 }
 
 function drawFlowNode(ctx, node, view, selected, hover, helpers) {
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const x = Number(node.x || 0) * scale + Number(view?.offsetX || 0);
-  const y = Number(node.y || 0) * scale + Number(view?.offsetY || 0);
-  const width = Math.max(1, Number(node.width || 1)) * scale;
-  const height = Math.max(1, Number(node.height || 1)) * scale;
+  const screenBounds = getElementScreenBounds(view, node);
+  const x = screenBounds.left;
+  const y = screenBounds.top;
+  const width = screenBounds.width;
+  const height = screenBounds.height;
 
   ctx.save();
   drawRoundedRect(ctx, x, y, width, height, 18);
@@ -98,7 +98,10 @@ function drawFlowNode(ctx, node, view, selected, hover, helpers) {
   ctx.restore();
 
   if (helpers?.renderTextInCanvas && helpers?.editingId !== node.id) {
-    const padding = getFlowNodeTextPadding(scale, { width, height });
+    const padding = getFlowNodeTextPadding(view, {
+      width: Number(node.width || 1),
+      height: Number(node.height || 1),
+    });
     const text = String(node.plainText || node.text || "");
     if (text || node.html) {
       ctx.save();
@@ -111,7 +114,7 @@ function drawFlowNode(ctx, node, view, selected, hover, helpers) {
         text,
         color: node.color || "rgba(15, 23, 42, 0.92)",
         fontSize: Math.max(12, Number(node.fontSize || 18)),
-        scale,
+        scale: Math.max(0.1, Number(view?.scale) || 1),
         lineHeightRatio: FLOW_NODE_TEXT_LAYOUT.lineHeightRatio,
         fontWeight: FLOW_NODE_TEXT_LAYOUT.fontWeight,
         boldWeight: FLOW_NODE_TEXT_LAYOUT.boldWeight,
@@ -128,11 +131,8 @@ function drawFlowNode(ctx, node, view, selected, hover, helpers) {
   const showConnectors = selected || hover || helpers?.flowDraft?.fromId === node.id;
   if (showConnectors) {
     const connectors = getFlowNodeConnectors(node);
-    const screenPoints = Object.values(connectors).map((point) => ({
-      x: point.x * scale + Number(view?.offsetX || 0),
-      y: point.y * scale + Number(view?.offsetY || 0),
-    }));
-    screenPoints.forEach((point) => drawConnector(ctx, point, Math.max(0.6, scale)));
+    const screenPoints = Object.values(connectors).map((point) => getScreenPoint(view, point));
+    screenPoints.forEach((point) => drawConnector(ctx, point));
   }
 }
 

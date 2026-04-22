@@ -1,11 +1,14 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import {
+  buildTextElementContentFields,
   estimateTextHeight,
   estimateTextWidth,
   inlineNodesToHtml,
   inlineNodesToPlainText,
+  resolveImportedTextBoxLayout,
 } from "../text/sharedTextRenderUtils.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const LIST_RENDERER_ID = "list-renderer";
 
@@ -141,8 +144,21 @@ function normalizeListItems(listNode, context = { level: 0, orderedStart: 1 }) {
 }
 
 function buildListOperation(block, index, renderInput) {
-  const plainText = buildListPlainText(block.items, block.listRole);
-  const html = buildListHtml(block.node, block.items);
+  const normalizedPlainText = buildListPlainText(block.items, block.listRole);
+  const normalizedHtml = buildListHtml(block.node, block.items);
+  const content = buildTextElementContentFields(
+    {
+      html: normalizedHtml,
+      plainText: normalizedPlainText,
+      text: normalizedPlainText,
+      fontSize: 20,
+    },
+    {
+      fontSize: 20,
+    }
+  );
+  const plainText = content.plainText;
+  const initialLayout = resolveImportedTextBoxLayout(plainText, 20);
   const title = buildTextTitle(plainText || block.listRole || "列表");
   return {
     type: "render-list-block",
@@ -159,16 +175,18 @@ function buildListOperation(block, index, renderInput) {
     element: {
       id: createId("text"),
       type: "text",
-      text: plainText,
-      plainText,
-      html,
+      text: content.text,
+      plainText: content.plainText,
+      html: content.html,
+      richTextDocument: content.richTextDocument,
       title,
       fontSize: 20,
       color: "#0f172a",
       wrapMode: "manual",
-      textResizeMode: "auto-width",
-      width: estimateTextWidth(plainText, 20),
-      height: estimateTextHeight(plainText, 20),
+      textBoxLayoutMode: initialLayout.textBoxLayoutMode,
+      textResizeMode: initialLayout.textResizeMode,
+      width: initialLayout.width || estimateTextWidth(plainText, 20),
+      height: initialLayout.height || estimateTextHeight(plainText, 20),
       x: 0,
       y: 0,
       locked: false,
@@ -194,6 +212,7 @@ function buildListOperation(block, index, renderInput) {
       descriptorId: String(renderInput?.descriptorId || ""),
       parserId: String(renderInput?.parserId || ""),
     },
+    sourceOrder: deriveNodeSourceOrder(block?.node, index),
   };
 }
 
@@ -225,8 +244,9 @@ function getPlainTextMarker(item, listRole) {
   if (item.kind === "taskItem") {
     return item.checked ? "[x] " : "[ ] ";
   }
-  if (listRole === "orderedList" && item.orderedIndex != null) {
-    return `${item.orderedIndex}. `;
+  if (item.orderedIndex != null || listRole === "orderedList") {
+    const resolved = Number.isFinite(Number(item.orderedIndex)) ? Number(item.orderedIndex) : 1;
+    return `${resolved}. `;
   }
   return "• ";
 }
@@ -237,29 +257,34 @@ function buildListHtml(listNode, items = []) {
   if (listNode?.type === "orderedList" && Number(listNode?.attrs?.start) > 1) {
     attrs.push(` start="${Number(listNode.attrs.start)}"`);
   }
+  if (listNode?.type === "taskList") {
+    attrs.push(' data-ff-task-list="true"');
+  }
   return `<${tagName}${attrs.join("")}>${items.map((item) => renderListItemHtml(item)).join("")}</${tagName}>`;
 }
 
 function renderListItemHtml(item) {
-  const body = item.kind === "taskItem"
-    ? `${item.checked ? "☑" : "☐"} ${item.html || ""}`
-    : item.html || "";
+  const taskAttrs = item.kind === "taskItem"
+    ? ` data-ff-task-item="true" data-ff-task-state="${item.checked ? "done" : "todo"}"`
+    : "";
+  const taskMarker = item.kind === "taskItem"
+    ? `<span data-ff-task-marker="true">${item.checked ? "☑" : "☐"}</span> `
+    : "";
+  const body = item.html || "";
   const nested = Array.isArray(item.childItems) && item.childItems.length
     ? buildNestedListHtml(item.childItems)
     : "";
-  return `<li data-kind="${escapeAttribute(item.kind)}">${body}${nested}</li>`;
+  return `<li data-kind="${escapeAttribute(item.kind)}"${taskAttrs}>${taskMarker}${body}${nested}</li>`;
 }
 
 function buildNestedListHtml(items) {
   if (!items.length) {
     return "";
   }
-  const tagName = items.some((item) => item.kind === "taskItem")
-    ? "ul"
-    : items.some((item) => item.orderedIndex != null)
-      ? "ol"
-      : "ul";
-  return `<${tagName}>${items.map((item) => renderListItemHtml(item)).join("")}</${tagName}>`;
+  const isTask = items.some((item) => item.kind === "taskItem");
+  const tagName = isTask ? "ul" : items.some((item) => item.orderedIndex != null) ? "ol" : "ul";
+  const taskAttr = isTask ? ' data-ff-task-list="true"' : "";
+  return `<${tagName}${taskAttr}>${items.map((item) => renderListItemHtml(item)).join("")}</${tagName}>`;
 }
 
 function isListNode(type) {

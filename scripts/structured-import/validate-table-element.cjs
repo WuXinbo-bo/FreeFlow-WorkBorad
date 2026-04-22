@@ -13,9 +13,14 @@ async function main() {
 
   const {
     createTableElement,
+    createEditableTableElement,
+    createEditableTableStructure,
+    createTableStructureFromMatrix,
+    flattenTableStructureToMatrix,
     normalizeTableElement,
     TABLE_MIN_WIDTH,
     TABLE_MIN_HEIGHT,
+    updateTableElementStructure,
   } = tableModule;
   const { normalizeElement } = indexModule;
   const { buildTableElementFromRenderOperation } = bridgeModule;
@@ -104,7 +109,30 @@ async function main() {
   assert(bridged.structuredImport != null, "bridged table structuredImport missing");
   assert(bridged.structuredImport.canonicalFragment.type === "table", "bridged canonical fragment mismatch");
 
-  console.log("[table-element] ok: 3 scenarios validated");
+  const editable = createEditableTableElement({ x: 0, y: 0 }, { columns: 4, rows: 3 });
+  assert(editable.table.columns === 4, "editable table columns mismatch");
+  assert(editable.table.rows.length === 3, "editable table rows mismatch");
+  assert(editable.table.rows[0].cells[0].header === true, "editable table header row mismatch");
+
+  const editableStructure = createEditableTableStructure(2, 2);
+  const matrix = flattenTableStructureToMatrix(editableStructure);
+  assert(matrix.length === 2, "table matrix row count mismatch");
+  assert(matrix[0].length === 2, "table matrix column count mismatch");
+
+  const rebuilt = createTableStructureFromMatrix(
+    [
+      [{ plainText: "姓名", header: true }, { plainText: "分数", header: true }],
+      [{ plainText: "小王" }, { plainText: "98" }],
+    ],
+    { title: "成绩", hasHeader: true }
+  );
+  assert(rebuilt.rows.length === 2, "rebuilt table rows mismatch");
+  assert(rebuilt.rows[0].cells[0].header === true, "rebuilt header mismatch");
+
+  const updated = updateTableElementStructure(editable, rebuilt);
+  assert(updated.table.rows[1].cells[1].plainText === "98", "updated table content mismatch");
+
+  console.log("[table-element] ok: 7 scenarios validated");
 }
 
 function assert(condition, message) {

@@ -6,7 +6,17 @@ async function main() {
   const { createInputDescriptor, INPUT_CHANNELS, INPUT_SOURCE_KINDS } = protocol;
   const { createParserRegistry } = registryModule;
 
-  const registry = createParserRegistry();
+  const registry = createParserRegistry({
+    resolveTieBreakRank({ parser }) {
+      if (parser.id === "html-fallback") {
+        return 1;
+      }
+      if (parser.id === "html-primary") {
+        return 2;
+      }
+      return 0;
+    },
+  });
 
   registry.registerParser({
     id: "html-primary",
@@ -63,6 +73,9 @@ async function main() {
   const parseResult = await registry.parseDescriptor(htmlDescriptor);
   assert(parseResult.ok === true, "parse should succeed");
   assert(parseResult.parserId === "html-primary", "primary parser should parse descriptor");
+  assert(parseResult.trace && typeof parseResult.trace === "object", "parse trace should exist");
+  assert(Array.isArray(parseResult.trace.matchedCandidates), "trace matched candidates mismatch");
+  assert(parseResult.trace.selectedParserId === "html-primary", "trace selected parser mismatch");
 
   const unknownDescriptor = createInputDescriptor({
     descriptorId: "descriptor-unknown",

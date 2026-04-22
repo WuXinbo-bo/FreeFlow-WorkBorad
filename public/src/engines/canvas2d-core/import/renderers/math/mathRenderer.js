@@ -1,6 +1,7 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
+import { normalizeMathRenderState, MATH_RENDER_STATES } from "../../../elements/math.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
-import { inlineNodesToPlainText } from "../text/sharedTextRenderUtils.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const MATH_RENDERER_ID = "math-renderer";
 
@@ -17,28 +18,18 @@ export function createMathRenderer(options = {}) {
     tags: ["builtin", "math", "canonical-renderer"],
     supports({ renderInput }) {
       const payload = collectMathPayload(renderInput?.payload?.content || []);
-      if (!payload.blocks.length && !payload.inlines.length) {
-        return { matched: false, score: -1, reason: "no-math-nodes" };
+      if (!payload.blocks.length) {
+        return { matched: false, score: -1, reason: "no-math-blocks" };
       }
       return {
         matched: true,
-        score: payload.blocks.length + payload.inlines.length > 1 ? 20 : 14,
-        reason:
-          payload.blocks.length && payload.inlines.length
-            ? "math-block-and-inline-available"
-            : payload.blocks.length
-              ? "math-block-available"
-              : "math-inline-available",
+        score: payload.blocks.length > 1 ? 20 : 14,
+        reason: payload.blocks.length > 1 ? "multiple-math-blocks" : "math-block-available",
       };
     },
     async render({ renderInput }) {
       const payload = collectMathPayload(renderInput?.payload?.content || []);
-      const operations = [
-        ...payload.blocks.map((block, index) => buildMathBlockOperation(block, index, renderInput)),
-        ...payload.inlines.map((inline, index) =>
-          buildMathInlineOperation(inline, payload.blocks.length + index, renderInput)
-        ),
-      ];
+      const operations = payload.blocks.map((block, index) => buildMathBlockOperation(block, index, renderInput));
 
       return {
         planId: `${id}:${renderInput?.descriptorId || "math-render-plan"}`,
@@ -47,7 +38,7 @@ export function createMathRenderer(options = {}) {
         operations,
         stats: {
           mathBlockCount: payload.blocks.length,
-          mathInlineCount: payload.inlines.length,
+          mathInlineCount: 0,
           sourceFormats: Array.from(
             new Set(
               operations
@@ -66,7 +57,6 @@ export function createMathRenderer(options = {}) {
 
 function collectMathPayload(nodes = [], context = { quoteDepth: 0, parentType: "doc" }) {
   const blocks = [];
-  const inlines = [];
   const safeNodes = Array.isArray(nodes) ? nodes : [];
 
   safeNodes.forEach((node, index) => {
@@ -83,22 +73,12 @@ function collectMathPayload(nodes = [], context = { quoteDepth: 0, parentType: "
       return;
     }
 
-    if (node.type === "paragraph" || node.type === "heading") {
-      collectInlineMathFromInlineNodes(node.content || [], {
-        inlines,
-        quoteDepth: context.quoteDepth,
-        parentType: node.type,
-      });
-      return;
-    }
-
     if (node.type === "blockquote") {
       const nested = collectMathPayload(node.content || [], {
         quoteDepth: context.quoteDepth + 1,
         parentType: node.type,
       });
       blocks.push(...nested.blocks);
-      inlines.push(...nested.inlines);
       return;
     }
 
@@ -108,38 +88,21 @@ function collectMathPayload(nodes = [], context = { quoteDepth: 0, parentType: "
         parentType: node.type,
       });
       blocks.push(...nested.blocks);
-      inlines.push(...nested.inlines);
     }
   });
 
-  return { blocks, inlines };
-}
-
-function collectInlineMathFromInlineNodes(nodes, context) {
-  const safeNodes = Array.isArray(nodes) ? nodes : [];
-  safeNodes.forEach((node, index) => {
-    if (!node || typeof node !== "object") {
-      return;
-    }
-    if (node.type === "mathInline") {
-      context.inlines.push({
-        node,
-        quoteDepth: context.quoteDepth,
-        parentType: context.parentType,
-        orderKey: `${context.quoteDepth}:inline:${index}`,
-      });
-      return;
-    }
-    if (node.type === "link") {
-      collectInlineMathFromInlineNodes(node.content || [], context);
-    }
-  });
+  return { blocks };
 }
 
 function buildMathBlockOperation(block, index, renderInput) {
   const formula = sanitizeText(String(block?.node?.text || "")).trim();
   const sourceFormat = normalizeSourceFormat(block?.node?.attrs?.sourceFormat);
   const fallbackText = buildMathFallbackText(formula, true);
+  const sourceMeta = {
+    descriptorId: String(renderInput?.descriptorId || ""),
+    parserId: String(renderInput?.parserId || ""),
+    entryId: String(renderInput?.entryId || ""),
+  };
   return {
     type: "render-math-block",
     sourceNodeType: "mathBlock",
@@ -164,7 +127,8 @@ function buildMathBlockOperation(block, index, renderInput) {
       x: 0,
       y: 0,
       locked: false,
-      renderState: formula ? "ready" : "fallback-text",
+      renderState: normalizeMathRenderState(formula ? MATH_RENDER_STATES.READY : MATH_RENDER_STATES.FALLBACK),
+      sourceMeta,
     },
     structure: {
       sourceFormat,
@@ -173,54 +137,8 @@ function buildMathBlockOperation(block, index, renderInput) {
       fallbackText,
       parentType: block.parentType,
     },
-    meta: {
-      descriptorId: String(renderInput?.descriptorId || ""),
-      parserId: String(renderInput?.parserId || ""),
-    },
-  };
-}
-
-function buildMathInlineOperation(inline, index, renderInput) {
-  const formula = sanitizeText(String(inline?.node?.text || "")).trim();
-  const sourceFormat = normalizeSourceFormat(inline?.node?.attrs?.sourceFormat);
-  const fallbackText = buildMathFallbackText(formula, false);
-  return {
-    type: "render-math-inline",
-    sourceNodeType: "mathInline",
-    legacyType: "math",
-    order: index,
-    layout: {
-      strategy: "inline-anchor",
-      stackIndex: index,
-      quoteDepth: inline.quoteDepth,
-      gap: 0,
-    },
-    element: {
-      id: createId("math"),
-      type: "mathInline",
-      title: buildTextTitle(formula || "行内公式"),
-      formula,
-      sourceFormat,
-      displayMode: false,
-      fallbackText,
-      width: estimateMathInlineWidth(formula),
-      height: 28,
-      x: 0,
-      y: 0,
-      locked: false,
-      renderState: formula ? "ready" : "fallback-text",
-    },
-    structure: {
-      sourceFormat,
-      displayMode: false,
-      formula,
-      fallbackText,
-      parentType: inline.parentType,
-    },
-    meta: {
-      descriptorId: String(renderInput?.descriptorId || ""),
-      parserId: String(renderInput?.parserId || ""),
-    },
+    meta: sourceMeta,
+    sourceOrder: deriveNodeSourceOrder(block?.node, index),
   };
 }
 
@@ -247,9 +165,4 @@ function estimateMathBlockHeight(formula) {
   const lines = sanitizeText(formula || "").split("\n");
   const lineCount = Math.max(1, lines.length);
   return Math.max(72, Math.round(30 + lineCount * 28));
-}
-
-function estimateMathInlineWidth(formula) {
-  const text = sanitizeText(formula || "");
-  return Math.max(56, Math.min(420, Math.round(20 + text.length * 9.2)));
 }

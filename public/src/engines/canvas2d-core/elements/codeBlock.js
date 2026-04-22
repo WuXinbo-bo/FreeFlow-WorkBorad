@@ -19,6 +19,23 @@ export function normalizeStructuredCodeBlockMeta(value = {}) {
   };
 }
 
+function normalizeCodeSourceMeta(value = {}) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const normalized = {};
+  if (value.descriptorId != null && String(value.descriptorId).trim()) {
+    normalized.descriptorId = String(value.descriptorId).trim();
+  }
+  if (value.parserId != null && String(value.parserId).trim()) {
+    normalized.parserId = String(value.parserId).trim();
+  }
+  if (value.entryId != null && String(value.entryId).trim()) {
+    normalized.entryId = String(value.entryId).trim();
+  }
+  return normalized;
+}
+
 export function estimateCodeBlockSize(text = "", fontSize = CODE_BLOCK_FONT_SIZE) {
   const clean = sanitizeText(text || "");
   const lines = clean ? clean.split("\n") : [""];
@@ -49,6 +66,7 @@ export function createCodeBlockElement(point, text = "", language = "") {
     locked: false,
     createdAt: Date.now(),
     structuredImport: null,
+    sourceMeta: {},
   };
 }
 
@@ -61,6 +79,19 @@ export function normalizeCodeBlockElement(element = {}) {
   const cleanText = sanitizeText(element.text || element.plainText || base.text || "");
   const fontSize = Math.max(12, Number(element.fontSize ?? base.fontSize) || base.fontSize);
   const size = estimateCodeBlockSize(cleanText, fontSize);
+  const structuredImport = normalizeStructuredCodeBlockMeta(element.structuredImport);
+  const sourceMeta = normalizeCodeSourceMeta(element.sourceMeta);
+  const mergedSourceMeta = {
+    ...normalizeCodeSourceMeta(structuredImport?.sourceMeta),
+    ...sourceMeta,
+  };
+  const resolvedStructuredImport = structuredImport
+    ? {
+      ...structuredImport,
+      sourceMeta: mergedSourceMeta,
+    }
+    : null;
+  const normalizedText = cleanText;
   return {
     ...base,
     ...element,
@@ -68,16 +99,25 @@ export function normalizeCodeBlockElement(element = {}) {
     type: "codeBlock",
     title: String(element.title || base.title),
     language: String(element.language || base.language).trim().toLowerCase(),
-    text: cleanText,
-    plainText: sanitizeText(element.plainText || cleanText),
+    text: normalizedText,
+    plainText: normalizedText,
     fontSize,
     width: Math.max(CODE_BLOCK_MIN_WIDTH, Number(element.width ?? size.width) || size.width),
     height: Math.max(CODE_BLOCK_MIN_HEIGHT, Number(element.height ?? size.height) || size.height),
-    theme: String(element.theme || base.theme || "default"),
+    theme: normalizeCodeTheme(element.theme || base.theme || "default"),
     x: Number(element.x ?? base.x) || 0,
     y: Number(element.y ?? base.y) || 0,
     locked: Boolean(element.locked ?? base.locked),
     createdAt: Number(element.createdAt) || base.createdAt,
-    structuredImport: normalizeStructuredCodeBlockMeta(element.structuredImport),
+    sourceMeta: mergedSourceMeta,
+    structuredImport: resolvedStructuredImport,
   };
+}
+
+function normalizeCodeTheme(value = "") {
+  const theme = String(value || "").trim().toLowerCase();
+  if (!theme) {
+    return "default";
+  }
+  return theme;
 }

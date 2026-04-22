@@ -4,6 +4,7 @@ import {
   INPUT_SOURCE_KINDS,
 } from "../../protocols/inputDescriptor.js";
 import { createCanonicalDocument, createCanonicalNode } from "../../canonical/canonicalDocument.js";
+import { detectTextContentType, DETECTED_TEXT_TYPES } from "../../gateway/contentTypeDetector.js";
 
 export const MARKDOWN_PARSER_ID = "markdown-parser";
 
@@ -196,11 +197,20 @@ function parseMarkdownBlocks(markdown, context) {
       index = result.nextIndex;
       continue;
     }
-
-    if (/^```/.test(lines[index])) {
-      const result = parseCodeFence(lines, index, context);
+    if (/^\s*\\\[\s*$/.test(lines[index])) {
+      const result = parseBracketMathBlock(lines, index, context);
       blocks.push(result.node);
-      context.stats.codeBlockCount += 1;
+      context.stats.mathBlockCount += 1;
+      index = result.nextIndex;
+      continue;
+    }
+
+    if (/^\s*(?:```|''')/.test(lines[index])) {
+      const result = parseCodeFence(lines, index, context);
+      blocks.push(...result.nodes);
+      if (result.isCodeBlock) {
+        context.stats.codeBlockCount += 1;
+      }
       index = result.nextIndex;
       continue;
     }
@@ -325,25 +335,98 @@ function parseMathBlock(lines, startIndex, context) {
   };
 }
 
-function parseCodeFence(lines, startIndex, context) {
-  const open = lines[startIndex].match(/^```([\w+-]*)\s*$/);
-  const language = String(open?.[1] || "").trim().toLowerCase();
+function parseBracketMathBlock(lines, startIndex, context) {
   const content = [];
   let index = startIndex + 1;
-  while (index < lines.length && !/^```/.test(lines[index])) {
+  while (index < lines.length && !/^\s*\\\]\s*$/.test(lines[index])) {
     content.push(lines[index]);
     index += 1;
   }
   const node = createCanonicalNode({
-    type: "codeBlock",
-    attrs: language ? { language } : {},
+    type: "mathBlock",
+    attrs: {
+      sourceFormat: "latex",
+      displayMode: true,
+    },
     text: content.join("\n"),
-    meta: buildNodeMeta(context.descriptor, context.parserId, `${context.originPrefix}-code-${startIndex}`, "markdown-code-fence"),
+    meta: buildNodeMeta(context.descriptor, context.parserId, `${context.originPrefix}-math-bracket-${startIndex}`, "markdown-math-block"),
   });
   return {
     node,
     nextIndex: index < lines.length ? index + 1 : index,
   };
+}
+
+function parseCodeFence(lines, startIndex, context) {
+  const open = String(lines[startIndex] || "").match(/^\s*(```|''')([\w+-]*)\s*$/);
+  const fence = String(open?.[1] || "```");
+  const language = String(open?.[2] || "").trim().toLowerCase();
+  const content = [];
+  let index = startIndex + 1;
+  while (index < lines.length) {
+    const trimmed = String(lines[index] || "").trim();
+    if (trimmed === fence) {
+      break;
+    }
+    content.push(lines[index]);
+    index += 1;
+  }
+  const body = content.join("\n");
+  if (shouldDowngradeFenceToMarkdown(language, body)) {
+    const nodes = parseMarkdownBlocks(body, {
+      ...context,
+      originPrefix: `${context.originPrefix}-fence-downgraded-${startIndex}`,
+    });
+    return {
+      nodes: nodes.length
+        ? nodes
+        : [
+            createCanonicalNode({
+              type: "paragraph",
+              meta: buildNodeMeta(
+                context.descriptor,
+                context.parserId,
+                `${context.originPrefix}-fence-downgraded-${startIndex}-paragraph`,
+                "markdown-fence-downgraded"
+              ),
+              content: parseInlineMarkdown(body, context),
+            }),
+          ],
+      nextIndex: index < lines.length ? index + 1 : index,
+      isCodeBlock: false,
+    };
+  }
+  const node = createCanonicalNode({
+    type: "codeBlock",
+    attrs: language ? { language } : {},
+    text: body,
+    meta: buildNodeMeta(context.descriptor, context.parserId, `${context.originPrefix}-code-${startIndex}`, "markdown-code-fence"),
+  });
+  return {
+    nodes: [node],
+    nextIndex: index < lines.length ? index + 1 : index,
+    isCodeBlock: true,
+  };
+}
+
+function shouldDowngradeFenceToMarkdown(language, text) {
+  const normalizedLanguage = String(language || "").trim().toLowerCase();
+  // Explicit fenced code blocks should remain code blocks by default.
+  // Only explicitly-marked markdown fences are candidates for downgrade.
+  const markdownLikeLanguage =
+    normalizedLanguage === "markdown" ||
+    normalizedLanguage === "md" ||
+    normalizedLanguage === "mdx" ||
+    normalizedLanguage === "gfm";
+  if (!markdownLikeLanguage) {
+    return false;
+  }
+  const source = String(text || "").trim();
+  if (!source) {
+    return true;
+  }
+  const detected = detectTextContentType(source);
+  return detected?.type !== DETECTED_TEXT_TYPES.CODE;
 }
 
 function parseBlockquote(lines, startIndex, context) {
@@ -618,8 +701,9 @@ function parseParagraph(lines, startIndex, context) {
     if (
       /^\s*>/.test(line) ||
       /^#{1,6}\s+/.test(line) ||
-      /^```/.test(line) ||
+      /^\s*(?:```|''')/.test(line) ||
       /^\s*\$\$\s*$/.test(line) ||
+      /^\s*\\\[\s*$/.test(line) ||
       /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line) ||
       isListItem(line) ||
       isTableStart(lines, index)
@@ -637,12 +721,53 @@ function parseParagraph(lines, startIndex, context) {
     }
     paragraphLines.push(line);
   });
+  const paragraphSource = paragraphLines.join("");
+  const singleLineDisplayDollar = paragraphSource.match(/^\s*\$\$([\s\S]+)\$\$\s*$/);
+  if (singleLineDisplayDollar) {
+    return {
+      node: createCanonicalNode({
+        type: "mathBlock",
+        attrs: {
+          sourceFormat: "latex",
+          displayMode: true,
+        },
+        text: String(singleLineDisplayDollar[1] || "").trim(),
+        meta: buildNodeMeta(
+          context.descriptor,
+          context.parserId,
+          `${context.originPrefix}-math-inline-display-${startIndex}`,
+          "markdown-math-block"
+        ),
+      }),
+      nextIndex: index,
+    };
+  }
+  const singleLineDisplayBracket = paragraphSource.match(/^\s*\\\[([\s\S]+)\\\]\s*$/);
+  if (singleLineDisplayBracket) {
+    return {
+      node: createCanonicalNode({
+        type: "mathBlock",
+        attrs: {
+          sourceFormat: "latex",
+          displayMode: true,
+        },
+        text: String(singleLineDisplayBracket[1] || "").trim(),
+        meta: buildNodeMeta(
+          context.descriptor,
+          context.parserId,
+          `${context.originPrefix}-math-inline-bracket-${startIndex}`,
+          "markdown-math-block"
+        ),
+      }),
+      nextIndex: index,
+    };
+  }
 
   return {
     node: createCanonicalNode({
       type: "paragraph",
       meta: buildNodeMeta(context.descriptor, context.parserId, `${context.originPrefix}-paragraph-${startIndex}`, "markdown-paragraph"),
-      content: parseInlineMarkdown(paragraphLines.join(""), context),
+      content: parseInlineMarkdown(paragraphSource, context),
     }),
     nextIndex: index,
   };
@@ -693,6 +818,20 @@ function parseInlineSegments(text, context) {
     {
       name: "mathInline",
       regex: /\$([^$\n]+)\$/g,
+      create(match) {
+        return createCanonicalNode({
+          type: "mathInline",
+          attrs: {
+            sourceFormat: "latex",
+            displayMode: false,
+          },
+          text: match[1],
+        });
+      },
+    },
+    {
+      name: "mathInlineParen",
+      regex: /\\\(([^()\n]+)\\\)/g,
       create(match) {
         return createCanonicalNode({
           type: "mathInline",

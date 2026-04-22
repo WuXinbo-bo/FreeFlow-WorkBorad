@@ -1,6 +1,7 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import { inlineNodesToHtml, inlineNodesToPlainText } from "../text/sharedTextRenderUtils.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const TABLE_RENDERER_ID = "table-renderer";
 
@@ -81,6 +82,11 @@ function collectTables(nodes = [], context = { quoteDepth: 0, parentType: "doc" 
 function buildTableOperation(table, index, renderInput) {
   const structure = normalizeTableStructure(table.node);
   const title = buildTextTitle(structure.title || `表格 ${index + 1}`);
+  const sourceMeta = {
+    descriptorId: String(renderInput?.descriptorId || ""),
+    parserId: String(renderInput?.parserId || ""),
+    entryId: String(renderInput?.entryId || ""),
+  };
   return {
     type: "render-table-block",
     sourceNodeType: "table",
@@ -98,11 +104,19 @@ function buildTableOperation(table, index, renderInput) {
       title,
       columns: structure.columns,
       rows: structure.rows.length,
+      table: {
+        title,
+        columns: structure.columns,
+        rows: JSON.parse(JSON.stringify(structure.rows)),
+        hasHeader: Boolean(structure.hasHeader),
+        sourceMeta,
+      },
       width: estimateTableWidth(structure),
       height: estimateTableHeight(structure),
       x: 0,
       y: 0,
       locked: false,
+      sourceMeta,
     },
     structure: {
       columns: structure.columns,
@@ -110,10 +124,8 @@ function buildTableOperation(table, index, renderInput) {
       parentType: table.parentType,
       hasHeader: structure.hasHeader,
     },
-    meta: {
-      descriptorId: String(renderInput?.descriptorId || ""),
-      parserId: String(renderInput?.parserId || ""),
-    },
+    meta: sourceMeta,
+    sourceOrder: deriveNodeSourceOrder(table?.node, index),
   };
 }
 
@@ -142,7 +154,7 @@ function normalizeTableStructure(tableNode = {}) {
 
 function normalizeTableRow(rowNode = {}, rowIndex = 0) {
   const cells = (Array.isArray(rowNode?.content) ? rowNode.content : [])
-    .filter((cell) => cell?.type === "tableCell")
+    .filter((cell) => isTableCellNode(cell))
     .map((cell, cellIndex) => normalizeTableCell(cell, rowIndex, cellIndex));
 
   return {
@@ -150,6 +162,11 @@ function normalizeTableRow(rowNode = {}, rowIndex = 0) {
     cells,
     columnSpanWidth: cells.reduce((sum, cell) => sum + cell.colSpan, 0),
   };
+}
+
+function isTableCellNode(cell = {}) {
+  const type = String(cell?.type || "").trim().toLowerCase();
+  return type === "tablecell" || type === "tableheadercell" || type === "tableheader";
 }
 
 function normalizeTableCell(cellNode = {}, rowIndex = 0, cellIndex = 0) {

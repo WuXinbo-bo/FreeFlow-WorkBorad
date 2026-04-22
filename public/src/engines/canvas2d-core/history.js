@@ -14,8 +14,8 @@ export function takeHistorySnapshot(state) {
     items: clone(state.board.items),
     selectedIds: clone(state.board.selectedIds),
     view: clone(state.board.view),
-    editingId: state.editingId || null,
-    editingType: state.editingType || null,
+    editingId: null,
+    editingType: null,
   };
 }
 

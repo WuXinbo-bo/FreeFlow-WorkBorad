@@ -1,14 +1,37 @@
-import { htmlToPlainText, normalizeRichHtml, sanitizeText } from "../utils.js";
-import { measureRichTextBox, TEXT_LINE_HEIGHT_RATIO } from "../rendererText.js";
+import { normalizeRichHtml, sanitizeText } from "../utils.js";
+import {
+  measureRichTextBox,
+  resolveRichTextDisplayHtml,
+  TEXT_BOLD_WEIGHT,
+  TEXT_FONT_FAMILY,
+  TEXT_FONT_WEIGHT,
+  TEXT_LINE_HEIGHT_RATIO,
+} from "../rendererText.js";
+import {
+  getBlockSpacingEmForTag,
+  getLineHeightRatioForTag,
+  normalizeTagName,
+  TEXT_BLOCK_SPACING_EM,
+  TEXT_BODY_LINE_HEIGHT_RATIO,
+} from "./typographyTokens.js";
 import { createTextMeasureHost } from "./createTextMeasureHost.js";
+import {
+  TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
+  TEXT_BOX_LAYOUT_MODE_FIXED_SIZE,
+} from "../textModel/textBoxLayoutModel.js";
+import {
+  createTextMeasurementResultModel,
+  normalizeTextMeasurementInput,
+} from "./textMeasurementModel.js";
 
 const DEFAULT_MIN_WIDTH = 80;
 const DEFAULT_MIN_HEIGHT = 40;
 const DEFAULT_MAX_WIDTH = 720;
 const DEFAULT_FONT_SIZE = 20;
-const DEFAULT_FONT_WEIGHT = "500";
-const DEFAULT_BOLD_WEIGHT = "700";
-const DEFAULT_FONT_FAMILY = '"Segoe UI", "PingFang SC", sans-serif';
+const DEFAULT_FONT_WEIGHT = TEXT_FONT_WEIGHT;
+const DEFAULT_BOLD_WEIGHT = TEXT_BOLD_WEIGHT;
+const DEFAULT_FONT_FAMILY = TEXT_FONT_FAMILY;
+const BODY_LINE_HEIGHT_RATIO = TEXT_BODY_LINE_HEIGHT_RATIO;
 
 function isHTMLElement(value) {
   return typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
@@ -16,18 +39,6 @@ function isHTMLElement(value) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
-}
-
-function normalizeFontSize(value, fallback = DEFAULT_FONT_SIZE) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return Math.max(12, Number(fallback) || DEFAULT_FONT_SIZE);
-  }
-  return Math.max(12, numericValue);
-}
-
-function normalizeResizeMode(value = "") {
-  return String(value || "").trim().toLowerCase() === "wrap" ? "wrap" : "auto-width";
 }
 
 function escapeHtml(value = "") {
@@ -54,73 +65,151 @@ function buildMeasureHtml(html = "", plainText = "") {
 function measureFallbackText(text = "", { minWidth = DEFAULT_MIN_WIDTH, maxWidth = DEFAULT_MAX_WIDTH, fontSize = DEFAULT_FONT_SIZE } = {}) {
   const clean = sanitizeText(text);
   const lines = clean ? clean.split("\n") : [""];
+  const paragraphCount = Math.max(
+    1,
+    clean
+      .split(/\n\s*\n+/)
+      .map((segment) => segment.trim())
+      .filter(Boolean).length || 1
+  );
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
   const width = clamp(Math.round(24 + longest * (fontSize * 0.6)), minWidth, maxWidth);
-  const height = Math.max(
-    Math.round(fontSize * 1.6),
-    Math.round(16 + lines.length * Math.max(22, fontSize * TEXT_LINE_HEIGHT_RATIO))
-  );
+  const lineHeight = fontSize * BODY_LINE_HEIGHT_RATIO;
+  const paragraphSpacing = Math.max(0, paragraphCount - 1) * fontSize * TEXT_BLOCK_SPACING_EM.paragraph;
+  const height = Math.max(Math.round(fontSize * 1.25), Math.round(10 + lines.length * lineHeight + paragraphSpacing));
   return { width, height };
 }
 
-function normalizeMeasuredResult(result, { minWidth, minHeight, resizeMode, widthHint, measuredWith, reason }) {
-  const contentWidth = Math.max(1, Math.ceil(Number(result?.contentWidth || result?.frameWidth || 0) || 1));
-  const contentHeight = Math.max(1, Math.ceil(Number(result?.contentHeight || result?.frameHeight || 0) || 1));
-  const frameWidth =
-    resizeMode === "wrap"
-      ? Math.max(minWidth, Number(widthHint || minWidth) || minWidth)
-      : Math.max(minWidth, Math.ceil(Number(result?.frameWidth || contentWidth) || contentWidth));
-  const frameHeight = Math.max(minHeight, Math.ceil(Number(result?.frameHeight || contentHeight) || contentHeight));
-  return {
-    contentWidth,
-    contentHeight,
-    frameWidth,
-    frameHeight,
-    measuredWith,
-    reason,
-  };
-}
-
-function applyMeasurementNodeStyles(node, { fontSize, lineHeightRatio, fontWeight, maxWidth, resizeMode, widthHint }) {
-  node.style.fontFamily = DEFAULT_FONT_FAMILY;
+function applyMeasurementNodeStyles(node, { fontFamily, fontSize, lineHeightRatio, fontWeight, maxWidth, layoutMode, widthHint }) {
+  node.style.fontFamily = String(fontFamily || DEFAULT_FONT_FAMILY);
   node.style.fontSize = `${Math.max(1, fontSize)}px`;
   node.style.fontWeight = String(fontWeight || DEFAULT_FONT_WEIGHT);
-  node.style.lineHeight = String(Math.max(1, Number(lineHeightRatio || TEXT_LINE_HEIGHT_RATIO)));
-  node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
-  if (resizeMode === "wrap") {
+  node.style.lineHeight = String(
+    Math.max(BODY_LINE_HEIGHT_RATIO, Number(lineHeightRatio || TEXT_LINE_HEIGHT_RATIO))
+  );
+  node.style.boxSizing = "border-box";
+  node.style.overflow = "hidden";
+  if (layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
     node.style.display = "block";
     node.style.width = `${Math.max(1, widthHint)}px`;
+    node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
+    node.style.whiteSpace = "pre-wrap";
+    node.style.wordBreak = "break-word";
+    node.style.overflowWrap = "anywhere";
   } else {
     node.style.display = "inline-block";
     node.style.width = "max-content";
+    node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
+    node.style.whiteSpace = "pre";
+    node.style.wordBreak = "normal";
+    node.style.overflowWrap = "normal";
   }
 }
 
 function normalizeMeasurementMarkup(node) {
-  node.querySelectorAll("p, div, section, article").forEach((element) => {
+  node.querySelectorAll("div, section, article, thead, tbody, tr").forEach((element) => {
     if (!isHTMLElement(element)) {
       return;
     }
     element.style.margin = "0";
     element.style.padding = "0";
   });
+  node.querySelectorAll("p").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    const spacing = getBlockSpacingEmForTag("p");
+    element.style.marginTop = "0";
+    element.style.marginBottom = `${spacing}em`;
+  });
+  node.querySelectorAll("blockquote").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    const spacing = getBlockSpacingEmForTag("blockquote");
+    element.style.marginTop = `${spacing}em`;
+    element.style.marginBottom = `${spacing}em`;
+    element.style.paddingInlineStart = "0.9em";
+    element.style.borderLeft = "3px solid rgba(148, 163, 184, 0.55)";
+  });
+  node.querySelectorAll("pre").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    const spacing = getBlockSpacingEmForTag("pre");
+    element.style.marginTop = `${spacing}em`;
+    element.style.marginBottom = `${spacing}em`;
+    element.style.whiteSpace = "pre-wrap";
+    element.style.wordBreak = "break-word";
+    element.style.overflowWrap = "anywhere";
+    element.style.padding = "0.6em 0.8em";
+    element.style.border = "1px solid rgba(148, 163, 184, 0.32)";
+    element.style.borderRadius = "12px";
+    element.style.boxSizing = "border-box";
+  });
+  node.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    const tag = normalizeTagName(element.tagName);
+    const scaleMap = { h1: 2.2, h2: 1.8, h3: 1.55, h4: 1.35, h5: 1.18, h6: 1.05 };
+    const fontScale = scaleMap[tag] || 1;
+    element.style.fontSize = `${fontScale}em`;
+    element.style.fontWeight = tag === "h1" || tag === "h2" ? "800" : "700";
+    element.style.lineHeight = String(getLineHeightRatioForTag(tag));
+    element.style.marginTop = "0";
+    element.style.marginBottom = `${getBlockSpacingEmForTag(tag)}em`;
+  });
   node.querySelectorAll("ul, ol").forEach((element) => {
     if (!isHTMLElement(element)) {
       return;
     }
-    element.style.margin = "0";
+    const tag = normalizeTagName(element.tagName);
+    const spacing = getBlockSpacingEmForTag(tag);
+    element.style.marginTop = `${spacing}em`;
+    element.style.marginBottom = `${spacing}em`;
     element.style.paddingInlineStart = "1.25em";
   });
   node.querySelectorAll("li").forEach((element) => {
     if (!isHTMLElement(element)) {
       return;
     }
-    element.style.margin = "0";
+    const isLastInList = !element.nextElementSibling || normalizeTagName(element.nextElementSibling.tagName) !== "li";
+    element.style.marginTop = "0";
+    element.style.marginBottom = isLastInList ? "0" : `${TEXT_BLOCK_SPACING_EM.listItem}em`;
     element.style.padding = "0";
+  });
+  node.querySelectorAll("table").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    const spacing = getBlockSpacingEmForTag("table");
+    element.style.marginTop = `${spacing}em`;
+    element.style.marginBottom = `${spacing}em`;
+    element.style.borderCollapse = "collapse";
+    element.style.width = "100%";
+    element.style.tableLayout = "fixed";
+  });
+  node.querySelectorAll("td, th").forEach((element) => {
+    if (!isHTMLElement(element)) {
+      return;
+    }
+    element.style.border = "1px solid rgba(148, 163, 184, 0.45)";
+    element.style.padding = "0.38em 0.5em";
+    element.style.verticalAlign = "top";
   });
 }
 
-function measureWithHost({ html, fontSize, lineHeightRatio, fontWeight, resizeMode, widthHint, maxWidth }) {
+function measureWithHost({
+  html,
+  fontFamily,
+  fontSize,
+  lineHeightRatio,
+  fontWeight,
+  layoutMode,
+  widthHint,
+  maxWidth,
+}) {
   const host = createTextMeasureHost();
   if (!host?.content) {
     return null;
@@ -133,15 +222,21 @@ function measureWithHost({ html, fontSize, lineHeightRatio, fontWeight, resizeMo
     fontSize: node.style.fontSize,
     fontWeight: node.style.fontWeight,
     lineHeight: node.style.lineHeight,
+    whiteSpace: node.style.whiteSpace,
+    wordBreak: node.style.wordBreak,
+    overflowWrap: node.style.overflowWrap,
+    boxSizing: node.style.boxSizing,
+    overflow: node.style.overflow,
     innerHTML: node.innerHTML,
   };
   try {
     applyMeasurementNodeStyles(node, {
+      fontFamily,
       fontSize,
       lineHeightRatio,
       fontWeight,
       maxWidth,
-      resizeMode,
+      layoutMode,
       widthHint,
     });
     node.innerHTML = html;
@@ -155,7 +250,7 @@ function measureWithHost({ html, fontSize, lineHeightRatio, fontWeight, resizeMo
     return {
       contentWidth,
       contentHeight,
-      frameWidth: resizeMode === "wrap" ? widthHint : Math.min(contentWidth, maxWidth),
+      frameWidth: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? Math.min(contentWidth, maxWidth) : widthHint,
       frameHeight: contentHeight,
     };
   } finally {
@@ -165,73 +260,30 @@ function measureWithHost({ html, fontSize, lineHeightRatio, fontWeight, resizeMo
     node.style.fontSize = previous.fontSize;
     node.style.fontWeight = previous.fontWeight;
     node.style.lineHeight = previous.lineHeight;
+    node.style.whiteSpace = previous.whiteSpace;
+    node.style.wordBreak = previous.wordBreak;
+    node.style.overflowWrap = previous.overflowWrap;
+    node.style.boxSizing = previous.boxSizing;
+    node.style.overflow = previous.overflow;
     node.innerHTML = previous.innerHTML;
   }
 }
 
-function measureWithEditorElement({
-  editorElement,
+function measureWithCanvas({
+  html,
+  plainText,
   fontSize,
   lineHeightRatio,
-  resizeMode,
+  fontWeight,
+  boldWeight,
+  layoutMode,
   widthHint,
-  scale,
   maxWidth,
-  minWidth,
-  minHeight,
-  plainText,
 }) {
-  if (!isHTMLElement(editorElement)) {
-    return null;
-  }
-  const scaleValue = Math.max(0.1, Number(scale) || 1);
-  const previous = {
-    width: editorElement.style.width,
-    height: editorElement.style.height,
-    maxWidth: editorElement.style.maxWidth,
-  };
-  try {
-    editorElement.style.width =
-      resizeMode === "wrap" ? `${Math.max(1, widthHint) * scaleValue}px` : "max-content";
-    editorElement.style.height = "auto";
-    editorElement.style.maxWidth = `${Math.max(widthHint || 0, maxWidth) * scaleValue}px`;
-    const rect = editorElement.getBoundingClientRect();
-    const contentWidth =
-      resizeMode === "wrap"
-        ? Math.max(1, Number(widthHint || minWidth) || minWidth)
-        : Math.max(
-            minWidth,
-            Math.min(
-              maxWidth,
-              Math.ceil(Math.max(editorElement.scrollWidth || 0, rect.width || 0) / scaleValue)
-            )
-          );
-    const lineCount = Math.max(1, String(plainText || "").split("\n").length);
-    const lineHeight = Math.max(22, fontSize * lineHeightRatio);
-    const contentHeight = Math.max(
-      minHeight,
-      Math.ceil(
-        Math.max(editorElement.scrollHeight || 0, rect.height || 0, lineCount * lineHeight) / scaleValue
-      )
-    );
-    return {
-      contentWidth,
-      contentHeight,
-      frameWidth: resizeMode === "wrap" ? widthHint : contentWidth,
-      frameHeight: contentHeight,
-    };
-  } finally {
-    editorElement.style.width = previous.width;
-    editorElement.style.height = previous.height;
-    editorElement.style.maxWidth = previous.maxWidth;
-  }
-}
-
-function measureWithCanvas({ html, plainText, fontSize, lineHeightRatio, fontWeight, boldWeight, resizeMode, widthHint, maxWidth }) {
   const richSize = measureRichTextBox({
     html,
     text: plainText,
-    width: resizeMode === "wrap" ? widthHint : maxWidth,
+    width: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? maxWidth : widthHint,
     fontSize,
     scale: 1,
     lineHeightRatio,
@@ -244,120 +296,111 @@ function measureWithCanvas({ html, plainText, fontSize, lineHeightRatio, fontWei
   return {
     contentWidth: richSize.width,
     contentHeight: richSize.height,
-    frameWidth: resizeMode === "wrap" ? widthHint : Math.min(richSize.width, maxWidth),
+    frameWidth: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? Math.min(richSize.width, maxWidth) : widthHint,
     frameHeight: richSize.height,
   };
 }
 
-export function measureTextElementLayout(input = {}) {
-  const html = normalizeRichHtml(input.html || "");
-  const plainText = sanitizeText(input.plainText || input.text || htmlToPlainText(html));
-  const fontSize = normalizeFontSize(input.fontSize, DEFAULT_FONT_SIZE);
-  const resizeMode = normalizeResizeMode(input.resizeMode);
-  const minWidth = Math.max(1, Number(input.minWidth || DEFAULT_MIN_WIDTH) || DEFAULT_MIN_WIDTH);
-  const minHeight = Math.max(1, Number(input.minHeight || DEFAULT_MIN_HEIGHT) || DEFAULT_MIN_HEIGHT);
-  const maxWidth = Math.max(minWidth, Number(input.maxWidth || DEFAULT_MAX_WIDTH) || DEFAULT_MAX_WIDTH);
-  const widthHint = Math.max(minWidth, Number(input.widthHint || minWidth) || minWidth);
-  const lineHeightRatio = Math.max(1, Number(input.lineHeightRatio || TEXT_LINE_HEIGHT_RATIO));
-  const fontWeight = String(input.fontWeight || DEFAULT_FONT_WEIGHT);
-  const boldWeight = String(input.boldWeight || DEFAULT_BOLD_WEIGHT);
-  const measureHtml = buildMeasureHtml(html, plainText);
-
-  if (!measureHtml.trim() && !plainText.trim()) {
-    return {
-      contentWidth: 1,
-      contentHeight: 1,
-      frameWidth: minWidth,
-      frameHeight: minHeight,
-      measuredWith: "fallback",
-      reason: "empty-content",
-    };
-  }
-
-  const editorMeasured = measureWithEditorElement({
-    editorElement: input.editorElement,
-    fontSize,
-    lineHeightRatio,
-    resizeMode,
-    widthHint,
-    scale: input.scale,
-    maxWidth,
-    minWidth,
-    minHeight,
-    plainText,
+export function measureTextLayoutModel(input = {}) {
+  const measurementInput = normalizeTextMeasurementInput(input, {
+    minWidth: DEFAULT_MIN_WIDTH,
+    minHeight: DEFAULT_MIN_HEIGHT,
+    maxWidth: DEFAULT_MAX_WIDTH,
+    fontSize: DEFAULT_FONT_SIZE,
+    fontWeight: DEFAULT_FONT_WEIGHT,
+    boldWeight: DEFAULT_BOLD_WEIGHT,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    lineHeightRatio: BODY_LINE_HEIGHT_RATIO,
   });
-  if (editorMeasured) {
-    return normalizeMeasuredResult(editorMeasured, {
-      minWidth,
-      minHeight,
-      resizeMode,
-      widthHint,
-      measuredWith: "dom",
-      reason: "editor-element",
-    });
+  const { content, layout, typography } = measurementInput;
+  const measureHtml = buildMeasureHtml(
+    resolveRichTextDisplayHtml({
+      text: content.plainText,
+      html: content.html,
+      linkTokens: Array.isArray(content.linkTokens) ? content.linkTokens : [],
+    }),
+    content.plainText
+  );
+
+  if (!measureHtml.trim() && !content.plainText.trim()) {
+    return createTextMeasurementResultModel(
+      measurementInput,
+      {
+        contentWidth: 1,
+        contentHeight: 1,
+        frameWidth: layout.autoWidth ? layout.minWidth : layout.widthHint,
+        frameHeight: layout.fixedSize ? layout.heightHint : layout.minHeight,
+      },
+      {
+        measuredWith: "fallback",
+        reason: "empty-content",
+      }
+    );
   }
 
   const hostMeasured = measureWithHost({
     html: measureHtml,
-    fontSize,
-    lineHeightRatio,
-    fontWeight,
-    resizeMode,
-    widthHint,
-    maxWidth,
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSize,
+    lineHeightRatio: typography.lineHeightRatio,
+    fontWeight: typography.fontWeight,
+    layoutMode: layout.layoutMode,
+    widthHint: layout.widthHint,
+    maxWidth: layout.maxWidth,
   });
   if (hostMeasured) {
-    return normalizeMeasuredResult(hostMeasured, {
-      minWidth,
-      minHeight,
-      resizeMode,
-      widthHint,
-      measuredWith: "dom",
-      reason: "measurement-host",
-    });
+    return createTextMeasurementResultModel(
+      measurementInput,
+      hostMeasured,
+      {
+        measuredWith: "dom",
+        reason: "measurement-host",
+      }
+    );
   }
 
   const canvasMeasured = measureWithCanvas({
     html: measureHtml,
-    plainText,
-    fontSize,
-    lineHeightRatio,
-    fontWeight,
-    boldWeight,
-    resizeMode,
-    widthHint,
-    maxWidth,
+    plainText: content.plainText,
+    fontSize: typography.fontSize,
+    lineHeightRatio: typography.lineHeightRatio,
+    fontWeight: typography.fontWeight,
+    boldWeight: typography.boldWeight,
+    layoutMode: layout.layoutMode,
+    widthHint: layout.widthHint,
+    maxWidth: layout.maxWidth,
   });
   if (canvasMeasured) {
-    return normalizeMeasuredResult(canvasMeasured, {
-      minWidth,
-      minHeight,
-      resizeMode,
-      widthHint,
-      measuredWith: "canvas",
-      reason: "canvas-runs",
-    });
+    return createTextMeasurementResultModel(
+      measurementInput,
+      canvasMeasured,
+      {
+        measuredWith: "canvas",
+        reason: "canvas-runs",
+      }
+    );
   }
 
-  const fallback = measureFallbackText(plainText, {
-    minWidth,
-    maxWidth: resizeMode === "wrap" ? widthHint : maxWidth,
-    fontSize,
+  const fallback = measureFallbackText(content.plainText, {
+    minWidth: layout.minWidth,
+    maxWidth: layout.autoWidth ? layout.maxWidth : layout.widthHint,
+    fontSize: typography.fontSize,
   });
-  return normalizeMeasuredResult(
+  return createTextMeasurementResultModel(
+    measurementInput,
     {
       contentWidth: fallback.width,
       contentHeight: fallback.height,
-      frameWidth: resizeMode === "wrap" ? widthHint : fallback.width,
-      frameHeight: fallback.height,
+      frameWidth: layout.autoWidth ? fallback.width : layout.widthHint,
+      frameHeight: layout.fixedSize ? layout.heightHint : fallback.height,
     },
     {
-      minWidth,
-      minHeight,
-      resizeMode,
-      widthHint,
       measuredWith: "fallback",
       reason: "heuristic",
     }
   );
+}
+
+export function measureTextElementLayout(input = {}) {
+  return measureTextLayoutModel(input);
 }

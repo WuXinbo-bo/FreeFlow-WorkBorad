@@ -2,6 +2,7 @@ import { createPasteGateway } from "../gateway/pasteGateway.js";
 import { createDragGateway } from "../gateway/dragGateway.js";
 import { createContextMenuPasteAdapter } from "../gateway/contextMenuPasteAdapter.js";
 import { createParserRegistry } from "../parsers/parserRegistry.js";
+import { INPUT_ENTRY_KINDS } from "../protocols/inputDescriptor.js";
 import { createFallbackStrategyManager } from "../fallbacks/fallbackStrategyManager.js";
 import { createDiagnosticsModel } from "../diagnostics/diagnosticsModel.js";
 import { createImportPipelineSwitchboard, IMPORT_PIPELINES } from "../rollout/pipelineSwitches.js";
@@ -20,15 +21,36 @@ import {
 } from "../host/hostPersistenceAdapter.js";
 import { buildHostFlowbackPayload } from "../host/hostFlowbackAdapter.js";
 import { createHostHistoryAdapter } from "../host/hostHistoryAdapter.js";
-import { createPlainTextParser } from "../parsers/plainText/plainTextParser.js";
-import { createHtmlParser } from "../parsers/html/htmlParser.js";
-import { createWebContentParser } from "../parsers/webContent/webContentParser.js";
-import { createMarkdownParser } from "../parsers/markdown/markdownParser.js";
-import { createCodeParser } from "../parsers/code/codeParser.js";
-import { createLatexMathParser } from "../parsers/math/latexMathParser.js";
-import { createImageResourceParser } from "../parsers/image/imageResourceParser.js";
-import { createFileResourceCompatibilityAdapter } from "../parsers/file/fileResourceCompatibilityAdapter.js";
-import { createInternalCompatibilityParser } from "../parsers/legacy/internalCompatibilityParser.js";
+import {
+  createPlainTextParser,
+  PLAIN_TEXT_PARSER_ID,
+} from "../parsers/plainText/plainTextParser.js";
+import { createHtmlParser, HTML_PARSER_ID } from "../parsers/html/htmlParser.js";
+import {
+  createWebContentParser,
+  WEB_CONTENT_PARSER_ID,
+} from "../parsers/webContent/webContentParser.js";
+import {
+  createMarkdownParser,
+  MARKDOWN_PARSER_ID,
+} from "../parsers/markdown/markdownParser.js";
+import { createCodeParser, CODE_PARSER_ID } from "../parsers/code/codeParser.js";
+import {
+  createLatexMathParser,
+  LATEX_MATH_PARSER_ID,
+} from "../parsers/math/latexMathParser.js";
+import {
+  createImageResourceParser,
+  IMAGE_RESOURCE_PARSER_ID,
+} from "../parsers/image/imageResourceParser.js";
+import {
+  createFileResourceCompatibilityAdapter,
+  FILE_RESOURCE_COMPATIBILITY_ADAPTER_ID,
+} from "../parsers/file/fileResourceCompatibilityAdapter.js";
+import {
+  createInternalCompatibilityParser,
+  INTERNAL_COMPATIBILITY_PARSER_ID,
+} from "../parsers/legacy/internalCompatibilityParser.js";
 import { createGenericTextRenderer } from "../renderers/text/genericTextRenderer.js";
 import { createListRenderer } from "../renderers/list/listRenderer.js";
 import { createCodeBlockRenderer } from "../renderers/code/codeBlockRenderer.js";
@@ -38,8 +60,47 @@ import { createImageRenderer } from "../renderers/image/imageRenderer.js";
 import { createFileCardLegacyAdapter } from "../renderers/file/fileCardLegacyAdapter.js";
 import { createNativePassthroughAdapter } from "../renderers/legacy/nativePassthroughAdapter.js";
 
+const DEFAULT_PARSER_ENTRY_KIND_GATES = Object.freeze({
+  [INTERNAL_COMPATIBILITY_PARSER_ID]: [INPUT_ENTRY_KINDS.INTERNAL_PAYLOAD],
+  [FILE_RESOURCE_COMPATIBILITY_ADAPTER_ID]: [INPUT_ENTRY_KINDS.FILE],
+  [IMAGE_RESOURCE_PARSER_ID]: [INPUT_ENTRY_KINDS.IMAGE],
+  [LATEX_MATH_PARSER_ID]: [INPUT_ENTRY_KINDS.MATH, INPUT_ENTRY_KINDS.TEXT],
+  [CODE_PARSER_ID]: [INPUT_ENTRY_KINDS.CODE, INPUT_ENTRY_KINDS.TEXT],
+  [MARKDOWN_PARSER_ID]: [INPUT_ENTRY_KINDS.MARKDOWN],
+  [WEB_CONTENT_PARSER_ID]: [INPUT_ENTRY_KINDS.HTML],
+  [HTML_PARSER_ID]: [INPUT_ENTRY_KINDS.HTML],
+  [PLAIN_TEXT_PARSER_ID]: [
+    INPUT_ENTRY_KINDS.TEXT,
+    INPUT_ENTRY_KINDS.CODE,
+    INPUT_ENTRY_KINDS.MATH,
+    INPUT_ENTRY_KINDS.UNKNOWN,
+  ],
+});
+
+const DEFAULT_PARSER_TIE_BREAK_RANKS = Object.freeze({
+  [INTERNAL_COMPATIBILITY_PARSER_ID]: 100,
+  [FILE_RESOURCE_COMPATIBILITY_ADAPTER_ID]: 95,
+  [IMAGE_RESOURCE_PARSER_ID]: 90,
+  [LATEX_MATH_PARSER_ID]: 80,
+  [CODE_PARSER_ID]: 70,
+  [MARKDOWN_PARSER_ID]: 60,
+  [WEB_CONTENT_PARSER_ID]: 50,
+  [HTML_PARSER_ID]: 45,
+  [PLAIN_TEXT_PARSER_ID]: 10,
+});
+
 export function createStructuredImportRuntime(options = {}) {
-  const parserRegistry = createParserRegistry();
+  const parserEntryKindGates = mergeParserEntryKindGates(options.parserEntryKindGates);
+  const parserTieBreakRanks = mergeParserTieBreakRanks(options.parserTieBreakRanks);
+  const parserRegistry = createParserRegistry({
+    resolveEntryKindGate({ parser }) {
+      // Stage-1 gating: narrow parser candidates by descriptor entry kinds before supports() scoring.
+      return parserEntryKindGates[parser.id] || [];
+    },
+    resolveTieBreakRank({ parser }) {
+      return parserTieBreakRanks[parser.id];
+    },
+  });
   registerBuiltinParsers(parserRegistry);
 
   const fallbackManager = createFallbackStrategyManager();
@@ -152,6 +213,38 @@ export function createStructuredImportRuntime(options = {}) {
     getLogs: logCollector.getEntries,
     clearLogs: logCollector.clear,
   };
+}
+
+function mergeParserEntryKindGates(overrides) {
+  const merged = { ...DEFAULT_PARSER_ENTRY_KIND_GATES };
+  if (!overrides || typeof overrides !== "object") {
+    return merged;
+  }
+  Object.keys(overrides).forEach((parserId) => {
+    const list = Array.isArray(overrides[parserId]) ? overrides[parserId] : null;
+    if (!list) {
+      return;
+    }
+    merged[parserId] = list
+      .map((kind) => String(kind || "").trim())
+      .filter(Boolean);
+  });
+  return merged;
+}
+
+function mergeParserTieBreakRanks(overrides) {
+  const merged = { ...DEFAULT_PARSER_TIE_BREAK_RANKS };
+  if (!overrides || typeof overrides !== "object") {
+    return merged;
+  }
+  Object.keys(overrides).forEach((parserId) => {
+    const rank = Number(overrides[parserId]);
+    if (!Number.isFinite(rank)) {
+      return;
+    }
+    merged[parserId] = rank;
+  });
+  return merged;
 }
 
 function registerBuiltinParsers(registry) {

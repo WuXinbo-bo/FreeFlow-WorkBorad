@@ -1,5 +1,9 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
+import {
+  resolveImportedTextBoxLayout,
+} from "../text/sharedTextRenderUtils.js";
 
 export const CODE_BLOCK_RENDERER_ID = "code-block-renderer";
 
@@ -77,11 +81,20 @@ function collectCodeBlocks(nodes = [], context = { quoteDepth: 0, parentType: "d
 function buildCodeOperation(block, index, renderInput) {
   const code = sanitizeText(String(block?.node?.text || ""));
   const language = String(block?.node?.attrs?.language || "").trim().toLowerCase();
-  const title = buildTextTitle(language ? `${language} 代码块` : "代码块");
+  const sourceMeta = {
+    descriptorId: String(renderInput?.descriptorId || ""),
+    parserId: String(renderInput?.parserId || ""),
+    entryId: String(renderInput?.entryId || ""),
+  };
+  const title = buildTextTitle(language ? `${language} 代码块` : "Markdown 代码块");
   const lineCount = countLines(code);
+  const initialLayout = resolveImportedTextBoxLayout(code, 16, {
+    forceWrap: true,
+  });
   return {
     type: "render-code-block",
     sourceNodeType: "codeBlock",
+    blockRole: "code-block",
     legacyType: "codeBlock",
     order: index,
     layout: {
@@ -98,12 +111,13 @@ function buildCodeOperation(block, index, renderInput) {
       text: code,
       plainText: code,
       fontSize: 16,
-      width: estimateCodeWidth(code),
-      height: estimateCodeHeight(code),
+      width: Math.max(initialLayout.width || 0, estimateCodeWidth(code)),
+      height: Math.max(initialLayout.height || 0, estimateCodeHeight(code)),
       x: 0,
       y: 0,
       locked: false,
       theme: "default",
+      sourceMeta,
     },
     structure: {
       language,
@@ -111,10 +125,8 @@ function buildCodeOperation(block, index, renderInput) {
       parentType: block.parentType,
       code,
     },
-    meta: {
-      descriptorId: String(renderInput?.descriptorId || ""),
-      parserId: String(renderInput?.parserId || ""),
-    },
+    meta: sourceMeta,
+    sourceOrder: deriveNodeSourceOrder(block?.node, index),
   };
 }
 

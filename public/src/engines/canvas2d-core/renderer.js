@@ -4,6 +4,8 @@ import { isLinearShape } from "./elements/shapes.js";
 import { drawTextElement } from "./rendererText.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
+import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
+import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
 
 const HINT_LOGO_SRC = "/assets/brand/FreeFlow_logo.svg";
 let hintLogo = null;
@@ -58,17 +60,16 @@ function drawLockBadge(ctx, element, view) {
   if (!element?.locked) {
     return;
   }
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
   const bounds = getElementBounds(element);
-  const anchor = sceneToScreen(view, { x: bounds.left, y: bounds.top });
-  const size = Math.max(12, 14 * scale);
-  const padding = Math.max(6, 8 * scale);
+  const anchor = getScreenPoint(view, { x: bounds.left, y: bounds.top });
+  const size = 14;
+  const padding = 8;
   const x = anchor.x + padding;
   const y = anchor.y + padding;
   ctx.save();
   ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
   ctx.strokeStyle = "rgba(148, 163, 184, 0.7)";
-  ctx.lineWidth = Math.max(1, 1.2 * scale);
+  ctx.lineWidth = 1.2;
   drawRoundedRect(ctx, x - size * 0.5, y - size * 0.5, size, size, Math.max(4, size * 0.28));
   ctx.fill();
   ctx.stroke();
@@ -84,14 +85,14 @@ function drawHandles(ctx, element, view) {
   const handleSize = 8;
   const points = [];
   if (element.type === "shape" && isLinearShape(element.shapeType)) {
-    points.push(sceneToScreen(view, { x: element.startX, y: element.startY }));
-    points.push(sceneToScreen(view, { x: element.endX, y: element.endY }));
+    points.push(getScreenPoint(view, { x: element.startX, y: element.startY }));
+    points.push(getScreenPoint(view, { x: element.endX, y: element.endY }));
   } else {
     const bounds = getElementBounds(element);
-    points.push(sceneToScreen(view, { x: bounds.left, y: bounds.top }));
-    points.push(sceneToScreen(view, { x: bounds.right, y: bounds.top }));
-    points.push(sceneToScreen(view, { x: bounds.left, y: bounds.bottom }));
-    points.push(sceneToScreen(view, { x: bounds.right, y: bounds.bottom }));
+    points.push(getScreenPoint(view, { x: bounds.left, y: bounds.top }));
+    points.push(getScreenPoint(view, { x: bounds.right, y: bounds.top }));
+    points.push(getScreenPoint(view, { x: bounds.left, y: bounds.bottom }));
+    points.push(getScreenPoint(view, { x: bounds.right, y: bounds.bottom }));
   }
   ctx.save();
   ctx.fillStyle = "#ffffff";
@@ -109,18 +110,13 @@ function drawHandles(ctx, element, view) {
     ctx.stroke();
   });
   if (isRect) {
-    const bounds = getElementBounds(element);
-    const inset = Math.max(6, 10 / Math.max(0.1, Number(view?.scale) || 1));
-    const scale = Math.max(0.1, Number(view?.scale) || 1);
-    const left = bounds.left * scale + Number(view?.offsetX || 0);
-    const top = bounds.top * scale + Number(view?.offsetY || 0);
-    const right = bounds.right * scale + Number(view?.offsetX || 0);
-    const bottom = bounds.bottom * scale + Number(view?.offsetY || 0);
+    const bounds = getElementScreenBounds(view, element);
+    const inset = 10;
     const pointsInner = [
-      { x: left + inset * scale, y: top + inset * scale },
-      { x: right - inset * scale, y: top + inset * scale },
-      { x: left + inset * scale, y: bottom - inset * scale },
-      { x: right - inset * scale, y: bottom - inset * scale },
+      { x: bounds.left + inset, y: bounds.top + inset },
+      { x: bounds.right - inset, y: bounds.top + inset },
+      { x: bounds.left + inset, y: bounds.bottom - inset },
+      { x: bounds.right - inset, y: bounds.bottom - inset },
     ];
     pointsInner.forEach((point) => {
       ctx.beginPath();
@@ -132,14 +128,7 @@ function drawHandles(ctx, element, view) {
   ctx.restore();
 }
 
-function drawBackground(ctx, width, height, view, options = {}) {
-  const { fill = "#ffffff", grid = true, pattern = grid ? "dots" : "none" } = options || {};
-  ctx.save();
-  if (fill && fill !== "transparent") {
-    ctx.fillStyle = fill;
-    ctx.fillRect(0, 0, width, height);
-  }
-  const resolvedPattern = String(pattern || (grid ? "dots" : "none")).trim().toLowerCase();
+function drawBackgroundPatternFallback(ctx, width, height, view, resolvedPattern) {
   const scale = Math.max(0.4, Number(view?.scale) || 1);
   const step = 18 * scale;
   const offsetX = ((Number(view?.offsetX || 0) % step) + step) % step;
@@ -203,17 +192,34 @@ function drawBackground(ctx, width, height, view, options = {}) {
     }
     ctx.stroke();
   }
+}
+
+function drawBackground(ctx, width, height, view, options = {}, backgroundPatternCache = null) {
+  const { fill = "#ffffff", grid = true, pattern = grid ? "dots" : "none" } = options || {};
+  ctx.save();
+  if (fill && fill !== "transparent") {
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, width, height);
+  }
+  const resolvedPattern = String(pattern || (grid ? "dots" : "none")).trim().toLowerCase();
+  if (resolvedPattern !== "none") {
+    const drawnWithCache = backgroundPatternCache?.draw(ctx, width, height, view, resolvedPattern) || false;
+    if (!drawnWithCache) {
+      drawBackgroundPatternFallback(ctx, width, height, view, resolvedPattern);
+    }
+  }
   ctx.restore();
 }
 
 function drawMindNode(ctx, element, view, selected, hover) {
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const x = Number(element.x || 0) * scale + Number(view?.offsetX || 0);
-  const y = Number(element.y || 0) * scale + Number(view?.offsetY || 0);
-  const width = Math.max(1, Number(element.width) || 1) * scale;
-  const height = Math.max(1, Number(element.height) || 1) * scale;
-  const padding = Math.max(10, Number(element.width || 0) * 0.06) * scale;
-  const fontSize = Math.min(Math.max(12, Number(element.fontSize || 18) * 1.05), 28) * scale;
+  const bounds = getElementScreenBounds(view, element);
+  const x = bounds.left;
+  const y = bounds.top;
+  const width = bounds.width;
+  const height = bounds.height;
+  const logicalWidth = Math.max(1, Number(element.width) || 1);
+  const padding = scaleSceneValue(view, Math.max(10, logicalWidth * 0.06));
+  const fontSize = scaleSceneValue(view, Math.min(Math.max(12, Number(element.fontSize || 18) * 1.05), 28));
   const lineHeight = Math.max(18, fontSize * 1.2);
   const title = String(element.title || "节点");
 
@@ -316,6 +322,8 @@ function drawHint(ctx, width, height) {
 
 export function createRenderer({ customRenderers = [] } = {}) {
   const renderers = Array.isArray(customRenderers) ? customRenderers : [];
+  const viewportCuller = createViewportCuller();
+  const backgroundPatternCache = createBackgroundPatternCache();
 
   return {
       render({
@@ -340,13 +348,22 @@ export function createRenderer({ customRenderers = [] } = {}) {
         const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
         const width = canvas.width / dpr;
         const height = canvas.height / dpr;
+        const frameStart = typeof performance !== "undefined" ? performance.now() : Date.now();
         ctx.save();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, width, height);
-        drawBackground(ctx, width, height, view, backgroundStyle);
+        drawBackground(ctx, width, height, view, backgroundStyle, backgroundPatternCache);
+
+      const cullResult = viewportCuller(items, view, width, height, {
+        selectedIds,
+        hoverId,
+        editingId,
+      });
+      const visibleItems = cullResult.items;
 
       const selected = new Set(selectedIds || []);
-      items.forEach((item) => {
+      let customRendererHandledCount = 0;
+      visibleItems.forEach((item) => {
         const isSelected = selected.has(item.id);
         const isHover = hoverId === item.id && !isSelected;
         for (const renderElement of renderers) {
@@ -368,6 +385,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
               },
             });
           if (handled) {
+            customRendererHandledCount += 1;
             drawLockBadge(ctx, item, view);
             return;
           }
@@ -408,6 +426,16 @@ export function createRenderer({ customRenderers = [] } = {}) {
       if (!items.length && !draftElement) {
         drawHint(ctx, width, height);
       }
+      const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const backgroundStats = backgroundPatternCache.getStats();
+      canvas.__ffRenderStats = {
+        frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
+        viewport: { width, height },
+        culling: cullResult.stats,
+        renderedItems: visibleItems.length,
+        customRendererHandledCount,
+        background: backgroundStats,
+      };
       ctx.restore();
     },
   };

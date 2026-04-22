@@ -5,10 +5,16 @@ import { getFlowNodeMinSize, normalizeFlowEdgeElement, normalizeFlowNodeElement 
 import { normalizeImageElement } from "./media.js";
 import { normalizeFileCardElement } from "./fileCard.js";
 import { isLinearShape, moveShapeElement, normalizeShapeElement } from "./shapes.js";
-import { getTextMinSize, normalizeTextElement, TEXT_RESIZE_MODE_WRAP } from "./text.js";
+import {
+  TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+  getTextMinSize,
+  normalizeTextElement,
+  TEXT_RESIZE_MODE_WRAP,
+} from "./text.js";
 import { normalizeCodeBlockElement, CODE_BLOCK_MIN_HEIGHT, CODE_BLOCK_MIN_WIDTH } from "./codeBlock.js";
 import { normalizeTableElement, TABLE_MIN_HEIGHT, TABLE_MIN_WIDTH } from "./table.js";
 import { normalizeMathElement, MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
+import { buildTextElementFromMathElement } from "./mathText.js";
 
 function normalizeBoardBackgroundPattern(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -49,7 +55,7 @@ export function normalizeElement(element = {}) {
     return normalizeTableElement(element);
   }
   if (type === "mathblock" || type === "mathinline" || type === "math") {
-    return normalizeMathElement(element);
+    return buildTextElementFromMathElement(element);
   }
   if (type === "mindnode" || type === "mind") {
     return normalizeMindNodeElement(element);
@@ -219,19 +225,25 @@ export function resizeElement(element, handle, point) {
     }
   }
   if (element.type === "text") {
+    const originalTop = Number(element.y || 0);
+    next.textBoxLayoutMode = TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT;
     next.textResizeMode = TEXT_RESIZE_MODE_WRAP;
     const minSize = getTextMinSize(
       {
         ...element,
         ...next,
+        textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
         textResizeMode: TEXT_RESIZE_MODE_WRAP,
       },
       {
         widthHint: next.width,
       }
     );
-    next.width = Math.max(minSize.width, next.width);
-    next.height = Math.max(minSize.height, next.height);
+    next.width = Math.max(80, minSize.width, next.width);
+    next.height = Math.max(40, minSize.height);
+    // Text boxes should resize from the top edge and grow/shrink downward.
+    // Reflow caused by width changes must not recenter the box vertically.
+    next.y = originalTop;
   }
   if (element.type === "shape") {
     next.startX = left;

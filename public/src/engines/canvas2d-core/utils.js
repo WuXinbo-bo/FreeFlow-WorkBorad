@@ -55,7 +55,28 @@ export function sanitizeHtml(value = "") {
   return template.innerHTML;
 }
 
-const RICH_TEXT_BLOCK_TAGS = new Set(["div", "p", "section", "article", "li", "ul", "ol"]);
+const RICH_TEXT_BLOCK_TAGS = new Set([
+  "div",
+  "p",
+  "section",
+  "article",
+  "li",
+  "ul",
+  "ol",
+  "blockquote",
+  "pre",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "tr",
+  "table",
+  "thead",
+  "tbody",
+  "hr",
+]);
 
 function pushTextLineBreak(parts) {
   if (!parts.length) {
@@ -87,7 +108,28 @@ function collectHtmlPlainText(node, parts) {
     pushTextLineBreak(parts);
     return;
   }
+  if (tag === "hr") {
+    pushTextLineBreak(parts);
+    parts.push("---");
+    pushTextLineBreak(parts);
+    return;
+  }
+  if (tag === "li") {
+    const parentTag = element.parentElement?.tagName?.toLowerCase() || "";
+    if (parentTag === "ol") {
+      parts.push("1. ");
+    } else if (parentTag === "ul" && element.parentElement?.getAttribute("data-ff-task-list") === "true") {
+      const state = String(element.getAttribute("data-ff-task-state") || "").trim().toLowerCase();
+      parts.push(`- [${state === "done" ? "x" : " "}] `);
+    } else if (parentTag === "ul") {
+      parts.push("- ");
+    }
+  }
   element.childNodes.forEach((child) => collectHtmlPlainText(child, parts));
+  if (tag === "td" || tag === "th") {
+    parts.push("\t");
+    return;
+  }
   if (RICH_TEXT_BLOCK_TAGS.has(tag)) {
     pushTextLineBreak(parts);
   }

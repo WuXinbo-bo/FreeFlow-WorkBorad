@@ -1,4 +1,5 @@
 import { getFileName, normalizeRichHtmlInlineFontSizes } from "../utils.js";
+import { normalizeTextElement } from "../elements/text.js";
 
 function isImagePath(path = "") {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || "").trim());
@@ -65,7 +66,18 @@ export function createDragBroker({
       return [];
     }
     const point = normalizeAnchorPoint(anchorPoint);
-    return [createTextElement(point, clean)];
+    const item = createTextElement(point, clean);
+    const isLongText = clean.length >= 48 || clean.includes("\n");
+    return [
+      isLongText
+        ? normalizeTextElement({
+            ...item,
+            textBoxLayoutMode: "auto-height",
+            textResizeMode: "wrap",
+            width: Math.max(240, Math.min(520, 320)),
+          })
+        : item,
+    ];
   }
 
   function createElementsFromHtml(html, anchorPoint) {
@@ -78,7 +90,18 @@ export function createDragBroker({
       return [];
     }
     const point = normalizeAnchorPoint(anchorPoint);
-    return [createTextElement(point, plainText, cleanHtml)];
+    const item = createTextElement(point, plainText, cleanHtml);
+    const isLongText = plainText.length >= 48 || plainText.includes("\n");
+    return [
+      isLongText
+        ? normalizeTextElement({
+            ...item,
+            textBoxLayoutMode: "auto-height",
+            textResizeMode: "wrap",
+            width: Math.max(240, Math.min(520, 320)),
+          })
+        : item,
+    ];
   }
 
   async function createFileCardsFromPaths(paths = [], anchorPoint) {

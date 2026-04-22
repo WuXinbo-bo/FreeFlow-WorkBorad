@@ -98,11 +98,23 @@ function buildEditMeta(item, kind) {
 }
 
 function applyTextEdit(item, payload) {
+  const hasExplicitRichTextDocument = Object.prototype.hasOwnProperty.call(payload, "richTextDocument");
+  const hasLegacyContentOverride =
+    Object.prototype.hasOwnProperty.call(payload, "text") ||
+    Object.prototype.hasOwnProperty.call(payload, "plainText") ||
+    Object.prototype.hasOwnProperty.call(payload, "html");
+  const nextRichTextDocument = hasExplicitRichTextDocument
+    ? payload.richTextDocument
+    : hasLegacyContentOverride
+      ? null
+      : item.richTextDocument ?? null;
   return normalizeTextElement({
     ...item,
     text: String(payload.text ?? item.text ?? ""),
     plainText: String(payload.plainText ?? payload.text ?? item.plainText ?? ""),
     html: String(payload.html ?? item.html ?? ""),
+    richTextDocument: nextRichTextDocument,
+    textBoxLayoutMode: String(payload.textBoxLayoutMode ?? item.textBoxLayoutMode ?? ""),
   });
 }
 

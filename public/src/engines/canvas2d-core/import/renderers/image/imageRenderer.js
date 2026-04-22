@@ -2,6 +2,7 @@ import { buildTextTitle, createId } from "../../../utils.js";
 import { normalizeImageElement } from "../../../elements/media.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import { buildImageElementFromRenderOperation } from "./imageElementBridge.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const IMAGE_RENDERER_ID = "image-renderer";
 
@@ -129,6 +130,7 @@ function buildImageOperation(image, index, renderInput) {
       descriptorId: String(renderInput?.descriptorId || ""),
       parserId: String(renderInput?.parserId || ""),
     },
+    sourceOrder: deriveNodeSourceOrder(image?.node, index),
   };
   operation.element = buildImageElementFromRenderOperation(operation);
   return operation;

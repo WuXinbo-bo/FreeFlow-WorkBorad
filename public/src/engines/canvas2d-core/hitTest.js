@@ -1,8 +1,8 @@
 import { getElementBounds } from "./elements/index.js";
-import { getFlowNodeConnectors } from "./elements/flow.js";
 import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
+import { invalidateHitTestSpatialIndex, queryHitTestSpatialIndex, resolveHitTestSpatialIndex } from "./hitTestSpatialIndex.js";
 
 function pointInBounds(point, bounds, padding = 0) {
   return (
@@ -31,41 +31,50 @@ function lineDistance(point, start, end) {
 
 export function hitTestElement(items, point, scale = 1) {
   const tolerance = Math.max(8, 12 / Math.max(0.1, scale));
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
+  const index = resolveHitTestSpatialIndex(items);
+  const candidates = queryHitTestSpatialIndex(index, {
+    left: Number(point?.x || 0) - tolerance,
+    right: Number(point?.x || 0) + tolerance,
+    top: Number(point?.y || 0) - tolerance,
+    bottom: Number(point?.y || 0) + tolerance,
+  }).sort((a, b) => b.itemIndex - a.itemIndex);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const item = candidate.item;
+    if (!item) {
+      continue;
+    }
     if (item.type === "flowEdge") {
-      const fromNode = items.find((entry) => entry.id === item.fromId);
-      const toNode = items.find((entry) => entry.id === item.toId);
-      if (!fromNode || !toNode) {
+      const fromPoint = candidate.geometry?.fromPoint;
+      const toPoint = candidate.geometry?.toPoint;
+      if (!fromPoint || !toPoint) {
         continue;
       }
-      const fromPoint = getFlowNodeConnectors(fromNode)[item.fromSide] || getFlowNodeConnectors(fromNode).right;
-      const toPoint = getFlowNodeConnectors(toNode)[item.toSide] || getFlowNodeConnectors(toNode).left;
-      const hit = lineDistance(point, fromPoint, toPoint) <= tolerance;
-      if (hit) {
+      if (lineDistance(point, fromPoint, toPoint) <= tolerance) {
         return item;
       }
       continue;
     }
     if (item.type === "shape" && isLinearShape(item.shapeType)) {
-      const hit = lineDistance(point, { x: item.startX, y: item.startY }, { x: item.endX, y: item.endY }) <= tolerance;
-      if (hit) {
+      const startPoint = candidate.geometry?.startPoint || { x: item.startX, y: item.startY };
+      const endPoint = candidate.geometry?.endPoint || { x: item.endX, y: item.endY };
+      if (lineDistance(point, startPoint, endPoint) <= tolerance) {
         return item;
       }
       continue;
     }
-    const bounds = getElementBounds(item);
+    const bounds = candidate.baseBounds || getElementBounds(item);
     if (pointInBounds(point, bounds, tolerance)) {
       return item;
     }
     if (item.type === "fileCard" && item.memoVisible) {
-      const memoBounds = getFileCardMemoBounds(item);
+      const memoBounds = candidate.geometry?.memoBounds || getFileCardMemoBounds(item);
       if (pointInBounds(point, memoBounds, tolerance)) {
         return item;
       }
     }
     if (item.type === "image" && item.memoVisible) {
-      const memoBounds = getImageMemoBounds(item);
+      const memoBounds = candidate.geometry?.memoBounds || getImageMemoBounds(item);
       if (pointInBounds(point, memoBounds, tolerance)) {
         return item;
       }
@@ -128,18 +137,32 @@ export function collectElementsInRect(items, startPoint, currentPoint) {
   const top = Math.min(Number(startPoint?.y || 0), Number(currentPoint?.y || 0));
   const right = Math.max(Number(startPoint?.x || 0), Number(currentPoint?.x || 0));
   const bottom = Math.max(Number(startPoint?.y || 0), Number(currentPoint?.y || 0));
-  return items
-    .filter((item) => {
-      if (item.type === "flowEdge") {
-        return false;
-      }
-      const bounds = getElementBounds(item);
-      return !(
-        bounds.right < left ||
-        bounds.left > right ||
-        bounds.bottom < top ||
-        bounds.top > bottom
-      );
-    })
-    .map((item) => item.id);
+  const index = resolveHitTestSpatialIndex(items);
+  const candidates = queryHitTestSpatialIndex(index, { left, top, right, bottom })
+    .filter((candidate) => candidate.item && candidate.item.type !== "flowEdge")
+    .sort((a, b) => a.itemIndex - b.itemIndex);
+  const selectedIds = [];
+  const seenIds = new Set();
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const item = candidate.item;
+    if (!item || seenIds.has(item.id)) {
+      continue;
+    }
+    const bounds = candidate.baseBounds || getElementBounds(item);
+    const intersects = !(
+      bounds.right < left ||
+      bounds.left > right ||
+      bounds.bottom < top ||
+      bounds.top > bottom
+    );
+    if (!intersects) {
+      continue;
+    }
+    seenIds.add(item.id);
+    selectedIds.push(item.id);
+  }
+  return selectedIds;
 }
+
+export { invalidateHitTestSpatialIndex };

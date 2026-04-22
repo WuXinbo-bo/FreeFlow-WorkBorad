@@ -7,6 +7,9 @@ const VALIDATORS = [
   "validate-renderer-pipeline.cjs",
   "validate-legacy-element-adapter-registry.cjs",
   "validate-generic-text-renderer.cjs",
+  "validate-text-spacing-rules.cjs",
+  "validate-renderer-text-link-tokens.cjs",
+  "validate-renderer-text-math-display.cjs",
   "validate-list-renderer.cjs",
   "validate-code-block-renderer.cjs",
   "validate-table-renderer.cjs",
@@ -22,6 +25,7 @@ const VALIDATORS = [
   "validate-image-element-bridge.cjs",
   "validate-file-card-element-bridge.cjs",
   "validate-native-compatibility-passthrough.cjs",
+  "validate-host-search-adapter.cjs",
 ];
 
 function main() {

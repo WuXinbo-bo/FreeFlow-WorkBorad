@@ -32,7 +32,28 @@ function normalizeRichFontSize(value, fallback = 16) {
   return Math.max(10, numericValue);
 }
 
-export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionChange: onSelectionChangeExternal } = {}) {
+function escapeHtml(value = "") {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function serializeCodeBlockPlainTextToHtml(text = "") {
+  return escapeHtml(String(text || "")).replace(/\n/g, "<br>");
+}
+
+export function createRichTextAdapter(
+  host,
+  {
+    onCommit,
+    onCancel,
+    onInput,
+    onBlur,
+    onSelectionChange: onSelectionChangeExternal,
+  } = {}
+) {
   const element = ensureEditableHost(host);
   if (!element) {
     return null;
@@ -180,12 +201,112 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     return decoration.includes("line-through");
   }
 
+  function isInlineCodeElement(node) {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    return node.tagName === "CODE" && node.parentElement?.tagName !== "PRE";
+  }
+
+  function isCodeBlockElement(node) {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    return (
+      node.getAttribute("data-ff-code-block") === "true" ||
+      node.tagName === "PRE" ||
+      (node.tagName === "CODE" && node.parentElement?.tagName === "PRE")
+    );
+  }
+
+  function isMathElement(node) {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    const role = String(node.getAttribute("data-role") || "").trim().toLowerCase();
+    return role === "math-inline" || role === "math-block";
+  }
+
+  function getMathElementType(node) {
+    const role = String(node?.getAttribute?.("data-role") || "").trim().toLowerCase();
+    if (role === "math-inline") {
+      return "inline";
+    }
+    if (role === "math-block") {
+      return "block";
+    }
+    return "";
+  }
+
+  function isRootCodeBlockMode() {
+    return element.getAttribute("data-ff-code-block-root") === "true";
+  }
+
+  function setRootCodeBlockMode(text = "") {
+    element.setAttribute("data-ff-code-block-root", "true");
+    element.textContent = String(text || "");
+    if (!element.firstChild) {
+      element.appendChild(document.createTextNode(""));
+    }
+    collapseToEnd(element);
+  }
+
+  function clearRootCodeBlockMode(text = "") {
+    element.removeAttribute("data-ff-code-block-root");
+    const safeText = String(text || "");
+    if (!safeText) {
+      element.innerHTML = "";
+      return;
+    }
+    element.innerHTML = serializeCodeBlockPlainTextToHtml(safeText);
+    collapseToEnd(element);
+  }
+
+  function isTaskListElement(node) {
+    return node instanceof HTMLElement && node.tagName === "UL" && node.getAttribute("data-ff-task-list") === "true";
+  }
+
+  function isBlockquoteElement(node) {
+    return node instanceof HTMLElement && node.tagName === "BLOCKQUOTE";
+  }
+
   function isListContainer(node, tagName) {
     if (!(node instanceof HTMLElement)) {
       return false;
     }
     const parentTag = node.parentElement?.tagName?.toLowerCase() || "";
     return node.tagName.toLowerCase() === "li" && parentTag === tagName;
+  }
+
+  function clearTaskListAttributes(list) {
+    if (!(list instanceof HTMLElement)) {
+      return;
+    }
+    list.removeAttribute("data-ff-task-list");
+    list.querySelectorAll("li[data-ff-task-item]").forEach((item) => {
+      if (!(item instanceof HTMLElement)) {
+        return;
+      }
+      item.removeAttribute("data-ff-task-item");
+      item.removeAttribute("data-ff-task-state");
+    });
+  }
+
+  function markListAsTaskList(list) {
+    if (!(list instanceof HTMLElement)) {
+      return false;
+    }
+    list.setAttribute("data-ff-task-list", "true");
+    list.querySelectorAll("li").forEach((item) => {
+      if (!(item instanceof HTMLElement)) {
+        return;
+      }
+      item.setAttribute("data-ff-task-item", "true");
+      if (!item.getAttribute("data-ff-task-state")) {
+        item.setAttribute("data-ff-task-state", "todo");
+      }
+    });
+    return true;
   }
 
   function isInlineSelectionWrapper(node) {
@@ -564,7 +685,72 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
   }
 
   function getCurrentBlock() {
-    return getClosestWithinSelection("li, div, p, section, article, h1, h2, h3, h4, h5, h6") || element;
+    return getClosestWithinSelection("li, div, p, section, article, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th") || element;
+  }
+
+  function createParagraphBlockFromText(text = "") {
+    const block = document.createElement("div");
+    block.textContent = text;
+    return block;
+  }
+
+  function replaceNodeWithBlock(node, nextBlock) {
+    if (!(node instanceof Node) || !(nextBlock instanceof HTMLElement)) {
+      return false;
+    }
+    node.replaceWith(nextBlock);
+    collapseToEnd(nextBlock.tagName === "PRE" ? nextBlock.querySelector("code") || nextBlock : nextBlock);
+    return true;
+  }
+
+  function replaceCurrentBlockWithTag(tagName = "div") {
+    const currentBlock = getCurrentBlock();
+    if (!(currentBlock instanceof HTMLElement)) {
+      return false;
+    }
+    if (currentBlock === element) {
+      return applyFormatBlock(tagName);
+    }
+    if (currentBlock.tagName.toLowerCase() === String(tagName || "div").toLowerCase()) {
+      return true;
+    }
+    const nextBlock = document.createElement(tagName);
+    nextBlock.innerHTML = currentBlock.innerHTML || "<br>";
+    return replaceNodeWithBlock(currentBlock, nextBlock);
+  }
+
+  function replaceCurrentBlockWithParagraph() {
+    const codeBlock = getClosestWithinSelection('[data-ff-code-block="true"], pre');
+    if (codeBlock instanceof HTMLElement) {
+      return replaceNodeWithBlock(codeBlock, createParagraphBlockFromText(getNodeText(codeBlock)));
+    }
+    const blockquote = getClosestWithinSelection("blockquote");
+    if (blockquote instanceof HTMLElement) {
+      const block = document.createElement("div");
+      block.innerHTML = blockquote.innerHTML || "<br>";
+      return replaceNodeWithBlock(blockquote, block);
+    }
+    return replaceCurrentBlockWithTag("div");
+  }
+
+  function setBlockType(blockType = "paragraph") {
+    const normalized = String(blockType || "paragraph").trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (normalized === "paragraph") {
+      return replaceCurrentBlockWithParagraph();
+    }
+    if (/^heading-[1-6]$/.test(normalized)) {
+      return replaceCurrentBlockWithTag(`h${normalized.slice(-1)}`);
+    }
+    if (normalized === "blockquote") {
+      return replaceCurrentBlockWithTag("blockquote");
+    }
+    if (normalized === "code-block") {
+      return toggleCodeBlock();
+    }
+    return false;
   }
 
   function selectNodeContents(node) {
@@ -578,6 +764,16 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     return range;
   }
 
+  function setCollapsedSelection(node, offset = 0) {
+    if (!(node instanceof Node)) {
+      return false;
+    }
+    const range = document.createRange();
+    range.setStart(node, Math.max(0, Number(offset) || 0));
+    range.collapse(true);
+    return setSelectionRange(range);
+  }
+
   function collapseToEnd(node) {
     const selection = document.getSelection?.();
     if (!selection || !(node instanceof Node)) {
@@ -589,6 +785,194 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     setSelectionRange(range);
   }
 
+  function collapseInsideMathElement(mathElement) {
+    if (!(mathElement instanceof HTMLElement)) {
+      return false;
+    }
+    const walker = document.createTreeWalker(mathElement, NodeFilter.SHOW_TEXT);
+    let lastTextNode = null;
+    while (walker.nextNode()) {
+      lastTextNode = walker.currentNode;
+    }
+    if (lastTextNode instanceof Text) {
+      return setCollapsedSelection(lastTextNode, lastTextNode.data.length);
+    }
+    collapseToEnd(mathElement);
+    return true;
+  }
+
+  function getCurrentMathElement() {
+    const range = getSelectionRange();
+    if (!range) {
+      return null;
+    }
+    return getUniformAncestor(range, isMathElement);
+  }
+
+  function getActiveCodeBlock() {
+    const range = getSelectionRange();
+    if (!range) {
+      return null;
+    }
+    return findAncestor(
+      range.startContainer,
+      (node) =>
+        node instanceof HTMLElement &&
+        node.getAttribute("data-ff-code-block") === "true"
+    );
+  }
+
+  function ensureCodeBlockEditableTextNode(codeBlock) {
+    if (!(codeBlock instanceof HTMLElement)) {
+      return null;
+    }
+    if (
+      codeBlock.childNodes.length === 1 &&
+      codeBlock.firstChild instanceof HTMLBRElement
+    ) {
+      codeBlock.textContent = "";
+    }
+    if (!codeBlock.firstChild) {
+      const textNode = document.createTextNode("");
+      codeBlock.appendChild(textNode);
+      return textNode;
+    }
+    if (codeBlock.lastChild instanceof Text) {
+      return codeBlock.lastChild;
+    }
+    return null;
+  }
+
+  function collapseToCodeBlockEnd(codeBlock) {
+    if (!(codeBlock instanceof HTMLElement)) {
+      return false;
+    }
+    const textNode = ensureCodeBlockEditableTextNode(codeBlock);
+    if (textNode instanceof Text) {
+      return setCollapsedSelection(textNode, textNode.data.length);
+    }
+    collapseToEnd(codeBlock);
+    return true;
+  }
+
+  function insertPlainText(text = "") {
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return false;
+    }
+    const content = String(text || "");
+    range.deleteContents();
+    const textNode = document.createTextNode(content);
+    range.insertNode(textNode);
+    const nextRange = document.createRange();
+    nextRange.setStart(textNode, textNode.data.length);
+    nextRange.collapse(true);
+    setSelectionRange(nextRange);
+    textNode.parentNode?.normalize?.();
+    return true;
+  }
+
+  function createCodeBlockFragmentFromPlainText(text = "") {
+    const fragment = document.createDocumentFragment();
+    const parts = String(text || "").split("\n");
+    parts.forEach((part, index) => {
+      if (index > 0) {
+        fragment.appendChild(document.createElement("br"));
+      }
+      if (part) {
+        fragment.appendChild(document.createTextNode(part));
+        return;
+      }
+      if (index > 0 && index === parts.length - 1) {
+        fragment.appendChild(document.createTextNode(""));
+      }
+    });
+    return fragment;
+  }
+
+  function insertCodeBlockText(text = "") {
+    const codeBlock = getActiveCodeBlock();
+    if (!(codeBlock instanceof HTMLElement)) {
+      return false;
+    }
+    ensureCodeBlockEditableTextNode(codeBlock);
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return false;
+    }
+    const fragment = createCodeBlockFragmentFromPlainText(text);
+    const lastChild = fragment.lastChild;
+    range.deleteContents();
+    range.insertNode(fragment);
+    const nextRange = document.createRange();
+    if (lastChild instanceof Text) {
+      nextRange.setStart(lastChild, lastChild.data.length);
+    } else if (lastChild instanceof Node) {
+      nextRange.setStartAfter(lastChild);
+    } else {
+      collapseToCodeBlockEnd(codeBlock);
+      return true;
+    }
+    nextRange.collapse(true);
+    setSelectionRange(nextRange);
+    return true;
+  }
+
+  function normalizeEditableCodeBlocks(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    root.querySelectorAll("pre, pre > code:only-child").forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      const pre = node.tagName === "PRE" ? node : node.parentElement;
+      if (!(pre instanceof HTMLElement) || pre.getAttribute("data-ff-code-block") === "normalized") {
+        return;
+      }
+      const block = document.createElement("div");
+      block.setAttribute("data-ff-code-block", "true");
+      pre.setAttribute("data-ff-code-block", "normalized");
+      while (pre.firstChild) {
+        const child = pre.firstChild;
+        if (child instanceof HTMLElement && child.tagName === "CODE") {
+          while (child.firstChild) {
+            block.appendChild(child.firstChild);
+          }
+          child.remove();
+          continue;
+        }
+        block.appendChild(child);
+      }
+      pre.replaceWith(block);
+      ensureCodeBlockEditableTextNode(block);
+    });
+  }
+
+  function serializeEditableCodeBlocks(root) {
+    if (!(root instanceof HTMLElement)) {
+      return "";
+    }
+    const clone = root.cloneNode(true);
+    if (!(clone instanceof HTMLElement)) {
+      return root.innerHTML || "";
+    }
+    clone.querySelectorAll('[data-ff-code-block="true"]').forEach((block) => {
+      if (!(block instanceof HTMLElement)) {
+        return;
+      }
+      const pre = document.createElement("pre");
+      pre.setAttribute("data-ff-code-block", "true");
+      const code = document.createElement("code");
+      while (block.firstChild) {
+        code.appendChild(block.firstChild);
+      }
+      pre.appendChild(code);
+      block.replaceWith(pre);
+    });
+    return clone.innerHTML || "";
+  }
+
   function replaceCurrentBlockText(text = "") {
     const block = getCurrentBlock();
     if (!(block instanceof HTMLElement)) {
@@ -597,6 +981,127 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     block.textContent = text;
     collapseToEnd(block);
     return true;
+  }
+
+  function insertParagraphAfterNode(node) {
+    if (!(node instanceof HTMLElement) || !node.parentNode) {
+      return false;
+    }
+    const nextBlock = document.createElement("div");
+    nextBlock.innerHTML = "<br>";
+    if (node.nextSibling) {
+      node.parentNode.insertBefore(nextBlock, node.nextSibling);
+    } else {
+      node.parentNode.appendChild(nextBlock);
+    }
+    selectNodeContents(nextBlock);
+    collapseToEnd(nextBlock);
+    return true;
+  }
+
+  function replaceCurrentBlockWithList({ ordered = false, task = false } = {}) {
+    const currentBlock = getCurrentBlock();
+    if (!(currentBlock instanceof HTMLElement)) {
+      return false;
+    }
+    const list = document.createElement(ordered ? "ol" : "ul");
+    if (task) {
+      list.setAttribute("data-ff-task-list", "true");
+    }
+    const item = document.createElement("li");
+    if (task) {
+      item.setAttribute("data-ff-task-item", "true");
+      item.setAttribute("data-ff-task-state", "todo");
+    }
+    item.appendChild(document.createElement("br"));
+    list.appendChild(item);
+    if (currentBlock === element) {
+      element.innerHTML = "";
+      element.appendChild(list);
+    } else {
+      currentBlock.replaceWith(list);
+    }
+    selectNodeContents(item);
+    collapseToEnd(item);
+    return true;
+  }
+
+  function toggleInlineCode() {
+    const range = getSelectionRange();
+    if (!range || range.collapsed) {
+      return false;
+    }
+    const existing = getUniformAncestor(range, isInlineCodeElement);
+    if (existing instanceof HTMLElement) {
+      unwrapNode(existing);
+      const refreshedRange = getSelectionRange({ includeStored: false });
+      if (refreshedRange) {
+        setSelectionRange(refreshedRange);
+      }
+      return true;
+    }
+    const currentBlock = getCurrentBlock();
+    const selectionText = getSelectionRangeText(range).trim();
+    const blockText = getNodeText(currentBlock).trim();
+    if (currentBlock instanceof HTMLElement && selectionText && selectionText === blockText) {
+      currentBlock.innerHTML = `<code data-ff-inline-code="true">${escapeHtml(selectionText)}</code>`;
+      selectNodeContents(currentBlock);
+      return true;
+    }
+    return wrapSelection("code", { "data-ff-inline-code": "true" });
+  }
+
+  function toggleCodeBlock() {
+    if (isRootCodeBlockMode()) {
+      clearRootCodeBlockMode(getText());
+      return true;
+    }
+    const currentBlock = getCurrentBlock();
+    if (!(currentBlock instanceof HTMLElement)) {
+      return false;
+    }
+    const currentText = getNodeText(currentBlock);
+    setRootCodeBlockMode(currentText);
+    return true;
+  }
+
+  function findCurrentUnorderedList() {
+    const fromSelection = getClosestWithinSelection("ul");
+    if (fromSelection instanceof HTMLElement) {
+      return fromSelection;
+    }
+    const currentBlock = getCurrentBlock();
+    const fromBlock = currentBlock?.closest?.("ul");
+    if (fromBlock instanceof HTMLElement) {
+      return fromBlock;
+    }
+    const lists = element.querySelectorAll("ul");
+    return lists.length ? lists[lists.length - 1] : null;
+  }
+
+  function toggleTaskList() {
+    const currentTaskList = getClosestWithinSelection("ul[data-ff-task-list='true']");
+    if (currentTaskList instanceof HTMLElement) {
+      clearTaskListAttributes(currentTaskList);
+      return true;
+    }
+    if (!exec("insertUnorderedList")) {
+      return false;
+    }
+    const list = findCurrentUnorderedList();
+    return markListAsTaskList(list);
+  }
+
+  function insertHorizontalRule() {
+    return insertHtml('<hr data-ff-divider="true"><div><br></div>');
+  }
+
+  function insertTable({ rows = 3, columns = 3 } = {}) {
+    const rowCount = Math.max(2, Number(rows) || 3);
+    const columnCount = Math.max(2, Number(columns) || 3);
+    const thead = `<thead><tr>${Array.from({ length: columnCount }, (_, index) => `<th>列${index + 1}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${Array.from({ length: rowCount - 1 }, (_, rowIndex) => `<tr>${Array.from({ length: columnCount }, (_, columnIndex) => `<td>单元格${rowIndex + 1}-${columnIndex + 1}</td>`).join("")}</tr>`).join("")}</tbody>`;
+    return insertHtml(`<table data-ff-md-table="true">${thead}${tbody}</table><div><br></div>`);
   }
 
   function applyAlignment(value = "left") {
@@ -652,25 +1157,67 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     if (trigger === "#") {
       block.textContent = "";
       selectNodeContents(block);
-      applyFormatBlock("h1");
+      setBlockType("heading-1");
       return true;
     }
     if (trigger === "##") {
       block.textContent = "";
       selectNodeContents(block);
-      applyFormatBlock("h2");
+      setBlockType("heading-2");
+      return true;
+    }
+    if (trigger === "###") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("heading-3");
+      return true;
+    }
+    if (trigger === "####") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("heading-4");
+      return true;
+    }
+    if (trigger === "#####") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("heading-5");
+      return true;
+    }
+    if (trigger === "######") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("heading-6");
+      return true;
+    }
+    if (trigger === ">") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("blockquote");
       return true;
     }
     if (trigger === "-" || trigger === "*") {
       block.textContent = "";
       selectNodeContents(block);
-      exec("insertUnorderedList");
+      replaceCurrentBlockWithList({ ordered: false, task: false });
       return true;
     }
     if (/^\d+\.$/.test(trigger)) {
       block.textContent = "";
       selectNodeContents(block);
-      exec("insertOrderedList");
+      replaceCurrentBlockWithList({ ordered: true, task: false });
+      return true;
+    }
+    if (/^(?:-|\*)\s+\[[ xX]\]$/.test(trigger)) {
+      block.textContent = "";
+      selectNodeContents(block);
+      replaceCurrentBlockWithList({ ordered: false, task: true });
+      return true;
+    }
+    if (trigger === "```") {
+      block.textContent = "";
+      selectNodeContents(block);
+      setBlockType("code-block");
       return true;
     }
     return false;
@@ -678,15 +1225,29 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
 
   function setContent(html = "", textFallback = "") {
     const safeHtml = normalizeRichHtmlInlineFontSizes(html || "", normalizeRichFontSize(element.style.fontSize, 16));
+    const trimmedHtml = safeHtml.trim();
+    if (/^<pre[\s>]/i.test(trimmedHtml) && /^<pre[\s\S]*<\/pre>$/i.test(trimmedHtml)) {
+      element.setAttribute("data-ff-code-block-root", "true");
+      element.textContent = htmlToPlainText(trimmedHtml);
+      if (!element.firstChild) {
+        element.appendChild(document.createTextNode(""));
+      }
+      return;
+    }
+    element.removeAttribute("data-ff-code-block-root");
     if (safeHtml.trim()) {
       element.innerHTML = safeHtml;
+      normalizeEditableCodeBlocks(element);
     } else {
       element.textContent = String(textFallback || "");
     }
   }
 
   function getHTML() {
-    return element.innerHTML || "";
+    if (isRootCodeBlockMode()) {
+      return `<pre data-ff-code-block="true"><code>${serializeCodeBlockPlainTextToHtml(getText())}</code></pre>`;
+    }
+    return serializeEditableCodeBlocks(element);
   }
 
   function getText() {
@@ -754,6 +1315,51 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     return true;
   }
 
+  function insertMathInline(formula = "") {
+    const source = String(formula || "").trim();
+    if (!source) {
+      return false;
+    }
+    return insertHtml(`<span data-role="math-inline">${escapeHtml(source)}</span>`);
+  }
+
+  function insertMathBlock(formula = "") {
+    const source = String(formula || "").trim();
+    if (!source) {
+      return false;
+    }
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return false;
+    }
+    range.deleteContents();
+    const fragment = document.createDocumentFragment();
+    const block = document.createElement("div");
+    block.setAttribute("data-role", "math-block");
+    block.textContent = source;
+    fragment.appendChild(block);
+    const trailingParagraph = document.createElement("div");
+    trailingParagraph.appendChild(document.createElement("br"));
+    fragment.appendChild(trailingParagraph);
+    range.insertNode(fragment);
+    collapseToEnd(trailingParagraph);
+    return true;
+  }
+
+  function updateCurrentMath(formula = "") {
+    const source = String(formula || "").trim();
+    if (!source) {
+      return false;
+    }
+    const currentMathElement = getCurrentMathElement();
+    if (!(currentMathElement instanceof HTMLElement)) {
+      return false;
+    }
+    currentMathElement.textContent = source;
+    collapseInsideMathElement(currentMathElement);
+    return true;
+  }
+
   function insertLineBreak() {
     focus();
     restoreSelection();
@@ -766,6 +1372,10 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
 
   function focus() {
     element.focus();
+  }
+
+  function blur() {
+    element.blur();
   }
 
   function deleteSelection() {
@@ -788,6 +1398,38 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     focus();
     restoreSelection();
     ensureSelection({ selectAllWhenCollapsed: false });
+    if (name === "insertMathInline") {
+      insertMathInline(value);
+      return;
+    }
+    if (name === "insertMathBlock") {
+      insertMathBlock(value);
+      return;
+    }
+    if (name === "updateCurrentMath") {
+      updateCurrentMath(value);
+      return;
+    }
+    if (name === "setBlockType") {
+      setBlockType(value);
+      return;
+    }
+    if (name === "toggleInlineCode") {
+      toggleInlineCode();
+      return;
+    }
+    if (name === "toggleTaskList") {
+      toggleTaskList();
+      return;
+    }
+    if (name === "insertHorizontalRule") {
+      insertHorizontalRule();
+      return;
+    }
+    if (name === "insertTable") {
+      insertTable(typeof value === "object" && value ? value : {});
+      return;
+    }
     if (name === "align") {
       applyAlignment(value);
       return;
@@ -903,15 +1545,44 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
   }
 
   function onKeyDown(event) {
+    const inCodeBlock = Boolean(getActiveCodeBlock());
+    const rootCodeBlock = isRootCodeBlockMode();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "enter") {
       event.preventDefault();
       onCommit?.();
       return;
     }
-    if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey && !inCodeBlock && !rootCodeBlock) {
       if (handleMarkdownShortcut()) {
         event.preventDefault();
       }
+      return;
+    }
+    if (rootCodeBlock) {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        insertPlainText("    ");
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel?.();
+        return;
+      }
+      return;
+    }
+    if (inCodeBlock && event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      insertCodeBlockText("\n");
+      return;
+    }
+    if (inCodeBlock && event.key === "Tab") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        removeLeadingIndent();
+        return;
+      }
+      insertCodeBlockText("    ");
       return;
     }
     if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.metaKey) {
@@ -922,6 +1593,15 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
       const inList = Boolean(getClosestWithinSelection("li"));
       if (inList) {
+        return;
+      }
+      const currentBlock = getCurrentBlock();
+      if (
+        currentBlock instanceof HTMLElement &&
+        (/^H[1-6]$/.test(currentBlock.tagName) || currentBlock.tagName === "BLOCKQUOTE")
+      ) {
+        event.preventDefault();
+        insertParagraphAfterNode(currentBlock);
         return;
       }
       event.preventDefault();
@@ -980,6 +1660,9 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
   }
 
   function onPaste(event) {
+    if (element.getAttribute("data-ff-managed-paste") === "true") {
+      return;
+    }
     if (!event.clipboardData) {
       return;
     }
@@ -988,12 +1671,31 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     if (!html && !text) {
       return;
     }
+    if (isRootCodeBlockMode()) {
+      event.preventDefault();
+      exec("insertText", text || htmlToPlainText(html || ""));
+      return;
+    }
+    if (getActiveCodeBlock()) {
+      event.preventDefault();
+      insertCodeBlockText(text || htmlToPlainText(html || ""));
+      return;
+    }
     event.preventDefault();
     if (html) {
       insertHtml(normalizeRichHtmlInlineFontSizes(html, normalizeRichFontSize(element.style.fontSize, 16)));
       return;
     }
     exec("insertText", text);
+  }
+
+  function onInputEvent(event) {
+    normalizeEditableCodeBlocks(element);
+    onInput?.(event);
+  }
+
+  function onBlurEvent(event) {
+    onBlur?.(event);
   }
 
   function onSelectionChange() {
@@ -1006,6 +1708,8 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
 
   element.addEventListener("keydown", onKeyDown);
   element.addEventListener("paste", onPaste);
+  element.addEventListener("input", onInputEvent);
+  element.addEventListener("blur", onBlurEvent);
   document.addEventListener("selectionchange", onSelectionChange);
 
   return {
@@ -1016,8 +1720,10 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
     getSelectionHtml,
     getSelectionText,
     focus,
+    blur,
     command,
     deleteSelection,
+    selectAll,
     captureSelection() {
       storeSelection();
     },
@@ -1035,8 +1741,12 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
       const italic = Boolean(range && getUniformAncestor(range, isItalicElement));
       const underline = Boolean(range && getUniformAncestor(range, isUnderlineElement));
       const strike = Boolean(range && getUniformAncestor(range, isStrikeElement));
+      const inlineCode = Boolean(range && getUniformAncestor(range, isInlineCodeElement));
       const unorderedList = Boolean(range && getUniformAncestor(range, (node) => isListContainer(node, "ul")));
       const orderedList = Boolean(range && getUniformAncestor(range, (node) => isListContainer(node, "ol")));
+      const taskList = Boolean(range && getUniformAncestor(range, isTaskListElement));
+      const codeBlock = Boolean(range && getUniformAncestor(range, isCodeBlockElement));
+      const blockquote = Boolean(range && getUniformAncestor(range, isBlockquoteElement));
       let color = "";
       const colorTarget = range
         ? getUniformAncestor(range, (node) => node instanceof HTMLElement && Boolean(node.style?.color))
@@ -1053,30 +1763,59 @@ export function createRichTextAdapter(host, { onCommit, onCancel, onSelectionCha
           fontSize = Math.round(parsed);
         }
       }
-      const block =
-        getClosestWithinSelection("h1, h2, h3, h4, h5, h6, p, div, section, article, li")?.tagName?.toLowerCase() || "";
+      const blockElement =
+        getClosestWithinSelection("pre, blockquote, table, h1, h2, h3, h4, h5, h6, p, div, section, article, li") || null;
+      const block = blockElement?.tagName?.toLowerCase() || "";
+      let blockType = "paragraph";
+      if (codeBlock) {
+        blockType = "code-block";
+      } else if (blockquote) {
+        blockType = "blockquote";
+      } else if (taskList) {
+        blockType = "task-list";
+      } else if (orderedList) {
+        blockType = "ordered-list";
+      } else if (unorderedList) {
+        blockType = "unordered-list";
+      } else if (block === "table") {
+        blockType = "table";
+      } else if (/^h[1-6]$/.test(block)) {
+        blockType = `heading-${block.slice(1)}`;
+      }
       const alignTarget = getClosestWithinSelection("li, h1, h2, h3, h4, h5, h6, p, div, section, article");
       const style = alignTarget instanceof HTMLElement ? alignTarget.style.textAlign : "";
       const align = style === "center" || style === "right" ? style : "left";
+      const currentMathElement = getCurrentMathElement();
+      const currentMathType = getMathElementType(currentMathElement);
       return {
         bold,
         italic,
         underline,
         strike,
+        inlineCode,
         color,
         fontSize,
         unorderedList,
         orderedList,
+        taskList,
+        codeBlock,
+        blockquote,
         block,
+        blockType,
         align,
         highlight: highlightState.highlight,
         highlightColor: highlightState.highlightColor,
+        canEditMath: Boolean(currentMathType),
+        currentMathType,
+        currentMathSource: currentMathElement ? getNodeText(currentMathElement) : "",
       };
     },
     getSelectionSnapshot,
     destroy() {
       element.removeEventListener("keydown", onKeyDown);
       element.removeEventListener("paste", onPaste);
+      element.removeEventListener("input", onInputEvent);
+      element.removeEventListener("blur", onBlurEvent);
       document.removeEventListener("selectionchange", onSelectionChange);
     },
   };
