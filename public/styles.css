@@ -2312,11 +2312,9 @@ body.is-resizing * {
 .code-block {
   margin: 14px 0;
   overflow: hidden;
-  border: 1px solid rgb(var(--app-accent-rgb) / 0.16);
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgb(var(--app-accent-rgb) / 0.08), rgba(255, 255, 255, 0.012)),
-    rgb(var(--theme-code-surface-rgb) / 0.98);
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 12px;
+  background: #f8fafc;
 }
 
 .code-toolbar {
@@ -2325,12 +2323,12 @@ body.is-resizing * {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+  background: #f1f5f9;
 }
 
 .code-lang {
-  color: var(--text-2);
+  color: #334155;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -2338,10 +2336,10 @@ body.is-resizing * {
 
 .code-copy-btn {
   padding: 7px 10px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid rgba(203, 213, 225, 0.95);
   border-radius: 999px;
-  color: var(--text-1);
-  background: rgba(255, 255, 255, 0.05);
+  color: #334155;
+  background: #ffffff;
 }
 
 .code-block pre {
@@ -6400,8 +6398,8 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 .canvas2d-rich-item pre {
   padding: 0.6em 0.8em;
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: #f8fafc;
+  border: 1px solid rgba(203, 213, 225, 0.95);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -6410,8 +6408,8 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 .canvas-rich-editor[data-ff-code-block-root="true"] {
   padding: 0.6em 0.8em;
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: #f8fafc;
+  border: 1px solid rgba(203, 213, 225, 0.95);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -7264,6 +7262,230 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 }
 
 .canvas2d-rich-display.is-hidden {
+  display: none !important;
+}
+
+.canvas2d-code-block-display {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.canvas2d-code-block-display.is-hidden {
+  display: none !important;
+}
+
+.canvas2d-code-block-item {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 12px;
+  background: #f8fafc;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  pointer-events: auto;
+}
+
+.canvas2d-code-block-item.is-selected {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+.canvas2d-code-block-item.is-hover:not(.is-selected) {
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.5);
+}
+
+.canvas2d-code-block-item.is-collapsed .canvas2d-code-block-body {
+  display: none;
+}
+
+.canvas2d-code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: var(--code-block-header-height, 34px);
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+  background: #f1f5f9;
+}
+
+.canvas2d-code-block-language {
+  color: #334155;
+  font: 600 0.74em/1.1 "Segoe UI", "PingFang SC", sans-serif;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.canvas2d-code-block-copy {
+  margin-left: auto;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  font: 600 0.72em/1 "Segoe UI", "PingFang SC", sans-serif;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.canvas2d-code-block-body {
+  display: grid;
+  grid-template-columns: var(--code-block-gutter-width, 0px) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+}
+
+.canvas2d-code-block-body.is-mermaid-preview {
+  display: block;
+}
+
+.canvas2d-code-block-gutter {
+  display: grid;
+  grid-auto-rows: minmax(1.55em, auto);
+  align-content: start;
+  padding: var(--code-block-padding-y, 10px) 8px var(--code-block-padding-y, 10px) 0;
+  border-right: 1px solid rgba(226, 232, 240, 0.95);
+  color: #94a3b8;
+  text-align: right;
+  user-select: none;
+}
+
+.canvas2d-code-block-codewrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--code-block-padding-y, 10px) var(--code-block-padding-x, 12px);
+  overflow: visible;
+}
+
+.canvas2d-code-block-pre {
+  margin: 0;
+  white-space: pre;
+  color: #0f172a;
+}
+
+.canvas2d-code-block-item.is-wrap .canvas2d-code-block-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.canvas2d-code-block-pre code,
+.canvas-code-block-editor .cm-content {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.canvas2d-code-block-pre .token.comment,
+.canvas2d-code-block-pre .token.prolog,
+.canvas2d-code-block-pre .token.doctype,
+.canvas2d-code-block-pre .token.cdata {
+  color: #64748b;
+}
+
+.canvas2d-code-block-pre .token.keyword,
+.canvas2d-code-block-pre .token.operator,
+.canvas2d-code-block-pre .token.atrule {
+  color: #7c3aed;
+}
+
+.canvas2d-code-block-pre .token.string,
+.canvas2d-code-block-pre .token.char,
+.canvas2d-code-block-pre .token.attr-value {
+  color: #0f766e;
+}
+
+.canvas2d-code-block-pre .token.number,
+.canvas2d-code-block-pre .token.boolean,
+.canvas2d-code-block-pre .token.constant {
+  color: #b45309;
+}
+
+.canvas2d-code-block-pre .token.function,
+.canvas2d-code-block-pre .token.class-name,
+.canvas2d-code-block-pre .token.property {
+  color: #2563eb;
+}
+
+.canvas2d-code-block-pre .token.punctuation {
+  color: #334155;
+}
+
+.canvas2d-code-block-mermaid-preview {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  padding: 16px;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.canvas2d-code-block-mermaid-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.canvas2d-code-block-mermaid-error {
+  color: #991b1b;
+  font: 600 13px/1.4 "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.canvas-code-block-editor {
+  position: absolute;
+  z-index: 45;
+  box-sizing: border-box;
+  padding: 14px 0 14px 0;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.canvas-code-block-editor.is-hidden {
+  display: none !important;
+}
+
+.canvas-code-block-editor .cm-editor,
+.canvas-code-block-editor .cm-scroller {
+  height: 100%;
+}
+
+.canvas-code-block-editor .cm-scroller {
+  font-size: var(--code-editor-font-size, 16px);
+}
+
+.canvas-code-block-editor-textarea {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: #0f172a;
+  font: 500 var(--code-editor-font-size, 16px)/1.55 "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+
+.canvas-code-block-toolbar {
+  position: absolute;
+  z-index: 46;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+}
+
+.canvas-code-block-toolbar.is-hidden {
   display: none !important;
 }
 

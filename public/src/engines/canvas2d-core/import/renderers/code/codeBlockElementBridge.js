@@ -25,7 +25,7 @@ export function buildCodeBlockElementFromRenderOperation(operation = {}, options
           language: String(structure.language || element.language || ""),
           theme: String(element.theme || structure.theme || "default"),
         },
-        text: String(structure.code || element.text || ""),
+        text: String(structure.code || element.code || element.text || ""),
       },
       sourceMeta,
     },

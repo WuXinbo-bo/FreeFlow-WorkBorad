@@ -102,26 +102,36 @@ function toScreenRect(item, view) {
 function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
   const sceneMetrics = getStructuredCodeSceneMetrics(item);
   const { x, y, width, height } = toScreenRect(item, view);
+  const hideReadyTextForOverlay =
+    typeof document !== "undefined" && document.documentElement?.dataset?.canvasCodeBlockOverlay === "1";
   const paddingX = scaleSceneValue(view, sceneMetrics.paddingX);
   const paddingY = scaleSceneValue(view, sceneMetrics.paddingY);
   const lineHeight = scaleSceneValue(view, 20, { min: 14 });
   const lines = String(item?.plainText || item?.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   const language = String(item?.language || "").trim().toUpperCase();
   const hasLanguage = Boolean(language);
+  const headerHeight = hasLanguage ? scaleSceneValue(view, 22, { min: 16 }) : 0;
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, scaleSceneValue(view, 14));
-  // Keep structured codeBlock visual aligned with markdown <pre> style.
-  ctx.fillStyle = "rgba(15, 23, 42, 0.06)";
+  // Use an opaque light theme in canvas fallback mode to avoid dark tinting over dark stage backgrounds.
+  ctx.fillStyle = "rgba(248, 250, 252, 0.99)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.32)";
+  ctx.strokeStyle = "rgba(203, 213, 225, 0.95)";
   ctx.lineWidth = 1;
   ctx.stroke();
+  if (hasLanguage) {
+    ctx.save();
+    drawRoundedRectPath(ctx, x, y, width, Math.max(1, headerHeight), scaleSceneValue(view, 14));
+    ctx.fillStyle = "rgba(241, 245, 249, 0.99)";
+    ctx.fill();
+    ctx.restore();
+  }
   const fontPx = Math.max(1, scaleSceneValue(view, Number(item?.fontSize || 16), { min: 12 }));
-  ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
   ctx.font = `${fontPx}px Consolas, "Courier New", monospace`;
   ctx.textBaseline = "top";
   const labelFontPx = Math.max(1, scaleSceneValue(view, 11, { min: 9 }));
-  const labelHeight = hasLanguage ? labelFontPx + scaleSceneValue(view, 6) : 0;
+  const labelHeight = hasLanguage ? Math.max(headerHeight, labelFontPx + scaleSceneValue(view, 6)) : 0;
   const contentLeft = x + paddingX;
   const contentTop = y + paddingY + labelHeight;
   const contentWidth = Math.max(1, width - paddingX * 2);
@@ -129,7 +139,7 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
   const maxVisibleLines = Math.max(1, Math.floor((contentBottom - contentTop) / lineHeight));
   const wrappedLines = buildWrappedCodeLines(ctx, lines, contentWidth);
   if (hasLanguage) {
-    ctx.fillStyle = "rgba(71, 85, 105, 0.9)";
+    ctx.fillStyle = "rgba(51, 65, 85, 0.95)";
     ctx.font = `600 ${labelFontPx}px "Segoe UI", sans-serif`;
     ctx.fillText(language, contentLeft, y + scaleSceneValue(view, sceneMetrics.languageLabelOffsetY));
     ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
@@ -139,9 +149,11 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
   ctx.beginPath();
   ctx.rect(contentLeft, contentTop, contentWidth, Math.max(1, contentBottom - contentTop));
   ctx.clip();
-  wrappedLines.slice(0, maxVisibleLines).forEach((line, index) => {
-    ctx.fillText(String(line || ""), contentLeft, contentTop + index * lineHeight);
-  });
+  if (!hideReadyTextForOverlay) {
+    wrappedLines.slice(0, maxVisibleLines).forEach((line, index) => {
+      ctx.fillText(String(line || ""), contentLeft, contentTop + index * lineHeight);
+    });
+  }
   ctx.restore();
   helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
   if (selected) {

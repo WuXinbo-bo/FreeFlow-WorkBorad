@@ -1,5 +1,5 @@
 import { normalizeTextElement } from "../../elements/text.js";
-import { estimateCodeBlockSize, normalizeCodeBlockElement } from "../../elements/codeBlock.js";
+import { normalizeCodeBlockElement, updateCodeBlockElement } from "../../elements/codeBlock.js";
 import { normalizeTableElement, normalizeTableStructure } from "../../elements/table.js";
 import { normalizeMathElement } from "../../elements/math.js";
 import {
@@ -132,17 +132,37 @@ function applyTaskListEdit(item, payload) {
 }
 
 function applyCodeBlockEdit(item, payload) {
-  const text = String(payload.text ?? item.text ?? "");
-  const language = String(payload.language ?? item.language ?? "");
-  const size = estimateCodeBlockSize(text, Number(item.fontSize) || 16);
-  return normalizeCodeBlockElement({
-    ...item,
-    text,
-    plainText: text,
-    language,
-    width: payload.width ?? size.width,
-    height: payload.height ?? size.height,
-  });
+  const code = String(payload.code ?? payload.text ?? item.code ?? item.text ?? "");
+  return updateCodeBlockElement(
+    item,
+    {
+      code,
+      text: code,
+      plainText: code,
+      language: String(payload.language ?? item.language ?? ""),
+      width: payload.width ?? item.width,
+      height: payload.height ?? item.height,
+      wrap: Object.prototype.hasOwnProperty.call(payload, "wrap") ? Boolean(payload.wrap) : item.wrap,
+      showLineNumbers: Object.prototype.hasOwnProperty.call(payload, "showLineNumbers")
+        ? Boolean(payload.showLineNumbers)
+        : item.showLineNumbers,
+      headerVisible: Object.prototype.hasOwnProperty.call(payload, "headerVisible")
+        ? Boolean(payload.headerVisible)
+        : item.headerVisible,
+      collapsed: Object.prototype.hasOwnProperty.call(payload, "collapsed")
+        ? Boolean(payload.collapsed)
+        : item.collapsed,
+      autoHeight: Object.prototype.hasOwnProperty.call(payload, "autoHeight")
+        ? Boolean(payload.autoHeight)
+        : item.autoHeight,
+      tabSize: payload.tabSize ?? item.tabSize,
+      previewMode: payload.previewMode ?? item.previewMode,
+      fontSize: payload.fontSize ?? item.fontSize,
+    },
+    {
+      remeasure: true,
+    }
+  );
 }
 
 function applyTableEdit(item, payload) {
