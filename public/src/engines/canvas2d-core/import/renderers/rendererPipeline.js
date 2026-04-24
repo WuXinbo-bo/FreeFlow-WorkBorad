@@ -318,15 +318,40 @@ function mergeRenderResults(results, renderInput) {
       meta[entry.rendererId] = { ...normalized.meta };
     }
   });
+  const sortedOperations = sortOperationsBySourceOrder(operations);
   return {
     planId: `${results.map((entry) => entry.rendererId).join("+")}:${renderInput.descriptorId || "render-plan"}`,
     kind: "element-render-plan",
     payloadKind: renderInput.kind || RENDER_PAYLOAD_KINDS.UNKNOWN,
     rendererId: results[0]?.rendererId || "",
-    operations,
+    operations: sortedOperations,
     stats,
     meta,
   };
+}
+
+function sortOperationsBySourceOrder(operations = []) {
+  return (Array.isArray(operations) ? operations : [])
+    .map((operation, index) => ({
+      operation,
+      index,
+      sourceOrder: Number(operation?.sourceOrder),
+      fallbackOrder: Number(operation?.order),
+    }))
+    .sort((left, right) => {
+      const leftHasSourceOrder = Number.isFinite(left.sourceOrder);
+      const rightHasSourceOrder = Number.isFinite(right.sourceOrder);
+      if (leftHasSourceOrder && rightHasSourceOrder && left.sourceOrder !== right.sourceOrder) {
+        return left.sourceOrder - right.sourceOrder;
+      }
+      const leftHasFallbackOrder = Number.isFinite(left.fallbackOrder);
+      const rightHasFallbackOrder = Number.isFinite(right.fallbackOrder);
+      if (leftHasFallbackOrder && rightHasFallbackOrder && left.fallbackOrder !== right.fallbackOrder) {
+        return left.fallbackOrder - right.fallbackOrder;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.operation);
 }
 
 function compareRenderers(a, b) {

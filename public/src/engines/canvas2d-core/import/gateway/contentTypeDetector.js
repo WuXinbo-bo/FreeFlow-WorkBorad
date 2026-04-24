@@ -3,10 +3,16 @@ import { INPUT_ENTRY_KINDS, INPUT_SOURCE_KINDS } from "../protocols/inputDescrip
 export const DETECTED_TEXT_TYPES = Object.freeze({
   CODE: "code",
   MATH: "math",
+  MARKDOWN: "markdown",
   TABLE: "table",
   LIST: "list",
   QUOTE: "quote",
   TEXT: "text",
+});
+
+export const CODE_ENTRY_STRATEGIES = Object.freeze({
+  MARKDOWN_FENCED: "markdown-fenced",
+  NATIVE_CODE: "native-code",
 });
 
 const TYPE_PRIORITY = Object.freeze([
@@ -15,12 +21,14 @@ const TYPE_PRIORITY = Object.freeze([
   DETECTED_TEXT_TYPES.TABLE,
   DETECTED_TEXT_TYPES.LIST,
   DETECTED_TEXT_TYPES.QUOTE,
+  DETECTED_TEXT_TYPES.MARKDOWN,
   DETECTED_TEXT_TYPES.TEXT,
 ]);
 
 const BASE_SCORES = Object.freeze({
   [DETECTED_TEXT_TYPES.CODE]: 80,
   [DETECTED_TEXT_TYPES.MATH]: 60,
+  [DETECTED_TEXT_TYPES.MARKDOWN]: 36,
   [DETECTED_TEXT_TYPES.TABLE]: 45,
   [DETECTED_TEXT_TYPES.LIST]: 25,
   [DETECTED_TEXT_TYPES.QUOTE]: 20,
@@ -29,12 +37,14 @@ const BASE_SCORES = Object.freeze({
 
 const STRONG_SIGNAL_BONUS = 20;
 
-export function detectTextContentType(value) {
+export function detectTextContentType(value, options = {}) {
+  const normalizedOptions = normalizeDetectionOptions(options);
   const preprocessed = preprocessRawText(value);
   const features = extractGlobalFeatures(preprocessed);
   const candidates = [
     detectCode(preprocessed, features),
     detectMath(preprocessed, features),
+    detectMarkdown(preprocessed, features),
     detectTable(preprocessed, features),
     detectList(preprocessed, features),
     detectQuote(preprocessed, features),
@@ -42,7 +52,7 @@ export function detectTextContentType(value) {
   ];
 
   const winner = resolveCandidates(candidates);
-  const mapping = mapDetectedTypeToEntry(winner.type);
+  const mapping = mapDetectedTypeToEntry(winner.type, normalizedOptions);
 
   return {
     type: winner.type,
@@ -80,6 +90,7 @@ export function preprocessRawText(value) {
 
 export function extractGlobalFeatures(preprocessed) {
   const text = preprocessed.text;
+
   const lines = preprocessed.lines;
   const nonEmptyLines = preprocessed.nonEmptyLines;
   const totalChars = text.length;
@@ -121,56 +132,19 @@ function detectCode(preprocessed, features) {
     return createCandidate(DETECTED_TEXT_TYPES.CODE, 0, "empty", false);
   }
 
-  let score = BASE_SCORES.code;
+  const fencedTripleQuotes = /^\s*'''[\w-]*\s*\n[\s\S]*\n'''(?:\s*)$/.test(text);
+  const matched = fencedTripleQuotes;
+  const score = matched ? BASE_SCORES.code + 40 : Math.max(BASE_SCORES.code - 55, 0);
   const reasons = [];
-  let strongSignal = false;
-
-  if (/^\s*```[\w-]*\s*$/m.test(text)) {
-    score += 30;
-    reasons.push("fenced-code");
-    strongSignal = true;
+  if (fencedTripleQuotes) {
+    reasons.push("fenced-code-triple-quotes");
   }
-  if (/^#!\s*\/.+/.test(text)) {
-    score += 20;
-    reasons.push("shebang");
-    strongSignal = true;
-  }
-
-  const keywordHits = countPattern(
-    text,
-    /\b(function|const|let|var|class|return|import|export|from|if|else|for|while|switch|case|try|catch|await|async|def|lambda|raise|except|elif|SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|public|private|static|void|new|package|interface|enum|struct)\b/g
-  );
-  if (keywordHits > 0) {
-    score += Math.min(keywordHits, 6) * 5;
-    reasons.push(`keyword-hits:${keywordHits}`);
-  }
-
-  const punctuationDensity = countPattern(text, /[{}()[\];:=<>]/g);
-  if (punctuationDensity >= 6) {
-    score += 10;
-    reasons.push("punctuation-density");
-  }
-  if (/=>|::|->|==|!=|<=|>=/.test(text)) {
-    score += 10;
-    reasons.push("operator-signature");
-  }
-  if (/^\s{2,}\S+/m.test(text) || /^\t+\S+/m.test(text)) {
-    score += 15;
-    reasons.push("indent-structure");
-  }
-  if (features.nonEmptyLineCount >= 3 && punctuationDensity >= 4) {
-    score += 8;
-    reasons.push("multiline-structure");
-  }
-
-  score -= features.naturalLanguagePenalty;
-  const matched = strongSignal || score >= 90;
   return createCandidate(
     DETECTED_TEXT_TYPES.CODE,
-    matched ? score : Math.max(score - 40, 0),
+    score,
     reasons.join(",") || "no-code-signature",
     matched,
-    strongSignal ? "strong-code-signal" : "scored-code-signal"
+    matched ? "strong-code-signal" : "scored-code-signal"
   );
 }
 
@@ -180,53 +154,32 @@ function detectMath(preprocessed, features) {
     return createCandidate(DETECTED_TEXT_TYPES.MATH, 0, "empty", false);
   }
 
-  let score = BASE_SCORES.math;
   const reasons = [];
-  let strongSignal = false;
-
-  if (/^\$\$(.|\n)+\$\$$/.test(text) || /^\$(.|\n)+\$$/.test(text) || /^\\\((.|\n)+\\\)$/.test(text) || /^\\\[(.|\n)+\\\]$/.test(text)) {
-    score += 25;
-    reasons.push("latex-wrapper");
-    strongSignal = true;
+  const trimmed = text.trim();
+  const inlineDollarWrapped = /^\$[^$\n]+\$$/.test(trimmed);
+  const inlineParenWrapped = /^\\\([^()\n]+\\\)$/.test(trimmed);
+  const blockDollarWrapped = /^\$\$[\s\S]+\$\$(?:\s*)$/.test(trimmed);
+  const blockBracketWrapped = /^\\\[[\s\S]+\\\](?:\s*)$/.test(trimmed);
+  const matched = inlineDollarWrapped || inlineParenWrapped || blockDollarWrapped || blockBracketWrapped;
+  const score = matched ? BASE_SCORES.math + 35 : Math.max(BASE_SCORES.math - 45, 0);
+  if (inlineDollarWrapped) {
+    reasons.push("inline-dollar-wrapper");
   }
-  if (/^\\begin\{([a-z*]+)\}(.|\n)+\\end\{\1\}$/.test(text)) {
-    score += 25;
-    reasons.push("latex-environment");
-    strongSignal = true;
+  if (inlineParenWrapped) {
+    reasons.push("inline-paren-wrapper");
   }
-
-  const commandHits = countPattern(
-    text,
-    /\\(frac|sqrt|sum|int|prod|alpha|beta|gamma|theta|lambda|pi|sigma|Delta|partial|begin|end|left|right)/g
-  );
-  if (commandHits > 0) {
-    score += Math.min(commandHits, 5) * 5;
-    reasons.push(`latex-commands:${commandHits}`);
+  if (blockDollarWrapped) {
+    reasons.push("block-dollar-wrapper");
   }
-
-  const mathSymbolHits = countPattern(text, /[=+\-*/^_{}[\]<>]|∑|∫|√|∞|≈|≠|≤|≥|±|×|÷/g);
-  const mathSymbolRatio = text.length ? mathSymbolHits / text.length : 0;
-  if (mathSymbolRatio >= 0.15) {
-    score += 12;
-    reasons.push("math-symbol-density");
+  if (blockBracketWrapped) {
+    reasons.push("block-bracket-wrapper");
   }
-  if (countPattern(text, /[_^]/g) >= 1 && /[{}]/.test(text)) {
-    score += 10;
-    reasons.push("super-sub-script");
-  }
-  if (countPattern(text, /=/g) >= 1 && countPattern(text, /[(){}\[\]]/g) >= 2) {
-    score += 8;
-    reasons.push("equation-structure");
-  }
-
-  score -= features.naturalLanguagePenalty;
-  const matched = strongSignal || score >= 80;
   return createCandidate(
     DETECTED_TEXT_TYPES.MATH,
-    matched ? score : Math.max(score - 35, 0),
+    score,
     reasons.join(",") || "no-math-signature",
     matched,
-    strongSignal ? "strong-math-signal" : "scored-math-signal"
+    matched ? "strong-math-signal" : "scored-math-signal"
   );
 }
 
@@ -275,6 +228,76 @@ function detectTable(preprocessed, features) {
     reasons.join(",") || "no-table-signature",
     matched,
     strongSignal ? "strong-table-signal" : "scored-table-signal"
+  );
+}
+
+function detectMarkdown(preprocessed, features) {
+  const text = preprocessed.text;
+  if (!text) {
+    return createCandidate(DETECTED_TEXT_TYPES.MARKDOWN, 0, "empty", false);
+  }
+
+  let score = BASE_SCORES.markdown;
+  const reasons = [];
+  let strongSignal = false;
+
+  if (/^\s{0,3}#{1,6}\s+\S+/m.test(text)) {
+    score += 18;
+    reasons.push("heading-syntax");
+    strongSignal = true;
+  }
+  if (/^\s{0,3}(?:---|\*\*\*|___)\s*$/m.test(text)) {
+    score += 12;
+    reasons.push("horizontal-rule");
+  }
+  if (/\[[^\]]+\]\((?:[^()\s]+|<[^>]+>)\)/.test(text)) {
+    score += 14;
+    reasons.push("markdown-link");
+  }
+  if (/(^|[^\w])(?:\*\*[^*\n]+\*\*|__[^_\n]+__)(?!\w)/.test(text)) {
+    score += 12;
+    reasons.push("strong-emphasis");
+  }
+  if (/(^|[^\w])(?:\*[^*\n]+\*|_[^_\n]+_)(?!\w)/.test(text)) {
+    score += 8;
+    reasons.push("emphasis");
+  }
+  if (/`[^`\n]+`/.test(text)) {
+    score += 8;
+    reasons.push("inline-code");
+  }
+  if (/^\s*>+\s+\S+/m.test(text)) {
+    score += 8;
+    reasons.push("blockquote");
+  }
+  if (/^\s*[-*+]\s+\[[ xX]\]\s+\S+/m.test(text)) {
+    score += 12;
+    reasons.push("task-list");
+    strongSignal = true;
+  }
+  if (/^\|.+\|\s*$/m.test(text) && /^\s*\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?\s*$/m.test(text)) {
+    score += 16;
+    reasons.push("gfm-table");
+    strongSignal = true;
+  }
+  if (/^\s*```[\w-]*\s*$/m.test(text) && features.nonEmptyLineCount >= 2) {
+    score += 10;
+    reasons.push("fenced-block");
+    strongSignal = true;
+  }
+  if (/^\[\^[^\]]+\]:/m.test(text)) {
+    score += 10;
+    reasons.push("footnote");
+  }
+
+  score -= Math.min(features.naturalLanguagePenalty, 8);
+  const matched = strongSignal || score >= 68;
+  return createCandidate(
+    DETECTED_TEXT_TYPES.MARKDOWN,
+    matched ? score : Math.max(score - 20, 0),
+    reasons.join(",") || "no-markdown-signature",
+    matched,
+    strongSignal ? "strong-markdown-signal" : "scored-markdown-signal"
   );
 }
 
@@ -526,18 +549,26 @@ function createCandidate(type, score, reason, matched, matchedRule = "") {
   };
 }
 
-function mapDetectedTypeToEntry(type) {
+function mapDetectedTypeToEntry(type, options) {
   switch (type) {
     case DETECTED_TEXT_TYPES.CODE:
+      if (options.codeEntryStrategy === CODE_ENTRY_STRATEGIES.NATIVE_CODE) {
+        return {
+          entryKind: INPUT_ENTRY_KINDS.CODE,
+          sourceKind: INPUT_SOURCE_KINDS.CODE,
+        };
+      }
       return {
-        entryKind: INPUT_ENTRY_KINDS.CODE,
-        sourceKind: INPUT_SOURCE_KINDS.CODE,
+        entryKind: INPUT_ENTRY_KINDS.MARKDOWN,
+        sourceKind: INPUT_SOURCE_KINDS.MARKDOWN,
       };
     case DETECTED_TEXT_TYPES.MATH:
+      // Freeze native math entry path: route explicit $...$ through markdown styling only.
       return {
-        entryKind: INPUT_ENTRY_KINDS.MATH,
-        sourceKind: INPUT_SOURCE_KINDS.MATH_FORMULA,
+        entryKind: INPUT_ENTRY_KINDS.MARKDOWN,
+        sourceKind: INPUT_SOURCE_KINDS.MARKDOWN,
       };
+    case DETECTED_TEXT_TYPES.MARKDOWN:
     case DETECTED_TEXT_TYPES.TABLE:
     case DETECTED_TEXT_TYPES.LIST:
     case DETECTED_TEXT_TYPES.QUOTE:
@@ -551,6 +582,14 @@ function mapDetectedTypeToEntry(type) {
         sourceKind: INPUT_SOURCE_KINDS.PLAIN_TEXT,
       };
   }
+}
+
+function normalizeDetectionOptions(options) {
+  const strategy = String(options?.codeEntryStrategy || "").trim().toLowerCase();
+  if (strategy === CODE_ENTRY_STRATEGIES.NATIVE_CODE) {
+    return { codeEntryStrategy: CODE_ENTRY_STRATEGIES.NATIVE_CODE };
+  }
+  return { codeEntryStrategy: CODE_ENTRY_STRATEGIES.MARKDOWN_FENCED };
 }
 
 function serializeFeatures(features) {

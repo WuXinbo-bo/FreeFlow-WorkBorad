@@ -5,6 +5,7 @@ import {
 } from "../../protocols/inputDescriptor.js";
 import { createCanonicalDocument, createCanonicalNode } from "../../canonical/canonicalDocument.js";
 import { htmlToPlainText, sanitizeHtml } from "../../../utils.js";
+import { detectTextContentType, DETECTED_TEXT_TYPES } from "../../gateway/contentTypeDetector.js";
 
 export const HTML_PARSER_ID = "html-parser";
 
@@ -401,8 +402,11 @@ function convertBlockNode(node, context) {
     return [convertList(node, context)];
   }
   if (tag === "pre") {
-    context.stats.codeBlockCount += 1;
-    return [convertCodeBlock(node, context)];
+    if (shouldTreatPreAsCodeBlock(node)) {
+      context.stats.codeBlockCount += 1;
+      return [convertCodeBlock(node, context)];
+    }
+    return [convertPreformattedParagraph(node, context)];
   }
   if (tag === "hr") {
     return [
@@ -552,7 +556,7 @@ function convertListItemContent(children, context) {
 }
 
 function convertCodeBlock(node, context) {
-  const codeNode = findFirstDescendant(node, "code");
+  const codeNode = findPrimaryCodeDescendant(node);
   const language = readCodeLanguage(codeNode || node);
   const text = extractTextContent(codeNode || node, { preserveWhitespace: true });
   return createCanonicalNode({
@@ -560,6 +564,15 @@ function convertCodeBlock(node, context) {
     attrs: language ? { language } : {},
     text,
     meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, "pre"),
+  });
+}
+
+function convertPreformattedParagraph(node, context) {
+  const plainText = extractTextContent(node, { preserveWhitespace: true });
+  return createCanonicalNode({
+    type: "paragraph",
+    meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, "pre-text"),
+    content: buildTextAndBreakNodes(plainText),
   });
 }
 
@@ -865,6 +878,34 @@ function trimInlineWhitespace(content) {
   return result.filter((node) => node.type !== "text" || node.text);
 }
 
+function expandInlineNewlines(content) {
+  const expanded = [];
+  (Array.isArray(content) ? content : []).forEach((node) => {
+    if (!node) {
+      return;
+    }
+    if (node.type !== "text" || !String(node.text || "").includes("\n")) {
+      expanded.push(node);
+      return;
+    }
+    const parts = String(node.text || "").split("\n");
+    parts.forEach((part, index) => {
+      if (part) {
+        expanded.push(
+          createCanonicalNode({
+            ...node,
+            text: part,
+          })
+        );
+      }
+      if (index < parts.length - 1) {
+        expanded.push(createCanonicalNode({ type: "hardBreak" }));
+      }
+    });
+  });
+  return trimInlineWhitespace(expanded);
+}
+
 function hasMeaningfulInlineContent(content) {
   return (Array.isArray(content) ? content : []).some((node) => {
     if (node?.type === "text") {
@@ -890,6 +931,60 @@ function findFirstDescendant(node, tagName) {
     }
   });
   return found;
+}
+
+function findPrimaryCodeDescendant(node) {
+  const codeNode = findFirstDescendant(node, "code");
+  if (!codeNode) {
+    return null;
+  }
+  const ownText = extractTextContent(node, { preserveWhitespace: true }).trim();
+  const codeText = extractTextContent(codeNode, { preserveWhitespace: true }).trim();
+  if (!codeText) {
+    return null;
+  }
+  return ownText === codeText ? codeNode : null;
+}
+
+function shouldTreatPreAsCodeBlock(node) {
+  if (!node || node.type !== "element" || node.tagName !== "pre") {
+    return false;
+  }
+  const attrs = node.attrs || {};
+  const explicitFlag = String(attrs["data-ff-code-block"] || "").toLowerCase() === "true";
+  const primaryCodeNode = findPrimaryCodeDescendant(node);
+  const language = readCodeLanguage(node) || readCodeLanguage(findFirstDescendant(node, "code"));
+  const hasStrongLanguage = Boolean(language && !isWeakCodeLanguage(language));
+  if (explicitFlag || hasStrongLanguage) {
+    return true;
+  }
+  // Standard HTML semantics: <pre><code> should be preserved as a code block,
+  // independent from plain-text heuristic detector strictness.
+  if (primaryCodeNode) {
+    return true;
+  }
+  const text = extractTextContent(node, { preserveWhitespace: true }).trim();
+  if (!text) {
+    return false;
+  }
+  const detected = detectTextContentType(text);
+  return detected?.type === DETECTED_TEXT_TYPES.CODE;
+}
+
+function isWeakCodeLanguage(language = "") {
+  const normalized = String(language || "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "text" ||
+    normalized === "plain" ||
+    normalized === "plaintext" ||
+    normalized === "markdown" ||
+    normalized === "md" ||
+    normalized === "mdx" ||
+    normalized === "gfm" ||
+    normalized === "txt" ||
+    normalized === "none"
+  );
 }
 
 export function walkRawTree(node, visitor) {

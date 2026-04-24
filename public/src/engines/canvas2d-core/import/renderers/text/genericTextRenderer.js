@@ -1,12 +1,15 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import {
+  buildTextElementContentFields,
   estimateTextHeight,
   estimateTextWidth,
   inferHeadingFontSize,
   inlineNodesToHtml,
   inlineNodesToPlainText,
+  resolveImportedTextBoxLayout,
 } from "./sharedTextRenderUtils.js";
+import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const GENERIC_TEXT_RENDERER_ID = "generic-text-renderer";
 
@@ -32,9 +35,12 @@ export function createGenericTextRenderer(options = {}) {
         reason: blocks.length >= 3 ? "multiple-text-blocks" : "text-block-available",
       };
     },
-    async render({ renderInput }) {
+    async render({ renderInput, pipelineOutput }) {
       const blocks = collectRenderableTextBlocks(renderInput?.payload?.content || []);
-      const operations = blocks.map((block, index) => buildTextOperation(block, index, renderInput));
+      const forceWrap = shouldForceImportedWrapMode(pipelineOutput);
+      const operations = shouldAggregateBlocksAsSingleTextBox(renderInput, blocks)
+        ? [buildAggregatedTextOperation(blocks, renderInput, { forceWrap })]
+        : blocks.map((block, index) => buildTextOperation(block, index, renderInput, { forceWrap }));
       return {
         planId: `${id}:${renderInput?.descriptorId || "text-render-plan"}`,
         kind: "element-render-plan",
@@ -86,10 +92,123 @@ function collectRenderableTextBlocks(nodes = [], context = { quoteDepth: 0 }) {
   return result.filter((block) => block.plainText.trim() || block.html.trim());
 }
 
-function buildTextOperation(block, index, renderInput) {
+function shouldAggregateBlocksAsSingleTextBox(renderInput, blocks = []) {
+  if (!Array.isArray(blocks) || blocks.length <= 1) {
+    return false;
+  }
+  if (String(renderInput?.parserId || "") !== "plain-text-parser") {
+    return false;
+  }
+  return blocks.every((block) => String(block?.sourceNodeType || "") === "paragraph");
+}
+
+function buildAggregatedTextOperation(blocks = [], renderInput, options = {}) {
+  const fontSize = 20;
+  const plainText = blocks.map((block) => sanitizeText(block?.plainText || "")).join("\n\n");
+  const html = blocks.map((block) => wrapBlockHtml(block, block?.html || "")).join("");
+  const content = buildTextElementContentFields(
+    {
+      html,
+      plainText,
+      text: plainText,
+      fontSize,
+    },
+    {
+      fontSize,
+    }
+  );
+  const initialLayout = resolveImportedTextBoxLayout(content.plainText, fontSize, {
+    forceWrap: options?.forceWrap === true,
+  });
+  return {
+    type: "render-generic-text-document",
+    sourceNodeType: "paragraph",
+    blockRole: "paragraph",
+    legacyType: "text",
+    order: 0,
+    layout: {
+      strategy: "flow-stack",
+      stackIndex: 0,
+      quoteDepth: 0,
+      gap: 18,
+    },
+    element: {
+      id: createId("text"),
+      type: "text",
+      text: content.text,
+      plainText: content.plainText,
+      html: content.html,
+      richTextDocument: content.richTextDocument,
+      title: buildTextTitle(content.plainText || "文本"),
+      fontSize,
+      color: "#0f172a",
+      wrapMode: "manual",
+      textBoxLayoutMode: initialLayout.textBoxLayoutMode,
+      textResizeMode: initialLayout.textResizeMode,
+      width: initialLayout.width || estimateTextWidth(content.plainText, fontSize),
+      height: initialLayout.height || estimateTextHeight(content.plainText, fontSize),
+      x: 0,
+      y: 0,
+      locked: false,
+      structuredImport: {
+        kind: "structured-import-v1",
+        blockRole: "paragraph",
+        sourceNodeType: "paragraph",
+        listRole: "",
+        canonicalFragment: {
+          type: "doc",
+          content: blocks.map((block) => ({
+            type: String(block?.sourceNodeType || "paragraph"),
+            role: String(block?.blockRole || "paragraph"),
+            html: String(block?.html || ""),
+            plainText: sanitizeText(block?.plainText || ""),
+          })),
+        },
+      },
+    },
+    meta: {
+      descriptorId: String(renderInput?.descriptorId || ""),
+      parserId: String(renderInput?.parserId || ""),
+    },
+    sourceOrder: deriveNodeSourceOrder(blocks[0]?.node, 0),
+  };
+}
+
+function wrapParagraphHtml(html = "") {
+  const clean = String(html || "").trim();
+  return `<div>${clean || "<br>"}</div>`;
+}
+
+function wrapBlockHtml(block, html = "") {
+  const clean = String(html || "").trim() || "<br>";
+  if (block?.sourceNodeType === "heading") {
+    const level = Math.min(6, Math.max(1, Number(block?.node?.attrs?.level) || 1));
+    return `<h${level}>${clean}</h${level}>`;
+  }
+  if (block?.blockRole === "blockquote") {
+    return `<blockquote><div>${clean}</div></blockquote>`;
+  }
+  return wrapParagraphHtml(clean);
+}
+
+function buildTextOperation(block, index, renderInput, options = {}) {
   const fontSize = inferFontSize(block);
-  const plainText = sanitizeText(block.plainText || "");
-  const html = String(block.html || "");
+  const normalizedHtml = wrapBlockHtml(block, String(block.html || ""));
+  const content = buildTextElementContentFields(
+    {
+      html: normalizedHtml,
+      plainText: sanitizeText(block.plainText || ""),
+      text: sanitizeText(block.plainText || ""),
+      fontSize,
+    },
+    {
+      fontSize,
+    }
+  );
+  const plainText = content.plainText;
+  const initialLayout = resolveImportedTextBoxLayout(plainText, fontSize, {
+    forceWrap: options?.forceWrap === true,
+  });
   const title = buildTextTitle(plainText || block.blockRole || "文本");
   return {
     type: "render-generic-text-block",
@@ -106,16 +225,18 @@ function buildTextOperation(block, index, renderInput) {
     element: {
       id: createId("text"),
       type: "text",
-      text: plainText,
-      plainText,
-      html,
+      text: content.text,
+      plainText: content.plainText,
+      html: content.html,
+      richTextDocument: content.richTextDocument,
       title,
       fontSize,
       color: block.blockRole === "blockquote" ? "#475569" : "#0f172a",
       wrapMode: "manual",
-      textResizeMode: "auto-width",
-      width: estimateTextWidth(plainText, fontSize),
-      height: estimateTextHeight(plainText, fontSize),
+      textBoxLayoutMode: initialLayout.textBoxLayoutMode,
+      textResizeMode: initialLayout.textResizeMode,
+      width: initialLayout.width || estimateTextWidth(plainText, fontSize),
+      height: initialLayout.height || estimateTextHeight(plainText, fontSize),
       x: 0,
       y: 0,
       locked: false,
@@ -127,8 +248,8 @@ function buildTextOperation(block, index, renderInput) {
         canonicalFragment: {
           type: block.sourceNodeType,
           role: block.blockRole,
-          html,
-          plainText,
+          html: content.html,
+          plainText: content.plainText,
         },
       },
     },
@@ -136,6 +257,7 @@ function buildTextOperation(block, index, renderInput) {
       descriptorId: String(renderInput?.descriptorId || ""),
       parserId: String(renderInput?.parserId || ""),
     },
+    sourceOrder: deriveNodeSourceOrder(block?.node, index),
   };
 }
 
@@ -148,4 +270,9 @@ function inferFontSize(block) {
     return 18;
   }
   return 20;
+}
+
+function shouldForceImportedWrapMode(pipelineOutput) {
+  const channel = String(pipelineOutput?.descriptor?.channel || "").trim().toLowerCase();
+  return channel === "drag-drop";
 }

@@ -3,6 +3,11 @@ import { buildTextTitle, createId, sanitizeText } from "../utils.js";
 export const MATH_MIN_WIDTH = 56;
 export const MATH_MIN_HEIGHT = 28;
 export const MATH_STRUCTURED_IMPORT_KIND = "structured-import-v1";
+export const MATH_RENDER_STATES = Object.freeze({
+  READY: "ready",
+  FALLBACK: "fallback",
+  ERROR: "error",
+});
 
 export function normalizeStructuredMathMeta(value = {}) {
   if (!value || typeof value !== "object") {
@@ -18,6 +23,23 @@ export function normalizeStructuredMathMeta(value = {}) {
   };
 }
 
+function normalizeMathSourceMeta(value = {}) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const normalized = {};
+  if (value.descriptorId != null && String(value.descriptorId).trim()) {
+    normalized.descriptorId = String(value.descriptorId).trim();
+  }
+  if (value.parserId != null && String(value.parserId).trim()) {
+    normalized.parserId = String(value.parserId).trim();
+  }
+  if (value.entryId != null && String(value.entryId).trim()) {
+    normalized.entryId = String(value.entryId).trim();
+  }
+  return normalized;
+}
+
 export function createMathElement(point, formula = "", options = {}) {
   const displayMode = Boolean(options.displayMode ?? true);
   const cleanFormula = sanitizeText(formula || "").trim();
@@ -31,7 +53,7 @@ export function createMathElement(point, formula = "", options = {}) {
     sourceFormat,
     displayMode,
     fallbackText: String(options.fallbackText || buildFallbackText(cleanFormula, displayMode)),
-    renderState: String(options.renderState || (cleanFormula ? "ready" : "fallback-text")),
+    renderState: normalizeMathRenderState(options.renderState || (cleanFormula ? MATH_RENDER_STATES.READY : MATH_RENDER_STATES.FALLBACK)),
     width: size.width,
     height: size.height,
     x: Number(point?.x) || 0,
@@ -39,6 +61,7 @@ export function createMathElement(point, formula = "", options = {}) {
     locked: false,
     createdAt: Date.now(),
     structuredImport: null,
+    sourceMeta: {},
   };
 }
 
@@ -59,6 +82,18 @@ export function normalizeMathElement(element = {}) {
   );
   const cleanFormula = sanitizeText(element.formula || element.text || base.formula || "").trim();
   const size = estimateMathElementSize(cleanFormula, displayMode);
+  const structuredImport = normalizeStructuredMathMeta(element.structuredImport);
+  const sourceMeta = normalizeMathSourceMeta(element.sourceMeta);
+  const mergedSourceMeta = {
+    ...normalizeMathSourceMeta(structuredImport?.sourceMeta),
+    ...sourceMeta,
+  };
+  const resolvedStructuredImport = structuredImport
+    ? {
+      ...structuredImport,
+      sourceMeta: mergedSourceMeta,
+    }
+    : null;
   return {
     ...base,
     ...element,
@@ -69,14 +104,15 @@ export function normalizeMathElement(element = {}) {
     sourceFormat: normalizeSourceFormat(element.sourceFormat || base.sourceFormat),
     displayMode,
     fallbackText: String(element.fallbackText || buildFallbackText(cleanFormula, displayMode)),
-    renderState: String(element.renderState || base.renderState || "ready"),
+    renderState: normalizeMathRenderState(element.renderState || base.renderState || MATH_RENDER_STATES.READY),
     width: Math.max(MATH_MIN_WIDTH, Number(element.width ?? size.width) || size.width),
     height: Math.max(MATH_MIN_HEIGHT, Number(element.height ?? size.height) || size.height),
     x: Number(element.x ?? base.x) || 0,
     y: Number(element.y ?? base.y) || 0,
     locked: Boolean(element.locked ?? base.locked),
     createdAt: Number(element.createdAt) || base.createdAt,
-    structuredImport: normalizeStructuredMathMeta(element.structuredImport),
+    sourceMeta: mergedSourceMeta,
+    structuredImport: resolvedStructuredImport,
   };
 }
 
@@ -115,4 +151,18 @@ function buildFallbackText(formula = "", displayMode = true) {
     return displayMode ? "[公式]" : "[行内公式]";
   }
   return displayMode ? `$$${clean}$$` : `$${clean}$`;
+}
+
+export function normalizeMathRenderState(value = "") {
+  const state = String(value || "").trim().toLowerCase();
+  if (!state) {
+    return MATH_RENDER_STATES.READY;
+  }
+  if (state === "fallback-text" || state === "fallback_text") {
+    return MATH_RENDER_STATES.FALLBACK;
+  }
+  if (state === MATH_RENDER_STATES.READY || state === MATH_RENDER_STATES.FALLBACK || state === MATH_RENDER_STATES.ERROR) {
+    return state;
+  }
+  return MATH_RENDER_STATES.READY;
 }

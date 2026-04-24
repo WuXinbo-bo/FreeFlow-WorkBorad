@@ -1,4 +1,5 @@
 import { normalizeTextElement, TEXT_STRUCTURED_IMPORT_KIND } from "../../../elements/text.js";
+import { buildTextElementContentFields } from "../text/sharedTextRenderUtils.js";
 
 export function isTaskListTextElement(element = {}) {
   const structuredImport = element?.structuredImport;
@@ -64,12 +65,25 @@ export function updateTaskListItems(element = {}, updater) {
   };
   const plainText = buildTaskListPlainText(nextItems);
   const html = buildTaskListHtml(nextItems);
+  const content = buildTextElementContentFields(
+    {
+      html,
+      plainText,
+      text: plainText,
+      richTextDocument: null,
+      fontSize: Number(element?.fontSize) || 20,
+    },
+    {
+      fontSize: Number(element?.fontSize) || 20,
+    }
+  );
   return normalizeTextElement({
     ...element,
-    text: plainText,
-    plainText,
-    html,
-    title: plainText.split("\n").find((line) => line.trim()) || element.title || "任务列表",
+    text: content.text,
+    plainText: content.plainText,
+    html: content.html,
+    richTextDocument: content.richTextDocument,
+    title: content.plainText.split("\n").find((line) => line.trim()) || element.title || "任务列表",
     structuredImport: {
       ...element.structuredImport,
       canonicalFragment,
@@ -92,21 +106,22 @@ function buildTaskListPlainText(items = []) {
   return flattenTaskItemsForRender(items)
     .map((item) => {
       const indent = "  ".repeat(item.level || 0);
-      return `${indent}${item.checked ? "[x]" : "[ ]"} ${item.plainText || ""}`.trimEnd();
+      return `${indent}${item.checked ? "- [x]" : "- [ ]"} ${item.plainText || ""}`.trimEnd();
     })
     .join("\n");
 }
 
 function buildTaskListHtml(items = []) {
-  return `<ul>${items.map((item) => renderTaskItemHtml(item)).join("")}</ul>`;
+  return `<ul data-ff-task-list="true">${items.map((item) => renderTaskItemHtml(item)).join("")}</ul>`;
 }
 
 function renderTaskItemHtml(item) {
   const nested = Array.isArray(item.childItems) && item.childItems.length
-    ? `<ul>${item.childItems.map((child) => renderTaskItemHtml(child)).join("")}</ul>`
+    ? `<ul data-ff-task-list="true">${item.childItems.map((child) => renderTaskItemHtml(child)).join("")}</ul>`
     : "";
-  const body = `${item.checked ? "☑" : "☐"} ${item.html || escapeHtml(item.plainText || "")}`;
-  return `<li data-kind="taskItem">${body}${nested}</li>`;
+  const body = item.html || escapeHtml(item.plainText || "");
+  const marker = `<span data-ff-task-marker="true">${item.checked ? "☑" : "☐"}</span> `;
+  return `<li data-kind="taskItem" data-ff-task-item="true" data-ff-task-state="${item.checked ? "done" : "todo"}">${marker}${body}${nested}</li>`;
 }
 
 function flattenTaskItemsForRender(items = [], level = 0, result = []) {

@@ -36,6 +36,15 @@ async function main() {
               content: [
                 { type: "text", text: "Hello " },
                 { type: "text", text: "world", marks: [{ type: "italic" }] },
+                { type: "text", text: " with " },
+                {
+                  type: "mathInline",
+                  attrs: {
+                    sourceFormat: "latex",
+                    displayMode: false,
+                  },
+                  text: "E=mc^2",
+                },
                 { type: "hardBreak" },
                 { type: "inlineCode", text: "const a = 1;" },
               ],
@@ -75,13 +84,99 @@ async function main() {
 
   const paragraphOperation = result.result.operations[1];
   assert(paragraphOperation.blockRole === "paragraph", "paragraph block role mismatch");
-  assert(paragraphOperation.element.plainText.includes("Hello world"), "paragraph text mismatch");
+  assert(paragraphOperation.element.plainText.includes("Hello world with E=mc^2"), "paragraph text mismatch");
   assert(paragraphOperation.element.html.includes("<br>"), "paragraph hard break html mismatch");
   assert(paragraphOperation.element.html.includes("<code>const a = 1;</code>"), "paragraph inline code html mismatch");
+  assert(paragraphOperation.element.html.includes('data-role="math-inline"'), "paragraph math inline html mismatch");
 
   const quoteOperation = result.result.operations[2];
   assert(quoteOperation.blockRole === "blockquote", "blockquote role mismatch");
   assert(quoteOperation.element.color === "#475569", "blockquote color mismatch");
+
+  const plainTextPipelineOutput = {
+    descriptor: {
+      descriptorId: "descriptor-text-render-plain-1",
+    },
+    parseResult: {
+      parserId: "plain-text-parser",
+      result: {
+        document: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "第一段第一行" }, { type: "hardBreak" }, { type: "text", text: "第一段第二行" }],
+            },
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "第二段内容" }],
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  const plainResult = await pipeline.render(plainTextPipelineOutput);
+  assert(plainResult.ok === true, "plain text render should succeed");
+  assert(plainResult.result.operations.length === 1, "plain text should aggregate into single text box");
+  const aggregatedOperation = plainResult.result.operations[0];
+  assert(aggregatedOperation.element.textBoxLayoutMode === "auto-height", "aggregated text box mode mismatch");
+  assert(aggregatedOperation.element.plainText.includes("第一段第二行\n\n第二段内容"), "aggregated paragraph text mismatch");
+  assert(aggregatedOperation.element.html.includes("<div>"), "aggregated paragraph html mismatch");
+
+  const cjkSingleParagraphOutput = {
+    descriptor: {
+      descriptorId: "descriptor-text-render-cjk-1",
+    },
+    parseResult: {
+      parserId: "plain-text-parser",
+      result: {
+        document: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "这是一段中文连续文本用于验证拖拽导入时的换行稳定性" }],
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  const cjkResult = await pipeline.render(cjkSingleParagraphOutput);
+  assert(cjkResult.ok === true, "cjk plain text render should succeed");
+  assert(cjkResult.result.operations.length === 1, "cjk plain text should render to one operation");
+  const cjkOperation = cjkResult.result.operations[0];
+  assert(cjkOperation.element.textBoxLayoutMode === "auto-height", "cjk paragraph should prefer auto-height");
+  assert(cjkOperation.element.textResizeMode === "wrap", "cjk paragraph should prefer wrap mode");
+
+  const dragDropShortParagraphOutput = {
+    descriptor: {
+      descriptorId: "descriptor-text-render-drag-1",
+      channel: "drag-drop",
+    },
+    parseResult: {
+      parserId: "html-parser",
+      result: {
+        document: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "短句也需要按文本框换行显示" }],
+            },
+          ],
+        },
+      },
+    },
+  };
+  const dragDropResult = await pipeline.render(dragDropShortParagraphOutput);
+  assert(dragDropResult.ok === true, "drag-drop render should succeed");
+  const dragOperation = dragDropResult.result.operations[0];
+  assert(dragOperation.element.textBoxLayoutMode === "auto-height", "drag-drop paragraph should force auto-height");
+  assert(dragOperation.element.textResizeMode === "wrap", "drag-drop paragraph should force wrap");
 
   console.log("[generic-text-renderer] ok: 1 scenario validated");
 }

@@ -72,17 +72,19 @@ async function main() {
       pointer: { x: 20, y: 30 },
     }
   );
-  assert(descriptorFromPlainMarkdown.sourceKind === INPUT_SOURCE_KINDS.PLAIN_TEXT, "plain markdown sourceKind mismatch");
+  assert(descriptorFromPlainMarkdown.sourceKind === INPUT_SOURCE_KINDS.MARKDOWN, "plain markdown sourceKind mismatch");
   assert(descriptorFromPlainMarkdown.entries.length === 1, "plain markdown entries mismatch");
-  assert(descriptorFromPlainMarkdown.entries[0].kind === "text", "plain markdown entry kind mismatch");
+  assert(descriptorFromPlainMarkdown.entries[0].kind === "markdown", "plain markdown entry kind mismatch");
 
   const descriptorFromPlainCode = gateway.fromClipboardData(
     createClipboardDataMock({
       "text/plain": [
+        "'''js",
         "function sum(a, b) {",
         "  const total = a + b;",
         "  return total;",
         "}",
+        "'''",
       ].join("\n"),
     }),
     {
@@ -91,17 +93,16 @@ async function main() {
       pointer: { x: 40, y: 60 },
     }
   );
-  assert(descriptorFromPlainCode.sourceKind === INPUT_SOURCE_KINDS.PLAIN_TEXT, "plain code sourceKind mismatch");
-  assert(descriptorFromPlainCode.entries[0].kind === "text", "plain code entry kind mismatch");
+  assert(descriptorFromPlainCode.sourceKind === INPUT_SOURCE_KINDS.MARKDOWN, "plain code sourceKind mismatch");
+  assert(descriptorFromPlainCode.entries[0].kind === "markdown", "plain code entry kind mismatch");
+  assert(
+    /^```/.test(String(descriptorFromPlainCode.entries[0]?.raw?.markdown || "")),
+    "plain code should be wrapped as fenced markdown by default"
+  );
 
   const descriptorFromPlainMath = gateway.fromClipboardData(
     createClipboardDataMock({
-      "text/plain": [
-        "\\begin{aligned}",
-        "E &= mc^2 \\\\",
-        "F &= ma",
-        "\\end{aligned}",
-      ].join("\n"),
+      "text/plain": "$E = mc^2$",
     }),
     {
       origin: "canvas",
@@ -109,8 +110,8 @@ async function main() {
       pointer: { x: 50, y: 70 },
     }
   );
-  assert(descriptorFromPlainMath.sourceKind === INPUT_SOURCE_KINDS.PLAIN_TEXT, "plain math sourceKind mismatch");
-  assert(descriptorFromPlainMath.entries[0].kind === "text", "plain math entry kind mismatch");
+  assert(descriptorFromPlainMath.sourceKind === INPUT_SOURCE_KINDS.MARKDOWN, "plain math sourceKind mismatch");
+  assert(descriptorFromPlainMath.entries[0].kind === "markdown", "plain math entry kind mismatch");
 
   console.log("[paste-gateway] ok: 6 scenarios validated");
 }

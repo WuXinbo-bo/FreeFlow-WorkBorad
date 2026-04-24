@@ -142,9 +142,14 @@ function readEntryText(entry) {
 }
 
 function splitIntoParagraphs(text) {
-  const normalized = String(text || "").replace(/\r\n/g, "\n");
-  const rawParagraphs = normalized.split(/\n{2,}/);
-  return rawParagraphs.map((paragraph) => paragraph.replace(/\n$/, ""));
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  const parts = normalized
+    .split(/\n\s*\n+/g)
+    .map((part) => part.replace(/^\n+|\n+$/g, ""))
+    .filter((part) => part.length > 0);
+  return parts.length ? parts : [""];
 }
 
 function buildInlineContent(paragraph) {

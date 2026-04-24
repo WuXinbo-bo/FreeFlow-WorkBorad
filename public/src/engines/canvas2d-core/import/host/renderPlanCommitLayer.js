@@ -18,6 +18,7 @@ export function createRenderPlanCommitLayer(options = {}) {
       };
     }
 
+    const diagnostics = collectStructuredOperationDiagnostics(plan);
     const layoutResult = applyLayout(plan, { anchorPoint });
     const nextBoard = normalizeBoard({
       ...normalizedBoard,
@@ -32,15 +33,103 @@ export function createRenderPlanCommitLayer(options = {}) {
       board: nextBoard,
       items: layoutResult.items,
       commits: layoutResult.commits,
+      diagnostics,
       stats: {
         committedCount: layoutResult.items.length,
         selectedCount: nextBoard.selectedIds.length,
+        structuredWarningCount: diagnostics.warnings.length,
       },
     };
   }
 
   return {
     commit,
+  };
+}
+
+function collectStructuredOperationDiagnostics(plan = {}) {
+  const operations = Array.isArray(plan?.operations) ? plan.operations : [];
+  const warnings = [];
+  operations.forEach((operation, index) => {
+    const operationType = String(operation?.type || "").trim().toLowerCase();
+    const elementType = String(operation?.element?.type || "").trim().toLowerCase();
+    if (operationType === "render-table-block" || elementType === "table") {
+      const rowCount = Array.isArray(operation?.structure?.rows) ? operation.structure.rows.length : 0;
+      if (!rowCount) {
+        warnings.push({
+          index,
+          code: "table-rows-missing",
+          message: "render-table-block operation has no structured rows; bridge will fallback to empty table.",
+        });
+      }
+    }
+    if (operationType === "render-code-block" || elementType === "codeblock") {
+      const text = String(operation?.structure?.code || operation?.element?.text || "");
+      const language = String(operation?.structure?.language || operation?.element?.language || "");
+      const theme = String(operation?.structure?.theme || operation?.element?.theme || "");
+      const sourceMeta = operation?.meta && typeof operation.meta === "object" ? operation.meta : operation?.element?.sourceMeta;
+      if (!text.trim()) {
+        warnings.push({
+          index,
+          code: "code-text-empty",
+          message: "render-code-block operation has empty code payload.",
+        });
+      }
+      if (!language.trim()) {
+        warnings.push({
+          index,
+          code: "code-language-missing",
+          message: "render-code-block operation has no language; fallback to plain code block.",
+        });
+      }
+      if (!theme.trim()) {
+        warnings.push({
+          index,
+          code: "code-theme-missing",
+          message: "render-code-block operation has no theme; fallback to default theme.",
+        });
+      }
+      if (!sourceMeta || typeof sourceMeta !== "object") {
+        warnings.push({
+          index,
+          code: "code-source-meta-missing",
+          message: "render-code-block operation has no source meta payload.",
+        });
+      }
+    }
+    if (operationType === "render-math-block" || operationType === "render-math-inline" || elementType === "mathblock" || elementType === "mathinline") {
+      const formula = String(operation?.structure?.formula || operation?.element?.formula || "");
+      const renderState = String(operation?.element?.renderState || operation?.structure?.renderState || "").trim().toLowerCase();
+      if (!formula.trim()) {
+        warnings.push({
+          index,
+          code: "math-formula-empty",
+          message: "render-math operation has empty formula payload.",
+        });
+      }
+      if (renderState && !["ready", "fallback", "error", "fallback-text"].includes(renderState)) {
+        warnings.push({
+          index,
+          code: "math-render-state-invalid",
+          message: "render-math operation uses unsupported renderState value.",
+        });
+      }
+    }
+    if (operationType === "render-table-block" || elementType === "table") {
+      const rows = Array.isArray(operation?.structure?.rows) ? operation.structure.rows : [];
+      const invalidRow = rows.findIndex((row) => !Array.isArray(row?.cells) || !row.cells.length);
+      if (invalidRow >= 0) {
+        warnings.push({
+          index,
+          code: "table-row-cells-missing",
+          message: `render-table-block row ${invalidRow} has no cells.`,
+        });
+      }
+    }
+  });
+  return {
+    operationCount: operations.length,
+    warnings,
   };
 }
 

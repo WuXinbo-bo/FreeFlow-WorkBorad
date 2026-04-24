@@ -1,5 +1,6 @@
 import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
+import { scaleSceneValue } from "./viewportMetrics.js";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -195,7 +196,7 @@ function drawAnnotations(ctx, annotations, width, height, scale = 1, draft = {})
     }
   }
   ctx.save();
-  ctx.lineWidth = Math.max(1.5, 2 * Math.max(0.6, scale));
+  ctx.lineWidth = Math.max(0.75, 2 * scale);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   lines.forEach((line) => {
@@ -251,7 +252,7 @@ function drawAnnotations(ctx, annotations, width, height, scale = 1, draft = {})
     const x2 = Number(arrow?.x2 || 0) * width;
     const y2 = Number(arrow?.y2 || 0) * height;
     ctx.strokeStyle = arrow?.color || "rgba(15, 23, 42, 0.9)";
-    drawArrow(ctx, x1, y1, x2, y2, 8 * Math.max(0.6, scale));
+    drawArrow(ctx, x1, y1, x2, y2, 8 * scale);
   });
   if (draftArrow) {
     const x1 = Number(draftArrow?.x1 || 0) * width;
@@ -259,7 +260,7 @@ function drawAnnotations(ctx, annotations, width, height, scale = 1, draft = {})
     const x2 = Number(draftArrow?.x2 || 0) * width;
     const y2 = Number(draftArrow?.y2 || 0) * height;
     ctx.strokeStyle = draftArrow?.color || "rgba(15, 23, 42, 0.9)";
-    drawArrow(ctx, x1, y1, x2, y2, 8 * Math.max(0.6, scale));
+    drawArrow(ctx, x1, y1, x2, y2, 8 * scale);
   }
   texts.forEach((entry) => {
     const text = String(entry?.text || "");
@@ -269,7 +270,7 @@ function drawAnnotations(ctx, annotations, width, height, scale = 1, draft = {})
     const x = Number(entry?.x || 0) * width;
     const y = Number(entry?.y || 0) * height;
     const baseFontSize = Number(entry?.fontSize || 0);
-    const fontSize = Math.max(12, (baseFontSize || 16) * Math.max(0.6, scale));
+    const fontSize = Math.max(1, (baseFontSize || 16) * scale);
     ctx.fillStyle = entry?.color || "rgba(15, 23, 42, 0.95)";
     ctx.font = `600 ${fontSize}px "Segoe UI", "PingFang SC", sans-serif`;
     ctx.textBaseline = "top";
@@ -328,15 +329,15 @@ function drawCropOverlay(ctx, width, height, crop) {
   ctx.restore();
 }
 
-function drawRotateHandle(ctx, x, y, width, height, scale) {
-  const handleOffset = 26 * Math.max(0.6, scale);
-  const radius = 8 * Math.max(0.6, scale);
+function drawRotateHandle(ctx, x, y, width, height) {
+  const handleOffset = 26;
+  const radius = 8;
   const centerX = x + width / 2;
   const centerY = y - handleOffset;
   const lineTop = y;
   ctx.save();
   ctx.strokeStyle = "rgba(59, 130, 246, 0.9)";
-  ctx.lineWidth = Math.max(1.4, 1.6 * Math.max(0.6, scale));
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(centerX, lineTop);
   ctx.lineTo(centerX, centerY + radius);
@@ -347,7 +348,7 @@ function drawRotateHandle(ctx, x, y, width, height, scale) {
   ctx.fill();
   ctx.stroke();
   ctx.strokeStyle = "rgba(59, 130, 246, 0.9)";
-  ctx.lineWidth = Math.max(1.2, 1.4 * Math.max(0.6, scale));
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.arc(centerX, centerY, radius * 0.6, Math.PI * 0.15, Math.PI * 1.45);
   ctx.stroke();
@@ -412,7 +413,7 @@ export function createImageRenderer() {
       }
     } else {
       ctx.fillStyle = "rgba(71, 85, 105, 0.86)";
-      ctx.font = '600 13px "Segoe UI", "PingFang SC", sans-serif';
+      ctx.font = `600 ${Math.max(1, scaleSceneValue(view, 13))}px "Segoe UI", "PingFang SC", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("图片载入中", width / 2, height / 2);
@@ -424,7 +425,7 @@ export function createImageRenderer() {
     helpers?.drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
     if (selected) {
       helpers?.drawHandles?.(ctx, item, view);
-      drawRotateHandle(ctx, x, y, width, height, scale);
+      drawRotateHandle(ctx, x, y, width, height);
     }
     return true;
   };

@@ -3,16 +3,36 @@ import {
   clamp,
   createId,
   htmlToPlainText,
-  normalizeRichHtml,
   normalizeRichHtmlInlineFontSizes,
   sanitizeText,
 } from "../utils.js";
 import { TEXT_LINE_HEIGHT_RATIO } from "../rendererText.js";
 import { measureTextElementLayout } from "../textLayout/measureTextElementLayout.js";
+import {
+  coerceInteractiveTextBoxLayoutMode as coerceInteractiveTextBoxLayoutModeModel,
+  LEGACY_TEXT_RESIZE_MODE_AUTO_WIDTH,
+  LEGACY_TEXT_RESIZE_MODE_WRAP,
+  normalizeLegacyTextResizeMode,
+  normalizeTextBoxLayoutMode as normalizeTextBoxLayoutModeModel,
+  normalizeTextBoxLayoutModel,
+  TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT as COMPAT_TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+  TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH as COMPAT_TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
+  TEXT_BOX_LAYOUT_MODE_FIXED_SIZE as COMPAT_TEXT_BOX_LAYOUT_MODE_FIXED_SIZE,
+  toLegacyTextResizeMode,
+} from "../textModel/textBoxLayoutModel.js";
+import {
+  mergeTextLinkSemantics,
+  normalizeTextContentModel,
+  normalizeLinkTokens,
+  normalizeUrlMetaCache,
+} from "../textModel/textContentModel.js";
 
 export const TEXT_WRAP_MODE_MANUAL = "manual";
-export const TEXT_RESIZE_MODE_AUTO_WIDTH = "auto-width";
-export const TEXT_RESIZE_MODE_WRAP = "wrap";
+export const TEXT_RESIZE_MODE_AUTO_WIDTH = LEGACY_TEXT_RESIZE_MODE_AUTO_WIDTH;
+export const TEXT_RESIZE_MODE_WRAP = LEGACY_TEXT_RESIZE_MODE_WRAP;
+export const TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH = COMPAT_TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH;
+export const TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT = COMPAT_TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT;
+export const TEXT_BOX_LAYOUT_MODE_FIXED_SIZE = COMPAT_TEXT_BOX_LAYOUT_MODE_FIXED_SIZE;
 export const TEXT_MIN_FONT_SIZE = 12;
 export const TEXT_STRUCTURED_IMPORT_KIND = "structured-import-v1";
 
@@ -50,21 +70,27 @@ export function normalizeTextWrapMode(value = "") {
 }
 
 export function normalizeTextResizeMode(value = "", legacyWrapMode = "") {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === TEXT_RESIZE_MODE_WRAP) {
-    return TEXT_RESIZE_MODE_WRAP;
-  }
-  if (normalized === TEXT_RESIZE_MODE_AUTO_WIDTH) {
-    return TEXT_RESIZE_MODE_AUTO_WIDTH;
-  }
-  return String(legacyWrapMode || "").trim().toLowerCase() === TEXT_RESIZE_MODE_WRAP
-    ? TEXT_RESIZE_MODE_WRAP
-    : TEXT_RESIZE_MODE_AUTO_WIDTH;
+  return normalizeLegacyTextResizeMode(value, legacyWrapMode);
+}
+
+export function normalizeTextBoxLayoutMode(value = "", legacyResizeMode = "", legacyWrapMode = "") {
+  return normalizeTextBoxLayoutModeModel(value, legacyResizeMode, legacyWrapMode);
+}
+
+export function deriveTextResizeModeFromLayoutMode(layoutMode = "") {
+  return toLegacyTextResizeMode(layoutMode);
+}
+
+export function coerceInteractiveTextBoxLayoutMode(layoutMode = "") {
+  return coerceInteractiveTextBoxLayoutModeModel(layoutMode);
 }
 
 function inferLegacyTextResizeMode(element = {}, text = "", fontSize = 20) {
+  if (Object.prototype.hasOwnProperty.call(element, "textBoxLayoutMode")) {
+    return toLegacyTextResizeMode(element.textBoxLayoutMode, element.textResizeMode, element.wrapMode);
+  }
   if (Object.prototype.hasOwnProperty.call(element, "textResizeMode")) {
-    return normalizeTextResizeMode(element.textResizeMode, element.wrapMode);
+    return normalizeLegacyTextResizeMode(element.textResizeMode, element.wrapMode);
   }
   const natural = measureTextBox(text, { fontSize });
   const width = Math.max(0, Number(element.width ?? 0) || 0);
@@ -93,51 +119,121 @@ export function measureTextBox(text = "", { minWidth = 80, maxWidth = 720, fontS
 }
 
 export function getTextMinSize(element = {}, options = {}) {
-  const html = normalizeRichHtml(element.html || "");
-  const plainText = sanitizeText(element.plainText || element.text || htmlToPlainText(html));
+  const content = normalizeTextContentModel(element, {
+    html: element.html || "",
+    plainText: element.plainText || element.text || "",
+    fontSize: element.fontSize ?? options.fontSize ?? 20,
+  });
   const fontSize = normalizeTextFontSize(element.fontSize ?? options.fontSize ?? 20, options.fontSize ?? 20);
   const resizeMode = normalizeTextResizeMode(element.textResizeMode, element.wrapMode);
-  const widthHint = Math.max(80, Number(options.widthHint ?? element.width ?? 80) || 80);
+  const layout = normalizeTextBoxLayoutModel(
+    {
+      ...element,
+      textBoxLayoutMode: coerceInteractiveTextBoxLayoutMode(
+        normalizeTextBoxLayoutMode(element.textBoxLayoutMode, resizeMode, element.wrapMode)
+      ),
+      textResizeMode: resizeMode,
+      widthHint: options.widthHint ?? element.width ?? 80,
+      heightHint: options.heightHint ?? element.height ?? 40,
+      minWidth: 80,
+      minHeight: 40,
+      maxWidth: 720,
+    },
+    {
+      fontSize,
+      minWidth: 80,
+      minHeight: 40,
+      maxWidth: 720,
+    }
+  );
   const measured = measureTextElementLayout({
-    html,
-    plainText,
+    ...content,
     fontSize,
-    resizeMode,
-    widthHint,
-    maxWidth: 720,
+    textBoxLayoutMode: layout.layoutMode,
+    layoutMode: layout.layoutMode,
+    resizeMode: layout.legacyResizeMode,
+    widthHint: layout.widthHint,
+    heightHint: layout.heightHint,
+    minWidth: layout.minWidth,
+    minHeight: layout.minHeight,
+    maxWidth: layout.maxWidth,
     lineHeightRatio: TEXT_LINE_HEIGHT_RATIO,
     fontWeight: "500",
     boldWeight: "700",
   });
   if (measured?.frameWidth && measured?.frameHeight) {
+    const contentHeight = Math.max(40, Number(measured?.contentHeight || measured?.frameHeight || 0) || 40);
     return {
-      width: resizeMode === TEXT_RESIZE_MODE_WRAP ? widthHint : measured.frameWidth,
-      height: measured.frameHeight,
+      width:
+        layout.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+          ? measured.frameWidth
+          : Math.max(80, layout.widthHint),
+      height:
+        layout.layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE
+          ? Math.max(40, layout.heightHint, contentHeight)
+          : measured.frameHeight,
     };
   }
 
   return {
     width:
-      resizeMode === TEXT_RESIZE_MODE_WRAP
-        ? widthHint
-        : measureTextBox(plainText, {
+      layout.layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+        ? layout.widthHint
+        : measureTextBox(content.plainText, {
             minWidth: 80,
             maxWidth: 720,
             fontSize,
           }).width,
-    height: Math.max(40, measureTextBox(plainText, { minWidth: 80, maxWidth: widthHint, fontSize }).height),
+    height:
+      layout.layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE
+        ? Math.max(40, layout.heightHint, measureTextBox(content.plainText, { minWidth: 80, maxWidth: layout.widthHint, fontSize }).height)
+        : Math.max(40, measureTextBox(content.plainText, { minWidth: 80, maxWidth: layout.widthHint, fontSize }).height),
   };
 }
 
 export function createTextElement(point, text = "", html = "") {
-  const cleanHtml = normalizeRichHtmlInlineFontSizes(html || "");
-  const cleanText = sanitizeText(text || htmlToPlainText(cleanHtml));
+  const content = normalizeTextContentModel(
+    {
+      html: normalizeRichHtmlInlineFontSizes(html || ""),
+      plainText: text || "",
+      text: text || "",
+      fontSize: 20,
+    },
+    { fontSize: 20 }
+  );
+  const cleanHtml = content.html;
+  const cleanText = content.plainText;
+  const linkSemantics = mergeTextLinkSemantics(
+    {
+      plainText: cleanText,
+      text: cleanText,
+      linkTokens: content.linkTokens,
+      urlMetaCache: content.urlMetaCache,
+      richTextDocument: content.richTextDocument,
+    },
+    {}
+  );
+  const richTextDocument =
+    content.richTextDocument && typeof content.richTextDocument === "object"
+      ? {
+          ...content.richTextDocument,
+          meta: {
+            ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
+              ? content.richTextDocument.meta
+              : {}),
+            linkTokens: linkSemantics.linkTokens,
+            urlMetaCache: linkSemantics.urlMetaCache,
+          },
+        }
+      : content.richTextDocument;
   const metrics = getTextMinSize(
     {
       html: cleanHtml,
       plainText: cleanText,
       text: cleanText,
+      richTextDocument,
       fontSize: 20,
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
       textResizeMode: TEXT_RESIZE_MODE_AUTO_WIDTH,
     },
     {
@@ -150,7 +246,11 @@ export function createTextElement(point, text = "", html = "") {
     text: cleanText,
     html: cleanHtml,
     plainText: cleanText,
+    richTextDocument,
+    linkTokens: normalizeLinkTokens(linkSemantics.linkTokens, cleanText),
+    urlMetaCache: normalizeUrlMetaCache(linkSemantics.urlMetaCache),
     wrapMode: TEXT_WRAP_MODE_MANUAL,
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
     textResizeMode: TEXT_RESIZE_MODE_AUTO_WIDTH,
     title: buildTextTitle(cleanText || "文本"),
     x: Number(point?.x) || 0,
@@ -171,28 +271,87 @@ export function normalizeTextElement(element = {}) {
     element.text || element.plainText || "",
     element.html || ""
   );
-  const nextText = sanitizeText(element.text || element.plainText || htmlToPlainText(element.html || base.html || ""));
-  const nextFontSize = normalizeTextFontSize(element.fontSize ?? base.fontSize, base.fontSize);
-  const textResizeMode = inferLegacyTextResizeMode(element, nextText, nextFontSize);
-  const metrics = getTextMinSize(
+  const content = normalizeTextContentModel(
     {
       ...element,
       html: normalizeRichHtmlInlineFontSizes(element.html || base.html || ""),
+      plainText: element.plainText || element.text || "",
+      text: element.text || element.plainText || "",
+    },
+    {
+      html: base.html || "",
+      plainText: base.plainText || base.text || "",
+      fontSize: element.fontSize ?? base.fontSize,
+    }
+  );
+  const nextText = content.plainText;
+  const linkSemantics = mergeTextLinkSemantics(
+    {
+      ...element,
       plainText: nextText,
       text: nextText,
+      linkTokens: element.linkTokens ?? content.linkTokens,
+      urlMetaCache: element.urlMetaCache ?? content.urlMetaCache,
+      richTextDocument: content.richTextDocument,
+    },
+    {
+      ...base,
+      linkTokens: base.linkTokens,
+      urlMetaCache: base.urlMetaCache,
+      richTextDocument: base.richTextDocument,
+    }
+  );
+  const normalizedLinkTokens = normalizeLinkTokens(linkSemantics.linkTokens, nextText);
+  const normalizedUrlMetaCache = normalizeUrlMetaCache(linkSemantics.urlMetaCache);
+  const richTextDocument =
+    content.richTextDocument && typeof content.richTextDocument === "object"
+      ? {
+          ...content.richTextDocument,
+          meta: {
+            ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
+              ? content.richTextDocument.meta
+              : {}),
+            linkTokens: normalizedLinkTokens,
+            urlMetaCache: normalizedUrlMetaCache,
+          },
+        }
+      : content.richTextDocument;
+  const nextFontSize = normalizeTextFontSize(element.fontSize ?? base.fontSize, base.fontSize);
+  const inferredResizeMode = inferLegacyTextResizeMode(element, nextText, nextFontSize);
+  const hasExplicitLayoutConfig =
+    Object.prototype.hasOwnProperty.call(element, "textBoxLayoutMode") ||
+    Object.prototype.hasOwnProperty.call(element, "textResizeMode");
+  const textResizeMode = hasExplicitLayoutConfig
+    ? toLegacyTextResizeMode(element.textBoxLayoutMode, element.textResizeMode, element.wrapMode)
+    : inferredResizeMode;
+  const textBoxLayoutMode = coerceInteractiveTextBoxLayoutMode(
+    normalizeTextBoxLayoutMode(element.textBoxLayoutMode, textResizeMode, element.wrapMode)
+  );
+  const metrics = getTextMinSize(
+    {
+      ...element,
+      html: content.html,
+      plainText: nextText,
+      text: nextText,
+      richTextDocument,
       fontSize: nextFontSize,
+      textBoxLayoutMode,
       textResizeMode,
     },
     {
       widthHint: Number(element.width ?? 0) || undefined,
+      heightHint: Number(element.height ?? 0) || undefined,
       fontSize: nextFontSize,
     }
   );
   const nextWidth =
-    textResizeMode === TEXT_RESIZE_MODE_WRAP
+    textBoxLayoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
       ? Math.max(80, Number(element.width ?? 0) || metrics.width)
       : Math.max(80, metrics.width);
-  const nextHeight = Math.max(40, metrics.height);
+  const nextHeight =
+    textBoxLayoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE
+      ? Math.max(40, Number(element.height ?? 0) || metrics.height)
+      : Math.max(40, metrics.height);
   const structuredImport = normalizeStructuredTextImportMeta(element.structuredImport);
   return {
     ...base,
@@ -200,9 +359,13 @@ export function normalizeTextElement(element = {}) {
     id: String(element.id || base.id),
     type: "text",
     text: nextText,
-    html: normalizeRichHtmlInlineFontSizes(element.html || base.html || ""),
+    html: content.html,
     plainText: sanitizeText(element.plainText || nextText || htmlToPlainText(element.html || base.html || "")),
+    richTextDocument,
+    linkTokens: normalizedLinkTokens,
+    urlMetaCache: normalizedUrlMetaCache,
     wrapMode: normalizeTextWrapMode(element.wrapMode || base.wrapMode),
+    textBoxLayoutMode,
     textResizeMode,
     title: buildTextTitle(element.title || nextText || element.plainText || element.html || "文本"),
     x: Number(element.x ?? base.x) || 0,

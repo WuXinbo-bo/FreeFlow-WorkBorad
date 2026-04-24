@@ -1,5 +1,10 @@
 import { collectElementsInRect, hitTestElement } from "../../hitTest.js";
 import { getElementBounds } from "../../elements/index.js";
+import {
+  getStructuredCodeSceneMetrics,
+  getStructuredMathSceneMetrics,
+  getStructuredTableSceneGrid,
+} from "../../viewportMetrics.js";
 
 export function hitTestHostInteraction(board, point, scale = 1) {
   const items = Array.isArray(board?.items) ? board.items : [];
@@ -36,9 +41,16 @@ export function hitTestHostInteraction(board, point, scale = 1) {
   }
 
   if (item.type === "mathBlock" || item.type === "mathInline") {
+    const mathMetrics = getStructuredMathSceneMetrics(item);
+    const formulaBounds = {
+      left: mathMetrics.bounds.left + mathMetrics.insetX,
+      top: mathMetrics.bounds.top + mathMetrics.insetY,
+      right: mathMetrics.bounds.right - mathMetrics.insetX,
+      bottom: mathMetrics.bounds.bottom - mathMetrics.insetY,
+    };
     return {
       ...base,
-      zone: "math-formula",
+      zone: pointInBounds(point, formulaBounds) ? "math-formula" : "element",
       detail: {
         displayMode: Boolean(item.displayMode),
         sourceFormat: String(item.sourceFormat || ""),
@@ -88,50 +100,41 @@ export function buildHostDragSelection(board, selectedIds = []) {
 }
 
 function hitTestTableCell(item, point) {
-  const structure = item?.table;
-  const rows = Array.isArray(structure?.rows) ? structure.rows : [];
+  const tableGrid = getStructuredTableSceneGrid(item);
+  const rows = tableGrid.rows;
   if (!rows.length) {
     return null;
   }
-  const bounds = getElementBounds(item);
-  const rowHeight = bounds.height / Math.max(1, rows.length);
-  let rowTop = bounds.top;
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
-    const rowBottom = rowTop + rowHeight;
-    if (point.y < rowTop || point.y > rowBottom) {
-      rowTop = rowBottom;
-      continue;
-    }
-    const totalColumns = Math.max(1, Number(structure?.columns) || 1);
-    const columnWidth = bounds.width / totalColumns;
-    let cellLeft = bounds.left;
-    const cells = Array.isArray(row.cells) ? row.cells : [];
-    for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
-      const cell = cells[cellIndex];
-      const span = Math.max(1, Number(cell?.colSpan) || 1);
-      const cellRight = cellLeft + columnWidth * span;
-      if (point.x >= cellLeft && point.x <= cellRight) {
-        return {
-          rowIndex,
-          cellIndex,
-          header: Boolean(cell?.header),
-        };
-      }
-      cellLeft = cellRight;
-    }
-    break;
+  const bounds = tableGrid.bounds;
+  if (!pointInBounds(point, bounds)) {
+    return null;
   }
-  return null;
+  const localX = Math.min(Math.max(point.x - bounds.left, 0), Math.max(0, bounds.width - 0.001));
+  const localY = Math.min(Math.max(point.y - bounds.top, 0), Math.max(0, bounds.height - 0.001));
+  const rowIndex = Math.min(tableGrid.rowCount - 1, Math.floor(localY / Math.max(tableGrid.rowHeight, 1e-6)));
+  const columnIndex = Math.min(
+    tableGrid.columnCount - 1,
+    Math.floor(localX / Math.max(tableGrid.columnWidth, 1e-6))
+  );
+  const row = rows[rowIndex] || rows[rows.length - 1];
+  const cells = Array.isArray(row?.cells) ? row.cells : [];
+  const hitCell = resolveTableCellByColumn(cells, columnIndex);
+  return {
+    rowIndex,
+    columnIndex,
+    cellIndex: hitCell.cellIndex,
+    header: Boolean(hitCell.cell?.header),
+  };
 }
 
 function getCodeContentBounds(item) {
-  const bounds = getElementBounds(item);
+  const codeMetrics = getStructuredCodeSceneMetrics(item);
+  const bounds = codeMetrics.bounds;
   return {
-    left: bounds.left + 8,
-    top: bounds.top + 28,
-    right: bounds.right - 8,
-    bottom: bounds.bottom - 8,
+    left: bounds.left + codeMetrics.contentInsetX,
+    top: bounds.top + codeMetrics.contentTop,
+    right: bounds.right - codeMetrics.contentInsetX,
+    bottom: bounds.bottom - codeMetrics.contentInsetBottom,
   };
 }
 
@@ -212,4 +215,27 @@ function mergeBounds(boundsList = []) {
       height: boundsList[0].height,
     }
   );
+}
+
+function resolveTableCellByColumn(cells, columnIndex) {
+  if (!Array.isArray(cells) || !cells.length) {
+    return {
+      cellIndex: Math.max(0, Number(columnIndex) || 0),
+      cell: null,
+    };
+  }
+  let cursor = 0;
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+    const cell = cells[cellIndex];
+    const span = Math.max(1, Number(cell?.colSpan) || 1);
+    const next = cursor + span;
+    if (columnIndex >= cursor && columnIndex < next) {
+      return { cellIndex, cell };
+    }
+    cursor = next;
+  }
+  return {
+    cellIndex: cells.length - 1,
+    cell: cells[cells.length - 1],
+  };
 }

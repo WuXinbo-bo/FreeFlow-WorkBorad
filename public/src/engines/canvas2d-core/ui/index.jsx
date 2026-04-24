@@ -379,6 +379,10 @@ function Canvas2DControls({ engine }) {
     : "";
   const boardTitle = boardDirty ? `${boardDisplayName} *` : boardDisplayName;
   const pdfExportProgress = useMemo(() => resolvePdfExportProgress(pdfExportHint), [pdfExportHint]);
+  const processingStatusText = useMemo(() => {
+    const text = String(snapshot?.statusText || "").trim();
+    return text.includes("处理中") ? text : "";
+  }, [snapshot?.statusText]);
   const searchResults = useMemo(
     () => buildCanvasSearchResults(snapshot?.board?.items || [], deferredSearchQuery, 10),
     [snapshot?.board?.items, deferredSearchQuery]
@@ -1409,6 +1413,12 @@ function Canvas2DControls({ engine }) {
             </div>
             <div className="canvas2d-pdf-export-meta">完成后将继续进入文件保存界面</div>
           </div>
+        </div>
+      ) : null}
+
+      {processingStatusText ? (
+        <div className="canvas2d-save-toast" role="status">
+          {processingStatusText}
         </div>
       ) : null}
 

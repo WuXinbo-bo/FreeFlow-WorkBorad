@@ -31,34 +31,74 @@ import { createFileCardElement, getFileCardMemoBounds } from "./elements/fileCar
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { createMindNodeElement } from "./elements/mind.js";
+import {
+  createEditableTableElement,
+  createTableStructureFromMatrix,
+  flattenTableStructureToMatrix,
+  updateTableElementStructure,
+} from "./elements/table.js";
+import {
+  createCodeBlockElement,
+  isMermaidCodeBlock,
+  normalizeCodeBlockElement,
+  updateCodeBlockElement,
+} from "./elements/codeBlock.js";
 import { createFlowModule } from "./flowModule.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { createShapeModule } from "./shapeModule.js";
 import {
+  coerceInteractiveTextBoxLayoutMode,
   createTextElement,
+  deriveTextResizeModeFromLayoutMode,
   getTextMinSize,
+  normalizeTextElement,
+  normalizeTextBoxLayoutMode,
   normalizeTextFontSize,
   normalizeTextResizeMode,
+  TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+  TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
+  TEXT_BOX_LAYOUT_MODE_FIXED_SIZE,
   TEXT_RESIZE_MODE_AUTO_WIDTH,
   TEXT_MIN_FONT_SIZE,
   TEXT_RESIZE_MODE_WRAP,
   TEXT_WRAP_MODE_MANUAL,
 } from "./elements/text.js";
 import { measureTextElementLayout } from "./textLayout/measureTextElementLayout.js";
-import { createRichTextAdapter } from "./editors/richTextAdapter.js";
 import { createLightImageEditor } from "./editors/lightImageEditor.js";
+import { createCodeBlockEditor } from "./editors/codeBlockEditor.js";
 import { syncFloatingToolbarLayout } from "./editors/floatingToolbarLayout.js";
 import { createDrawToolModule } from "./drawToolModule.js";
-import { FLOW_NODE_TEXT_LAYOUT, getFlowNodeTextPadding, measureRichTextBox, TEXT_LINE_HEIGHT_RATIO } from "./rendererText.js";
+import {
+  FLOW_NODE_TEXT_LAYOUT,
+  getFlowNodeTextPadding,
+  measureRichTextBox,
+  resolveRichTextDisplayHtml,
+  TEXT_BOLD_WEIGHT,
+  TEXT_FONT_FAMILY,
+  TEXT_FONT_WEIGHT,
+  TEXT_LINE_HEIGHT_RATIO,
+} from "./rendererText.js";
+import {
+  getLineHeightRatioForTag,
+  normalizeTagName,
+  TEXT_BLOCK_SPACING_EM,
+  TEXT_BODY_LINE_HEIGHT_RATIO,
+} from "./textLayout/typographyTokens.js";
+import { resolveImportedTextBoxLayout } from "./import/renderers/text/sharedTextRenderUtils.js";
+import { renderLatexToStaticHtml } from "./import/renderers/markdown/markdownStaticRenderer.js";
+import { measureCodeBlockLayout } from "./codeBlock/measureCodeBlockLayout.js";
+import { renderCodeBlockStatic } from "./codeBlock/renderCodeBlockStatic.js";
 import {
   createHistoryState,
   markHistoryBaseline,
   pushHistory,
+  pushPatchHistory,
   redoHistory,
   takeHistorySnapshot,
   undoHistory,
 } from "./history.js";
-import { hitTestElement, hitTestHandle } from "./hitTest.js";
+import { hitTestElement, hitTestHandle, invalidateHitTestSpatialIndex } from "./hitTest.js";
+import { getStructuredTableSceneGrid, scaleSceneValue } from "./viewportMetrics.js";
 import {
   buildFileCardContextMenuHtml,
   getFileCardHit,
@@ -103,6 +143,23 @@ import {
   INPUT_SOURCE_KINDS,
 } from "./import/protocols/inputDescriptor.js";
 import { createStructuredImportRuntime } from "./import/runtime/createStructuredImportRuntime.js";
+import { detectTextContentType, DETECTED_TEXT_TYPES } from "./import/gateway/contentTypeDetector.js";
+import {
+  ensureRichTextDocumentFields,
+  RICH_TEXT_BLOCK_TYPES,
+  serializeRichTextBlocksToHtml,
+} from "./textModel/richTextDocument.js";
+import {
+  createRichTextClipboardPayload,
+  parseRichTextClipboardPayload,
+  RICH_TEXT_CLIPBOARD_MIME,
+  readRichTextClipboardPayload,
+  stringifyRichTextClipboardPayload,
+} from "./textClipboard/richTextClipboard.js";
+import { createRichTextEditingSession } from "./textEditing/createRichTextEditingSession.js";
+import { renderMarkdownPlainTextToRichHtml } from "./textEditing/renderMarkdownPlainTextToRichHtml.js";
+import { refreshTextLinkSemantics } from "./textEditing/linkSemantics.js";
+import { resolveUrlMeta } from "./textEditing/linkMetaResolver.js";
 import { CONFIG } from "../../config/app.config.js";
 import { API_ROUTES, readJsonResponse } from "../../api/http.js";
 
@@ -128,6 +185,21 @@ const TEXT_STYLE_PRESETS = Object.freeze({
 });
 const BOARD_BACKGROUND_PATTERNS = new Set(["none", "dots", "grid", "lines", "engineering"]);
 const RICH_SELECTION_FONT_SIZE_PRESETS = Object.freeze([8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48]);
+const RICH_BLOCK_TYPE_OPTIONS = Object.freeze([
+  { value: "paragraph", label: "正文" },
+  { value: "heading-1", label: "# 一级标题" },
+  { value: "heading-2", label: "## 二级标题" },
+  { value: "heading-3", label: "### 三级标题" },
+  { value: "heading-4", label: "#### 四级标题" },
+  { value: "heading-5", label: "##### 五级标题" },
+  { value: "heading-6", label: "###### 六级标题" },
+]);
+const MARKDOWN_SEMANTIC_TEXT_TYPES = new Set([
+  DETECTED_TEXT_TYPES.MARKDOWN,
+  DETECTED_TEXT_TYPES.TABLE,
+  DETECTED_TEXT_TYPES.LIST,
+  DETECTED_TEXT_TYPES.QUOTE,
+]);
 
 function normalizeBoardBackgroundPattern(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -141,23 +213,504 @@ function getMatchingTextPresetName(fontSize) {
   );
 }
 
+function buildRichBlockTypeSelectHtml(dataAction = "block-type", ariaLabel = "文本语义") {
+  return `
+    <label class="canvas2d-rich-select-wrap">
+      <select class="canvas2d-rich-select" data-action="${dataAction}" aria-label="${ariaLabel}">
+        ${RICH_BLOCK_TYPE_OPTIONS.map(
+          (option) => `<option value="${option.value}">${option.label}</option>`
+        ).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function buildRichQuoteMenuHtml() {
+  return `
+    <div class="canvas2d-rich-submenu" data-submenu="blockquote">
+      <button type="button" class="canvas2d-rich-btn" data-action="blockquote" title="引用">❝</button>
+      <button
+        type="button"
+        class="canvas2d-rich-btn canvas2d-rich-submenu-toggle"
+        data-action="toggle-blockquote-menu"
+        aria-label="引用层级菜单"
+        aria-expanded="false"
+        title="引用层级"
+      >▾</button>
+      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="引用层级菜单">
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote-indent" title="引用层级加一">层级 +</button>
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote-outdent" title="引用层级减一">层级 -</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildRichMathMenuHtml() {
+  return `
+    <div class="canvas2d-rich-submenu" data-submenu="math">
+      <button
+        type="button"
+        class="canvas2d-rich-btn canvas2d-rich-submenu-toggle"
+        data-action="toggle-math-menu"
+        aria-label="公式菜单"
+        aria-expanded="false"
+        title="公式"
+      >fx</button>
+      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="公式菜单">
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="insert-math-inline" title="插入行内公式">行内公式</button>
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="insert-math-block" title="插入独行公式">独行公式</button>
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="edit-math-source" title="编辑当前公式">编辑公式</button>
+      </div>
+    </div>
+  `;
+}
+
+function escapeRichTextHtml(value = "") {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderMathMarkup(formula = "", { displayMode = false } = {}) {
+  return renderLatexToStaticHtml(formula, { displayMode });
+}
+
+function hasRenderedKatexMarkup(markup = "") {
+  return /\bkatex(?:-display)?\b/i.test(String(markup || ""));
+}
+
+function getCodeBlockContent(item) {
+  return sanitizeText(String(item?.code ?? item?.text ?? item?.plainText ?? ""));
+}
+
+function getCodeBlockItemTitle(item) {
+  const language = String(item?.language || "").trim().toLowerCase();
+  return buildTextTitle(language ? `${language} 代码块` : "代码块");
+}
+
+function convertPlainClipboardTextToSemanticHtml(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
+  const source = sanitizeText(text || "").trim();
+  if (!source) {
+    return "";
+  }
+  const cached = readClipboardSemanticHtmlCache(source, baseFontSize);
+  if (cached !== null) {
+    return cached;
+  }
+  let result = "";
+  const detected = detectTextContentType(source);
+  if (MARKDOWN_SEMANTIC_TEXT_TYPES.has(detected?.type)) {
+    result = sanitizeHtml(normalizeRichHtmlInlineFontSizes(renderMarkdownPlainTextToRichHtml(source), baseFontSize)).trim();
+    writeClipboardSemanticHtmlCache(source, baseFontSize, result);
+    return result;
+  }
+  if (detected?.type === DETECTED_TEXT_TYPES.CODE && shouldFenceAsCodeMarkdown(detected)) {
+    const markdownCodeBlock = `\`\`\`\n${source.replace(/\r\n/g, "\n").replace(/\r/g, "\n")}\n\`\`\``;
+    result = sanitizeHtml(
+      normalizeRichHtmlInlineFontSizes(renderMarkdownPlainTextToRichHtml(markdownCodeBlock), baseFontSize)
+    ).trim();
+    writeClipboardSemanticHtmlCache(source, baseFontSize, result);
+    return result;
+  }
+  writeClipboardSemanticHtmlCache(source, baseFontSize, "");
+  return "";
+}
+
+async function convertPlainClipboardTextToSemanticHtmlAsync(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
+  const source = sanitizeText(text || "").trim();
+  if (!source) {
+    return "";
+  }
+  const cached = readClipboardSemanticHtmlCache(source, baseFontSize);
+  if (cached !== null) {
+    return cached;
+  }
+  await yieldForHeavyClipboardText(source);
+  const html = convertPlainClipboardTextToSemanticHtml(source, baseFontSize);
+  writeClipboardSemanticHtmlCache(source, baseFontSize, html);
+  return html;
+}
+
+function shouldFenceAsCodeMarkdown(detected = null) {
+  if (!detected || detected.type !== DETECTED_TEXT_TYPES.CODE) {
+    return false;
+  }
+  const confidence = String(detected.confidence || "").toLowerCase();
+  const matchedRule = String(detected.matchedRule || "").toLowerCase();
+  const features = detected.features && typeof detected.features === "object" ? detected.features : {};
+  const scores = detected.scores && typeof detected.scores === "object" ? detected.scores : {};
+  const codeScore = Number(scores.code || 0);
+  const markdownScore = Number(scores.markdown || 0);
+  const nonEmptyLineCount = Number(features.nonEmptyLineCount || 0);
+  if (matchedRule === "strong-code-signal") {
+    return true;
+  }
+  if (confidence !== "high") {
+    return false;
+  }
+  if (codeScore - markdownScore < 20) {
+    return false;
+  }
+  return nonEmptyLineCount >= 2;
+}
+
+function isWeakCodeLanguageTag(language = "") {
+  const normalized = String(language || "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "text" ||
+    normalized === "plain" ||
+    normalized === "plaintext" ||
+    normalized === "markdown" ||
+    normalized === "md" ||
+    normalized === "mdx" ||
+    normalized === "gfm" ||
+    normalized === "txt" ||
+    normalized === "none"
+  );
+}
+
+function convertMisclassifiedCodeBlockToText(item, fontSizeFallback = DEFAULT_TEXT_FONT_SIZE) {
+  return item;
+}
+
+function repairMisclassifiedCodeBlocksOnBoard(board, fontSizeFallback = DEFAULT_TEXT_FONT_SIZE) {
+  return board;
+}
+
 const AUTOSAVE_INTERVAL_MS = 30000;
 const AUTOSAVE_ENABLED_KEY = "ai_worker_canvas2d_autosave_v1";
 const DEFAULT_BOARD_FILE_NAME = "canvas-board.json";
 const DEFAULT_NEW_BOARD_BASE = "FreeFlowBoard";
 const RENDER_TEXT_IN_CANVAS = false;
 const CANVAS_CLIPBOARD_MIME = "application/x-freeflow-canvas2d";
+const CANVAS_CLIPBOARD_MARKER_TYPE = "canvas2d";
+const CLIPBOARD_SOURCE_CANVAS = "canvas";
+const CLIPBOARD_SOURCE_RICH_EDITOR = "rich-editor";
+const CLIPBOARD_KIND_ITEMS = "items";
+const CLIPBOARD_KIND_RICH_TEXT = "rich-text";
+const CLIPBOARD_SEMANTIC_CACHE_MAX_SIZE = 24;
+const CLIPBOARD_SEMANTIC_HEAVY_TEXT_THRESHOLD = 20000;
+const CLIPBOARD_SEMANTIC_VERY_HEAVY_TEXT_THRESHOLD = 80000;
+const CLIPBOARD_SEMANTIC_DEGRADE_THRESHOLD = 12000;
+const RICH_OVERLAY_CULL_PADDING_PX = 160;
+const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
+const INTERNAL_DRAG_MARKER_ATTR = "data-freeflow-canvas2d-marker";
+const LINK_SEMANTIC_ENABLED_KEY = "ai_worker_canvas2d_link_semantic_enabled_v1";
+const clipboardSemanticHtmlCache = new Map();
+
+function getClipboardSemanticCacheKey(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
+  return `${Math.max(8, Number(baseFontSize) || DEFAULT_TEXT_FONT_SIZE)}::${String(text || "")}`;
+}
+
+function readClipboardSemanticHtmlCache(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
+  const key = getClipboardSemanticCacheKey(text, baseFontSize);
+  if (!clipboardSemanticHtmlCache.has(key)) {
+    return null;
+  }
+  const value = clipboardSemanticHtmlCache.get(key);
+  clipboardSemanticHtmlCache.delete(key);
+  clipboardSemanticHtmlCache.set(key, value);
+  return value;
+}
+
+function writeClipboardSemanticHtmlCache(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE, html = "") {
+  const key = getClipboardSemanticCacheKey(text, baseFontSize);
+  clipboardSemanticHtmlCache.set(key, String(html || ""));
+  while (clipboardSemanticHtmlCache.size > CLIPBOARD_SEMANTIC_CACHE_MAX_SIZE) {
+    const oldestKey = clipboardSemanticHtmlCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    clipboardSemanticHtmlCache.delete(oldestKey);
+  }
+}
+
+function yieldToNextFrame() {
+  if (typeof requestAnimationFrame === "function") {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+  return Promise.resolve();
+}
+
+function yieldToIdleWindow(timeout = 32) {
+  if (typeof requestIdleCallback === "function") {
+    return new Promise((resolve) => requestIdleCallback(() => resolve(), { timeout }));
+  }
+  return yieldToNextFrame();
+}
+
+async function yieldForHeavyClipboardText(text = "") {
+  const length = String(text || "").length;
+  if (length >= CLIPBOARD_SEMANTIC_HEAVY_TEXT_THRESHOLD) {
+    await yieldToNextFrame();
+  }
+  if (length >= CLIPBOARD_SEMANTIC_VERY_HEAVY_TEXT_THRESHOLD) {
+    await yieldToIdleWindow(48);
+  }
+}
+
+function shouldDeferSemanticUpgradeForText(text = "") {
+  const source = sanitizeText(String(text || ""));
+  if (!source || source.length < CLIPBOARD_SEMANTIC_DEGRADE_THRESHOLD) {
+    return false;
+  }
+  return /```|^\s*[-*+]\s+|^\s*\d+\.\s+|^\s*#{1,6}\s+|^\s*>\s+|\|.+\||\$\$|\\\[|\\\(/m.test(source);
+}
+
+function buildInternalClipboardMarker({ copiedAt = Date.now(), itemCount = 0, source = "", kind = "" } = {}) {
+  return JSON.stringify({
+    type: CANVAS_CLIPBOARD_MARKER_TYPE,
+    copiedAt: Number(copiedAt) || Date.now(),
+    itemCount: Math.max(0, Number(itemCount) || 0),
+    source: String(source || ""),
+    kind: String(kind || ""),
+  });
+}
+
+function parseInternalClipboardMarker(rawValue = "") {
+  try {
+    const parsed = JSON.parse(String(rawValue || "").trim());
+    return parsed && parsed.type === CANVAS_CLIPBOARD_MARKER_TYPE ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildInternalDragHtmlPayload({ marker = "", text = "" } = {}) {
+  const markerValue = encodeURIComponent(String(marker || "").trim());
+  const safeText = escapeRichTextHtml(String(text || "").trim()).replace(/\n/g, "<br>");
+  return `<div ${INTERNAL_DRAG_MARKER_ATTR}="${markerValue}">${safeText || "&nbsp;"}</div>`;
+}
+
+function parseInternalClipboardMarkerFromHtml(html = "") {
+  const source = String(html || "");
+  if (!source) {
+    return null;
+  }
+  const matcher = new RegExp(`${INTERNAL_DRAG_MARKER_ATTR}\\s*=\\s*([\"'])(.*?)\\1`, "i");
+  const match = source.match(matcher);
+  if (!match || !match[2]) {
+    return null;
+  }
+  try {
+    return parseInternalClipboardMarker(decodeURIComponent(match[2]));
+  } catch {
+    return null;
+  }
+}
 
 function normalizeRichEditorFontSize(value, fallback = DEFAULT_TEXT_FONT_SIZE) {
   return normalizeTextFontSize(value, fallback);
 }
 
+function getTextBoxLayoutMode(item) {
+  return coerceInteractiveTextBoxLayoutMode(
+    normalizeTextBoxLayoutMode(item?.textBoxLayoutMode, item?.textResizeMode, item?.wrapMode)
+  );
+}
+
+function getLinkSemanticSignature(item) {
+  const tokens = Array.isArray(item?.linkTokens) ? item.linkTokens : [];
+  const cache = item?.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
+  return JSON.stringify({
+    tokens: tokens.map((token) => ({
+      url: String(token?.url || "").trim(),
+      start: Number(token?.rangeStart ?? token?.start ?? -1),
+      end: Number(token?.rangeEnd ?? token?.end ?? -1),
+      kindHint: String(token?.kindHint || "").trim(),
+      fetchState: String(token?.fetchState || token?.state || "").trim().toLowerCase(),
+    })),
+    cache: Object.entries(cache)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([url, meta]) => [
+        url,
+        {
+          title: String(meta?.title || "").trim(),
+          fetchState: String(meta?.fetchState || meta?.state || "").trim().toLowerCase(),
+          siteName: String(meta?.siteName || "").trim(),
+        },
+      ]),
+  });
+}
+
 function getTextResizeMode(item) {
-  return normalizeTextResizeMode(item?.textResizeMode, item?.wrapMode);
+  return normalizeTextResizeMode(
+    item?.textResizeMode || deriveTextResizeModeFromLayoutMode(getTextBoxLayoutMode(item)),
+    item?.wrapMode
+  );
 }
 
 function isWrapTextItem(item) {
   return item?.type === "text" && getTextResizeMode(item) === TEXT_RESIZE_MODE_WRAP;
+}
+
+function isFixedSizeTextItem(item) {
+  return item?.type === "text" && getTextBoxLayoutMode(item) === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE;
+}
+
+function resolveSessionFontSize(session, fallback = DEFAULT_TEXT_FONT_SIZE) {
+  return normalizeRichEditorFontSize(session?.getFontSize?.() || fallback, fallback);
+}
+
+function hasSemanticTextBlocks(documentValue) {
+  const blocks = Array.isArray(documentValue?.blocks) ? documentValue.blocks : [];
+  return blocks.some((block) => String(block?.type || "") !== RICH_TEXT_BLOCK_TYPES.HTML);
+}
+
+function shouldUseSemanticTextLayout(content = {}) {
+  const blocks = Array.isArray(content?.richTextDocument?.blocks) ? content.richTextDocument.blocks : [];
+  if (!blocks.length || !hasSemanticTextBlocks(content.richTextDocument)) {
+    return false;
+  }
+  if (blocks.length > 1) {
+    return true;
+  }
+  const firstType = String(blocks[0]?.type || "");
+  if (
+    firstType &&
+    firstType !== RICH_TEXT_BLOCK_TYPES.HTML &&
+    firstType !== RICH_TEXT_BLOCK_TYPES.PARAGRAPH
+  ) {
+    return true;
+  }
+  return String(content?.plainText || "").includes("\n");
+}
+
+function getCanonicalRichTextHtml(content = {}, fallbackHtml = "") {
+  const blocks = Array.isArray(content?.richTextDocument?.blocks) ? content.richTextDocument.blocks : [];
+  if (!blocks.length || !hasSemanticTextBlocks(content.richTextDocument)) {
+    return String(content?.html || fallbackHtml || "");
+  }
+  const canonical = serializeRichTextBlocksToHtml(blocks);
+  return String(canonical || content?.html || fallbackHtml || "");
+}
+
+function shouldRemapPlainTextToSemanticHtml(content = {}, plainText = "") {
+  const detected = detectTextContentType(plainText || "");
+  if (!MARKDOWN_SEMANTIC_TEXT_TYPES.has(detected?.type) && detected?.type !== DETECTED_TEXT_TYPES.CODE) {
+    return false;
+  }
+  const blocks = Array.isArray(content?.richTextDocument?.blocks) ? content.richTextDocument.blocks : [];
+  if (!blocks.length) {
+    return true;
+  }
+  return blocks.every((block) => {
+    const type = String(block?.type || "");
+    return type === RICH_TEXT_BLOCK_TYPES.HTML || type === RICH_TEXT_BLOCK_TYPES.PARAGRAPH;
+  });
+}
+
+function normalizeEditedRichTextContent(item, html, fontSize) {
+  const initialContent = ensureRichTextDocumentFields(
+    {
+      ...item,
+      html,
+      plainText: htmlToPlainText(html),
+      text: htmlToPlainText(html),
+    },
+    {
+      fontSize,
+    }
+  );
+  const plainText = initialContent.plainText;
+  if (!shouldRemapPlainTextToSemanticHtml(initialContent, plainText)) {
+    return initialContent;
+  }
+  const remappedHtml = convertPlainClipboardTextToSemanticHtml(plainText, fontSize);
+  if (!String(remappedHtml || "").trim()) {
+    return initialContent;
+  }
+  return ensureRichTextDocumentFields(
+    {
+      ...item,
+      html: remappedHtml,
+      plainText,
+      text: plainText,
+    },
+    {
+      fontSize,
+    }
+  );
+}
+
+function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT_TEXT_FONT_SIZE) {
+  const currentLayoutMode = getTextBoxLayoutMode(item);
+  const currentWidth = Math.max(80, Number(item?.width || 0) || 80);
+  const currentHeight = Math.max(40, Number(item?.height || 0) || 40);
+  if (!shouldUseSemanticTextLayout(content)) {
+    return {
+      layoutMode: currentLayoutMode,
+      resizeMode: deriveTextResizeModeFromLayoutMode(currentLayoutMode),
+      widthHint: currentWidth,
+      heightHint: currentHeight,
+    };
+  }
+  const importedLayout = resolveImportedTextBoxLayout(
+    content?.plainText || "",
+    Number(item?.fontSize || fallbackFontSize) || fallbackFontSize
+  );
+  return {
+    layoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    resizeMode: TEXT_RESIZE_MODE_WRAP,
+    widthHint: Math.max(240, currentWidth, Number(importedLayout?.width || 0) || 0),
+    heightHint: currentHeight,
+  };
+}
+
+function syncTextLinkSemanticFields(item, plainText = "", richTextDocument = null, options = {}) {
+  if (!item || item.type !== "text") {
+    return { linkTokens: [], urlMetaCache: {}, richTextDocument };
+  }
+  const semanticEnabled = options?.semanticEnabled !== false;
+  if (!semanticEnabled) {
+    const fallbackDocument =
+      richTextDocument && typeof richTextDocument === "object"
+        ? richTextDocument
+        : item.richTextDocument && typeof item.richTextDocument === "object"
+          ? item.richTextDocument
+          : null;
+    return {
+      linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+      urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
+      richTextDocument: fallbackDocument,
+    };
+  }
+  const semanticData = refreshTextLinkSemantics(
+    {
+      ...item,
+      richTextDocument: richTextDocument || item.richTextDocument || null,
+    },
+    plainText
+  );
+  const documentValue =
+    richTextDocument && typeof richTextDocument === "object"
+      ? richTextDocument
+      : item.richTextDocument && typeof item.richTextDocument === "object"
+        ? item.richTextDocument
+        : null;
+  const nextDocument = documentValue
+    ? {
+        ...documentValue,
+        meta: {
+          ...(documentValue.meta && typeof documentValue.meta === "object" ? documentValue.meta : {}),
+          linkTokens: semanticData.linkTokens,
+          urlMetaCache: semanticData.urlMetaCache,
+        },
+      }
+    : documentValue;
+  item.linkTokens = semanticData.linkTokens;
+  item.urlMetaCache = semanticData.urlMetaCache;
+  if (nextDocument) {
+    item.richTextDocument = nextDocument;
+  }
+  return {
+    linkTokens: semanticData.linkTokens,
+    urlMetaCache: semanticData.urlMetaCache,
+    richTextDocument: nextDocument,
+  };
 }
 
 function applyRichEditorLayoutStyles(editor, item, scale) {
@@ -169,36 +722,381 @@ function applyRichEditorLayoutStyles(editor, item, scale) {
   const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(scale) || 1);
   const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(scale) || 1);
   const padding = isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
-  const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
+  const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_BODY_LINE_HEIGHT_RATIO;
   editor.classList.toggle("is-flow-node", isFlowNode);
   editor.classList.toggle("is-wrap-mode", isWrapText);
+  editor.classList.toggle("is-fixed-size", isFixedSizeTextItem(item));
   editor.style.padding = `${padding.y}px ${padding.x}px`;
   editor.style.lineHeight = String(lineHeightRatio);
-  editor.style.fontWeight = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : "500";
+  editor.style.fontFamily = TEXT_FONT_FAMILY;
+  editor.style.fontWeight = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
+  editor.style.color = item.color || "#0f172a";
   editor.style.boxSizing = "border-box";
+  editor.style.overflow = isFixedSizeTextItem(item) ? "hidden" : "visible";
+  applyRichEditorTypographyTokens(editor);
+}
+
+function applyRichTypographyTokens(container) {
+  if (!(container instanceof HTMLDivElement)) {
+    return;
+  }
+  const blockSelector = "p,div,section,article,h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,pre,table";
+  const blocks = container.querySelectorAll(blockSelector);
+  blocks.forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    const tag = normalizeTagName(node.tagName);
+    node.style.lineHeight = String(getLineHeightRatioForTag(tag));
+    if (tag === "ul" || tag === "ol") {
+      node.style.marginTop = `${TEXT_BLOCK_SPACING_EM.listBlock}em`;
+      node.style.marginBottom = `${TEXT_BLOCK_SPACING_EM.listBlock}em`;
+      return;
+    }
+    if (tag === "li") {
+      const isLastInList = !node.nextElementSibling || normalizeTagName(node.nextElementSibling.tagName) !== "li";
+      node.style.marginTop = "0";
+      node.style.marginBottom = isLastInList ? "0" : `${TEXT_BLOCK_SPACING_EM.listItem}em`;
+      return;
+    }
+    if (tag === "blockquote" || tag === "pre" || tag === "table") {
+      node.style.marginTop = `${TEXT_BLOCK_SPACING_EM.block}em`;
+      node.style.marginBottom = `${TEXT_BLOCK_SPACING_EM.block}em`;
+      return;
+    }
+    node.style.marginTop = "0";
+    node.style.marginBottom = `${TEXT_BLOCK_SPACING_EM.paragraph}em`;
+  });
+}
+
+function applyRichEditorTypographyTokens(editor) {
+  applyRichTypographyTokens(editor);
+}
+
+function getRichOverlayViewportBounds(surface, fallbackWidth = 0, fallbackHeight = 0, cullPadding = RICH_OVERLAY_CULL_PADDING_PX) {
+  const surfaceRect = surface?.getBoundingClientRect?.();
+  const width = Math.max(
+    1,
+    Number(surfaceRect?.width || 0) ||
+      Number(surface?.clientWidth || 0) ||
+      Number(fallbackWidth || 0) ||
+      1
+  );
+  const height = Math.max(
+    1,
+    Number(surfaceRect?.height || 0) ||
+      Number(surface?.clientHeight || 0) ||
+      Number(fallbackHeight || 0) ||
+      1
+  );
+  const padding = Math.max(0, Number(cullPadding || 0));
+  return {
+    left: -padding,
+    top: -padding,
+    right: width + padding,
+    bottom: height + padding,
+  };
+}
+
+function hasScreenRectIntersection(rect, bounds) {
+  if (!rect || !bounds) {
+    return false;
+  }
+  return !(
+    Number(rect.right || 0) < Number(bounds.left || 0) ||
+    Number(rect.left || 0) > Number(bounds.right || 0) ||
+    Number(rect.bottom || 0) < Number(bounds.top || 0) ||
+    Number(rect.top || 0) > Number(bounds.bottom || 0)
+  );
+}
+
+function setStyleIfNeeded(node, prop, value) {
+  if (!(node instanceof HTMLElement)) {
+    return;
+  }
+  if (node.style[prop] === value) {
+    return;
+  }
+  node.style[prop] = value;
+}
+
+function getRichOverlayScaleBucket(scale = 1) {
+  const normalized = Math.max(0.1, Number(scale) || 1);
+  const step = Math.max(0.001, Number(RICH_OVERLAY_SCALE_BUCKET_STEP) || 0.02);
+  return String(Math.round(normalized / step) * step);
+}
+
+function getRichOverlayClassSignature(item) {
+  return JSON.stringify({
+    flow: item?.type === "flowNode",
+    wrap: isWrapTextItem(item),
+    fixed: isFixedSizeTextItem(item),
+  });
+}
+
+function getRichOverlayStyleSignature({
+  left = 0,
+  top = 0,
+  fontSize = 12,
+  paddingX = 0,
+  paddingY = 0,
+  lineHeightRatio = TEXT_LINE_HEIGHT_RATIO,
+  fontWeight = TEXT_FONT_WEIGHT,
+  color = "#0f172a",
+  widthCss = "",
+  heightCss = "",
+  minHeightCss = "",
+  maxWidthCss = "",
+  display = "block",
+  whiteSpace = "",
+  wordBreak = "",
+  overflowWrap = "",
+  overflow = "visible",
+} = {}) {
+  return [
+    Math.round(Number(left || 0) * 100) / 100,
+    Math.round(Number(top || 0) * 100) / 100,
+    Math.round(Number(fontSize || 0) * 100) / 100,
+    Math.round(Number(paddingX || 0) * 100) / 100,
+    Math.round(Number(paddingY || 0) * 100) / 100,
+    Number(lineHeightRatio || TEXT_LINE_HEIGHT_RATIO),
+    String(fontWeight || TEXT_FONT_WEIGHT),
+    String(color || "#0f172a"),
+    String(widthCss || ""),
+    String(heightCss || ""),
+    String(minHeightCss || ""),
+    String(maxWidthCss || ""),
+    String(display || "block"),
+    String(whiteSpace || ""),
+    String(wordBreak || ""),
+    String(overflowWrap || ""),
+    String(overflow || "visible"),
+  ].join("|");
+}
+
+function getAutoSizedTextWritebackSignature(item, html = "") {
+  return JSON.stringify({
+    id: String(item?.id || ""),
+    html: String(html || ""),
+    text: String(item?.plainText || item?.text || ""),
+    width: Math.round(Math.max(1, Number(item?.width || 1) || 1) * 100) / 100,
+    height: Math.round(Math.max(1, Number(item?.height || 1) || 1) * 100) / 100,
+    fontSize: Math.round(Math.max(1, Number(item?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE) * 100) / 100,
+    color: String(item?.color || "#0f172a"),
+    layoutMode: String(item?.textBoxLayoutMode || ""),
+    resizeMode: String(item?.textResizeMode || ""),
+  });
+}
+
+function getMathOverlaySignature(item) {
+  return JSON.stringify({
+    id: String(item?.id || ""),
+    formula: String(item?.formula || "").trim(),
+    fallbackText: String(item?.fallbackText || "").trim(),
+    displayMode: item?.displayMode !== false,
+    renderState: String(item?.renderState || ""),
+    width: Math.round(Math.max(1, Number(item?.width || 1) || 1) * 100) / 100,
+    height: Math.round(Math.max(1, Number(item?.height || 1) || 1) * 100) / 100,
+  });
+}
+
+function getMathOverlayTypography(item, scale = 1) {
+  const displayMode = item?.displayMode !== false;
+  return {
+    fontSize: displayMode ? Math.max(1, scaleSceneValue({ scale }, 22, { min: 14 })) : Math.max(1, scaleSceneValue({ scale }, 18, { min: 12 })),
+    paddingX: displayMode ? 16 * Math.max(0.1, Number(scale || 1) || 1) : 10 * Math.max(0.1, Number(scale || 1) || 1),
+    paddingY: displayMode ? 12 * Math.max(0.1, Number(scale || 1) || 1) : 8 * Math.max(0.1, Number(scale || 1) || 1),
+  };
+}
+
+function getMathOverlayStyleSignature({ left = 0, top = 0, fontSize = 16, paddingX = 0, paddingY = 0 } = {}) {
+  return [
+    Math.round(Number(left || 0) * 100) / 100,
+    Math.round(Number(top || 0) * 100) / 100,
+    Math.round(Number(fontSize || 0) * 100) / 100,
+    Math.round(Number(paddingX || 0) * 100) / 100,
+    Math.round(Number(paddingY || 0) * 100) / 100,
+  ].join("|");
+}
+
+function readMathOverlayFrame(node, scale = 1) {
+  if (!(node instanceof HTMLDivElement)) {
+    return null;
+  }
+  const normalizedScale = Math.max(0.1, Number(scale || 1) || 1);
+  const rect = node.getBoundingClientRect();
+  const widthPx = Math.max(node.scrollWidth || 0, rect.width || 0);
+  const heightPx = Math.max(node.scrollHeight || 0, rect.height || 0);
+  if (!widthPx || !heightPx) {
+    return null;
+  }
+  return {
+    width: Math.max(1, Math.ceil(widthPx / normalizedScale)),
+    height: Math.max(1, Math.ceil(heightPx / normalizedScale)),
+  };
+}
+
+function maybeWritebackMathOverlayFrame(item, node, scale = 1) {
+  if (!item || (item.type !== "mathBlock" && item.type !== "mathInline")) {
+    return false;
+  }
+  const measured = readMathOverlayFrame(node, scale);
+  if (!measured) {
+    return false;
+  }
+  const nextWidth = Math.max(56, measured.width);
+  const nextHeight = Math.max(28, measured.height);
+  const currentWidth = Math.max(56, Math.ceil(Number(item.width || 0) || 56));
+  const currentHeight = Math.max(28, Math.ceil(Number(item.height || 0) || 28));
+  if (Math.abs(nextWidth - currentWidth) <= 2 && Math.abs(nextHeight - currentHeight) <= 2) {
+    return false;
+  }
+  item.width = nextWidth;
+  item.height = nextHeight;
+  return true;
+}
+
+function getAutoWidthOverlayMaxWidthPx(item, scale = 1) {
+  const currentWidth = Math.max(80, Number(item?.width || 0) || 80);
+  return Math.max(currentWidth, Math.min(TEXT_EDIT_MAX_WIDTH, 3200)) * Math.max(0.1, Number(scale || 1) || 1);
+}
+
+function getRichOverlayBoxStyles(item, scale = 1) {
+  const layoutMode = getTextBoxLayoutMode(item);
+  const currentWidth = Math.max(1, Number(item?.width || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
+  const currentHeight = Math.max(1, Number(item?.height || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+    return {
+      display: "inline-block",
+      widthCss: "max-content",
+      heightCss: "auto",
+      minHeightCss: "",
+      maxWidthCss: `${getAutoWidthOverlayMaxWidthPx(item, scale)}px`,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      overflowWrap: "anywhere",
+      overflow: "visible",
+    };
+  }
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE) {
+    return {
+      display: "block",
+      widthCss: `${currentWidth}px`,
+      heightCss: `${currentHeight}px`,
+      minHeightCss: "",
+      maxWidthCss: `${currentWidth}px`,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      overflowWrap: "anywhere",
+      overflow: "hidden",
+    };
+  }
+  return {
+    display: "block",
+    widthCss: `${currentWidth}px`,
+    heightCss: "auto",
+    minHeightCss: "",
+    maxWidthCss: `${currentWidth}px`,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
+    overflow: "visible",
+  };
+}
+
+function readSceneTextOverlayFrame(node, scale = 1) {
+  if (!(node instanceof HTMLDivElement)) {
+    return null;
+  }
+  const normalizedScale = Math.max(0.1, Number(scale || 1) || 1);
+  const rect = node.getBoundingClientRect();
+  const widthPx = Math.max(node.scrollWidth || 0, rect.width || 0);
+  const heightPx = Math.max(node.scrollHeight || 0, rect.height || 0);
+  if (!widthPx || !heightPx) {
+    return null;
+  }
+  return {
+    width: Math.max(1, Math.ceil(widthPx / normalizedScale)),
+    height: Math.max(1, Math.ceil(heightPx / normalizedScale)),
+  };
+}
+
+function maybeWritebackTextOverlayFrame(item, node, scale = 1) {
+  if (!item || item.type !== "text") {
+    return false;
+  }
+  const layoutMode = getTextBoxLayoutMode(item);
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE) {
+    return false;
+  }
+  const measuredFrame = readSceneTextOverlayFrame(node, scale);
+  if (!measuredFrame) {
+    return false;
+  }
+  const nextWidth =
+    layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+      ? Math.max(80, measuredFrame.width)
+      : Math.max(80, Number(item.width || 0) || 80);
+  const nextHeight = Math.max(40, measuredFrame.height);
+  const currentWidth = Math.max(80, Math.ceil(Number(item.width || 0) || 80));
+  const currentHeight = Math.max(40, Math.ceil(Number(item.height || 0) || 40));
+  const widthDelta = Math.abs(nextWidth - currentWidth);
+  const heightDelta = Math.abs(nextHeight - currentHeight);
+  const widthThreshold = layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? 2 : 0;
+  const heightThreshold = layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? 2 : 6;
+  if (widthDelta <= widthThreshold && heightDelta < heightThreshold) {
+    return false;
+  }
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+    item.width = nextWidth;
+  }
+  item.height = nextHeight;
+  return true;
 }
 
 function getEditingTextBoxMetrics(editor, item, view, plainText = "") {
   const fontSize = Math.max(12, Number(item?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE);
-  const isWrapText = isWrapTextItem(item);
+  const layoutMode = getTextBoxLayoutMode(item);
+  const isWrapText = layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH;
+  const isFlowNode = item?.type === "flowNode";
   const measured = measureTextElementLayout({
     html: editor?.innerHTML || item?.html || "",
     plainText,
+    linkTokens: Array.isArray(item?.linkTokens) ? item.linkTokens : [],
     fontSize,
+    layoutMode,
     resizeMode: isWrapText ? TEXT_RESIZE_MODE_WRAP : TEXT_RESIZE_MODE_AUTO_WIDTH,
     widthHint: isWrapText ? Number(item?.width || 0) || 80 : undefined,
+    heightHint: layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE ? Number(item?.height || 0) || 40 : undefined,
     maxWidth: TEXT_EDIT_MAX_WIDTH,
-    lineHeightRatio: TEXT_LINE_HEIGHT_RATIO,
-    fontWeight: "500",
-    boldWeight: "700",
-    editorElement: editor,
-    scale: Number(view?.scale || 1),
+    lineHeightRatio: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO,
+    fontWeight: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT,
+    boldWeight: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.boldWeight : TEXT_BOLD_WEIGHT,
   });
 
   return {
     width: Math.max(80, Math.ceil(Number(measured?.frameWidth || 0) || 80)),
     height: Math.max(40, Math.ceil(Number(measured?.frameHeight || 0) || 40)),
   };
+}
+
+function getRichEditableItemSignature(item) {
+  if (!item || (item.type !== "text" && item.type !== "flowNode")) {
+    return "";
+  }
+  return JSON.stringify({
+    type: item.type,
+    html: item.html || "",
+    plainText: item.plainText || "",
+    text: item.text || "",
+    richTextDocument: item.richTextDocument || null,
+    title: item.title || "",
+    width: Number(item.width || 0) || 0,
+    height: Number(item.height || 0) || 0,
+    fontSize: Number(item.fontSize || 0) || 0,
+    textBoxLayoutMode: item.textBoxLayoutMode || "",
+    textResizeMode: item.textResizeMode || "",
+  });
 }
 
   function syncEditingRichEditorFrame(editor, item, view) {
@@ -881,10 +1779,11 @@ export function createCanvas2DEngine(options = {}) {
       }
       const text = String(payload?.text || "");
       const html = String(payload?.html || "");
-      const marker = JSON.stringify({
-        type: "canvas2d",
+      const marker = buildInternalClipboardMarker({
         copiedAt: Number(payload?.copiedAt) || Date.now(),
         itemCount: Array.isArray(payload?.items) ? payload.items.length : 0,
+        source: CLIPBOARD_SOURCE_CANVAS,
+        kind: CLIPBOARD_KIND_ITEMS,
       });
       const item = new ClipboardItem({
         [CANVAS_CLIPBOARD_MIME]: new Blob([marker], { type: CANVAS_CLIPBOARD_MIME }),
@@ -963,11 +1862,18 @@ export function createCanvas2DEngine(options = {}) {
     richToolbar: null,
     richSelectionToolbar: null,
     richDisplayHost: null,
+    codeBlockDisplayHost: null,
+    mathDisplayHost: null,
+    codeBlockEditor: null,
+    codeBlockToolbar: null,
     imageToolbar: null,
     fileMemoEditor: null,
     imageMemoEditor: null,
+    tableEditor: null,
+    tableToolbar: null,
     uiHost: null,
     contextMenu: null,
+    linkTooltip: null,
     dragIndicator: null,
     fileImportInput: null,
     imageImportInput: null,
@@ -988,18 +1894,365 @@ export function createCanvas2DEngine(options = {}) {
   let boardLoadInFlight = null;
   let boardSaveInFlight = null;
   let boardSelectionPersistPromise = Promise.resolve();
+  const urlMetaHydrationTasks = new Map();
+  const deferredTextSemanticUpgradeTasks = new Map();
+  let clipboardProcessingStatusToken = 0;
+  let linkSemanticEnabled = true;
   let lastEditorItemId = null;
-  let lastRichEditorItemId = null;
   let lastFileMemoItemId = null;
   let lastImageMemoItemId = null;
+  let lastTableEditItemId = null;
+  let lastCodeBlockEditItemId = null;
+  let codeBlockEditorLayoutFrame = 0;
+  let codeBlockEditorPreciseLayoutTimer = 0;
+  let pendingCodeBlockEditorLayoutMode = "precise";
+  let tableEditSelection = { rowIndex: 0, columnIndex: 0 };
   let flowDraft = null;
-  let richTextAdapter = null;
   const richDisplayMap = new Map();
+  const codeBlockDisplayMap = new Map();
+  const codeBlockOverlayDirtyIds = new Set();
+  const codeBlockVisibleIds = new Set();
+  const codeBlockItemsById = new Map();
+  const codeBlockEditLayoutCache = new Map();
+  const mathDisplayMap = new Map();
+  let codeBlockOverlayNeedsFullRescan = true;
+  let lastCodeBlockOverlayViewportKey = "";
+  let lastCodeBlockOverlayHoverId = "";
+  let lastCodeBlockOverlaySelectionKey = "";
+  let lastCodeBlockOverlayEditingId = "";
+  let lastCodeBlockOverlayInteractive = true;
   let pointerOverCanvas = false;
   let editBaselineSnapshot = null;
-  let richFontSize = 20;
+  linkSemanticEnabled = readLinkSemanticEnabled();
+  const richTextSession = createRichTextEditingSession({
+    editorElement: refs.richEditor,
+    onSelectionChange: () => syncRichTextToolbar(),
+    onRequestCommit: () => commitRichEdit(),
+    onRequestCancel: () => cancelRichEdit(),
+  });
+  let richFontSize = DEFAULT_TEXT_FONT_SIZE;
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
+  function clearCodeBlockEditLayoutCache(itemId = "") {
+    if (!itemId) {
+      codeBlockEditLayoutCache.clear();
+      return;
+    }
+    codeBlockEditLayoutCache.delete(String(itemId || ""));
+  }
+
+  function getCodeBlockLayoutCacheKey(item = {}) {
+    return String(item?.id || "");
+  }
+
+  function readCodeBlockEditLayoutCache(item = {}, draftCode = "", widthHint = 0) {
+    const key = getCodeBlockLayoutCacheKey(item);
+    if (!key || !codeBlockEditLayoutCache.has(key)) {
+      return null;
+    }
+    const cached = codeBlockEditLayoutCache.get(key) || null;
+    if (!cached) {
+      return null;
+    }
+    const nextWidthHint = Math.max(1, Number(widthHint || item?.width || 0) || 1);
+    const nextSignature = [
+      nextWidthHint,
+      Math.max(12, Number(item?.fontSize || 16)),
+      item?.wrap === true ? 1 : 0,
+      item?.showLineNumbers === false ? 0 : 1,
+      item?.headerVisible === false ? 0 : 1,
+      item?.collapsed === true ? 1 : 0,
+      Math.max(2, Math.min(8, Number(item?.tabSize || 2) || 2)),
+      String(item?.language || "").trim().toLowerCase(),
+      String(item?.previewMode || "preview").trim().toLowerCase() || "preview",
+      String(draftCode || ""),
+    ].join("|");
+    if (cached.signature !== nextSignature) {
+      return null;
+    }
+    return cached;
+  }
+
+  function writeCodeBlockEditLayoutCache(item = {}, draftCode = "", widthHint = 0, layout = null, mode = "precise") {
+    const key = getCodeBlockLayoutCacheKey(item);
+    if (!key || !layout) {
+      return;
+    }
+    const nextWidthHint = Math.max(1, Number(widthHint || item?.width || 0) || 1);
+    const signature = [
+      nextWidthHint,
+      Math.max(12, Number(item?.fontSize || 16)),
+      item?.wrap === true ? 1 : 0,
+      item?.showLineNumbers === false ? 0 : 1,
+      item?.headerVisible === false ? 0 : 1,
+      item?.collapsed === true ? 1 : 0,
+      Math.max(2, Math.min(8, Number(item?.tabSize || 2) || 2)),
+      String(item?.language || "").trim().toLowerCase(),
+      String(item?.previewMode || "preview").trim().toLowerCase() || "preview",
+      String(draftCode || ""),
+    ].join("|");
+    const previous = codeBlockEditLayoutCache.get(key) || {};
+    codeBlockEditLayoutCache.set(key, {
+      ...previous,
+      signature,
+      code: String(draftCode || ""),
+      widthHint: nextWidthHint,
+      updatedAt: Date.now(),
+      fastLayout: mode === "fast" ? layout : previous.fastLayout || layout,
+      preciseLayout: mode === "precise" ? layout : previous.preciseLayout || null,
+    });
+  }
+
+  function buildFastCodeBlockLayout(item = {}, draftCode = "", options = {}) {
+    const widthHint = Math.max(1, Number(options.widthHint || item.width || 0) || 1);
+    const cached = readCodeBlockEditLayoutCache(item, draftCode, widthHint);
+    if (cached?.preciseLayout) {
+      return {
+        ...cached.preciseLayout,
+        layoutMode: "fast",
+      };
+    }
+    const code = sanitizeText(draftCode || "");
+    const rawLineCount = Math.max(1, code ? code.split("\n").length : 1);
+    const fontSize = Math.max(12, Number(item.fontSize || 16) || 16);
+    const lineHeight = Math.max(18, Math.round(fontSize * 1.55));
+    const headerHeight = item.headerVisible === false ? 0 : Math.max(34, Math.round(fontSize * 2.1));
+    const bodyPaddingX = Math.max(12, Math.round(fontSize * 0.95));
+    const bodyPaddingY = Math.max(10, Math.round(fontSize * 0.72));
+    const lineNumberDigits = Math.max(2, String(rawLineCount).length);
+    const gutterWidth = item.showLineNumbers === false ? 0 : Math.round(fontSize * 0.72 * (lineNumberDigits + 1.8));
+    const charWidth = Math.max(7, fontSize * 0.61);
+    const metrics = cached?.fastLayout?.metrics || {
+      fontSize,
+      lineHeight,
+      headerHeight,
+      bodyPaddingX,
+      bodyPaddingY,
+      gutterWidth,
+      charWidth,
+    };
+    const contentWidth = Math.max(48, widthHint - metrics.bodyPaddingX * 2 - metrics.gutterWidth);
+    const wrapCharsPerLine = Math.max(1, Math.floor(contentWidth / Math.max(metrics.charWidth, 1)));
+    const approxVisualLineCount = item.wrap === true
+      ? Math.max(rawLineCount, Math.ceil(Math.max(code.length, rawLineCount) / Math.max(wrapCharsPerLine, 1)))
+      : rawLineCount;
+    const bodyLineCount = item.collapsed === true ? 0 : approxVisualLineCount;
+    const bodyHeight = item.collapsed === true
+      ? 0
+      : Math.max(metrics.lineHeight * Math.max(1, bodyLineCount), metrics.lineHeight);
+    const bodyInnerHeight = item.collapsed === true ? 0 : bodyHeight + metrics.bodyPaddingY * 2;
+    const layout = {
+      width: Math.max(1, widthHint),
+      height: Math.max(84, Math.round(metrics.headerHeight + bodyInnerHeight)),
+      estimatedWidth: cached?.preciseLayout?.estimatedWidth || Math.max(220, widthHint),
+      metrics,
+      code,
+      rawLineCount,
+      visualLineCount: approxVisualLineCount,
+      contentWidth,
+      wrapCharsPerLine,
+      layoutMode: "fast",
+    };
+    writeCodeBlockEditLayoutCache(item, code, widthHint, layout, "fast");
+    return layout;
+  }
+
+  function measureCodeBlockEditorLayout(item = {}, draftCode = "", options = {}) {
+    const widthHint = Math.max(1, Number(options.widthHint || item.width || 0) || 1);
+    if (options.mode === "fast") {
+      return buildFastCodeBlockLayout(item, draftCode, { widthHint });
+    }
+    const cached = readCodeBlockEditLayoutCache(item, draftCode, widthHint);
+    if (cached?.preciseLayout) {
+      return {
+        ...cached.preciseLayout,
+        layoutMode: "precise",
+      };
+    }
+    const preciseLayout = measureCodeBlockLayout(
+      {
+        ...item,
+        code: draftCode,
+        text: draftCode,
+        plainText: draftCode,
+      },
+      {
+        widthHint,
+      }
+    );
+    const layout = {
+      ...preciseLayout,
+      layoutMode: "precise",
+    };
+    writeCodeBlockEditLayoutCache(item, draftCode, widthHint, layout, "precise");
+    return layout;
+  }
+
+  function scheduleCodeBlockEditorLayoutSync(mode = "fast") {
+    if (mode === "precise") {
+      pendingCodeBlockEditorLayoutMode = "precise";
+      if (codeBlockEditorPreciseLayoutTimer) {
+        clearTimeout(codeBlockEditorPreciseLayoutTimer);
+      }
+      codeBlockEditorPreciseLayoutTimer = setTimeout(() => {
+        codeBlockEditorPreciseLayoutTimer = 0;
+        if (state.editingType !== "code-block" || !state.editingId) {
+          return;
+        }
+        syncCodeBlockEditorLayout("precise");
+      }, 96);
+      return;
+    }
+    pendingCodeBlockEditorLayoutMode = pendingCodeBlockEditorLayoutMode === "precise" ? "precise" : "fast";
+    if (codeBlockEditorLayoutFrame) {
+      return;
+    }
+    codeBlockEditorLayoutFrame = requestAnimationFrame(() => {
+      const nextMode = pendingCodeBlockEditorLayoutMode;
+      pendingCodeBlockEditorLayoutMode = "fast";
+      codeBlockEditorLayoutFrame = 0;
+      syncCodeBlockEditorLayout(nextMode);
+    });
+  }
+
+  function cancelCodeBlockEditorLayoutSync() {
+    if (!codeBlockEditorLayoutFrame) {
+      pendingCodeBlockEditorLayoutMode = "fast";
+    } else {
+      cancelAnimationFrame(codeBlockEditorLayoutFrame);
+      codeBlockEditorLayoutFrame = 0;
+    }
+    if (codeBlockEditorPreciseLayoutTimer) {
+      clearTimeout(codeBlockEditorPreciseLayoutTimer);
+      codeBlockEditorPreciseLayoutTimer = 0;
+    }
+  }
+
+  function markCodeBlockOverlayDirty(itemIds = [], { fullRescan = false } = {}) {
+    if (fullRescan) {
+      codeBlockOverlayNeedsFullRescan = true;
+    }
+    const ids = Array.isArray(itemIds) ? itemIds : [itemIds];
+    ids.forEach((itemId) => {
+      const normalizedId = String(itemId || "");
+      if (normalizedId) {
+        codeBlockOverlayDirtyIds.add(normalizedId);
+      }
+    });
+  }
+
+  function resetCodeBlockOverlayState({ clearNodes = false } = {}) {
+    codeBlockOverlayDirtyIds.clear();
+    codeBlockVisibleIds.clear();
+    codeBlockItemsById.clear();
+    codeBlockOverlayNeedsFullRescan = true;
+    lastCodeBlockOverlayViewportKey = "";
+    lastCodeBlockOverlayHoverId = "";
+    lastCodeBlockOverlaySelectionKey = "";
+    lastCodeBlockOverlayEditingId = "";
+    lastCodeBlockOverlayInteractive = isInteractiveMode();
+    if (clearNodes && codeBlockDisplayMap.size) {
+      codeBlockDisplayMap.forEach((node) => node.remove());
+      codeBlockDisplayMap.clear();
+    }
+  }
+
+  function getCodeBlockOverlayViewportKey(viewportBounds, scale) {
+    return [
+      Math.round(scale * 100),
+      Math.round(Number(state.board.view.offsetX || 0) / 12),
+      Math.round(Number(state.board.view.offsetY || 0) / 12),
+      Math.round(Number(viewportBounds.left || 0) / 24),
+      Math.round(Number(viewportBounds.top || 0) / 24),
+      Math.round(Number(viewportBounds.right || 0) / 24),
+      Math.round(Number(viewportBounds.bottom || 0) / 24),
+    ].join("|");
+  }
+
+  function getSelectedCodeBlockIds() {
+    return state.board.selectedIds.filter((itemId) => {
+      const item = codeBlockItemsById.get(itemId);
+      return item?.type === "codeBlock";
+    });
+  }
+
+  function syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY) {
+    const itemId = String(item?.id || "");
+    if (!itemId) {
+      return;
+    }
+    const left = Number(item.x || 0) * scale + offsetX;
+    const top = Number(item.y || 0) * scale + offsetY;
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const height = Math.max(1, Number(item.height || 1)) * scale;
+    const isVisible = hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
+    const isEditing = state.editingId === item.id && state.editingType === "code-block";
+    let node = codeBlockDisplayMap.get(item.id);
+    if (!isVisible) {
+      if (node) {
+        node.style.display = "none";
+      }
+      codeBlockVisibleIds.delete(item.id);
+      return;
+    }
+    if (!node) {
+      node = document.createElement("div");
+      refs.codeBlockDisplayHost.appendChild(node);
+      codeBlockDisplayMap.set(item.id, node);
+    }
+    codeBlockVisibleIds.add(item.id);
+    node.style.display = "block";
+    node.style.pointerEvents = isEditing ? "none" : "auto";
+    node.style.left = `${Math.round(left)}px`;
+    node.style.top = `${Math.round(top)}px`;
+    node.style.width = `${Math.round(width)}px`;
+    node.style.height = `${Math.round(height)}px`;
+    const contentSignature = [
+      Number(item.updatedAt || 0),
+      String(item.language || "").trim().toLowerCase(),
+      item.wrap ? 1 : 0,
+      item.showLineNumbers === false ? 0 : 1,
+      item.headerVisible === false ? 0 : 1,
+      item.collapsed ? 1 : 0,
+      Number(item.fontSize || 16),
+      String(item.previewMode || "preview"),
+    ].join("|");
+    const viewSignature = [
+      Math.round(scale * 1000),
+      Math.round(left),
+      Math.round(top),
+      Math.round(width),
+      Math.round(height),
+      state.hoverId === item.id ? 1 : 0,
+      state.board.selectedIds.includes(item.id) ? 1 : 0,
+      item.locked === true ? 1 : 0,
+      isEditing ? 1 : 0,
+    ].join("|");
+    if (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderViewSignature !== viewSignature) {
+      renderCodeBlockStatic(node, item, {
+        scale,
+        hover: state.hoverId === item.id,
+        selected: state.board.selectedIds.includes(item.id),
+        editing: isEditing,
+      });
+      node.dataset.renderContentSignature = contentSignature;
+      node.dataset.renderViewSignature = viewSignature;
+    }
+    node.style.pointerEvents = isEditing ? "none" : "auto";
+    node.style.opacity = isEditing ? "0.82" : "1";
+  }
+
+  const codeBlockEditor = createCodeBlockEditor(null, {
+    onChange: () => {
+      scheduleCodeBlockEditorLayoutSync("fast");
+      scheduleCodeBlockEditorLayoutSync("precise");
+    },
+    onBlur: () => {
+      if (state.editingType === "code-block") {
+        commitCodeBlockEdit();
+      }
+    },
+  });
   const onHintLogoLoaded = () => scheduleRender();
   const lightImageEditor = createLightImageEditor({
     getImageItemById: (id) => state.board.items.find((entry) => entry.id === id && entry.type === "image"),
@@ -1069,12 +2322,16 @@ export function createCanvas2DEngine(options = {}) {
       syncEditorLayout();
       syncRichTextToolbar();
       syncRichTextOverlays();
+      syncCodeBlockOverlays();
+      syncMathOverlays();
+      syncCodeBlockToolbar();
       syncImageToolbar();
       syncCanvasCursor();
     });
   }
 
   function syncBoard({ persist = true, emit = true, markDirty = persist } = {}) {
+    markCodeBlockOverlayDirty([], { fullRescan: true });
     if (markDirty) {
       markBoardDirty();
     }
@@ -1134,12 +2391,327 @@ export function createCanvas2DEngine(options = {}) {
     store.emit();
   }
 
+  async function runClipboardOperationWithStatus(statusText = "处理中…", operation) {
+    if (typeof operation !== "function") {
+      return null;
+    }
+    const marker = String(statusText || "处理中…");
+    const previousText = String(state.statusText || "");
+    const previousTone = String(state.statusTone || "neutral");
+    const token = ++clipboardProcessingStatusToken;
+    setStatus(marker);
+    try {
+      // Ensure the processing hint can paint before heavy clipboard work starts.
+      await yieldToNextFrame();
+      return await operation();
+    } finally {
+      if (token === clipboardProcessingStatusToken && state.statusText === marker) {
+        state.statusText = previousText;
+        state.statusTone = previousTone;
+        store.emit();
+      }
+    }
+  }
+
+  function openExternalUrl(url = "") {
+    const targetUrl = String(url || "").trim();
+    if (!targetUrl) {
+      return false;
+    }
+    try {
+      // Validate URL before trying to open.
+      // eslint-disable-next-line no-new
+      new URL(targetUrl);
+    } catch (_error) {
+      return false;
+    }
+    if (typeof globalThis?.desktopShell?.openExternal === "function") {
+      void globalThis.desktopShell.openExternal(targetUrl);
+      return true;
+    }
+    if (typeof window?.open === "function") {
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+      return true;
+    }
+    return false;
+  }
+
   function waitForUiPaint() {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
         setTimeout(resolve, 0);
       });
     });
+  }
+
+  function findTextItemById(itemId = "") {
+    const targetId = String(itemId || "").trim();
+    if (!targetId) {
+      return null;
+    }
+    return state.board.items.find((entry) => entry.id === targetId && entry.type === "text") || null;
+  }
+
+  function mergeTextItemUrlMeta(itemId = "", url = "", meta = null) {
+    const item = findTextItemById(itemId);
+    if (!item || !url || !meta || typeof meta !== "object") {
+      return false;
+    }
+    const nextCache = {
+      ...(item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {}),
+      [url]: {
+        ...(item.urlMetaCache?.[url] && typeof item.urlMetaCache[url] === "object" ? item.urlMetaCache[url] : {}),
+        ...meta,
+        url,
+      },
+    };
+    item.urlMetaCache = nextCache;
+    if (item.richTextDocument && typeof item.richTextDocument === "object") {
+      item.richTextDocument = {
+        ...item.richTextDocument,
+        meta: {
+          ...(item.richTextDocument.meta && typeof item.richTextDocument.meta === "object"
+            ? item.richTextDocument.meta
+            : {}),
+          linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+          urlMetaCache: nextCache,
+        },
+      };
+    }
+    markBoardDirty();
+    syncBoard({ persist: false, emit: true, markDirty: false });
+    return true;
+  }
+
+  async function hydrateUrlMetaForItem(itemId = "", token = null, existingMeta = null) {
+    const url = String(token?.url || "").trim();
+    if (!url) {
+      return;
+    }
+    const taskKey = `${String(itemId || "").trim()}::${url}`;
+    if (!taskKey || urlMetaHydrationTasks.has(taskKey)) {
+      return;
+    }
+    const pendingMeta =
+      existingMeta && typeof existingMeta === "object"
+        ? existingMeta
+        : {
+            url,
+            domain: String(token?.domain || "").trim().toLowerCase(),
+            title: "",
+            description: "",
+            image: "",
+            siteName: "",
+            status: "",
+            fetchState: "pending",
+            updatedAt: Date.now(),
+            embeddable: token?.kindHint === "embed-candidate",
+          };
+    mergeTextItemUrlMeta(itemId, url, pendingMeta);
+    const task = (async () => {
+      try {
+        const resolvedMeta = await resolveUrlMeta(url, { timeoutMs: 4500 });
+        if (!resolvedMeta) {
+          mergeTextItemUrlMeta(itemId, url, {
+            ...pendingMeta,
+            fetchState: "error",
+            status: "meta-unavailable",
+            updatedAt: Date.now(),
+          });
+          return;
+        }
+        mergeTextItemUrlMeta(itemId, url, {
+          ...pendingMeta,
+          ...resolvedMeta,
+          fetchState: "ready",
+          updatedAt: Date.now(),
+        });
+      } catch (_error) {
+        mergeTextItemUrlMeta(itemId, url, {
+          ...pendingMeta,
+          fetchState: "error",
+          status: "meta-error",
+          updatedAt: Date.now(),
+        });
+      } finally {
+        urlMetaHydrationTasks.delete(taskKey);
+      }
+    })();
+    urlMetaHydrationTasks.set(taskKey, task);
+  }
+
+  function scheduleUrlMetaHydrationForItem(item = null) {
+    if (!linkSemanticEnabled || !item || item.type !== "text") {
+      return;
+    }
+    const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
+    if (!tokens.length) {
+      return;
+    }
+    const metaCache = item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
+    tokens.forEach((token) => {
+      const url = String(token?.url || "").trim();
+      if (!url) {
+        return;
+      }
+      const metaEntry = metaCache[url];
+      const hasRichMeta = Boolean(String(metaEntry?.title || "").trim() || String(metaEntry?.description || "").trim());
+      const isResolved = String(metaEntry?.fetchState || "").trim().toLowerCase() === "ready";
+      if (hasRichMeta && isResolved) {
+        return;
+      }
+      void hydrateUrlMetaForItem(item.id, token, metaEntry);
+    });
+  }
+
+  function hideLinkMetaTooltip() {
+    if (!(refs.linkTooltip instanceof HTMLDivElement)) {
+      return;
+    }
+    refs.linkTooltip.classList.add("is-hidden");
+    refs.linkTooltip.style.left = "-9999px";
+    refs.linkTooltip.style.top = "-9999px";
+    refs.linkTooltip.innerHTML = "";
+  }
+
+  function normalizeComparableUrl(url = "") {
+    const raw = String(url || "").trim();
+    if (!raw) {
+      return "";
+    }
+    try {
+      return new URL(raw, window.location.href).toString();
+    } catch {
+      return raw;
+    }
+  }
+
+  function resolveLinkDescriptorFromAnchor(target) {
+    const linkEl = target instanceof Element ? target.closest("a[href], a[data-link-token='1']") : null;
+    if (!(linkEl instanceof HTMLAnchorElement)) {
+      return null;
+    }
+    const richItemEl = linkEl.closest(".canvas2d-rich-item[data-id]");
+    const itemId = String(richItemEl?.getAttribute("data-id") || "").trim();
+    if (!itemId) {
+      return null;
+    }
+    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "text");
+    if (!item || state.editingId === item.id) {
+      return null;
+    }
+    const rawUrl = String(linkEl.getAttribute("data-link-url") || linkEl.getAttribute("href") || linkEl.href || "").trim();
+    const normalizedUrl = normalizeComparableUrl(rawUrl);
+    if (!normalizedUrl) {
+      return null;
+    }
+    const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
+    const rangeStart = Number(linkEl.getAttribute("data-link-range-start"));
+    const rangeEnd = Number(linkEl.getAttribute("data-link-range-end"));
+    const token =
+      tokens.find((entry) => {
+        const entryUrl = normalizeComparableUrl(entry?.url || "");
+        if (!entryUrl || entryUrl !== normalizedUrl) {
+          return false;
+        }
+        if (Number.isFinite(rangeStart) && Number.isFinite(rangeEnd)) {
+          return Number(entry?.rangeStart) === rangeStart && Number(entry?.rangeEnd) === rangeEnd;
+        }
+        return true;
+      }) ||
+      tokens.find((entry) => normalizeComparableUrl(entry?.url || "") === normalizedUrl) ||
+      null;
+    const metaCache = item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
+    const meta = metaCache[rawUrl] && typeof metaCache[rawUrl] === "object"
+      ? metaCache[rawUrl]
+      : metaCache[normalizedUrl] && typeof metaCache[normalizedUrl] === "object"
+        ? metaCache[normalizedUrl]
+        : {};
+    return {
+      item,
+      linkEl,
+      url: rawUrl || normalizedUrl,
+      normalizedUrl,
+      token,
+      meta,
+    };
+  }
+
+  function applyLinkSemanticsToRichDisplayNode(node, item) {
+    if (!(node instanceof HTMLDivElement) || !item || item.type !== "text") {
+      return;
+    }
+    const anchors = Array.from(node.querySelectorAll("a[href]"));
+    if (!anchors.length) {
+      return;
+    }
+    const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
+    const metaCache = item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
+    anchors.forEach((anchor) => {
+      const href = String(anchor.getAttribute("href") || anchor.href || "").trim();
+      const normalizedHref = normalizeComparableUrl(href);
+      if (!normalizedHref) {
+        return;
+      }
+      const matchedToken = tokens.find((token) => normalizeComparableUrl(token?.url || "") === normalizedHref) || null;
+      const meta = metaCache[href] && typeof metaCache[href] === "object"
+        ? metaCache[href]
+        : metaCache[normalizedHref] && typeof metaCache[normalizedHref] === "object"
+          ? metaCache[normalizedHref]
+          : {};
+      anchor.setAttribute("data-link-token", "1");
+      anchor.setAttribute("data-link-url", href || normalizedHref);
+      anchor.setAttribute("data-link-kind", String(matchedToken?.kindHint || "link").trim() || "link");
+      anchor.setAttribute(
+        "data-link-state",
+        String(meta?.fetchState || matchedToken?.fetchState || "unknown").trim().toLowerCase() || "unknown"
+      );
+      if (Number.isFinite(Number(matchedToken?.rangeStart))) {
+        anchor.setAttribute("data-link-range-start", String(Number(matchedToken.rangeStart)));
+      }
+      if (Number.isFinite(Number(matchedToken?.rangeEnd))) {
+        anchor.setAttribute("data-link-range-end", String(Number(matchedToken.rangeEnd)));
+      }
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener noreferrer");
+      const title = String(meta?.title || href || normalizedHref).trim();
+      if (title) {
+        anchor.setAttribute("title", title);
+      }
+    });
+  }
+
+  function updateLinkMetaTooltip(descriptor = null, clientX = 0, clientY = 0) {
+    if (!(refs.linkTooltip instanceof HTMLDivElement) || !refs.surface) {
+      return;
+    }
+    if (!descriptor?.item || descriptor.item.type !== "text" || state.editingId === descriptor.item.id) {
+      hideLinkMetaTooltip();
+      return;
+    }
+    const url = String(descriptor.url || descriptor.normalizedUrl || "").trim();
+    if (!url) {
+      hideLinkMetaTooltip();
+      return;
+    }
+    const token = descriptor.token && typeof descriptor.token === "object" ? descriptor.token : {};
+    const meta = descriptor.meta && typeof descriptor.meta === "object" ? descriptor.meta : {};
+    const title = String(meta.title || url).trim();
+    const desc = String(meta.description || meta.siteName || meta.domain || "").trim();
+    const stateText = String(meta.fetchState || token.fetchState || "pending").trim().toLowerCase();
+    refs.linkTooltip.innerHTML = `
+      <div class="canvas2d-link-tooltip-title">${escapeRichTextHtml(title)}</div>
+      <div class="canvas2d-link-tooltip-desc">${escapeRichTextHtml(desc || url)}</div>
+      <div class="canvas2d-link-tooltip-state">${escapeRichTextHtml(stateText)}</div>
+    `;
+    refs.linkTooltip.classList.remove("is-hidden");
+    const hostRect = refs.surface.getBoundingClientRect();
+    const panelWidth = Math.max(200, Math.min(360, refs.linkTooltip.offsetWidth || 260));
+    const panelHeight = Math.max(56, refs.linkTooltip.offsetHeight || 82);
+    const left = Math.min(Math.max(12, Number(clientX || 0) - hostRect.left + 12), Math.max(12, hostRect.width - panelWidth - 12));
+    const top = Math.min(Math.max(12, Number(clientY || 0) - hostRect.top + 12), Math.max(12, hostRect.height - panelHeight - 12));
+    refs.linkTooltip.style.left = `${left}px`;
+    refs.linkTooltip.style.top = `${top}px`;
   }
 
   async function mapWithConcurrency(items = [], iteratee, concurrency = 4) {
@@ -1493,6 +3065,35 @@ export function createCanvas2DEngine(options = {}) {
     }
   }
 
+  function readLinkSemanticEnabled() {
+    try {
+      const raw = localStorage.getItem(LINK_SEMANTIC_ENABLED_KEY);
+      if (raw === "0" || raw === "false") {
+        return false;
+      }
+      if (raw === "1" || raw === "true") {
+        return true;
+      }
+    } catch {
+      // Ignore storage failures.
+    }
+    return true;
+  }
+
+  function persistLinkSemanticEnabled(enabled) {
+    try {
+      localStorage.setItem(LINK_SEMANTIC_ENABLED_KEY, enabled ? "1" : "0");
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  function setLinkSemanticEnabled(enabled) {
+    linkSemanticEnabled = Boolean(enabled);
+    persistLinkSemanticEnabled(linkSemanticEnabled);
+    setStatus(linkSemanticEnabled ? "已启用链接语义化" : "已关闭链接语义化（纯文本模式）");
+  }
+
   function stopAutosaveTimer() {
     if (!autosaveTimer) {
       return;
@@ -1568,6 +3169,7 @@ export function createCanvas2DEngine(options = {}) {
       }
       return false;
     }
+    syncActiveDraftEditingState({ markDirty: true });
     if (boardSaveInFlight) {
       return boardSaveInFlight;
     }
@@ -1641,6 +3243,10 @@ export function createCanvas2DEngine(options = {}) {
           setSaveToast("画布已保存");
         }
       }
+      if (state.editingId) {
+        editBaselineSnapshot = takeHistorySnapshot(state);
+        richTextSession.setBaselineSnapshot(editBaselineSnapshot);
+      }
       store.emit();
       return true;
     })()
@@ -1703,7 +3309,10 @@ export function createCanvas2DEngine(options = {}) {
         return false;
       }
       suppressDirtyTracking = true;
-      state.board = structuredImportRuntime.deserializeBoard(parsed).board;
+      const restoredBoard = structuredImportRuntime.deserializeBoard(parsed).board;
+      state.board = normalizeBoard(
+        repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE)
+      );
       state.board.selectedIds = [];
       state.history = createHistoryState();
       markHistoryBaseline(state.history, takeHistorySnapshot(state));
@@ -1762,6 +3371,19 @@ export function createCanvas2DEngine(options = {}) {
       return true;
     }
     return saveBoard({ silent: true });
+  }
+
+  function persistCommittedBoardIfPossible() {
+    if (!useLocalFileSystem) {
+      return;
+    }
+    if (!state.boardDirty) {
+      return;
+    }
+    if (!String(state.boardFilePath || "").trim()) {
+      return;
+    }
+    void saveBoard({ autosave: true, silent: true });
   }
 
   async function newBoard() {
@@ -2181,7 +3803,13 @@ export function createCanvas2DEngine(options = {}) {
     if (!state.editingId) {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
+      refs.codeBlockEditor?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
     }
+    clearCodeBlockEditLayoutCache();
+    markCodeBlockOverlayDirty([], { fullRescan: true });
     syncBoard({ persist, emit: true });
     return true;
   }
@@ -2189,7 +3817,40 @@ export function createCanvas2DEngine(options = {}) {
   function commitHistory(before, reason = "") {
     const after = takeHistorySnapshot(state);
     const changed = pushHistory(state.history, before, after, reason);
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, markDirty: changed });
+    return changed;
+  }
+
+  function getHistorySnapshotItem(snapshot, itemId) {
+    if (!snapshot || !Array.isArray(snapshot.items)) {
+      return null;
+    }
+    return snapshot.items.find((entry) => String(entry?.id || "") === String(itemId || "")) || null;
+  }
+
+  function commitCodeBlockPatchHistory(beforeSnapshot, itemId, afterItem, reason = "") {
+    if (!beforeSnapshot || !itemId) {
+      return false;
+    }
+    const changed = pushPatchHistory(
+      state.history,
+      {
+        patchKind: "codeBlock-edit",
+        itemId,
+        beforeItem: getHistorySnapshotItem(beforeSnapshot, itemId),
+        afterItem: afterItem || null,
+        beforeSelectedIds: Array.isArray(beforeSnapshot.selectedIds) ? beforeSnapshot.selectedIds : [],
+        afterSelectedIds: Array.isArray(state.board.selectedIds) ? state.board.selectedIds : [],
+        beforeView: beforeSnapshot.view || DEFAULT_VIEW,
+        afterView: state.board.view || DEFAULT_VIEW,
+        beforeEditingId: beforeSnapshot.editingId || null,
+        beforeEditingType: beforeSnapshot.editingType || null,
+        afterEditingId: state.editingId || null,
+        afterEditingType: state.editingType || null,
+      },
+      reason
+    );
+    syncBoard({ persist: true, emit: true, markDirty: changed });
     return changed;
   }
 
@@ -2316,6 +3977,31 @@ export function createCanvas2DEngine(options = {}) {
       refs.surface.appendChild(refs.imageMemoEditor);
     }
 
+    refs.tableEditor = refs.surface.querySelector("#canvas-table-editor");
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      refs.tableEditor = document.createElement("div");
+      refs.tableEditor.id = "canvas-table-editor";
+      refs.tableEditor.className = "canvas-table-editor is-hidden";
+      refs.tableEditor.setAttribute("aria-label", "编辑表格");
+      refs.surface.appendChild(refs.tableEditor);
+    }
+
+    refs.tableToolbar = refs.surface.querySelector("#canvas-table-toolbar");
+    if (!(refs.tableToolbar instanceof HTMLDivElement)) {
+      refs.tableToolbar = document.createElement("div");
+      refs.tableToolbar.id = "canvas-table-toolbar";
+      refs.tableToolbar.className = "canvas-table-toolbar is-hidden";
+      refs.tableToolbar.innerHTML = `
+        <button type="button" class="canvas2d-rich-btn" data-action="table-add-row">+ 行</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="table-add-column">+ 列</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="table-delete-row">- 行</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="table-delete-column">- 列</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="table-toggle-header">表头</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="table-done">完成</button>
+      `;
+      refs.surface.appendChild(refs.tableToolbar);
+    }
+
     refs.richEditor = refs.surface.querySelector("#canvas-rich-editor");
     if (!(refs.richEditor instanceof HTMLDivElement)) {
       refs.richEditor = document.createElement("div");
@@ -2324,8 +4010,21 @@ export function createCanvas2DEngine(options = {}) {
       refs.richEditor.setAttribute("aria-label", "编辑富文本");
       refs.richEditor.setAttribute("contenteditable", "true");
       refs.richEditor.setAttribute("spellcheck", "false");
+      refs.richEditor.dataset.ffManagedPaste = "true";
       refs.surface.appendChild(refs.richEditor);
     }
+    refs.richEditor.dataset.ffManagedPaste = "true";
+    richTextSession.setEditorElement(refs.richEditor);
+
+    refs.codeBlockEditor = refs.surface.querySelector("#canvas-code-block-editor");
+    if (!(refs.codeBlockEditor instanceof HTMLDivElement)) {
+      refs.codeBlockEditor = document.createElement("div");
+      refs.codeBlockEditor.id = "canvas-code-block-editor";
+      refs.codeBlockEditor.className = "canvas-code-block-editor is-hidden";
+      refs.codeBlockEditor.setAttribute("aria-label", "编辑代码块");
+      refs.surface.appendChild(refs.codeBlockEditor);
+    }
+    codeBlockEditor.setHost(refs.codeBlockEditor);
 
     refs.contextMenu = refs.surface.querySelector("#canvas2d-context-menu");
     if (!(refs.contextMenu instanceof HTMLDivElement)) {
@@ -2347,6 +4046,7 @@ export function createCanvas2DEngine(options = {}) {
           <button type="button" class="canvas2d-context-menu-item" data-action="add-node">添加节点</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-image">添加图片</button>
+          <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="clear-board">清空画布</button>
         `;
       refs.contextMenu.style.position = "absolute";
@@ -2361,6 +4061,26 @@ export function createCanvas2DEngine(options = {}) {
       refs.contextMenu.style.flexDirection = "column";
       refs.contextMenu.style.gap = "4px";
       refs.surface.appendChild(refs.contextMenu);
+    }
+
+    refs.linkTooltip = refs.surface.querySelector("#canvas2d-link-meta-tooltip");
+    if (!(refs.linkTooltip instanceof HTMLDivElement)) {
+      refs.linkTooltip = document.createElement("div");
+      refs.linkTooltip.id = "canvas2d-link-meta-tooltip";
+      refs.linkTooltip.className = "canvas2d-link-meta-tooltip is-hidden";
+      refs.linkTooltip.setAttribute("aria-hidden", "true");
+      refs.linkTooltip.style.position = "absolute";
+      refs.linkTooltip.style.zIndex = "39";
+      refs.linkTooltip.style.maxWidth = "360px";
+      refs.linkTooltip.style.padding = "8px 10px";
+      refs.linkTooltip.style.borderRadius = "8px";
+      refs.linkTooltip.style.background = "rgba(248, 250, 252, 0.97)";
+      refs.linkTooltip.style.border = "1px solid rgba(148, 163, 184, 0.45)";
+      refs.linkTooltip.style.boxShadow = "0 8px 20px rgba(15, 23, 42, 0.15)";
+      refs.linkTooltip.style.pointerEvents = "none";
+      refs.linkTooltip.style.left = "-9999px";
+      refs.linkTooltip.style.top = "-9999px";
+      refs.surface.appendChild(refs.linkTooltip);
     }
 
     refs.dragIndicator = refs.surface.querySelector("#canvas2d-export-drag-indicator");
@@ -2427,38 +4147,103 @@ export function createCanvas2DEngine(options = {}) {
       refs.richDisplayHost.style.display = "none";
     }
 
+    refs.codeBlockDisplayHost = refs.surface.querySelector("#canvas2d-code-block-display");
+    if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
+      refs.codeBlockDisplayHost = document.createElement("div");
+      refs.codeBlockDisplayHost.id = "canvas2d-code-block-display";
+      refs.codeBlockDisplayHost.className = "canvas2d-code-block-display";
+      refs.surface.appendChild(refs.codeBlockDisplayHost);
+    }
+    refs.codeBlockDisplayHost.classList.add("is-hidden");
+    refs.codeBlockDisplayHost.style.display = "none";
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.dataset.canvasCodeBlockOverlay = "1";
+    }
+
+    refs.mathDisplayHost = refs.surface.querySelector("#canvas2d-math-display");
+    if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
+      refs.mathDisplayHost = document.createElement("div");
+      refs.mathDisplayHost.id = "canvas2d-math-display";
+      refs.mathDisplayHost.className = "canvas2d-math-display";
+      refs.mathDisplayHost.style.position = "absolute";
+      refs.mathDisplayHost.style.inset = "0";
+      refs.mathDisplayHost.style.pointerEvents = "none";
+      refs.mathDisplayHost.style.zIndex = "15";
+      refs.surface.appendChild(refs.mathDisplayHost);
+    }
+    refs.mathDisplayHost.classList.add("is-hidden");
+    refs.mathDisplayHost.style.display = "none";
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.dataset.canvasMathOverlay = "1";
+    }
+
     refs.richToolbar = refs.surface.querySelector("#canvas2d-rich-toolbar");
     if (!(refs.richToolbar instanceof HTMLDivElement)) {
       refs.richToolbar = document.createElement("div");
       refs.richToolbar.id = "canvas2d-rich-toolbar";
       refs.richToolbar.className = "canvas2d-rich-toolbar is-hidden";
       refs.richToolbar.innerHTML = `
-        <label class="canvas2d-rich-select-wrap">
-          <select class="canvas2d-rich-select" data-action="preset" aria-label="文本预设">
-            <option value="body">正文</option>
-            <option value="subtitle">副标题</option>
-            <option value="title">标题</option>
-          </select>
-        </label>
+        ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
         <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
         <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="underline"><u>U</u></button>
         <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+        ${buildRichMathMenuHtml()}
+        ${buildRichQuoteMenuHtml()}
         <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
         <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="align-left" title="左对齐">左</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="align-center" title="居中">中</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="align-right" title="右对齐">右</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
         <button type="button" class="canvas2d-rich-btn" data-action="link">🔗</button>
-        <div class="canvas2d-rich-font">
-          <input type="number" class="canvas2d-rich-font-input" data-action="font-size" min="${TEXT_MIN_FONT_SIZE}" step="1" value="${DEFAULT_TEXT_FONT_SIZE}" />
-        </div>
-        <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#0f172a" title="黑色"></button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#dc2626" title="红色"></button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#2563eb" title="蓝色"></button>
       `;
       refs.surface.appendChild(refs.richToolbar);
+    }
+    syncRichToolbarEnhancements(refs.richToolbar);
+
+    refs.codeBlockToolbar = refs.surface.querySelector("#canvas-code-block-toolbar");
+    if (!(refs.codeBlockToolbar instanceof HTMLDivElement)) {
+      refs.codeBlockToolbar = document.createElement("div");
+      refs.codeBlockToolbar.id = "canvas-code-block-toolbar";
+      refs.codeBlockToolbar.className = "canvas-code-block-toolbar is-hidden";
+      refs.codeBlockToolbar.innerHTML = `
+        <label class="canvas2d-rich-select-wrap">
+          <select class="canvas2d-rich-select" data-action="code-language" aria-label="代码语言">
+            <option value="">plain text</option>
+            <option value="javascript">javascript</option>
+            <option value="typescript">typescript</option>
+            <option value="python">python</option>
+            <option value="json">json</option>
+            <option value="html">html</option>
+            <option value="css">css</option>
+            <option value="markdown">markdown</option>
+            <option value="sql">sql</option>
+            <option value="cpp">cpp</option>
+            <option value="java">java</option>
+            <option value="mermaid">mermaid</option>
+          </select>
+        </label>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-copy">Copy</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-wrap">Wrap</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-line-numbers">123</button>
+        <label class="canvas2d-rich-select-wrap">
+          <select class="canvas2d-rich-select" data-action="code-font-size" aria-label="代码字号">
+            <option value="12">12</option>
+            <option value="14">14</option>
+            <option value="16">16</option>
+            <option value="18">18</option>
+            <option value="20">20</option>
+            <option value="24">24</option>
+          </select>
+        </label>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-preview-toggle">View</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-done">完成</button>
+      `;
+      refs.surface.appendChild(refs.codeBlockToolbar);
     }
 
     refs.richSelectionToolbar = refs.surface.querySelector("#canvas2d-rich-selection-toolbar");
@@ -2467,46 +4252,19 @@ export function createCanvas2DEngine(options = {}) {
       refs.richSelectionToolbar.id = "canvas2d-rich-selection-toolbar";
       refs.richSelectionToolbar.className = "canvas2d-rich-toolbar canvas2d-rich-selection-toolbar is-hidden";
       refs.richSelectionToolbar.innerHTML = `
+        ${buildRichBlockTypeSelectHtml("block-type", "块级语义")}
         <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
         <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
         <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
         <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-        <div class="canvas2d-rich-size-control" data-size-control>
-          <button type="button" class="canvas2d-rich-size-trigger" data-action="toggle-font-size-panel" title="字号">
-            <span class="canvas2d-rich-size-value" data-role="font-size-label">16</span>
-            <span class="canvas2d-rich-size-caret" aria-hidden="true">▾</span>
-          </button>
-          <div class="canvas2d-rich-size-panel is-hidden" data-role="font-size-panel">
-            <div class="canvas2d-rich-size-panel-head">
-              <span class="canvas2d-rich-size-panel-label">字号</span>
-              <span class="canvas2d-rich-size-panel-hint">Size</span>
-            </div>
-            <div class="canvas2d-rich-size-stepper">
-              <button type="button" class="canvas2d-rich-btn canvas2d-rich-size-step" data-action="font-size-step-down" title="减小字号">−</button>
-              <input
-                type="number"
-                class="canvas2d-rich-size-input"
-                data-action="selection-font-size-input"
-                min="8"
-                step="1"
-                value="16"
-                inputmode="numeric"
-                aria-label="输入字号"
-              />
-              <button type="button" class="canvas2d-rich-btn canvas2d-rich-size-step" data-action="font-size-step-up" title="增大字号">+</button>
-            </div>
-            <div class="canvas2d-rich-size-presets" data-role="font-size-presets">
-              ${RICH_SELECTION_FONT_SIZE_PRESETS.map(
-                (size) =>
-                  `<button type="button" class="canvas2d-rich-size-preset" data-action="font-size-preset" data-size="${size}" title="${size}">
-                    <span class="canvas2d-rich-size-preset-size">${size}</span>
-                    <span class="canvas2d-rich-size-preset-preview" style="font-size: ${Math.max(12, Math.min(size, 26))}px;">Aa</span>
-                  </button>`
-              ).join("")}
-            </div>
-          </div>
-        </div>
+        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+        ${buildRichMathMenuHtml()}
+        ${buildRichQuoteMenuHtml()}
+        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#0f172a" title="黑色"></button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#dc2626" title="红色"></button>
         <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#2563eb" title="蓝色"></button>
@@ -2514,6 +4272,7 @@ export function createCanvas2DEngine(options = {}) {
       `;
       refs.surface.appendChild(refs.richSelectionToolbar);
     }
+    syncRichToolbarEnhancements(refs.richSelectionToolbar);
 
     refs.imageToolbar = lightImageEditor.mount(refs.surface);
 
@@ -2528,19 +4287,21 @@ export function createCanvas2DEngine(options = {}) {
     if (!hasEditing) {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
+      refs.codeBlockEditor?.classList.add("is-hidden");
       refs.richSelectionToolbar?.classList.add("is-hidden");
       refs.fileMemoEditor?.classList.add("is-hidden");
       refs.imageMemoEditor?.classList.add("is-hidden");
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
       lastEditorItemId = null;
-      lastRichEditorItemId = null;
       lastFileMemoItemId = null;
       lastImageMemoItemId = null;
+      lastTableEditItemId = null;
+      lastCodeBlockEditItemId = null;
       lightImageEditor.finishEdit();
-      if (richTextAdapter) {
-        richTextAdapter.destroy();
-        richTextAdapter = null;
-      }
-      editBaselineSnapshot = null;
+      richTextSession.clear({ destroyAdapter: false });
+      codeBlockEditor.clear();
       return;
     }
 
@@ -2555,8 +4316,22 @@ export function createCanvas2DEngine(options = {}) {
     if (state.editingType === "image") {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
+      refs.codeBlockEditor?.classList.add("is-hidden");
       refs.fileMemoEditor?.classList.add("is-hidden");
       refs.imageMemoEditor?.classList.add("is-hidden");
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      return;
+    }
+
+    if (state.editingType === "table") {
+      syncTableEditorLayout();
+      return;
+    }
+
+    if (state.editingType === "code-block") {
+      syncCodeBlockEditorLayout();
       return;
     }
 
@@ -2571,30 +4346,21 @@ export function createCanvas2DEngine(options = {}) {
       state.editingId = null;
       state.editingType = null;
       refs.richEditor.classList.add("is-hidden");
-      lastRichEditorItemId = null;
+      richTextSession.clear({ destroyAdapter: false });
       return;
     }
     if (isFlowNode ? isLockedItem(item) : isLockedText(item)) {
       isFlowNode ? cancelFlowNodeEdit() : cancelTextEdit();
       return;
     }
-    if (!richTextAdapter) {
-      richTextAdapter = createRichTextAdapter(refs.richEditor, {
-        onCommit: commitRichEdit,
-        onCancel: cancelRichEdit,
-        onSelectionChange: syncRichTextToolbar,
-      });
-    }
-    if (lastRichEditorItemId !== item.id) {
-      richTextAdapter?.setContent(
-        normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
-        item.plainText || item.text || ""
-      );
-    }
-    lastRichEditorItemId = item.id;
-    richFontSize = normalizeRichEditorFontSize(item.fontSize || 20, 20);
+    richTextSession.syncContent({
+      itemId: item.id,
+      html: normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
+      plainText: item.plainText || item.text || "",
+      fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+    });
+    richFontSize = normalizeRichEditorFontSize(item.fontSize || DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_SIZE);
     syncRichTextFontSize();
-    richTextAdapter?.setBaseFontSize?.(richFontSize, { normalize: false });
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
     applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.editor?.classList.add("is-hidden");
@@ -2615,7 +4381,7 @@ export function createCanvas2DEngine(options = {}) {
 
   function getRichTextSelectionState() {
     const editingItem = getActiveRichEditingItem();
-    const snapshot = richTextAdapter?.getSelectionSnapshot?.() || null;
+    const snapshot = richTextSession.getSelectionSnapshot() || null;
     const hasExpandedSelection = Boolean(
       editingItem &&
         snapshot?.inside &&
@@ -2628,77 +4394,60 @@ export function createCanvas2DEngine(options = {}) {
       editingItem,
       snapshot,
       hasExpandedSelection,
-      formatState: richTextAdapter?.getFormatState?.() || {},
+      formatState: richTextSession.getFormatState() || {},
     };
   }
 
-  function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null } = {}) {
-    if (!(toolbar instanceof HTMLDivElement)) {
-      return;
-    }
-    const logicalSelectionFontSize = Math.max(
-      8,
-      Math.round(
-        ((Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
-          Math.max(0.1, Number(state.board.view?.scale || 1))) *
-          100
-      ) / 100
-    );
-    toolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
-      const action = button.getAttribute("data-action");
-      if (action === "bold") {
-        button.classList.toggle("is-active", Boolean(formatState.bold));
+function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null } = {}) {
+  if (!(toolbar instanceof HTMLDivElement)) {
+    return;
+  }
+  toolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
+    const action = button.getAttribute("data-action");
+    if (action === "bold") {
+      button.classList.toggle("is-active", Boolean(formatState.bold));
       } else if (action === "italic") {
         button.classList.toggle("is-active", Boolean(formatState.italic));
-      } else if (action === "underline") {
-        button.classList.toggle("is-active", Boolean(formatState.underline));
       } else if (action === "strike") {
         button.classList.toggle("is-active", Boolean(formatState.strike));
+      } else if (action === "inline-code") {
+        button.classList.toggle("is-active", Boolean(formatState.inlineCode));
       } else if (action === "highlight") {
         button.classList.toggle("is-active", Boolean(formatState.highlight));
       } else if (action === "unordered-list") {
         button.classList.toggle("is-active", Boolean(formatState.unorderedList));
       } else if (action === "ordered-list") {
         button.classList.toggle("is-active", Boolean(formatState.orderedList));
-      } else if (action === "align-left") {
-        button.classList.toggle("is-active", (formatState.align || "left") === "left");
-      } else if (action === "align-center") {
-        button.classList.toggle("is-active", formatState.align === "center");
-      } else if (action === "align-right") {
-        button.classList.toggle("is-active", formatState.align === "right");
+      } else if (action === "task-list") {
+        button.classList.toggle("is-active", Boolean(formatState.taskList));
+      } else if (action === "blockquote") {
+        button.classList.toggle("is-active", formatState.blockType === "blockquote");
+      } else if (action === "horizontal-rule") {
+        button.classList.toggle("is-active", formatState.blockType === "horizontal-rule");
+      } else if (action === "underline") {
+        button.classList.toggle("is-active", Boolean(formatState.underline));
       }
     });
-    toolbar.querySelectorAll('[data-action="preset"]').forEach((input) => {
-      if (!(input instanceof HTMLSelectElement)) {
-        return;
-      }
-      input.value = editingItem ? getMatchingTextPresetName(editingItem.fontSize || richFontSize) : "body";
-    });
-    toolbar.querySelectorAll('[data-action="font-size"]').forEach((input) => {
-      if (!(input instanceof HTMLInputElement)) {
-        return;
-      }
-      input.value = String(normalizeRichEditorFontSize(richFontSize || 20, 20));
-    });
-    toolbar.querySelectorAll('[data-role="font-size-label"]').forEach((label) => {
-      label.textContent = String(Math.round(logicalSelectionFontSize));
-    });
-    toolbar.querySelectorAll('[data-action="selection-font-size-input"]').forEach((input) => {
-      if (!(input instanceof HTMLInputElement)) {
-        return;
-      }
-      const nextValue = String(Math.round(logicalSelectionFontSize));
-      if (input.value !== nextValue) {
-        input.value = nextValue;
-      }
-    });
-    toolbar.querySelectorAll('[data-action="font-size-preset"]').forEach((button) => {
-      const size = Number(button.getAttribute("data-size") || 0);
-      button.classList.toggle("is-active", size === Math.round(logicalSelectionFontSize));
-    });
-    if (toolbar === refs.richSelectionToolbar) {
-      requestAnimationFrame(() => centerActiveRichSelectionFontSizePreset());
+  toolbar.querySelectorAll(".canvas2d-rich-submenu").forEach((submenu) => {
+    if (!(submenu instanceof HTMLElement)) {
+      return;
     }
+    const submenuType = String(submenu.getAttribute("data-submenu") || "").trim().toLowerCase();
+    const isActive =
+      submenuType === "blockquote"
+        ? formatState.blockType === "blockquote"
+        : submenuType === "math"
+          ? Boolean(formatState.canEditMath)
+          : false;
+    submenu.classList.toggle("is-active", isActive);
+  });
+  toolbar.querySelectorAll('[data-action="block-type"]').forEach((input) => {
+    if (!(input instanceof HTMLSelectElement)) {
+      return;
+    }
+      const value = String(formatState.blockType || "paragraph");
+      input.value = /^heading-[1-6]$/.test(value) || value === "paragraph" ? value : "paragraph";
+    });
   }
 
   function getRichSelectionFontSizeControl() {
@@ -2720,11 +4469,11 @@ export function createCanvas2DEngine(options = {}) {
     container.scrollTop = Math.max(0, targetTop);
   }
 
-  function closeRichSelectionFontSizePanel() {
-    const control = getRichSelectionFontSizeControl();
-    if (!(control instanceof HTMLElement)) {
-      return;
-    }
+function closeRichSelectionFontSizePanel() {
+  const control = getRichSelectionFontSizeControl();
+  if (!(control instanceof HTMLElement)) {
+    return;
+  }
     control.classList.remove("is-open");
     control.querySelectorAll('[data-role="font-size-panel"]').forEach((panel) => panel.classList.add("is-hidden"));
   }
@@ -2741,8 +4490,76 @@ export function createCanvas2DEngine(options = {}) {
     );
     if (nextOpen) {
       requestAnimationFrame(() => centerActiveRichSelectionFontSizePreset());
-    }
   }
+}
+
+function getRichToolbarSubmenuRoots() {
+  const toolbars = [refs.richToolbar, refs.richSelectionToolbar].filter((entry) => entry instanceof HTMLDivElement);
+  return toolbars.flatMap((toolbar) => Array.from(toolbar.querySelectorAll(".canvas2d-rich-submenu")));
+}
+
+function closeRichToolbarSubmenus({ except = null } = {}) {
+  getRichToolbarSubmenuRoots().forEach((submenu) => {
+    if (!(submenu instanceof HTMLElement)) {
+      return;
+    }
+    const shouldKeepOpen = except instanceof HTMLElement && submenu === except;
+    submenu.classList.toggle("is-open", shouldKeepOpen);
+    const panel = submenu.querySelector(".canvas2d-rich-submenu-panel");
+    const toggle = submenu.querySelector(".canvas2d-rich-submenu-toggle");
+    if (panel instanceof HTMLElement) {
+      panel.classList.toggle("is-hidden", !shouldKeepOpen);
+      panel.style.display = shouldKeepOpen ? "flex" : "none";
+    }
+    if (toggle instanceof HTMLElement) {
+      toggle.setAttribute("aria-expanded", shouldKeepOpen ? "true" : "false");
+    }
+  });
+}
+
+function toggleRichToolbarSubmenu(submenu) {
+  if (!(submenu instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = !submenu.classList.contains("is-open");
+  closeRichToolbarSubmenus({ except: nextOpen ? submenu : null });
+}
+
+function syncRichToolbarEnhancements(toolbar) {
+  if (!(toolbar instanceof HTMLDivElement)) {
+    return;
+  }
+  toolbar.querySelectorAll(".canvas2d-rich-submenu").forEach((submenu) => {
+    if (!(submenu instanceof HTMLElement)) {
+      return;
+    }
+    submenu.style.position = "relative";
+    submenu.style.display = "inline-flex";
+    submenu.style.alignItems = "center";
+    submenu.style.gap = "4px";
+    const panel = submenu.querySelector(".canvas2d-rich-submenu-panel");
+    if (panel instanceof HTMLElement) {
+      panel.style.position = "absolute";
+      panel.style.top = "calc(100% + 8px)";
+      panel.style.left = "0";
+      panel.style.display = panel.classList.contains("is-hidden") ? "none" : "flex";
+      panel.style.flexDirection = "column";
+      panel.style.gap = "4px";
+      panel.style.padding = "8px";
+      panel.style.minWidth = "92px";
+      panel.style.borderRadius = "12px";
+      panel.style.background = "rgba(255,255,255,0.98)";
+      panel.style.border = "1px solid rgba(203, 213, 225, 0.9)";
+      panel.style.boxShadow = "0 12px 24px rgba(15, 23, 42, 0.16)";
+      panel.style.zIndex = "4";
+    }
+    const toggle = submenu.querySelector(".canvas2d-rich-submenu-toggle");
+    if (toggle instanceof HTMLElement) {
+      toggle.style.minWidth = "28px";
+      toggle.style.paddingInline = "8px";
+    }
+  });
+}
 
   function getActiveRichSelectionFontSize() {
     const input = refs.richSelectionToolbar?.querySelector?.('[data-action="selection-font-size-input"]');
@@ -2759,7 +4576,7 @@ export function createCanvas2DEngine(options = {}) {
         return Math.max(8, Math.round(value));
       }
     }
-    const formatState = richTextAdapter?.getFormatState?.() || {};
+    const formatState = richTextSession.getFormatState() || {};
     const logicalValue =
       (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
       Math.max(0.1, Number(state.board.view?.scale || 1));
@@ -2900,61 +4717,168 @@ export function createCanvas2DEngine(options = {}) {
 
   function syncEditingTextItemSize(item) {
     if (!item || item.type !== "text" || !(refs.richEditor instanceof HTMLDivElement)) {
-      return;
+      return false;
     }
+    const beforeSignature = getRichEditableItemSignature(item);
     const html = normalizeRichHtmlInlineFontSizes(
-      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
-      item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
     );
-    const plainText = sanitizeText(htmlToPlainText(html));
-    const nextSize = getEditingTextBoxMetrics(refs.richEditor, item, state.board.view, plainText);
-    item.html = html;
+    const content = normalizeEditedRichTextContent(
+      item,
+      html,
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const plainText = content.plainText;
+    const canonicalHtml = normalizeRichHtmlInlineFontSizes(
+      getCanonicalRichTextHtml(content, html),
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const layoutConfig = resolveEditedTextLayoutConfig(
+      item,
+      { ...content, html: canonicalHtml },
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const layoutMode = layoutConfig.layoutMode;
+    const measureItem = {
+      ...item,
+      width: layoutConfig.widthHint,
+      height: layoutConfig.heightHint,
+      textBoxLayoutMode: layoutMode,
+      textResizeMode: layoutConfig.resizeMode,
+    };
+    const nextSize = getEditingTextBoxMetrics(refs.richEditor, measureItem, state.board.view, plainText);
+    item.html = canonicalHtml;
     item.plainText = plainText;
     item.text = plainText;
+    item.richTextDocument = content.richTextDocument;
+    const semanticState = syncTextLinkSemanticFields(item, plainText, content.richTextDocument, {
+      semanticEnabled: linkSemanticEnabled,
+    });
+    if (semanticState?.linkTokens?.length) {
+      scheduleUrlMetaHydrationForItem(item);
+    }
     item.title = buildTextTitle(plainText || "文本");
-    item.textResizeMode = getTextResizeMode(item);
-    item.width = Math.max(80, Math.ceil(Number(nextSize?.width || 0) || 80));
-    item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
+    item.textBoxLayoutMode = layoutMode;
+    item.textResizeMode = layoutConfig.resizeMode;
+    if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+      item.width = Math.max(80, Math.ceil(Number(nextSize?.width || 0) || 80));
+      item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
+    } else if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT) {
+      item.width = Math.max(80, Math.ceil(Number(layoutConfig.widthHint || item.width || 0) || 80));
+      item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
+    } else {
+      item.width = Math.max(
+        80,
+        Math.ceil(Number(layoutConfig.widthHint || item.width || 0) || Number(nextSize?.width || 0) || 80)
+      );
+      item.height = Math.max(
+        40,
+        Math.ceil(Number(layoutConfig.heightHint || item.height || 0) || Number(nextSize?.height || 0) || 40)
+      );
+    }
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    return beforeSignature !== getRichEditableItemSignature(item);
   }
 
   function syncEditingFlowNodeState(item) {
     if (!item || item.type !== "flowNode" || !(refs.richEditor instanceof HTMLDivElement)) {
-      return;
+      return false;
     }
+    const beforeSignature = getRichEditableItemSignature(item);
     const html = normalizeRichHtmlInlineFontSizes(
-      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
-      item.fontSize || richFontSize || 18
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, 18)
     );
-    const plainText = sanitizeText(htmlToPlainText(html));
-    item.html = html;
+    const content = ensureRichTextDocumentFields(
+      {
+        ...item,
+        html,
+        plainText: htmlToPlainText(html),
+      },
+      {
+        fontSize: item.fontSize || resolveSessionFontSize(richTextSession, 18),
+      }
+    );
+    const plainText = content.plainText;
+    item.html = content.html;
     item.plainText = plainText;
-    item.fontSize = normalizeRichEditorFontSize(item.fontSize || richFontSize || 18, 18);
+    item.richTextDocument = content.richTextDocument;
+    item.fontSize = normalizeRichEditorFontSize(item.fontSize || resolveSessionFontSize(richTextSession, 18), 18);
     const minNodeSize = getFlowNodeMinSize(item, { widthHint: item.width });
     item.width = Math.max(Number(item.width || 0) || 0, minNodeSize.width);
     item.height = Math.max(Number(item.height || 0) || 0, minNodeSize.height);
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    return beforeSignature !== getRichEditableItemSignature(item);
   }
 
-  function syncActiveRichEditingItemState({ emit = true, refreshToolbar = true } = {}) {
+  function syncActiveRichEditingItemState({ emit = true, refreshToolbar = true, markDirty = true } = {}) {
     const item = getActiveRichEditingItem();
     if (!item) {
       return null;
     }
+    let changed = false;
     if (item.type === "text") {
-      syncEditingTextItemSize(item);
+      changed = syncEditingTextItemSize(item);
     } else if (item.type === "flowNode") {
-      syncEditingFlowNodeState(item);
+      changed = syncEditingFlowNodeState(item);
     }
-    if (emit) {
+    if (emit && changed) {
       syncBoard({ persist: false, emit: true });
     } else {
       scheduleRender();
     }
+    if (markDirty && changed) {
+      markBoardDirty();
+    }
     if (refreshToolbar) {
       requestAnimationFrame(() => syncRichTextToolbar());
     }
-    return item;
+    return {
+      item,
+      changed,
+    };
+  }
+
+  function syncActiveDraftEditingState({ markDirty = true } = {}) {
+    if (state.editingType === "text" || state.editingType === "flow-node") {
+      return syncActiveRichEditingItemState({
+        emit: false,
+        refreshToolbar: false,
+        markDirty,
+      });
+    }
+    if (state.editingType === "file-memo" && state.editingId && refs.fileMemoEditor instanceof HTMLTextAreaElement) {
+      const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "fileCard");
+      if (!item) {
+        return null;
+      }
+      const nextMemo = sanitizeText(refs.fileMemoEditor.value || "");
+      if (item.memo !== nextMemo) {
+        item.memo = nextMemo;
+        if (markDirty) {
+          markBoardDirty();
+        }
+      }
+      scheduleRender();
+      return item;
+    }
+    if (state.editingType === "image-memo" && state.editingId && refs.imageMemoEditor instanceof HTMLTextAreaElement) {
+      const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "image");
+      if (!item) {
+        return null;
+      }
+      const nextMemo = sanitizeText(refs.imageMemoEditor.value || "");
+      if (item.memo !== nextMemo) {
+        item.memo = nextMemo;
+        if (markDirty) {
+          markBoardDirty();
+        }
+      }
+      scheduleRender();
+      return item;
+    }
+    return null;
   }
 
   function syncImageToolbar() {
@@ -2997,9 +4921,38 @@ export function createCanvas2DEngine(options = {}) {
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
+    const scaleBucket = getRichOverlayScaleBucket(scale);
     const editingId = state.editingId;
+    const viewportBounds = getRichOverlayViewportBounds(
+      refs.surface,
+      refs.canvas?.clientWidth || refs.canvas?.width || 0,
+      refs.canvas?.clientHeight || refs.canvas?.height || 0
+    );
 
     const activeIds = new Set(items.map((item) => item.id));
+    const visibleItems = [];
+    let textLayoutWritebackChanged = false;
+    items.forEach((item) => {
+      const left = Number(item.x || 0) * scale + offsetX;
+      const top = Number(item.y || 0) * scale + offsetY;
+      const width = Math.max(1, Number(item.width || 1)) * scale;
+      const height = Math.max(1, Number(item.height || 1)) * scale;
+      if (!hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds)) {
+        const node = richDisplayMap.get(item.id);
+        if (node) {
+          setStyleIfNeeded(node, "display", "none");
+        }
+        return;
+      }
+      visibleItems.push({
+        item,
+        left,
+        top,
+        width,
+        height,
+      });
+    });
+
     for (const [id, node] of richDisplayMap.entries()) {
       if (!activeIds.has(id)) {
         node.remove();
@@ -3007,11 +4960,11 @@ export function createCanvas2DEngine(options = {}) {
       }
     }
 
-    items.forEach((item) => {
+    visibleItems.forEach(({ item, left, top, width, height }) => {
       if (editingId && editingId === item.id) {
         const existing = richDisplayMap.get(item.id);
         if (existing) {
-          existing.style.display = "none";
+          setStyleIfNeeded(existing, "display", "none");
         }
         return;
       }
@@ -3023,46 +4976,346 @@ export function createCanvas2DEngine(options = {}) {
         refs.richDisplayHost.appendChild(node);
         richDisplayMap.set(item.id, node);
       }
-      if (item.type === "flowNode") {
-        node.classList.add("is-flow-node");
-      } else {
-        node.classList.remove("is-flow-node");
+      const classSignature = getRichOverlayClassSignature(item);
+      if (node.dataset.classSignature !== classSignature) {
+        node.classList.toggle("is-flow-node", item.type === "flowNode");
+        node.classList.toggle("is-wrap-mode", isWrapTextItem(item));
+        node.classList.toggle("is-fixed-size", isFixedSizeTextItem(item));
+        node.classList.remove("is-locked");
+        node.dataset.classSignature = classSignature;
       }
-      node.classList.toggle("is-wrap-mode", isWrapTextItem(item));
-      node.classList.remove("is-locked");
-      const left = Number(item.x || 0) * scale + offsetX;
-      const top = Number(item.y || 0) * scale + offsetY;
-      const width = Math.max(1, Number(item.width || 1)) * scale;
-      const height = Math.max(1, Number(item.height || 1)) * scale;
+
       const fontSize = Math.max(12, Number(item.fontSize || 18)) * scale;
       const padding = item.type === "flowNode" ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
       const lineHeightRatio = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
-      const html = normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || DEFAULT_TEXT_FONT_SIZE);
+      const linkSignature = item.type === "text" ? getLinkSemanticSignature(item) : "";
+      const html = normalizeRichHtmlInlineFontSizes(
+        resolveRichTextDisplayHtml({
+          text: item.plainText || item.text || "",
+          html: item.html || "",
+          linkTokens: item.linkTokens || [],
+        }),
+        item.fontSize || DEFAULT_TEXT_FONT_SIZE
+      );
+      let contentMutated = false;
       if (html.trim()) {
         if (node.dataset.html !== html) {
           node.innerHTML = html;
           node.dataset.html = html;
+          node.dataset.text = "";
+          contentMutated = true;
         }
-        applyInlineFontSizingToContainer(node, scale);
+        if (item.type === "text" && (contentMutated || node.dataset.linkSignature !== linkSignature)) {
+          applyLinkSemanticsToRichDisplayNode(node, item);
+          node.dataset.linkSignature = linkSignature;
+        }
+        if (contentMutated || node.dataset.inlineScaleBucket !== scaleBucket) {
+          applyInlineFontSizingToContainer(node, scale);
+          node.dataset.inlineScaleBucket = scaleBucket;
+        }
+        if (contentMutated) {
+          applyRichTypographyTokens(node);
+        }
       } else {
         const text = item.plainText || item.text || "";
         if (node.dataset.text !== text) {
           node.textContent = text;
           node.dataset.text = text;
           node.dataset.html = "";
+          node.dataset.inlineScaleBucket = "";
+          node.dataset.linkSignature = "";
+          contentMutated = true;
         }
       }
-      node.style.display = "block";
-      node.style.left = `${left}px`;
-      node.style.top = `${top}px`;
-      node.style.width = `${width}px`;
-      node.style.height = `${height}px`;
-      node.style.fontSize = `${fontSize}px`;
-      node.style.padding = `${padding.y}px ${padding.x}px`;
-      node.style.lineHeight = String(lineHeightRatio);
-      node.style.fontWeight = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.fontWeight : "500";
-      node.style.color = item.color || "#0f172a";
+      setStyleIfNeeded(node, "display", "block");
+      const boxStyles = getRichOverlayBoxStyles(item, scale);
+      const fontWeight = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
+      const styleSignature = getRichOverlayStyleSignature({
+        left,
+        top,
+        fontSize,
+        paddingX: padding.x,
+        paddingY: padding.y,
+        lineHeightRatio,
+        fontWeight,
+        color: item.color || "#0f172a",
+        widthCss: boxStyles.widthCss,
+        heightCss: boxStyles.heightCss,
+        minHeightCss: boxStyles.minHeightCss,
+        maxWidthCss: boxStyles.maxWidthCss,
+        display: boxStyles.display,
+        whiteSpace: boxStyles.whiteSpace,
+        wordBreak: boxStyles.wordBreak,
+        overflowWrap: boxStyles.overflowWrap,
+        overflow: boxStyles.overflow,
+      });
+      if (node.dataset.styleSignature !== styleSignature) {
+        setStyleIfNeeded(node, "left", `${left}px`);
+        setStyleIfNeeded(node, "top", `${top}px`);
+        setStyleIfNeeded(node, "display", boxStyles.display);
+        setStyleIfNeeded(node, "width", boxStyles.widthCss);
+        setStyleIfNeeded(node, "height", boxStyles.heightCss);
+        setStyleIfNeeded(node, "minHeight", boxStyles.minHeightCss);
+        setStyleIfNeeded(node, "maxWidth", boxStyles.maxWidthCss);
+        setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
+        setStyleIfNeeded(node, "fontFamily", TEXT_FONT_FAMILY);
+        setStyleIfNeeded(node, "padding", `${padding.y}px ${padding.x}px`);
+        setStyleIfNeeded(node, "lineHeight", String(lineHeightRatio));
+        setStyleIfNeeded(node, "fontWeight", fontWeight);
+        setStyleIfNeeded(node, "color", item.color || "#0f172a");
+        setStyleIfNeeded(node, "whiteSpace", boxStyles.whiteSpace);
+        setStyleIfNeeded(node, "wordBreak", boxStyles.wordBreak);
+        setStyleIfNeeded(node, "overflowWrap", boxStyles.overflowWrap);
+        setStyleIfNeeded(node, "overflow", boxStyles.overflow);
+        node.dataset.styleSignature = styleSignature;
+      }
+      if (item.type === "text") {
+        const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
+        if (node.dataset.layoutWritebackSignature !== writebackSignature) {
+          node.dataset.layoutWritebackSignature = writebackSignature;
+          if (maybeWritebackTextOverlayFrame(item, node, scale)) {
+            textLayoutWritebackChanged = true;
+          }
+        }
+      }
     });
+    if (textLayoutWritebackChanged) {
+      invalidateHitTestSpatialIndex(state.board.items);
+      syncBoard({ persist: false, emit: true, markDirty: false });
+    }
+  }
+
+  function syncMathOverlays() {
+    if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    if (!isInteractiveMode()) {
+      refs.mathDisplayHost.classList.add("is-hidden");
+      refs.mathDisplayHost.style.display = "none";
+      if (mathDisplayMap.size) {
+        mathDisplayMap.forEach((node) => node.remove());
+        mathDisplayMap.clear();
+      }
+      return;
+    }
+
+    const items = state.board.items.filter((item) => item.type === "mathBlock" || item.type === "mathInline");
+    if (!items.length) {
+      refs.mathDisplayHost.classList.add("is-hidden");
+      refs.mathDisplayHost.style.display = "none";
+      if (mathDisplayMap.size) {
+        mathDisplayMap.forEach((node) => node.remove());
+        mathDisplayMap.clear();
+      }
+      return;
+    }
+
+    refs.mathDisplayHost.classList.remove("is-hidden");
+    refs.mathDisplayHost.style.display = "block";
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const offsetX = Number(state.board.view.offsetX || 0);
+    const offsetY = Number(state.board.view.offsetY || 0);
+    const viewportBounds = getRichOverlayViewportBounds(
+      refs.surface,
+      refs.canvas?.clientWidth || refs.canvas?.width || 0,
+      refs.canvas?.clientHeight || refs.canvas?.height || 0
+    );
+    const activeIds = new Set(items.map((item) => item.id));
+    let mathLayoutWritebackChanged = false;
+
+    for (const [id, node] of mathDisplayMap.entries()) {
+      if (!activeIds.has(id)) {
+        node.remove();
+        mathDisplayMap.delete(id);
+      }
+    }
+
+    items.forEach((item) => {
+      const left = Number(item.x || 0) * scale + offsetX;
+      const top = Number(item.y || 0) * scale + offsetY;
+      const width = Math.max(1, Number(item.width || 1)) * scale;
+      const height = Math.max(1, Number(item.height || 1)) * scale;
+      if (!hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds)) {
+        const hiddenNode = mathDisplayMap.get(item.id);
+        if (hiddenNode) {
+          setStyleIfNeeded(hiddenNode, "display", "none");
+        }
+        return;
+      }
+
+      let node = mathDisplayMap.get(item.id);
+      if (!node) {
+        node = document.createElement("div");
+        node.className = "canvas2d-math-item";
+        node.dataset.id = item.id;
+        refs.mathDisplayHost.appendChild(node);
+        mathDisplayMap.set(item.id, node);
+      }
+
+      const displayMode = item.displayMode !== false;
+      const katexReady = Boolean(globalThis?.katex && typeof globalThis.katex.renderToString === "function");
+      const shouldRetryRender = item.mathOverlayReady !== true && katexReady;
+      const markup = renderMathMarkup(item.formula || "", { displayMode });
+      const stateToken = normalizeMathRenderState(item);
+      const fallbackText = String(item.fallbackText || item.formula || "").trim() || (displayMode ? "[公式]" : "[行内公式]");
+      const contentSignature = getMathOverlaySignature(item);
+      if (node.dataset.contentSignature !== contentSignature || shouldRetryRender) {
+        if (markup && hasRenderedKatexMarkup(markup)) {
+          node.innerHTML = markup;
+          item.renderState = "ready";
+          item.mathOverlayReady = true;
+        } else {
+          node.innerHTML = markup || "";
+          if (!markup) {
+            node.textContent = fallbackText;
+          }
+          item.renderState = stateToken === "error" ? "error" : "fallback";
+          item.mathOverlayReady = false;
+        }
+        node.dataset.contentSignature = contentSignature;
+      }
+
+      const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, scale);
+      setStyleIfNeeded(node, "display", displayMode ? "block" : "inline-flex");
+      const styleSignature = getMathOverlayStyleSignature({ left, top, fontSize, paddingX, paddingY });
+      if (node.dataset.styleSignature !== styleSignature) {
+        setStyleIfNeeded(node, "position", "absolute");
+        setStyleIfNeeded(node, "left", `${left}px`);
+        setStyleIfNeeded(node, "top", `${top}px`);
+        setStyleIfNeeded(node, "padding", `${paddingY}px ${paddingX}px`);
+        setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
+        setStyleIfNeeded(node, "lineHeight", displayMode ? "normal" : "1.1");
+        setStyleIfNeeded(node, "alignItems", "center");
+        setStyleIfNeeded(node, "justifyContent", displayMode ? "center" : "flex-start");
+        setStyleIfNeeded(node, "whiteSpace", displayMode ? "normal" : "nowrap");
+        setStyleIfNeeded(node, "color", "rgba(15, 23, 42, 0.96)");
+        node.dataset.styleSignature = styleSignature;
+      }
+
+      if (node.dataset.layoutWritebackSignature !== contentSignature) {
+        node.dataset.layoutWritebackSignature = contentSignature;
+      }
+      if (maybeWritebackMathOverlayFrame(item, node, scale)) {
+        mathLayoutWritebackChanged = true;
+      }
+    });
+
+    if (mathLayoutWritebackChanged) {
+      invalidateHitTestSpatialIndex(state.board.items);
+      syncBoard({ persist: false, emit: true, markDirty: false });
+    }
+  }
+
+  function syncCodeBlockOverlays() {
+    if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    const interactive = isInteractiveMode();
+    if (!interactive) {
+      refs.codeBlockDisplayHost.classList.add("is-hidden");
+      refs.codeBlockDisplayHost.style.display = "none";
+      resetCodeBlockOverlayState({ clearNodes: true });
+      lastCodeBlockOverlayInteractive = interactive;
+      return;
+    }
+    const items = state.board.items.filter((item) => item.type === "codeBlock");
+    if (!items.length) {
+      refs.codeBlockDisplayHost.classList.add("is-hidden");
+      refs.codeBlockDisplayHost.style.display = "none";
+      resetCodeBlockOverlayState({ clearNodes: true });
+      lastCodeBlockOverlayInteractive = interactive;
+      return;
+    }
+    refs.codeBlockDisplayHost.classList.remove("is-hidden");
+    refs.codeBlockDisplayHost.style.display = "block";
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const offsetX = Number(state.board.view.offsetX || 0);
+    const offsetY = Number(state.board.view.offsetY || 0);
+    const viewportBounds = getRichOverlayViewportBounds(
+      refs.surface,
+      refs.canvas?.clientWidth || refs.canvas?.width || 0,
+      refs.canvas?.clientHeight || refs.canvas?.height || 0
+    );
+    const viewportKey = getCodeBlockOverlayViewportKey(viewportBounds, scale);
+    const shouldRescan =
+      codeBlockOverlayNeedsFullRescan ||
+      !lastCodeBlockOverlayInteractive ||
+      viewportKey !== lastCodeBlockOverlayViewportKey ||
+      items.length !== codeBlockItemsById.size;
+
+    if (shouldRescan) {
+      codeBlockItemsById.clear();
+      items.forEach((item) => {
+        codeBlockItemsById.set(item.id, item);
+      });
+    }
+
+    const nextHoverId = codeBlockItemsById.has(state.hoverId) ? String(state.hoverId || "") : "";
+    const nextEditingId =
+      state.editingType === "code-block" && codeBlockItemsById.has(state.editingId) ? String(state.editingId || "") : "";
+    const selectedCodeBlockIds = getSelectedCodeBlockIds();
+    const selectionKey = selectedCodeBlockIds.join("|");
+    if (lastCodeBlockOverlayHoverId !== nextHoverId) {
+      markCodeBlockOverlayDirty([lastCodeBlockOverlayHoverId, nextHoverId]);
+    }
+    if (lastCodeBlockOverlayEditingId !== nextEditingId) {
+      markCodeBlockOverlayDirty([lastCodeBlockOverlayEditingId, nextEditingId]);
+    }
+    if (lastCodeBlockOverlaySelectionKey !== selectionKey) {
+      markCodeBlockOverlayDirty([
+        ...lastCodeBlockOverlaySelectionKey.split("|").filter(Boolean),
+        ...selectedCodeBlockIds,
+      ]);
+    }
+    lastCodeBlockOverlayHoverId = nextHoverId;
+    lastCodeBlockOverlayEditingId = nextEditingId;
+    lastCodeBlockOverlaySelectionKey = selectionKey;
+
+    const activeIds = new Set(items.map((item) => item.id));
+    for (const [id, node] of codeBlockDisplayMap.entries()) {
+      if (!activeIds.has(id)) {
+        node.remove();
+        codeBlockDisplayMap.delete(id);
+        codeBlockVisibleIds.delete(id);
+      }
+    }
+
+    if (shouldRescan) {
+      codeBlockVisibleIds.clear();
+      items.forEach((item) => {
+        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+      });
+    } else {
+      const idsToUpdate = new Set([
+        ...codeBlockVisibleIds,
+        ...codeBlockOverlayDirtyIds,
+        ...selectedCodeBlockIds,
+      ]);
+      if (nextHoverId) {
+        idsToUpdate.add(nextHoverId);
+      }
+      if (nextEditingId) {
+        idsToUpdate.add(nextEditingId);
+      }
+      idsToUpdate.forEach((itemId) => {
+        const item = codeBlockItemsById.get(itemId);
+        if (!item) {
+          const node = codeBlockDisplayMap.get(itemId);
+          if (node) {
+            node.remove();
+            codeBlockDisplayMap.delete(itemId);
+          }
+          codeBlockVisibleIds.delete(itemId);
+          return;
+        }
+        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+      });
+    }
+
+    codeBlockOverlayDirtyIds.clear();
+    codeBlockOverlayNeedsFullRescan = false;
+    lastCodeBlockOverlayViewportKey = viewportKey;
+    lastCodeBlockOverlayInteractive = interactive;
   }
 
   function beginTextEdit(itemId) {
@@ -3076,31 +5329,29 @@ export function createCanvas2DEngine(options = {}) {
     }
     finishImageEdit();
     cancelFlowNodeEdit();
-    if (!richTextAdapter) {
-      richTextAdapter = createRichTextAdapter(refs.richEditor, {
-        onCommit: commitRichEdit,
-        onCancel: cancelRichEdit,
-        onSelectionChange: syncRichTextToolbar,
-      });
-    }
     if (!editBaselineSnapshot) {
       editBaselineSnapshot = takeHistorySnapshot(state);
     }
     state.editingId = item.id;
     state.editingType = "text";
     state.board.selectedIds = [item.id];
-    richTextAdapter?.setContent(item.html || "", item.plainText || item.text || "");
-    lastRichEditorItemId = item.id;
-    richFontSize = normalizeRichEditorFontSize(item.fontSize || 20, 20);
+    richTextSession.begin({
+      itemId: item.id,
+      itemType: "text",
+      html: item.html || "",
+      plainText: item.plainText || item.text || "",
+      fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+      baselineSnapshot: editBaselineSnapshot,
+    });
+    richFontSize = normalizeRichEditorFontSize(item.fontSize || DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_SIZE);
     syncRichTextFontSize();
-    richTextAdapter?.setBaseFontSize?.(richFontSize, { normalize: false });
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
     applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
     syncBoard({ persist: false, emit: true });
     requestAnimationFrame(() => {
-      refs.richEditor?.focus();
+      richTextSession.focus();
       syncRichTextToolbar();
     });
     return true;
@@ -3118,33 +5369,29 @@ export function createCanvas2DEngine(options = {}) {
     finishImageEdit();
     cancelFileMemoEdit();
     cancelImageMemoEdit();
-    if (!richTextAdapter) {
-      richTextAdapter = createRichTextAdapter(refs.richEditor, {
-        onCommit: commitRichEdit,
-        onCancel: cancelRichEdit,
-        onSelectionChange: syncRichTextToolbar,
-      });
-    }
     if (!editBaselineSnapshot) {
       editBaselineSnapshot = takeHistorySnapshot(state);
     }
     state.editingId = item.id;
     state.editingType = "flow-node";
     state.board.selectedIds = [item.id];
-    richTextAdapter?.setContent(
-      normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || 18),
-      item.plainText || ""
-    );
-    lastRichEditorItemId = item.id;
+    richTextSession.begin({
+      itemId: item.id,
+      itemType: "flow-node",
+      html: normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || resolveSessionFontSize(richTextSession, 18)),
+      plainText: item.plainText || "",
+      fontSize: item.fontSize || 18,
+      baselineSnapshot: editBaselineSnapshot,
+    });
     richFontSize = normalizeRichEditorFontSize(item.fontSize || 18, 18);
     syncRichTextFontSize();
-    richTextAdapter?.setBaseFontSize?.(richFontSize, { normalize: false });
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
     syncBoard({ persist: false, emit: true });
     requestAnimationFrame(() => {
-      refs.richEditor?.focus();
+      richTextSession.focus();
       syncRichTextToolbar();
     });
     return true;
@@ -3159,24 +5406,28 @@ export function createCanvas2DEngine(options = {}) {
       state.editingId = null;
       state.editingType = null;
       refs.richEditor?.classList.add("is-hidden");
-      if (richTextAdapter) {
-        richTextAdapter.destroy();
-        richTextAdapter = null;
-      }
-      editBaselineSnapshot = null;
-      lastRichEditorItemId = null;
+      richTextSession.clear({ destroyAdapter: false });
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
         shouldExitTextToolAfterEdit = false;
         setTool("select");
       }
       return false;
     }
-    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
     const html = normalizeRichHtmlInlineFontSizes(
-      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
-      item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
     );
-    const plainText = htmlToPlainText(html);
+    const content = normalizeEditedRichTextContent(
+      item,
+      html,
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const plainText = content.plainText;
+    const canonicalHtml = normalizeRichHtmlInlineFontSizes(
+      getCanonicalRichTextHtml(content, html),
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
     if (!plainText.trim()) {
       state.board.items = state.board.items.filter((entry) => {
         if (entry.id === item.id) {
@@ -3191,12 +5442,8 @@ export function createCanvas2DEngine(options = {}) {
       state.editingType = null;
       state.board.selectedIds = [];
       refs.richEditor.classList.add("is-hidden");
-      if (richTextAdapter) {
-        richTextAdapter.destroy();
-        richTextAdapter = null;
-      }
+      richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      lastRichEditorItemId = null;
       commitHistory(before, "删除空白文本");
       setStatus("已删除空白文本");
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
@@ -3208,24 +5455,72 @@ export function createCanvas2DEngine(options = {}) {
     syncEditingTextItemSize(item);
     const currentWidth = Math.max(80, Number(item.width || 0) || 80);
     const currentHeight = Math.max(40, Number(item.height || 0) || 40);
-    item.html = html;
-    item.plainText = plainText;
-    item.text = plainText;
-    item.title = buildTextTitle(plainText || "文本");
-    item.width = currentWidth;
-    item.height = currentHeight;
+    const refreshedLinkSemantics = linkSemanticEnabled
+      ? refreshTextLinkSemantics(
+          {
+            ...item,
+            richTextDocument: content.richTextDocument,
+          },
+          plainText
+        )
+      : {
+          linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+          urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
+        };
+    const richTextDocumentWithMeta =
+      content.richTextDocument && typeof content.richTextDocument === "object"
+        ? {
+            ...content.richTextDocument,
+            meta: {
+              ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
+                ? content.richTextDocument.meta
+                : {}),
+              linkTokens: refreshedLinkSemantics.linkTokens,
+              urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+            },
+          }
+        : content.richTextDocument;
+    const finalLayoutConfig = resolveEditedTextLayoutConfig(
+      item,
+      { ...content, html: canonicalHtml },
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const normalizedItem = normalizeTextElement({
+      ...item,
+      html: canonicalHtml,
+      plainText,
+      text: plainText,
+      richTextDocument: richTextDocumentWithMeta,
+      linkTokens: refreshedLinkSemantics.linkTokens,
+      urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+      textBoxLayoutMode: finalLayoutConfig.layoutMode,
+      textResizeMode: finalLayoutConfig.resizeMode,
+      title: buildTextTitle(plainText || "文本"),
+      width:
+        finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
+          ? Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || currentWidth) || currentWidth))
+          : currentWidth,
+      height: currentHeight,
+    });
+    Object.assign(item, normalizedItem);
+    scheduleUrlMetaHydrationForItem(item);
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
     refs.richEditor.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    lastRichEditorItemId = null;
-    commitHistory(before, "更新文本");
+    const changed = commitHistory(before, "更新文本");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      if (state.tool === "text" && shouldExitTextToolAfterEdit) {
+        shouldExitTextToolAfterEdit = false;
+        setTool("select");
+      }
+      return true;
+    }
     setStatus("文本已更新");
+    persistCommittedBoardIfPossible();
     if (state.tool === "text" && shouldExitTextToolAfterEdit) {
       shouldExitTextToolAfterEdit = false;
       setTool("select");
@@ -3242,20 +5537,25 @@ export function createCanvas2DEngine(options = {}) {
       state.editingId = null;
       state.editingType = null;
       refs.richEditor?.classList.add("is-hidden");
-      if (richTextAdapter) {
-        richTextAdapter.destroy();
-        richTextAdapter = null;
-      }
-      editBaselineSnapshot = null;
-      lastRichEditorItemId = null;
+      richTextSession.clear({ destroyAdapter: false });
       return false;
     }
-    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
     const html = normalizeRichHtmlInlineFontSizes(
-      richTextAdapter?.getHTML?.() || refs.richEditor.innerHTML || "",
-      item.fontSize || richFontSize || 18
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, 18)
     );
-    const plainText = htmlToPlainText(html);
+    const content = ensureRichTextDocumentFields(
+      {
+        ...item,
+        html,
+        plainText: htmlToPlainText(html),
+      },
+      {
+        fontSize: item.fontSize || resolveSessionFontSize(richTextSession, 18),
+      }
+    );
+    const plainText = content.plainText;
     if (!plainText.trim()) {
       state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
       if (state.hoverId === item.id) {
@@ -3265,19 +5565,16 @@ export function createCanvas2DEngine(options = {}) {
       state.editingType = null;
       state.board.selectedIds = [];
       refs.richEditor.classList.add("is-hidden");
-      if (richTextAdapter) {
-        richTextAdapter.destroy();
-        richTextAdapter = null;
-      }
+      richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      lastRichEditorItemId = null;
       commitHistory(before, "删除空白节点");
       setStatus("已删除空白节点");
       return true;
     }
-    item.html = html;
+    item.html = content.html;
     item.plainText = plainText;
-    item.fontSize = richFontSize;
+    item.richTextDocument = content.richTextDocument;
+    item.fontSize = resolveSessionFontSize(richTextSession, 18);
     const minNodeSize = getFlowNodeMinSize(item, { widthHint: item.width });
     item.width = Math.max(Number(item.width || 0) || 0, minNodeSize.width);
     item.height = Math.max(Number(item.height || 0) || 0, minNodeSize.height);
@@ -3285,14 +5582,15 @@ export function createCanvas2DEngine(options = {}) {
     state.editingType = null;
     state.board.selectedIds = [item.id];
     refs.richEditor.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    lastRichEditorItemId = null;
-    commitHistory(before, "更新节点");
+    const changed = commitHistory(before, "更新节点");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
     setStatus("节点已更新");
+    persistCommittedBoardIfPossible();
     return true;
   }
 
@@ -3303,12 +5601,8 @@ export function createCanvas2DEngine(options = {}) {
     state.editingId = null;
     state.editingType = null;
     refs.richEditor?.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    lastRichEditorItemId = null;
     syncBoard({ persist: false, emit: true });
     return true;
   }
@@ -3327,6 +5621,566 @@ export function createCanvas2DEngine(options = {}) {
     return cancelTextEdit();
   }
 
+  function getTableEditItem() {
+    return state.editingType === "table"
+      ? state.board.items.find((entry) => entry.id === state.editingId && entry.type === "table") || null
+      : null;
+  }
+
+  function buildTableEditorHtml(item) {
+    const matrix = flattenTableStructureToMatrix(item?.table || {});
+    return `
+      <div class="canvas-table-editor-scroll">
+        <table class="canvas-table-editor-grid">
+          <tbody>
+            ${matrix
+              .map(
+                (row, rowIndex) => `
+                  <tr data-row-index="${rowIndex}">
+                    ${row
+                      .map((cell, columnIndex) => {
+                        const tag = cell.header ? "th" : "td";
+                        return `
+                          <${tag}
+                            contenteditable="true"
+                            spellcheck="false"
+                            data-row-index="${rowIndex}"
+                            data-column-index="${columnIndex}"
+                            data-header="${cell.header ? "1" : "0"}"
+                          >${escapeRichTextHtml(cell.plainText || "")}</${tag}>
+                        `;
+                      })
+                      .join("")}
+                  </tr>
+                `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function getTableEditorCellElement(rowIndex = 0, columnIndex = 0) {
+    return refs.tableEditor?.querySelector?.(
+      `[data-row-index="${Math.max(0, Number(rowIndex) || 0)}"][data-column-index="${Math.max(0, Number(columnIndex) || 0)}"]`
+    ) || null;
+  }
+
+  function syncTableEditorSelectionUI() {
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    refs.tableEditor.querySelectorAll("[data-row-index][data-column-index]").forEach((cell) => {
+      if (!(cell instanceof HTMLElement)) {
+        return;
+      }
+      const rowIndex = Number(cell.getAttribute("data-row-index"));
+      const columnIndex = Number(cell.getAttribute("data-column-index"));
+      cell.classList.toggle(
+        "is-selected",
+        rowIndex === Number(tableEditSelection.rowIndex) && columnIndex === Number(tableEditSelection.columnIndex)
+      );
+    });
+    const editingItem = getTableEditItem();
+    if (!(refs.tableToolbar instanceof HTMLDivElement) || !editingItem) {
+      return;
+    }
+    const hasHeader = editingItem?.table?.hasHeader !== false;
+    refs.tableToolbar
+      .querySelectorAll('[data-action="table-toggle-header"]')
+      .forEach((button) => button.classList.toggle("is-active", hasHeader));
+  }
+
+  function focusTableEditorCell(rowIndex = 0, columnIndex = 0, { placeAtEnd = false } = {}) {
+    const cell = getTableEditorCellElement(rowIndex, columnIndex);
+    if (!(cell instanceof HTMLElement)) {
+      return;
+    }
+    tableEditSelection = {
+      rowIndex: Math.max(0, Number(rowIndex) || 0),
+      columnIndex: Math.max(0, Number(columnIndex) || 0),
+    };
+    syncTableEditorSelectionUI();
+    cell.focus();
+    const selection = window.getSelection?.();
+    if (!selection) {
+      return;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(!placeAtEnd);
+    if (placeAtEnd) {
+      range.collapse(false);
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function buildTableMatrixFromEditor() {
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      return [];
+    }
+    const rows = Array.from(refs.tableEditor.querySelectorAll("tr[data-row-index]"));
+    return rows.map((rowEl, rowIndex) =>
+      Array.from(rowEl.querySelectorAll("[data-column-index]")).map((cellEl, columnIndex) => ({
+        plainText: sanitizeText(cellEl.textContent || ""),
+        header: String(cellEl.getAttribute("data-header") || "") === "1",
+        rowIndex,
+        columnIndex,
+      }))
+    );
+  }
+
+  function syncTableToolbarLayout(item) {
+    if (!(refs.tableToolbar instanceof HTMLDivElement) || !(refs.surface instanceof HTMLElement) || !item) {
+      return;
+    }
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
+    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const hostRect = refs.surface.getBoundingClientRect();
+    const toolbarWidth = Math.max(1, refs.tableToolbar.offsetWidth || 320);
+    const toolbarHeight = Math.max(1, refs.tableToolbar.offsetHeight || 38);
+    const nextLeft = Math.max(8, Math.min(left + width / 2 - toolbarWidth / 2, hostRect.width - toolbarWidth - 8));
+    const nextTop = Math.max(8, Math.min(top - toolbarHeight - 10, hostRect.height - toolbarHeight - 8));
+    refs.tableToolbar.style.left = `${Math.round(nextLeft)}px`;
+    refs.tableToolbar.style.top = `${Math.round(nextTop)}px`;
+    refs.tableToolbar.classList.remove("is-hidden");
+  }
+
+  function syncTableEditorLayout() {
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    if (!state.editingId || state.editingType !== "table") {
+      refs.tableEditor.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      return;
+    }
+    refs.editor?.classList.add("is-hidden");
+    refs.richEditor?.classList.add("is-hidden");
+    refs.fileMemoEditor?.classList.add("is-hidden");
+    refs.imageMemoEditor?.classList.add("is-hidden");
+    richTextSession.clear({ destroyAdapter: false });
+    const item = getTableEditItem();
+    if (!item) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.tableEditor.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      lastTableEditItemId = null;
+      return;
+    }
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
+    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const height = Math.max(1, Number(item.height || 1)) * scale;
+    if (lastTableEditItemId !== item.id || !refs.tableEditor.querySelector("table")) {
+      refs.tableEditor.innerHTML = buildTableEditorHtml(item);
+      lastTableEditItemId = item.id;
+    }
+    refs.tableEditor.style.left = `${Math.round(left)}px`;
+    refs.tableEditor.style.top = `${Math.round(top)}px`;
+    refs.tableEditor.style.width = `${Math.round(width)}px`;
+    refs.tableEditor.style.height = `${Math.round(height)}px`;
+    refs.tableEditor.style.fontSize = `${Math.max(9, scaleSceneValue(state.board.view, 12, { min: 9 }))}px`;
+    refs.tableEditor.classList.remove("is-hidden");
+    syncTableToolbarLayout(item);
+    syncTableEditorSelectionUI();
+  }
+
+  function getCodeBlockEditItem() {
+    return state.editingType === "code-block"
+      ? state.board.items.find((entry) => entry.id === state.editingId && entry.type === "codeBlock") || null
+      : null;
+  }
+
+  function getSelectedCodeBlockItem() {
+    if (state.board.selectedIds.length !== 1) {
+      return null;
+    }
+    return state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "codeBlock") || null;
+  }
+
+  function copyCodeBlockContent(item) {
+    const content = getCodeBlockContent(item);
+    if (!content.trim()) {
+      setStatus("代码块为空");
+      return false;
+    }
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(content).catch(() => {});
+    }
+    setStatus("代码已复制");
+    return true;
+  }
+
+  function syncCodeBlockToolbar() {
+    if (!(refs.codeBlockToolbar instanceof HTMLDivElement) || !(refs.surface instanceof HTMLElement)) {
+      return;
+    }
+    const item = getCodeBlockEditItem() || getSelectedCodeBlockItem();
+    if (!isInteractiveMode() || !item || (state.editingId && state.editingType !== "code-block")) {
+      refs.codeBlockToolbar.classList.add("is-hidden");
+      return;
+    }
+    refs.codeBlockToolbar.querySelectorAll('[data-action="code-wrap"]').forEach((button) => {
+      button.classList.toggle("is-active", item.wrap === true);
+    });
+    refs.codeBlockToolbar.querySelectorAll('[data-action="code-line-numbers"]').forEach((button) => {
+      button.classList.toggle("is-active", item.showLineNumbers !== false);
+    });
+    refs.codeBlockToolbar.querySelectorAll('[data-action="code-preview-toggle"]').forEach((button) => {
+      button.classList.toggle("is-active", isMermaidCodeBlock(item) && item.previewMode !== "source");
+      button.textContent = isMermaidCodeBlock(item) && item.previewMode !== "source" ? "Source" : "View";
+    });
+    refs.codeBlockToolbar.querySelectorAll('[data-action="code-language"]').forEach((input) => {
+      if (input instanceof HTMLSelectElement) {
+        input.value = String(item.language || "");
+      }
+    });
+    refs.codeBlockToolbar.querySelectorAll('[data-action="code-font-size"]').forEach((input) => {
+      if (input instanceof HTMLSelectElement) {
+        input.value = String(Math.max(12, Number(item.fontSize || 16)));
+      }
+    });
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
+    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const height = Math.max(1, Number(item.height || 1)) * scale;
+    syncFloatingToolbarLayout(refs.codeBlockToolbar, refs.surface, {
+      anchorRect: {
+        left,
+        top,
+        width,
+        height,
+      },
+      placement: "top",
+      offset: 10,
+      minPadding: 8,
+    });
+    refs.codeBlockToolbar.classList.remove("is-hidden");
+  }
+
+  function syncCodeBlockEditorLayout(layoutMode = "precise") {
+    if (!(refs.codeBlockEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    if (!state.editingId || state.editingType !== "code-block") {
+      refs.codeBlockEditor.classList.add("is-hidden");
+      return;
+    }
+    refs.editor?.classList.add("is-hidden");
+    refs.richEditor?.classList.add("is-hidden");
+    refs.fileMemoEditor?.classList.add("is-hidden");
+    refs.imageMemoEditor?.classList.add("is-hidden");
+    refs.tableEditor?.classList.add("is-hidden");
+    refs.tableToolbar?.classList.add("is-hidden");
+    richTextSession.clear({ destroyAdapter: false });
+    const item = getCodeBlockEditItem();
+    if (!item) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.codeBlockEditor.classList.add("is-hidden");
+      lastCodeBlockEditItemId = null;
+      codeBlockEditor.clear();
+      return;
+    }
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
+    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    if (lastCodeBlockEditItemId !== item.id || !codeBlockEditor.isEditing(item.id)) {
+      codeBlockEditor.begin({
+        itemId: item.id,
+        code: getCodeBlockContent(item),
+        language: item.language,
+        showLineNumbers: item.showLineNumbers !== false,
+        wrap: item.wrap === true,
+      });
+      lastCodeBlockEditItemId = item.id;
+    } else {
+      codeBlockEditor.setLanguage(item.language);
+      codeBlockEditor.setWrap(item.wrap === true);
+    }
+    const draftCode = codeBlockEditor.getValue() || getCodeBlockContent(item);
+    const draftLayout = measureCodeBlockEditorLayout(item, draftCode, {
+      widthHint: Number(item.width || 0),
+      mode: layoutMode,
+    });
+    refs.codeBlockEditor.style.left = `${Math.round(left)}px`;
+    refs.codeBlockEditor.style.top = `${Math.round(top)}px`;
+    refs.codeBlockEditor.style.width = `${Math.round(width)}px`;
+    refs.codeBlockEditor.style.height = `${Math.round(Math.max(item.autoHeight !== false ? draftLayout.height : item.height, 48) * scale)}px`;
+    refs.codeBlockEditor.style.setProperty("--code-editor-font-size", `${Math.max(12, Number(item.fontSize || 16)) * scale}px`);
+    refs.codeBlockEditor.style.setProperty("background", "#ffffff", "important");
+    refs.codeBlockEditor.style.setProperty("border-color", "rgba(203, 213, 225, 0.95)", "important");
+    refs.codeBlockEditor.style.setProperty("color", "#0f172a", "important");
+    refs.codeBlockEditor.style.setProperty("box-shadow", "0 8px 24px rgba(15, 23, 42, 0.12)", "important");
+    refs.codeBlockEditor.dataset.layoutMode = String(draftLayout.layoutMode || layoutMode || "precise");
+    refs.codeBlockEditor.classList.remove("is-hidden");
+    syncCodeBlockToolbar();
+  }
+
+  function beginCodeBlockEdit(itemId) {
+    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "codeBlock");
+    if (!item || !(refs.codeBlockEditor instanceof HTMLDivElement)) {
+      return false;
+    }
+    if (isLockedItem(item)) {
+      setStatus("代码块已锁定，无法编辑");
+      return false;
+    }
+    finishImageEdit();
+    cancelTextEdit();
+    cancelFlowNodeEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    cancelTableEdit();
+    if (!editBaselineSnapshot) {
+      editBaselineSnapshot = takeHistorySnapshot(state);
+    }
+    state.editingId = item.id;
+    state.editingType = "code-block";
+    state.board.selectedIds = [item.id];
+    markCodeBlockOverlayDirty(item.id);
+    lastCodeBlockEditItemId = null;
+    cancelCodeBlockEditorLayoutSync();
+    syncCodeBlockEditorLayout("fast");
+    scheduleCodeBlockEditorLayoutSync("precise");
+    syncBoard({ persist: false, emit: true });
+    requestAnimationFrame(() => {
+      codeBlockEditor.focus();
+      syncCodeBlockToolbar();
+    });
+    return true;
+  }
+
+  function commitCodeBlockEdit() {
+    if (!state.editingId || state.editingType !== "code-block") {
+      return false;
+    }
+    cancelCodeBlockEditorLayoutSync();
+    const item = getCodeBlockEditItem();
+    if (!item) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.codeBlockEditor?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      lastCodeBlockEditItemId = null;
+      codeBlockEditor.clear();
+      markCodeBlockOverlayDirty([], { fullRescan: true });
+      return false;
+    }
+    const before = editBaselineSnapshot || null;
+    const fallbackBefore = before || takeHistorySnapshot(state);
+    const code = sanitizeText(codeBlockEditor.getValue() || "");
+    if (!code.trim()) {
+      const deletedItemId = item.id;
+      state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
+      state.board.selectedIds = [];
+      state.editingId = null;
+      state.editingType = null;
+      refs.codeBlockEditor?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      lastCodeBlockEditItemId = null;
+      clearCodeBlockEditLayoutCache(deletedItemId);
+      codeBlockEditor.clear();
+      editBaselineSnapshot = null;
+      markCodeBlockOverlayDirty(deletedItemId, { fullRescan: true });
+      before
+        ? commitCodeBlockPatchHistory(before, deletedItemId, null, "删除空白代码块")
+        : commitHistory(fallbackBefore, "删除空白代码块");
+      setStatus("已删除空白代码块");
+      return true;
+    }
+    const normalized = updateCodeBlockElement(
+      item,
+      {
+        code,
+        text: code,
+        plainText: code,
+        title: getCodeBlockItemTitle({ ...item, code }),
+      },
+      {
+        remeasure: true,
+      }
+    );
+    Object.assign(item, normalized);
+    state.editingId = null;
+    state.editingType = null;
+    state.board.selectedIds = [item.id];
+    markCodeBlockOverlayDirty(item.id);
+    refs.codeBlockEditor?.classList.add("is-hidden");
+    lastCodeBlockEditItemId = null;
+    codeBlockEditor.clear();
+    editBaselineSnapshot = null;
+    const changed = before
+      ? commitCodeBlockPatchHistory(before, item.id, item, "更新代码块")
+      : commitHistory(fallbackBefore, "更新代码块");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
+    setStatus("代码块已更新");
+    persistCommittedBoardIfPossible();
+    return true;
+  }
+
+  function cancelCodeBlockEdit() {
+    if (state.editingType !== "code-block") {
+      return false;
+    }
+    const activeItemId = state.editingId;
+    cancelCodeBlockEditorLayoutSync();
+    state.editingId = null;
+    state.editingType = null;
+    refs.codeBlockEditor?.classList.add("is-hidden");
+    lastCodeBlockEditItemId = null;
+    codeBlockEditor.clear();
+    editBaselineSnapshot = null;
+    markCodeBlockOverlayDirty(activeItemId);
+    syncBoard({ persist: false, emit: true });
+    return true;
+  }
+
+  function beginTableEdit(itemId, selection = null) {
+    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "table");
+    if (!item || !(refs.tableEditor instanceof HTMLDivElement)) {
+      return false;
+    }
+    if (isLockedItem(item)) {
+      setStatus("表格已锁定，无法编辑");
+      return false;
+    }
+    finishImageEdit();
+    cancelTextEdit();
+    cancelFlowNodeEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    if (!editBaselineSnapshot) {
+      editBaselineSnapshot = takeHistorySnapshot(state);
+    }
+    state.editingId = item.id;
+    state.editingType = "table";
+    state.board.selectedIds = [item.id];
+    tableEditSelection = {
+      rowIndex: Math.max(0, Number(selection?.rowIndex) || 0),
+      columnIndex: Math.max(0, Number(selection?.columnIndex) || 0),
+    };
+    lastTableEditItemId = null;
+    syncTableEditorLayout();
+    syncBoard({ persist: false, emit: true });
+    requestAnimationFrame(() => {
+      focusTableEditorCell(tableEditSelection.rowIndex, tableEditSelection.columnIndex);
+    });
+    return true;
+  }
+
+  function commitTableEdit() {
+    if (!state.editingId || state.editingType !== "table") {
+      return false;
+    }
+    const item = getTableEditItem();
+    if (!item || !(refs.tableEditor instanceof HTMLDivElement)) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      lastTableEditItemId = null;
+      return false;
+    }
+    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const matrix = buildTableMatrixFromEditor();
+    const structure = createTableStructureFromMatrix(matrix, {
+      title: item?.table?.title || item?.title || "表格",
+      hasHeader: item?.table?.hasHeader !== false,
+    });
+    const normalizedItem = updateTableElementStructure(item, structure);
+    Object.assign(item, normalizedItem);
+    state.editingId = null;
+    state.editingType = null;
+    state.board.selectedIds = [item.id];
+    refs.tableEditor.classList.add("is-hidden");
+    refs.tableToolbar?.classList.add("is-hidden");
+    lastTableEditItemId = null;
+    editBaselineSnapshot = null;
+    const changed = commitHistory(before, "更新表格");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
+    setStatus("表格已更新");
+    persistCommittedBoardIfPossible();
+    return true;
+  }
+
+  function cancelTableEdit() {
+    if (state.editingType !== "table") {
+      return false;
+    }
+    state.editingId = null;
+    state.editingType = null;
+    refs.tableEditor?.classList.add("is-hidden");
+    refs.tableToolbar?.classList.add("is-hidden");
+    lastTableEditItemId = null;
+    editBaselineSnapshot = null;
+    syncBoard({ persist: false, emit: true });
+    return true;
+  }
+
+  function mutateTableEditor(mutator) {
+    const item = getTableEditItem();
+    if (!(refs.tableEditor instanceof HTMLDivElement) || !item || typeof mutator !== "function") {
+      return;
+    }
+    const matrix = buildTableMatrixFromEditor();
+    const mutationResult = mutator(matrix.map((row) => row.map((cell) => ({ ...cell })))) || matrix;
+    const nextMatrix = Array.isArray(mutationResult) ? mutationResult : mutationResult?.matrix || matrix;
+    const nextHasHeader =
+      typeof mutationResult?.hasHeader === "boolean" ? mutationResult.hasHeader : item?.table?.hasHeader !== false;
+    const structure = createTableStructureFromMatrix(nextMatrix, {
+      title: item?.table?.title || item?.title || "表格",
+      hasHeader: nextHasHeader,
+    });
+    item.table = structure;
+    item.columns = structure.columns;
+    item.rows = structure.rows.length;
+    const normalizedItem = updateTableElementStructure(item, structure);
+    Object.assign(item, normalizedItem);
+    refs.tableEditor.innerHTML = buildTableEditorHtml(item);
+    syncTableEditorLayout();
+    requestAnimationFrame(() => {
+      focusTableEditorCell(
+        Math.min(tableEditSelection.rowIndex, Math.max(0, structure.rows.length - 1)),
+        Math.min(tableEditSelection.columnIndex, Math.max(0, structure.columns - 1))
+      );
+    });
+  }
+
+  function getTableCellSelectionFromScenePoint(item, scenePoint) {
+    const grid = getStructuredTableSceneGrid(item);
+    const bounds = grid.bounds;
+    if (
+      Number(scenePoint?.x || 0) < bounds.left ||
+      Number(scenePoint?.x || 0) > bounds.right ||
+      Number(scenePoint?.y || 0) < bounds.top ||
+      Number(scenePoint?.y || 0) > bounds.bottom
+    ) {
+      return { rowIndex: 0, columnIndex: 0 };
+    }
+    const localX = Math.min(Math.max(Number(scenePoint?.x || 0) - bounds.left, 0), Math.max(0, bounds.width - 0.001));
+    const localY = Math.min(Math.max(Number(scenePoint?.y || 0) - bounds.top, 0), Math.max(0, bounds.height - 0.001));
+    return {
+      rowIndex: Math.min(grid.rowCount - 1, Math.floor(localY / Math.max(grid.rowHeight, 1e-6))),
+      columnIndex: Math.min(grid.columnCount - 1, Math.floor(localX / Math.max(grid.columnWidth, 1e-6))),
+    };
+  }
+
   function syncFileMemoLayout() {
     if (!(refs.fileMemoEditor instanceof HTMLTextAreaElement)) {
       return;
@@ -3338,16 +6192,12 @@ export function createCanvas2DEngine(options = {}) {
     refs.editor?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
     refs.imageMemoEditor?.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.clear({ destroyAdapter: false });
     const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "fileCard");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
       refs.fileMemoEditor.classList.add("is-hidden");
-      editBaselineSnapshot = null;
       return;
     }
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
@@ -3404,7 +6254,6 @@ export function createCanvas2DEngine(options = {}) {
       state.editingId = null;
       state.editingType = null;
       refs.fileMemoEditor?.classList.add("is-hidden");
-      editBaselineSnapshot = null;
       lastFileMemoItemId = null;
       return false;
     }
@@ -3415,10 +6264,16 @@ export function createCanvas2DEngine(options = {}) {
     state.editingType = null;
     state.board.selectedIds = [item.id];
     refs.fileMemoEditor.classList.add("is-hidden");
-    editBaselineSnapshot = null;
     lastFileMemoItemId = null;
-    commitHistory(before, "更新文件卡备注");
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
+    const changed = commitHistory(before, "更新文件卡备注");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
     setStatus("文件卡备注已更新");
+    persistCommittedBoardIfPossible();
     return true;
   }
 
@@ -3429,8 +6284,9 @@ export function createCanvas2DEngine(options = {}) {
     state.editingId = null;
     state.editingType = null;
     refs.fileMemoEditor?.classList.add("is-hidden");
-    editBaselineSnapshot = null;
     lastFileMemoItemId = null;
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
     syncBoard({ persist: false, emit: true });
     return true;
   }
@@ -3446,16 +6302,12 @@ export function createCanvas2DEngine(options = {}) {
     refs.editor?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
     refs.fileMemoEditor?.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.clear({ destroyAdapter: false });
     const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "image");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
       refs.imageMemoEditor.classList.add("is-hidden");
-      editBaselineSnapshot = null;
       return;
     }
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
@@ -3512,7 +6364,6 @@ export function createCanvas2DEngine(options = {}) {
       state.editingId = null;
       state.editingType = null;
       refs.imageMemoEditor?.classList.add("is-hidden");
-      editBaselineSnapshot = null;
       lastImageMemoItemId = null;
       return false;
     }
@@ -3523,10 +6374,16 @@ export function createCanvas2DEngine(options = {}) {
     state.editingType = null;
     state.board.selectedIds = [item.id];
     refs.imageMemoEditor.classList.add("is-hidden");
-    editBaselineSnapshot = null;
     lastImageMemoItemId = null;
-    commitHistory(before, "更新图片备注");
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
+    const changed = commitHistory(before, "更新图片备注");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
     setStatus("图片备注已更新");
+    persistCommittedBoardIfPossible();
     return true;
   }
 
@@ -3537,8 +6394,9 @@ export function createCanvas2DEngine(options = {}) {
     state.editingId = null;
     state.editingType = null;
     refs.imageMemoEditor?.classList.add("is-hidden");
-    editBaselineSnapshot = null;
     lastImageMemoItemId = null;
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
     syncBoard({ persist: false, emit: true });
     return true;
   }
@@ -4833,11 +7691,7 @@ export function createCanvas2DEngine(options = {}) {
     state.editingType = null;
     refs.editor?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
-    editBaselineSnapshot = null;
+    richTextSession.clear({ destroyAdapter: false });
     if (state.tool === "text" && shouldExitTextToolAfterEdit) {
       shouldExitTextToolAfterEdit = false;
       setTool("select");
@@ -4889,6 +7743,7 @@ export function createCanvas2DEngine(options = {}) {
     if (state.tool !== "text") {
       cancelTextEdit();
       cancelFlowNodeEdit();
+      cancelTableEdit();
       cancelFileMemoEdit();
       cancelImageMemoEdit();
       finishImageEdit();
@@ -4902,6 +7757,7 @@ export function createCanvas2DEngine(options = {}) {
       clearTransientState();
       cancelTextEdit();
       cancelFlowNodeEdit();
+      cancelTableEdit();
       cancelFileMemoEdit();
       cancelImageMemoEdit();
       finishImageEdit();
@@ -4968,6 +7824,9 @@ export function createCanvas2DEngine(options = {}) {
     if (!items.length) {
       return null;
     }
+    if (items.length >= 24) {
+      await yieldToNextFrame();
+    }
     const fileBacked = items.filter((item) => item.type === "fileCard" || item.type === "image");
     if (fileBacked.length) {
       const changed = await resolveFileCardSourcesForItems(fileBacked);
@@ -4976,7 +7835,12 @@ export function createCanvas2DEngine(options = {}) {
       }
     }
     const copied = await clipboardBroker.copyItemsToClipboard(items);
-    const flowback = structuredImportRuntime.buildFlowbackPayload(items);
+    if (items.length >= 24) {
+      await yieldToNextFrame();
+    }
+    const flowback = shouldBuildStructuredFlowback(items)
+      ? structuredImportRuntime.buildFlowbackPayload(items)
+      : null;
     const externalOutput = flowback?.externalOutput || {};
     const nextClipboard = copied
       ? {
@@ -5007,34 +7871,85 @@ export function createCanvas2DEngine(options = {}) {
     return state.clipboard;
   }
 
-  function duplicateElementsWithDelta(items = [], deltaX = 0, deltaY = 0) {
-    return (Array.isArray(items) ? items : []).map((item) => {
-      const next = normalizeElement(item);
-      next.id = createId(next.type || "item");
-      return moveElement(next, deltaX, deltaY);
+  function shouldBuildStructuredFlowback(items = []) {
+    return (Array.isArray(items) ? items : []).some((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      if (item.structuredImport && typeof item.structuredImport === "object") {
+        return true;
+      }
+      return (
+        item.type === "flowNode" ||
+        item.type === "codeBlock" ||
+        item.type === "table" ||
+        item.type === "mathBlock" ||
+        item.type === "mathInline"
+      );
     });
   }
 
-  function pasteInternalClipboard(anchorPoint = getCenterScenePoint()) {
+  function duplicateElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
+    const forceWrapText = options?.forceWrapText === true;
+    const duplicatedItems = (Array.isArray(items) ? items : []).map((item) => {
+      const duplicated = clone(item);
+      duplicated.id = createId(duplicated?.type || "item");
+      const moved = moveElement(duplicated, deltaX, deltaY);
+      if (forceWrapText && moved?.type === "text") {
+        const widthHint = Math.max(160, Number(moved.width || 0) || 0) || 320;
+        const fontSize = Math.max(12, Number(moved.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE);
+        const measured = getTextMinSize(
+          {
+            ...moved,
+            textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+            textResizeMode: TEXT_RESIZE_MODE_WRAP,
+            wrapMode: TEXT_WRAP_MODE_MANUAL,
+            fontSize,
+          },
+          {
+            widthHint,
+            fontSize,
+          }
+        );
+        return normalizeElement({
+          ...moved,
+          textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+          textResizeMode: TEXT_RESIZE_MODE_WRAP,
+          wrapMode: TEXT_WRAP_MODE_MANUAL,
+          width: Math.max(160, widthHint),
+          height: Math.max(40, Number(measured?.height || 0) || Number(moved.height || 0) || 40),
+        });
+      }
+      return normalizeElement(moved);
+    });
+    return buildExportReadyBoardItems(duplicatedItems);
+  }
+
+  function pasteInternalClipboard(anchorPoint = getCenterScenePoint(), options = {}) {
     const payload = state.clipboard;
     if (!payload?.items?.length) {
       return false;
     }
+    const stagger = options?.stagger !== false;
+    const historyReason = String(options?.historyReason || "粘贴元素");
+    const statusPrefix = String(options?.statusPrefix || "已粘贴");
     const before = takeHistorySnapshot(state);
     const bounds = getBoardBounds(payload.items);
     const pasteCount = Math.max(0, Number(payload.pasteCount) || 0);
-    const groupOffset = 28 + pasteCount * 20;
+    const groupOffset = stagger ? 28 + pasteCount * 20 : 0;
     const anchorX = Number(anchorPoint?.x || 0) + groupOffset;
     const anchorY = Number(anchorPoint?.y || 0) + groupOffset;
     const deltaX = anchorX - Number(bounds?.left || 0);
     const deltaY = anchorY - Number(bounds?.top || 0);
-    const pasted = duplicateElementsWithDelta(payload.items, deltaX, deltaY);
-    payload.pasteCount = pasteCount + 1;
+    const pasted = duplicateElementsWithDelta(payload.items, deltaX, deltaY, {
+      forceWrapText: options?.forceWrapText === true,
+    });
+    payload.pasteCount = stagger ? pasteCount + 1 : pasteCount;
     state.board.items.push(...pasted);
     state.board.selectedIds = pasted.map((item) => item.id);
     void hydrateFileCardIds(pasted);
-    commitHistory(before, "粘贴元素");
-    setStatus(`已粘贴 ${pasted.length} 个元素`);
+    commitHistory(before, historyReason);
+    setStatus(`${statusPrefix} ${pasted.length} 个元素`);
     return true;
   }
 
@@ -5066,14 +7981,12 @@ export function createCanvas2DEngine(options = {}) {
       return false;
     }
     try {
-      if (!Array.from(dataTransfer.types).includes(CANVAS_CLIPBOARD_MIME)) {
+      const customRaw = String(dataTransfer.getData(CANVAS_CLIPBOARD_MIME) || "").trim();
+      const htmlRaw = String(dataTransfer.getData("text/html") || "");
+      const parsed = parseInternalClipboardMarker(customRaw) || parseInternalClipboardMarkerFromHtml(htmlRaw);
+      if (!parsed) {
         return false;
       }
-      const raw = String(dataTransfer.getData(CANVAS_CLIPBOARD_MIME) || "").trim();
-      if (!raw) {
-        return false;
-      }
-      const parsed = JSON.parse(raw);
       return Number(parsed?.copiedAt) === Number(state.clipboard?.copiedAt);
     } catch {
       return false;
@@ -5148,9 +8061,137 @@ export function createCanvas2DEngine(options = {}) {
     return pushItems(items, { reason: "导入文件", statusText: `已导入 ${items.length} 个文件` });
   }
 
-  function insertTextAt(anchorPoint, text) {
-    const items = dragBroker.createElementsFromText(text, anchorPoint);
-    return pushItems(items, { reason: "插入文本", statusText: "已插入文本" });
+  function scheduleDeferredSemanticUpgradeForTextItem(itemId, sourceText = "") {
+    const targetItemId = String(itemId || "").trim();
+    const plainSourceText = sanitizeText(String(sourceText || ""));
+    if (!targetItemId || !plainSourceText.trim() || deferredTextSemanticUpgradeTasks.has(targetItemId)) {
+      return;
+    }
+    const task = (async () => {
+      await yieldToIdleWindow(120);
+      const item = state.board.items.find((entry) => entry.id === targetItemId && entry.type === "text");
+      if (!item || isLockedText(item)) {
+        return;
+      }
+      const currentPlainText = sanitizeText(item.plainText || item.text || htmlToPlainText(item.html || ""));
+      if (currentPlainText !== plainSourceText) {
+        return;
+      }
+      const semanticHtml = await convertPlainClipboardTextToSemanticHtmlAsync(
+        plainSourceText,
+        item.fontSize || DEFAULT_TEXT_FONT_SIZE
+      );
+      if (!String(semanticHtml || "").trim()) {
+        return;
+      }
+      const content = normalizeEditedRichTextContent(item, semanticHtml, item.fontSize || DEFAULT_TEXT_FONT_SIZE);
+      const plainText = content.plainText;
+      const canonicalHtml = normalizeRichHtmlInlineFontSizes(
+        getCanonicalRichTextHtml(content, semanticHtml),
+        item.fontSize || DEFAULT_TEXT_FONT_SIZE
+      );
+      const refreshedLinkSemantics = linkSemanticEnabled
+        ? refreshTextLinkSemantics(
+            {
+              ...item,
+              richTextDocument: content.richTextDocument,
+            },
+            plainText
+          )
+        : {
+            linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+            urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
+          };
+      const richTextDocumentWithMeta =
+        content.richTextDocument && typeof content.richTextDocument === "object"
+          ? {
+              ...content.richTextDocument,
+              meta: {
+                ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
+                  ? content.richTextDocument.meta
+                  : {}),
+                linkTokens: refreshedLinkSemantics.linkTokens,
+                urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+              },
+            }
+          : content.richTextDocument;
+      const finalLayoutConfig = resolveEditedTextLayoutConfig(
+        item,
+        { ...content, html: canonicalHtml },
+        item.fontSize || DEFAULT_TEXT_FONT_SIZE
+      );
+      const widthHint =
+        finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
+          ? Math.max(80, Number(finalLayoutConfig.widthHint || item.width || 0) || 80)
+          : Math.max(80, Number(item.width || 0) || 80);
+      const measured = measureTextElementLayout(
+        {
+          ...item,
+          html: canonicalHtml,
+          plainText,
+          text: plainText,
+          richTextDocument: richTextDocumentWithMeta,
+          textBoxLayoutMode: finalLayoutConfig.layoutMode,
+          textResizeMode: finalLayoutConfig.resizeMode,
+          width: widthHint,
+          height: Math.max(40, Number(item.height || 0) || 40),
+        },
+        {
+          includeHtmlMeasurement: true,
+          widthHint,
+        }
+      );
+      const nextWidth =
+        finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+          ? Math.max(80, Math.ceil(Number(measured.width || item.width || 0) || 80))
+          : widthHint;
+      const nextHeight = Math.max(40, Math.ceil(Number(measured.height || item.height || 0) || 40));
+      const normalizedItem = normalizeTextElement({
+        ...item,
+        html: canonicalHtml,
+        plainText,
+        text: plainText,
+        richTextDocument: richTextDocumentWithMeta,
+        linkTokens: refreshedLinkSemantics.linkTokens,
+        urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+        textBoxLayoutMode: finalLayoutConfig.layoutMode,
+        textResizeMode: finalLayoutConfig.resizeMode,
+        title: buildTextTitle(plainText || "文本"),
+        width: nextWidth,
+        height: nextHeight,
+      });
+      Object.assign(item, normalizedItem);
+      scheduleUrlMetaHydrationForItem(item);
+      syncBoard({ persist: true, emit: true });
+    })()
+      .catch(() => {})
+      .finally(() => {
+        deferredTextSemanticUpgradeTasks.delete(targetItemId);
+      });
+    deferredTextSemanticUpgradeTasks.set(targetItemId, task);
+  }
+
+  function insertTextAt(anchorPoint, text, options = {}) {
+    const deferSemanticUpgrade = options?.deferSemanticUpgrade === true;
+    const statusText = String(options?.statusText || "已插入文本");
+    const sourceText = sanitizeText(text || "");
+    const items = dragBroker.createElementsFromText(sourceText, anchorPoint).map((entry) => {
+      if (!entry || entry.type !== "text") {
+        return entry;
+      }
+      const plainText = sanitizeText(entry.plainText || entry.text || htmlToPlainText(entry.html || ""));
+      syncTextLinkSemanticFields(entry, plainText, entry.richTextDocument || null, {
+        semanticEnabled: linkSemanticEnabled,
+      });
+      scheduleUrlMetaHydrationForItem(entry);
+      return entry;
+    });
+    const textItemIds = items.filter((entry) => entry?.type === "text").map((entry) => String(entry.id || ""));
+    const pushed = pushItems(items, { reason: "插入文本", statusText });
+    if (pushed && deferSemanticUpgrade && textItemIds.length) {
+      textItemIds.forEach((id) => scheduleDeferredSemanticUpgradeForTextItem(id, sourceText));
+    }
+    return pushed;
   }
 
   function buildStructuredImportContext(anchorPoint, extra = {}) {
@@ -5180,7 +8221,9 @@ export function createCanvas2DEngine(options = {}) {
       // ignore import persistence failures
     }
     const before = takeHistorySnapshot(state);
-    state.board = normalizeBoard(commitResult.board || state.board);
+    state.board = normalizeBoard(
+      repairMisclassifiedCodeBlocksOnBoard(commitResult.board || state.board, DEFAULT_TEXT_FONT_SIZE)
+    );
     void hydrateFileCardIds(commitResult.items);
     commitHistory(before, reason || "结构化导入");
     if (statusText) {
@@ -5761,8 +8804,10 @@ export function createCanvas2DEngine(options = {}) {
     if (!pointer) {
       hideDragIndicator();
       updateHover(scenePoint);
+      hideLinkMetaTooltip();
       return;
     }
+    hideLinkMetaTooltip();
 
     if (pointer.type === "pan") {
       const deltaX = Number(event.clientX || 0) - Number(pointer.lastClientX || 0);
@@ -6205,6 +9250,7 @@ export function createCanvas2DEngine(options = {}) {
       state.hoverHandle = null;
       scheduleRender();
     }
+    hideLinkMetaTooltip();
   }
 
   function onDoubleClick(event) {
@@ -6243,6 +9289,14 @@ export function createCanvas2DEngine(options = {}) {
     }
     if (target?.type === "flowNode") {
       beginFlowNodeEdit(target.id);
+      return;
+    }
+    if (target?.type === "table") {
+      beginTableEdit(target.id, getTableCellSelectionFromScenePoint(target, scenePoint));
+      return;
+    }
+    if (target?.type === "codeBlock") {
+      beginCodeBlockEdit(target.id);
       return;
     }
     if (!target) {
@@ -6623,6 +9677,23 @@ export function createCanvas2DEngine(options = {}) {
             <button type="button" class="canvas2d-context-menu-item" data-action="toggle-lock">${lockLabel}</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
           `;
+        } else if (selectedItem?.type === "table") {
+          refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="table-edit">编辑表格</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="table-add-row">新增一行</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="table-add-column">新增一列</button>
+            <div class="canvas2d-context-submenu">
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
+                <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="layer-up">上移一层</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="layer-down">下移一层</button>
+              </div>
+            </div>
+            <button type="button" class="canvas2d-context-menu-item" data-action="toggle-lock">${lockLabel}</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
+          `;
         } else if (selectedItem?.type === "text" || selectedItem?.type === "flowNode") {
           const isNode = selectedItem?.type === "flowNode";
         const nodeLabel = isNode ? "转为普通文本" : "转为节点文本";
@@ -6631,6 +9702,7 @@ export function createCanvas2DEngine(options = {}) {
           <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="text-node-toggle">${nodeLabel}</button>
+          <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
           <div class="canvas2d-context-submenu">
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">文本样式</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="文本样式">
@@ -6673,6 +9745,8 @@ export function createCanvas2DEngine(options = {}) {
             <button type="button" class="canvas2d-context-menu-item" data-action="add-node">添加节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="add-image">添加图片</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
@@ -6693,6 +9767,8 @@ export function createCanvas2DEngine(options = {}) {
           <button type="button" class="canvas2d-context-menu-item" data-action="add-node">添加节点</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-image">添加图片</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
+          <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
+          <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
           <div class="canvas2d-context-submenu">
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
@@ -6773,6 +9849,12 @@ export function createCanvas2DEngine(options = {}) {
     if (action === "add-image") {
       pendingImportAnchor = getContextMenuScenePoint();
       refs.imageImportInput?.click();
+      hideContextMenu();
+    }
+    if (action === "add-table") {
+      const item = createEditableTableElement(getContextMenuScenePoint(), { columns: 3, rows: 3 });
+      pushItems([item], { reason: "创建表格", statusText: "已添加表格" });
+      beginTableEdit(item.id, { rowIndex: 0, columnIndex: 0 });
       hideContextMenu();
     }
     if (action === "clear-board") {
@@ -6916,6 +9998,99 @@ export function createCanvas2DEngine(options = {}) {
     }
     if (action === "text-node-toggle") {
       toggleNodeText();
+      hideContextMenu();
+    }
+    if (action === "table-edit") {
+      if (state.board.selectedIds.length === 1) {
+        beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+      }
+      hideContextMenu();
+    }
+    if (action === "table-add-row") {
+      if (state.editingType !== "table" && state.board.selectedIds.length === 1) {
+        beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+      }
+      mutateTableEditor((matrix) => {
+        const columnCount = Math.max(1, matrix[0]?.length || 1);
+        const insertIndex = Math.max(0, Number(tableEditSelection.rowIndex) || 0) + 1;
+        matrix.splice(
+          Math.min(insertIndex, matrix.length),
+          0,
+          Array.from({ length: columnCount }, (_, columnIndex) => ({
+            plainText: "",
+            header: false,
+            columnIndex,
+          }))
+        );
+        tableEditSelection.rowIndex = Math.min(insertIndex, matrix.length - 1);
+        return matrix;
+      });
+      hideContextMenu();
+    }
+    if (action === "table-add-column") {
+      if (state.editingType !== "table" && state.board.selectedIds.length === 1) {
+        beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+      }
+      mutateTableEditor((matrix) => {
+        const insertIndex = Math.max(0, Number(tableEditSelection.columnIndex) || 0) + 1;
+        matrix.forEach((row, rowIndex) => {
+          row.splice(
+            Math.min(insertIndex, row.length),
+            0,
+            {
+              plainText: rowIndex === 0 && getTableEditItem()?.table?.hasHeader !== false ? `列 ${insertIndex + 1}` : "",
+              header: rowIndex === 0 && getTableEditItem()?.table?.hasHeader !== false,
+            }
+          );
+        });
+        tableEditSelection.columnIndex = Math.min(insertIndex, Math.max(0, matrix[0]?.length - 1));
+        return matrix;
+      });
+      hideContextMenu();
+    }
+    if (action === "table-delete-row") {
+      mutateTableEditor((matrix) => {
+        if (matrix.length <= 1) {
+          return matrix;
+        }
+        const removeIndex = Math.max(0, Math.min(matrix.length - 1, Number(tableEditSelection.rowIndex) || 0));
+        matrix.splice(removeIndex, 1);
+        tableEditSelection.rowIndex = Math.max(0, Math.min(removeIndex - 1, matrix.length - 1));
+        return matrix;
+      });
+      hideContextMenu();
+    }
+    if (action === "table-delete-column") {
+      mutateTableEditor((matrix) => {
+        if (!matrix.length || (matrix[0] || []).length <= 1) {
+          return matrix;
+        }
+        const removeIndex = Math.max(0, Math.min((matrix[0] || []).length - 1, Number(tableEditSelection.columnIndex) || 0));
+        matrix.forEach((row) => row.splice(removeIndex, 1));
+        tableEditSelection.columnIndex = Math.max(0, Math.min(removeIndex - 1, (matrix[0] || []).length - 1));
+        return matrix;
+      });
+      hideContextMenu();
+    }
+    if (action === "table-toggle-header") {
+      mutateTableEditor((matrix) => {
+        const editingItem = getTableEditItem();
+        const nextHasHeader = editingItem?.table?.hasHeader === false;
+        matrix.forEach((row, rowIndex) => {
+          row.forEach((cell) => {
+            cell.header = nextHasHeader ? rowIndex === 0 : false;
+          });
+        });
+        return { matrix, hasHeader: nextHasHeader };
+      });
+      hideContextMenu();
+    }
+    if (action === "table-done") {
+      commitTableEdit();
+      hideContextMenu();
+    }
+    if (action === "toggle-link-semantic") {
+      setLinkSemanticEnabled(!linkSemanticEnabled);
       hideContextMenu();
     }
     if (action === "mark-highlight") {
@@ -7076,58 +10251,135 @@ export function createCanvas2DEngine(options = {}) {
     if (action === "link") {
       const url = window.prompt("输入链接");
       requestAnimationFrame(() => {
-        if (!richTextAdapter) {
+        if (!richTextSession.isActive()) {
           return;
         }
         if (url) {
-          richTextAdapter.command("createLink", url);
+          richTextSession.command("createLink", url);
         } else {
-          richTextAdapter.command("unlink");
+          richTextSession.command("unlink");
         }
         applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
         syncActiveRichEditingItemState();
       });
       return;
     }
+    if (action === "insert-math-inline" || action === "insert-math-block") {
+      const isBlockMath = action === "insert-math-block";
+      const formula = window.prompt(isBlockMath ? "输入独行公式 LaTeX" : "输入行内公式 LaTeX");
+      if (formula === null) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (!richTextSession.isActive()) {
+          return;
+        }
+        const source = String(formula || "").trim();
+        if (!source) {
+          return;
+        }
+        richTextSession.command(isBlockMath ? "insertMathBlock" : "insertMathInline", source);
+        richTextSession.focus();
+        richTextSession.captureSelection();
+        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+        syncActiveRichEditingItemState();
+      });
+      return;
+    }
+    if (action === "edit-math-source") {
+      requestAnimationFrame(() => {
+        if (!richTextSession.isActive()) {
+          return;
+        }
+        const formatState = richTextSession.getFormatState() || {};
+        if (!formatState.canEditMath) {
+          setStatus("请先将光标放到公式内");
+          return;
+        }
+        const currentSource = String(formatState.currentMathSource || "");
+        const formula = window.prompt("编辑当前公式 LaTeX", currentSource);
+        if (formula === null) {
+          return;
+        }
+        const nextSource = String(formula || "").trim();
+        if (!nextSource) {
+          return;
+        }
+        richTextSession.command("updateCurrentMath", nextSource);
+        richTextSession.focus();
+        richTextSession.captureSelection();
+        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+        syncActiveRichEditingItemState();
+      });
+      return;
+    }
     requestAnimationFrame(() => {
-      if (!richTextAdapter) {
+      if (!richTextSession.isActive()) {
         return;
       }
       if (action === "bold") {
-        richTextAdapter.command("bold");
+        richTextSession.command("bold");
       } else if (action === "italic") {
-        richTextAdapter.command("italic");
+        richTextSession.command("italic");
+      } else if (action === "inline-code") {
+        richTextSession.command("toggleInlineCode");
       } else if (action === "underline") {
-        richTextAdapter.command("underline");
+        richTextSession.command("underline");
       } else if (action === "strike") {
-        richTextAdapter.command("strikeThrough");
+        richTextSession.command("strikeThrough");
+      } else if (action === "blockquote") {
+        richTextSession.command("setBlockType", "blockquote");
+      } else if (action === "blockquote-indent") {
+        const formatState = richTextSession.getFormatState() || {};
+        if (formatState.blockType !== "blockquote") {
+          richTextSession.command("setBlockType", "blockquote");
+        } else {
+          richTextSession.command("indent");
+        }
+      } else if (action === "blockquote-outdent") {
+        richTextSession.command("outdent");
       } else if (action === "unordered-list") {
-        richTextAdapter.command("insertUnorderedList");
+        richTextSession.command("insertUnorderedList");
       } else if (action === "ordered-list") {
-        richTextAdapter.command("insertOrderedList");
-      } else if (action === "align-left") {
-        richTextAdapter.command("align", "left");
-      } else if (action === "align-center") {
-        richTextAdapter.command("align", "center");
-      } else if (action === "align-right") {
-        richTextAdapter.command("align", "right");
+        richTextSession.command("insertOrderedList");
+      } else if (action === "task-list") {
+        richTextSession.command("toggleTaskList");
+      } else if (action === "horizontal-rule") {
+        richTextSession.command("insertHorizontalRule");
       } else if (action === "color") {
         if (color) {
-          richTextAdapter.command("foreColor", color);
+          richTextSession.command("foreColor", color);
         }
       } else if (action === "highlight") {
-        richTextAdapter.command("highlight", "#fff4a3");
+        richTextSession.command("highlight", "#fff4a3");
       } else if (action === "fontSize") {
         if (color) {
-          richTextAdapter.command("fontSize", color);
+          richTextSession.command("fontSize", color);
         }
       }
+      richTextSession.focus();
+      richTextSession.captureSelection();
       applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
       syncActiveRichEditingItemState();
     });
   }
 
   function onGlobalPointerDown(event) {
+    hideLinkMetaTooltip();
+    if (
+      state.editingType === "table" &&
+      event.target instanceof Element &&
+      !(refs.tableEditor?.contains(event.target) || refs.tableToolbar?.contains(event.target))
+    ) {
+      commitTableEdit();
+    }
+    if (
+      state.editingType === "code-block" &&
+      event.target instanceof Element &&
+      !(refs.codeBlockEditor?.contains(event.target) || refs.codeBlockToolbar?.contains(event.target))
+    ) {
+      commitCodeBlockEdit();
+    }
     if (refs.richSelectionToolbar && event.target instanceof Element && !refs.richSelectionToolbar.contains(event.target)) {
       const activeInput = document.activeElement;
       if (
@@ -7140,6 +10392,13 @@ export function createCanvas2DEngine(options = {}) {
     }
     if (refs.richSelectionToolbar && event.target instanceof Element && !refs.richSelectionToolbar.contains(event.target)) {
       closeRichSelectionFontSizePanel();
+    }
+    if (
+      event.target instanceof Element &&
+      !refs.richToolbar?.contains(event.target) &&
+      !refs.richSelectionToolbar?.contains(event.target)
+    ) {
+      closeRichToolbarSubmenus();
     }
     if (refs.contextMenu?.classList.contains("is-hidden")) {
       return;
@@ -7191,7 +10450,17 @@ export function createCanvas2DEngine(options = {}) {
     if (!action) {
       return;
     }
+    if (target instanceof HTMLSelectElement) {
+      return;
+    }
     event.preventDefault();
+    if (action !== "toggle-blockquote-menu" && action !== "toggle-math-menu") {
+      closeRichToolbarSubmenus();
+    }
+    if (action === "toggle-blockquote-menu" || action === "toggle-math-menu") {
+      toggleRichToolbarSubmenu(target.closest(".canvas2d-rich-submenu"));
+      return;
+    }
     if (action === "toggle-font-size-panel") {
       toggleRichSelectionFontSizePanel();
       return;
@@ -7234,8 +10503,12 @@ export function createCanvas2DEngine(options = {}) {
     lightImageEditor.handleToolbarClick(event, renderImageToCanvas);
   }
 
-  function onRichToolbarPointerDown() {
-    richTextAdapter?.captureSelection?.();
+  function onRichToolbarPointerDown(event) {
+    const target = event.target instanceof Element ? event.target.closest("button, [data-action]") : null;
+    if (target instanceof HTMLButtonElement) {
+      event.preventDefault();
+    }
+    richTextSession.captureSelection();
   }
 
   function setRichFontSize(nextSize) {
@@ -7250,7 +10523,7 @@ export function createCanvas2DEngine(options = {}) {
         const scale = Math.max(0.1, Number(state.board.view.scale || 1));
         refs.richEditor.style.fontSize = `${Math.max(1, value * scale)}px`;
         applyRichEditorLayoutStyles(refs.richEditor, item, scale);
-        richTextAdapter?.setBaseFontSize?.(value, { normalize: true });
+        richTextSession.setFontSize(value, { normalize: true });
         syncActiveRichEditingItemState();
       }
     }
@@ -7453,10 +10726,16 @@ export function createCanvas2DEngine(options = {}) {
       const editingItem = state.board.items.find(
         (entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode")
       );
-      if (editingItem && richTextAdapter) {
+      if (editingItem && richTextSession.isActive()) {
         richFontSize = preset.fontSize;
-        richTextAdapter.setContent(editingItem.html || "", editingItem.plainText || editingItem.text || "");
-        richTextAdapter.setBaseFontSize?.(preset.fontSize, { normalize: true });
+        richTextSession.syncContent({
+          itemId: editingItem.id,
+          html: editingItem.html || "",
+          plainText: editingItem.plainText || editingItem.text || "",
+          fontSize: preset.fontSize,
+          force: true,
+        });
+        richTextSession.setFontSize(preset.fontSize, { normalize: true });
         syncRichTextFontSize();
         syncEditingRichEditorFrame(refs.richEditor, editingItem, state.board.view);
       }
@@ -7640,13 +10919,14 @@ export function createCanvas2DEngine(options = {}) {
       return;
     }
     const action = target.getAttribute("data-action");
-    if (action === "font-size" && target instanceof HTMLInputElement) {
-      const value = Number(target.value || 0);
-      setRichFontSize(value);
-      return;
-    }
-    if (action === "preset" && target instanceof HTMLSelectElement) {
-      applyTextPresetToSelection(target.value || "body");
+    if (action === "block-type" && target instanceof HTMLSelectElement) {
+      requestAnimationFrame(() => {
+        if (!richTextSession.isActive()) {
+          return;
+        }
+        richTextSession.command("setBlockType", target.value || "paragraph");
+        syncActiveRichEditingItemState();
+      });
       return;
     }
     if (action === "selection-font-size-input" && target instanceof HTMLInputElement) {
@@ -7710,7 +10990,7 @@ export function createCanvas2DEngine(options = {}) {
     }
     event.preventDefault();
     hideContextMenu();
-    richTextAdapter?.captureSelection?.();
+    richTextSession.captureSelection();
     syncRichTextToolbar({
       point: {
         clientX: Number(event.clientX || 0),
@@ -7721,7 +11001,7 @@ export function createCanvas2DEngine(options = {}) {
 
   function onRichEditorPointerDown(event) {
     if (Number(event.button) === 2) {
-      richTextAdapter?.captureSelection?.();
+      richTextSession.captureSelection();
       const { hasExpandedSelection } = getRichTextSelectionState();
       if (hasExpandedSelection) {
         event.preventDefault();
@@ -7743,6 +11023,146 @@ export function createCanvas2DEngine(options = {}) {
     onWheel(event);
   }
 
+  function writeClipboardDataWithProtocols(
+    dataTransfer,
+    { marker = "", html = "", text = "", richTextPayload = null } = {}
+  ) {
+    if (!dataTransfer) {
+      return false;
+    }
+    const cleanHtml = String(html || "").trim();
+    const plainText = sanitizeText(String(text || ""));
+    const cleanText = plainText || (cleanHtml ? sanitizeText(htmlToPlainText(cleanHtml)) : "");
+    if (!cleanHtml && !cleanText) {
+      return false;
+    }
+    if (marker) {
+      dataTransfer.setData(CANVAS_CLIPBOARD_MIME, String(marker));
+    }
+    if (richTextPayload) {
+      dataTransfer.setData(RICH_TEXT_CLIPBOARD_MIME, stringifyRichTextClipboardPayload(richTextPayload));
+    }
+    if (cleanHtml) {
+      dataTransfer.setData("text/html", cleanHtml);
+    }
+    if (cleanText) {
+      dataTransfer.setData("text/plain", cleanText);
+    }
+    return true;
+  }
+
+  function getRichEditorSelectionClipboardPayload(item) {
+    const baseFontSize = item?.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE;
+    const rawHtml =
+      richTextSession.getSelectionHtml({
+        baseFontSize,
+      }) || "";
+    const html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(rawHtml), baseFontSize)).trim();
+    const text = sanitizeText(richTextSession.getSelectionText() || "") || sanitizeText(htmlToPlainText(html));
+    if (!html && !text) {
+      return null;
+    }
+    const richTextPayload = createRichTextClipboardPayload({
+      html,
+      plainText: text,
+      baseFontSize,
+      source: CLIPBOARD_SOURCE_RICH_EDITOR,
+      itemType: item?.type || "text",
+    });
+    return {
+      html,
+      text,
+      richTextPayload,
+    };
+  }
+
+  async function getRichEditorPasteClipboardPayload(dataTransfer, item) {
+    if (!dataTransfer) {
+      return null;
+    }
+    const marker = parseInternalClipboardMarker(dataTransfer.getData(CANVAS_CLIPBOARD_MIME));
+    const baseFontSize = item?.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE;
+    const richPayload =
+      readRichTextClipboardPayload(dataTransfer) ||
+      parseRichTextClipboardPayload(dataTransfer.getData(RICH_TEXT_CLIPBOARD_MIME));
+    let html = String(richPayload?.html || dataTransfer.getData("text/html") || "");
+    let text = String(richPayload?.plainText || dataTransfer.getData("text/plain") || "");
+    if (html) {
+      html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(html), baseFontSize)).trim();
+    }
+    text = sanitizeText(text || "") || sanitizeText(htmlToPlainText(html));
+    if (!html && text) {
+      html = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
+    }
+    if (!html && !text && marker?.source === CLIPBOARD_SOURCE_CANVAS && state.clipboard?.items?.length) {
+      html = sanitizeHtml(
+        normalizeRichHtmlInlineFontSizes(normalizeRichHtml(String(state.clipboard?.html || "")), baseFontSize)
+      ).trim();
+      text = sanitizeText(state.clipboard?.text || "") || sanitizeText(htmlToPlainText(html));
+    }
+    if (!html && !text) {
+      return null;
+    }
+    return {
+      marker,
+      html,
+      text,
+      richTextPayload: richPayload,
+    };
+  }
+
+  function insertRichEditorClipboardPayload(payload) {
+    const html = String(payload?.html || "").trim();
+    const text = sanitizeText(payload?.text || "");
+    if (!html && !text) {
+      return false;
+    }
+    if (!(refs.richEditor instanceof HTMLDivElement)) {
+      return false;
+    }
+    refs.richEditor.focus();
+    let inserted = false;
+    if (typeof document?.execCommand === "function") {
+      if (html) {
+        inserted = document.execCommand("insertHTML", false, html);
+      }
+      if (!inserted && text) {
+        inserted = document.execCommand("insertText", false, text);
+      }
+    }
+    if (!inserted) {
+      const selection = document.getSelection?.();
+      if (selection?.rangeCount) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        if (html) {
+          const template = document.createElement("template");
+          template.innerHTML = html;
+          const fragment = template.content.cloneNode(true);
+          const tail = fragment.lastChild;
+          range.insertNode(fragment);
+          if (tail) {
+            range.setStartAfter(tail);
+            range.setEndAfter(tail);
+          }
+        } else {
+          const textNode = document.createTextNode(text);
+          range.insertNode(textNode);
+          range.setStartAfter(textNode);
+          range.setEndAfter(textNode);
+        }
+        selection.removeAllRanges();
+        selection.addRange(range);
+        inserted = true;
+      }
+    }
+    if (inserted) {
+      syncActiveRichEditingItemState();
+      syncRichTextToolbar();
+    }
+    return inserted;
+  }
+
   function onRichEditorCopy(event) {
     if (!event.clipboardData) {
       return;
@@ -7751,21 +11171,178 @@ export function createCanvas2DEngine(options = {}) {
     if (!item) {
       return;
     }
-    const html =
-      richTextAdapter?.getSelectionHtml?.({
-        baseFontSize: item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE,
-      }) || "";
-    const text = sanitizeText(richTextAdapter?.getSelectionText?.() || "");
-    if (!html.trim() && !text.trim()) {
+    const payload = getRichEditorSelectionClipboardPayload(item);
+    if (!payload) {
+      return;
+    }
+    const marker = buildInternalClipboardMarker({
+      copiedAt: Date.now(),
+      itemCount: 1,
+      source: CLIPBOARD_SOURCE_RICH_EDITOR,
+      kind: CLIPBOARD_KIND_RICH_TEXT,
+    });
+    clearInternalClipboard();
+    event.preventDefault();
+    writeClipboardDataWithProtocols(event.clipboardData, {
+      marker,
+      html: payload.html,
+      text: payload.text,
+      richTextPayload: payload.richTextPayload,
+    });
+  }
+
+  function onRichEditorDoubleClick(event) {
+    const selection = document.getSelection?.();
+    const anchorNode = selection?.anchorNode || event.target;
+    const anchorElement =
+      anchorNode instanceof Element
+        ? anchorNode
+        : anchorNode?.parentElement instanceof Element
+          ? anchorNode.parentElement
+          : null;
+    const linkEl = anchorElement?.closest?.("a[href]");
+    if (!(linkEl instanceof HTMLAnchorElement)) {
       return;
     }
     event.preventDefault();
-    if (text.trim()) {
-      event.clipboardData.setData("text/plain", text);
+    event.stopPropagation();
+    const currentHref = String(linkEl.getAttribute("href") || linkEl.href || "").trim();
+    const nextHref = window.prompt("编辑链接 URL（留空移除链接）", currentHref);
+    if (nextHref == null) {
+      return;
     }
-    if (html.trim()) {
-      event.clipboardData.setData("text/html", html);
+    if (!richTextSession.isActive()) {
+      return;
     }
+    const range = document.createRange();
+    range.selectNodeContents(linkEl);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    richTextSession.captureSelection();
+    if (String(nextHref || "").trim()) {
+      richTextSession.command("createLink", String(nextHref || "").trim());
+    } else {
+      richTextSession.command("unlink");
+    }
+    syncActiveRichEditingItemState();
+    syncRichTextToolbar();
+  }
+
+  function onRichDisplayClick(event) {
+    const descriptor = resolveLinkDescriptorFromAnchor(event.target);
+    if (!descriptor?.linkEl) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    if (!(event.ctrlKey || event.metaKey)) {
+      setStatus("按 Ctrl/Cmd+点击链接可打开网页");
+      return;
+    }
+    const opened = openExternalUrl(descriptor.url || descriptor.normalizedUrl || "");
+    setStatus(opened ? "已打开链接" : "链接打开失败");
+  }
+
+  function onRichDisplayPointerMove(event) {
+    onPointerMove(event);
+    const descriptor = resolveLinkDescriptorFromAnchor(event.target);
+    if (!descriptor) {
+      hideLinkMetaTooltip();
+      return;
+    }
+    updateLinkMetaTooltip(descriptor, Number(event.clientX || 0), Number(event.clientY || 0));
+  }
+
+  function onRichDisplayPointerLeave() {
+    hideLinkMetaTooltip();
+  }
+
+  function onRichDisplayPointerDown(event) {
+    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+      return;
+    }
+    event.preventDefault();
+    onPointerDown(event);
+  }
+
+  function onRichDisplayPointerUp(event) {
+    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+      return;
+    }
+    onPointerUp(event);
+  }
+
+  function onRichDisplayDoubleClick(event) {
+    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+      return;
+    }
+    event.preventDefault();
+    onDoubleClick(event);
+  }
+
+  function onCodeBlockDisplayPointerMove(event) {
+    onPointerMove(event);
+  }
+
+  function onCodeBlockDisplayPointerLeave() {
+    if (state.hoverId) {
+      markCodeBlockOverlayDirty(state.hoverId);
+      state.hoverId = null;
+      scheduleRender();
+    }
+  }
+
+  function onCodeBlockDisplayPointerDown(event) {
+    const target = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    onPointerDown(event);
+  }
+
+  function onCodeBlockDisplayPointerUp(event) {
+    const target = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    onPointerUp(event);
+  }
+
+  function onCodeBlockDisplayClick(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    const itemNode = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
+    if (!(itemNode instanceof HTMLElement)) {
+      return;
+    }
+    const itemId = String(itemNode.dataset.id || "");
+    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "codeBlock");
+    if (!item) {
+      return;
+    }
+    if (actionTarget instanceof HTMLElement) {
+      const action = String(actionTarget.getAttribute("data-action") || "").trim().toLowerCase();
+      if (action === "copy-code") {
+        event.preventDefault();
+        event.stopPropagation();
+        copyCodeBlockContent(item);
+      }
+      return;
+    }
+    state.board.selectedIds = [item.id];
+    markCodeBlockOverlayDirty(item.id);
+    syncBoard({ persist: false, emit: true });
+  }
+
+  function onCodeBlockDisplayDoubleClick(event) {
+    const itemNode = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
+    if (!(itemNode instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    const itemId = String(itemNode.dataset.id || "");
+    beginCodeBlockEdit(itemId);
   }
 
   function onRichEditorCut(event) {
@@ -7776,34 +11353,54 @@ export function createCanvas2DEngine(options = {}) {
     if (!item) {
       return;
     }
-    const html =
-      richTextAdapter?.getSelectionHtml?.({
-        baseFontSize: item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE,
-      }) || "";
-    const text = sanitizeText(richTextAdapter?.getSelectionText?.() || "");
-    if (!html.trim() && !text.trim()) {
+    const payload = getRichEditorSelectionClipboardPayload(item);
+    if (!payload) {
       return;
     }
+    const marker = buildInternalClipboardMarker({
+      copiedAt: Date.now(),
+      itemCount: 1,
+      source: CLIPBOARD_SOURCE_RICH_EDITOR,
+      kind: CLIPBOARD_KIND_RICH_TEXT,
+    });
+    clearInternalClipboard();
     event.preventDefault();
-    if (text.trim()) {
-      event.clipboardData.setData("text/plain", text);
-    }
-    if (html.trim()) {
-      event.clipboardData.setData("text/html", html);
-    }
-    richTextAdapter?.deleteSelection?.();
+    writeClipboardDataWithProtocols(event.clipboardData, {
+      marker,
+      html: payload.html,
+      text: payload.text,
+      richTextPayload: payload.richTextPayload,
+    });
+    richTextSession.deleteSelection();
     syncActiveRichEditingItemState();
   }
 
+  async function onRichEditorPaste(event) {
+    if (!event.clipboardData) {
+      return;
+    }
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return;
+    }
+    const payload = await getRichEditorPasteClipboardPayload(event.clipboardData, item);
+    if (!payload) {
+      return;
+    }
+    const inserted = insertRichEditorClipboardPayload(payload);
+    if (!inserted) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
   function onRichEditorBlur(event) {
-    const next = event?.relatedTarget instanceof Element ? event.relatedTarget : document.activeElement;
-    if (refs.richToolbar && next && refs.richToolbar.contains(next)) {
-      return;
-    }
-    if (refs.richSelectionToolbar && next && refs.richSelectionToolbar.contains(next)) {
-      return;
-    }
-    commitRichEdit();
+    richTextSession.handleBlur(event, {
+      ignoreTargets: [refs.richToolbar, refs.richSelectionToolbar],
+      onCommit: () => commitRichEdit(),
+    });
   }
 
   function onRichEditorInput() {
@@ -7814,7 +11411,10 @@ export function createCanvas2DEngine(options = {}) {
     if (!item || (item.type === "text" && isLockedText(item)) || (item.type === "flowNode" && isLockedItem(item))) {
       return;
     }
-    syncActiveRichEditingItemState();
+    richTextSession.handleInput(() => {
+      syncActiveRichEditingItemState({ emit: false, refreshToolbar: false, markDirty: true });
+      requestAnimationFrame(() => syncRichTextToolbar());
+    });
   }
 
   function onFileMemoBlur() {
@@ -7835,7 +11435,8 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function onFileMemoInput() {
-    syncFileMemoEditorLayout();
+    syncActiveDraftEditingState({ markDirty: true });
+    syncFileMemoLayout();
   }
 
   function onImageMemoBlur() {
@@ -7856,7 +11457,189 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function onImageMemoInput() {
-    syncImageMemoEditorLayout();
+    syncActiveDraftEditingState({ markDirty: true });
+    syncImageMemoLayout();
+  }
+
+  function onTableEditorPointerDown(event) {
+    event.stopPropagation();
+    const cell = event.target instanceof Element ? event.target.closest("[data-row-index][data-column-index]") : null;
+    if (!(cell instanceof HTMLElement)) {
+      return;
+    }
+    tableEditSelection = {
+      rowIndex: Math.max(0, Number(cell.getAttribute("data-row-index")) || 0),
+      columnIndex: Math.max(0, Number(cell.getAttribute("data-column-index")) || 0),
+    };
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableEditorInput() {
+    syncActiveDraftEditingState({ markDirty: true });
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableEditorKeyDown(event) {
+    const cell = event.target instanceof Element ? event.target.closest("[data-row-index][data-column-index]") : null;
+    if (!(cell instanceof HTMLElement)) {
+      return;
+    }
+    const rowIndex = Math.max(0, Number(cell.getAttribute("data-row-index")) || 0);
+    const columnIndex = Math.max(0, Number(cell.getAttribute("data-column-index")) || 0);
+    const key = String(event.key || "").toLowerCase();
+    if (key === "escape") {
+      event.preventDefault();
+      cancelTableEdit();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "enter") {
+      event.preventDefault();
+      commitTableEdit();
+      return;
+    }
+    if (key === "tab") {
+      event.preventDefault();
+      const matrix = buildTableMatrixFromEditor();
+      const rowCount = Math.max(1, matrix.length);
+      const columnCount = Math.max(1, matrix[0]?.length || 1);
+      const movingBackward = Boolean(event.shiftKey);
+      const rawColumn = movingBackward ? columnIndex - 1 : columnIndex + 1;
+      const rawRow = movingBackward ? rowIndex - (rawColumn < 0 ? 1 : 0) : rowIndex + (rawColumn >= columnCount ? 1 : 0);
+      const nextRow = Math.max(0, Math.min(rowCount - 1, rawRow));
+      const nextColumn = movingBackward
+        ? (rawColumn < 0 ? columnCount - 1 : rawColumn)
+        : (rawColumn >= columnCount ? 0 : rawColumn);
+      focusTableEditorCell(nextRow, nextColumn, { placeAtEnd: true });
+    }
+  }
+
+  function onTableToolbarPointerDown(event) {
+    event.stopPropagation();
+  }
+
+  function onTableToolbarClick(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    onContextMenuClick(event);
+  }
+
+  function onCodeBlockEditorPointerDown(event) {
+    event.stopPropagation();
+  }
+
+  function onCodeBlockEditorKeyDown(event) {
+    const key = String(event.key || "").toLowerCase();
+    if (key === "escape") {
+      event.preventDefault();
+      cancelCodeBlockEdit();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "enter") {
+      event.preventDefault();
+      commitCodeBlockEdit();
+    }
+  }
+
+  function onCodeBlockToolbarPointerDown(event) {
+    event.stopPropagation();
+  }
+
+  function onCodeBlockToolbarClick(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    const action = String(target.getAttribute("data-action") || "").trim().toLowerCase();
+    const item = getCodeBlockEditItem() || getSelectedCodeBlockItem();
+    if (!item) {
+      return;
+    }
+    if (action === "code-copy") {
+      copyCodeBlockContent(item);
+      return;
+    }
+    if (action === "code-wrap") {
+      Object.assign(item, updateCodeBlockElement(item, { wrap: item.wrap !== true }, { remeasure: true }));
+      clearCodeBlockEditLayoutCache(item.id);
+      markCodeBlockOverlayDirty(item.id);
+      syncBoard({ persist: true, emit: true });
+      return;
+    }
+    if (action === "code-line-numbers") {
+      Object.assign(
+        item,
+        updateCodeBlockElement(item, { showLineNumbers: item.showLineNumbers === false }, { remeasure: true })
+      );
+      clearCodeBlockEditLayoutCache(item.id);
+      markCodeBlockOverlayDirty(item.id);
+      syncBoard({ persist: true, emit: true });
+      return;
+    }
+    if (action === "code-preview-toggle") {
+      Object.assign(
+        item,
+        updateCodeBlockElement(
+          item,
+          { previewMode: item.previewMode === "source" ? "preview" : "source" },
+          { remeasure: true }
+        )
+      );
+      clearCodeBlockEditLayoutCache(item.id);
+      markCodeBlockOverlayDirty(item.id);
+      syncBoard({ persist: true, emit: true });
+      return;
+    }
+    if (action === "code-done") {
+      if (state.editingType === "code-block") {
+        commitCodeBlockEdit();
+      }
+    }
+  }
+
+  function onCodeBlockToolbarInput(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!target) {
+      return;
+    }
+    const action = String(target.getAttribute("data-action") || "").trim().toLowerCase();
+    const item = getCodeBlockEditItem() || getSelectedCodeBlockItem();
+    if (!item) {
+      return;
+    }
+    if (action === "code-language" && target instanceof HTMLSelectElement) {
+      const language = String(target.value || "").trim().toLowerCase();
+      Object.assign(
+        item,
+        updateCodeBlockElement(
+          item,
+          {
+            language,
+            previewMode: language === "mermaid" ? item.previewMode || "preview" : "source",
+            title: getCodeBlockItemTitle({ ...item, language }),
+          },
+          { remeasure: true }
+        )
+      );
+      if (state.editingType === "code-block") {
+        lastCodeBlockEditItemId = null;
+        clearCodeBlockEditLayoutCache(item.id);
+        syncCodeBlockEditorLayout("fast");
+        scheduleCodeBlockEditorLayoutSync("precise");
+      }
+      markCodeBlockOverlayDirty(item.id);
+      syncBoard({ persist: true, emit: true });
+      return;
+    }
+    if (action === "code-font-size" && target instanceof HTMLSelectElement) {
+      Object.assign(item, updateCodeBlockElement(item, { fontSize: Number(target.value) || 16 }, { remeasure: true }));
+      clearCodeBlockEditLayoutCache(item.id);
+      markCodeBlockOverlayDirty(item.id);
+      syncBoard({ persist: true, emit: true });
+    }
   }
 
   function onDragStart(event) {
@@ -7877,7 +11660,8 @@ export function createCanvas2DEngine(options = {}) {
         return;
       }
     }
-    const text = (textItems.length ? textItems : fallbackItems)
+    const dragItems = textItems.length ? textItems : fallbackItems;
+    const text = dragItems
       .map((item) => sanitizeText(item.plainText || item.text || ""))
       .join("\n")
       .trim();
@@ -7885,7 +11669,25 @@ export function createCanvas2DEngine(options = {}) {
       event.preventDefault();
       return;
     }
+    const dragPayload = clipboardBroker.buildPayloadFromItems(dragItems);
+    const copiedAt = Number(dragPayload?.copiedAt) || Date.now();
+    const marker = buildInternalClipboardMarker({
+      copiedAt,
+      itemCount: Array.isArray(dragPayload?.items) ? dragPayload.items.length : 0,
+      source: CLIPBOARD_SOURCE_CANVAS,
+      kind: CLIPBOARD_KIND_ITEMS,
+    });
+    clipboardBroker.setPayload(dragPayload);
+    state.clipboard = dragPayload ? { ...dragPayload, pasteCount: 0 } : null;
     event.dataTransfer.clearData();
+    event.dataTransfer.setData(CANVAS_CLIPBOARD_MIME, marker);
+    event.dataTransfer.setData(
+      "text/html",
+      buildInternalDragHtmlPayload({
+        marker,
+        text,
+      })
+    );
     event.dataTransfer.setData("text/plain", text);
     event.dataTransfer.effectAllowed = "copy";
   }
@@ -7896,6 +11698,15 @@ export function createCanvas2DEngine(options = {}) {
     }
     event.preventDefault();
     const scenePoint = toScenePoint(event.clientX, event.clientY);
+    if (matchesInternalClipboardByMarker(event.dataTransfer)) {
+      pasteInternalClipboard(scenePoint, {
+        stagger: false,
+        forceWrapText: true,
+        historyReason: "拖拽复制",
+        statusPrefix: "已拖拽复制",
+      });
+      return;
+    }
     for (const handler of dragHandlers) {
       const result = await handler?.({
         event,
@@ -7949,23 +11760,27 @@ export function createCanvas2DEngine(options = {}) {
       return;
     }
     event.preventDefault();
-    const payload = await copySelection();
-    if (payload && event.clipboardData) {
-      event.clipboardData.setData(
-        CANVAS_CLIPBOARD_MIME,
-        JSON.stringify({
-          type: "canvas2d",
-          copiedAt: Number(payload.copiedAt) || Date.now(),
-          itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
-        })
-      );
-      if (payload.text) {
-        event.clipboardData.setData("text/plain", payload.text);
+    await runClipboardOperationWithStatus("复制处理中…", async () => {
+      const payload = await copySelection();
+      if (payload && event.clipboardData) {
+        event.clipboardData.setData(
+          CANVAS_CLIPBOARD_MIME,
+          buildInternalClipboardMarker({
+            copiedAt: Number(payload.copiedAt) || Date.now(),
+            itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
+            source: CLIPBOARD_SOURCE_CANVAS,
+            kind: CLIPBOARD_KIND_ITEMS,
+          })
+        );
+        if (payload.text) {
+          event.clipboardData.setData("text/plain", payload.text);
+        }
+        if (payload.html) {
+          event.clipboardData.setData("text/html", payload.html);
+        }
       }
-      if (payload.html) {
-        event.clipboardData.setData("text/html", payload.html);
-      }
-    }
+      return payload;
+    });
   }
 
   async function onCut(event) {
@@ -7980,117 +11795,139 @@ export function createCanvas2DEngine(options = {}) {
     if (!isInteractiveMode() || state.editingId) {
       return;
     }
-    const anchor = state.lastPointerScenePoint || getCenterScenePoint();
-    if (matchesInternalClipboardByMarker(event.clipboardData) || (await shouldUseInternalClipboard())) {
-      event.preventDefault();
-      pasteInternalClipboard(anchor);
-      return;
-    }
-    for (const handler of pasteHandlers) {
-      const result = await handler?.({
-        event,
-        dataTransfer: event.clipboardData,
-        anchor,
-        state,
-      });
-      if (result?.handled) {
+    await runClipboardOperationWithStatus("粘贴处理中…", async () => {
+      const anchor = state.lastPointerScenePoint || getCenterScenePoint();
+      if (matchesInternalClipboardByMarker(event.clipboardData) || (await shouldUseInternalClipboard())) {
         event.preventDefault();
-        if (Array.isArray(result.items) && result.items.length) {
-          try {
-            await persistImportedImages(result.items);
-          } catch {
-            // ignore import persistence failures
+        pasteInternalClipboard(anchor);
+        return true;
+      }
+      for (const handler of pasteHandlers) {
+        const result = await handler?.({
+          event,
+          dataTransfer: event.clipboardData,
+          anchor,
+          state,
+        });
+        if (result?.handled) {
+          event.preventDefault();
+          if (Array.isArray(result.items) && result.items.length) {
+            try {
+              await persistImportedImages(result.items);
+            } catch {
+              // ignore import persistence failures
+            }
+            pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
           }
-          pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+          return true;
         }
-        return;
       }
-    }
-    const structuredHandled = await tryStructuredImportDescriptor(
-      structuredImportRuntime.pasteGateway.fromClipboardEvent(event, {
-        origin: "engine-paste",
-        anchor,
-      }),
-      anchor,
-      {
-        reason: "粘贴内容",
-        statusText: "已通过新导入链路粘贴内容",
-        context: {
+      const clipboardTextHint = sanitizeText(String(event.clipboardData?.getData("text/plain") || ""));
+      await yieldForHeavyClipboardText(clipboardTextHint);
+      const structuredHandled = await tryStructuredImportDescriptor(
+        structuredImportRuntime.pasteGateway.fromClipboardEvent(event, {
           origin: "engine-paste",
-        },
+          anchor,
+        }),
+        anchor,
+        {
+          reason: "粘贴内容",
+          statusText: "已通过新导入链路粘贴内容",
+          context: {
+            origin: "engine-paste",
+          },
+        }
+      );
+      if (structuredHandled) {
+        event.preventDefault();
+        return true;
       }
-    );
-    if (structuredHandled) {
-      event.preventDefault();
-      return;
-    }
-    const result = await dragBroker.importFromDataTransfer(event.clipboardData, anchor);
-    if (result?.handled && result.items?.length) {
-      event.preventDefault();
-      try {
-        await persistImportedImages(result.items);
-      } catch {
-        // ignore import persistence failures
+      await yieldToNextFrame();
+      const result = await dragBroker.importFromDataTransfer(event.clipboardData, anchor);
+      if (result?.handled && result.items?.length) {
+        event.preventDefault();
+        try {
+          await persistImportedImages(result.items);
+        } catch {
+          // ignore import persistence failures
+        }
+        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+        return true;
       }
-      pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
-      return;
-    }
-    const filePaths = await clipboardBroker.readSystemClipboardFiles();
-    if (filePaths.length) {
-      event.preventDefault();
-      const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
-      try {
-        await persistImportedImages(items);
-      } catch {
-        // ignore import persistence failures
+      const filePaths = await clipboardBroker.readSystemClipboardFiles();
+      if (filePaths.length) {
+        event.preventDefault();
+        const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
+        try {
+          await persistImportedImages(items);
+        } catch {
+          // ignore import persistence failures
+        }
+        pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+        return true;
       }
-      pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
-      return;
-    }
 
-    const text = await clipboardBroker.readSystemClipboardText();
-    if (text.trim()) {
-      event.preventDefault();
-      insertTextAt(anchor, text);
-    }
+      const text = await clipboardBroker.readSystemClipboardText();
+      if (text.trim()) {
+        event.preventDefault();
+        await yieldForHeavyClipboardText(text);
+        const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
+        insertTextAt(anchor, text, {
+          deferSemanticUpgrade,
+          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已插入文本",
+        });
+      }
+      return true;
+    });
   }
 
   async function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
-    if (await shouldUseInternalClipboard()) {
-      return pasteInternalClipboard(anchorPoint);
-    }
-    const structuredHandled = await tryStructuredImportDescriptor(
-      await structuredImportRuntime.contextMenuPasteAdapter.createDescriptor({
-        origin: "engine-context-menu-paste",
-        anchor: anchorPoint,
-      }),
-      anchorPoint,
-      {
-        reason: "粘贴内容",
-        statusText: "已通过新导入链路粘贴内容",
-        context: {
-          origin: "engine-context-menu-paste",
-        },
+    return runClipboardOperationWithStatus("粘贴处理中…", async () => {
+      if (await shouldUseInternalClipboard()) {
+        return pasteInternalClipboard(anchorPoint);
       }
-    );
-    if (structuredHandled) {
-      return true;
-    }
-    const { items } = await pasteFileCardsFromClipboard({ clipboardBroker, dragBroker, anchor: anchorPoint });
-    if (items.length) {
-      return pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
-    }
-    const text = await clipboardBroker.readSystemClipboardText();
-    if (text.trim()) {
-      return insertTextAt(anchorPoint, text);
-    }
-    return false;
+      const textHint = await clipboardBroker.readSystemClipboardText();
+      await yieldForHeavyClipboardText(textHint);
+      const structuredHandled = await tryStructuredImportDescriptor(
+        await structuredImportRuntime.contextMenuPasteAdapter.createDescriptor({
+          origin: "engine-context-menu-paste",
+          anchor: anchorPoint,
+        }),
+        anchorPoint,
+        {
+          reason: "粘贴内容",
+          statusText: "已通过新导入链路粘贴内容",
+          context: {
+            origin: "engine-context-menu-paste",
+          },
+        }
+      );
+      if (structuredHandled) {
+        return true;
+      }
+      const { items } = await pasteFileCardsFromClipboard({ clipboardBroker, dragBroker, anchor: anchorPoint });
+      if (items.length) {
+        return pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+      }
+      const text = textHint;
+      if (text.trim()) {
+        await yieldForHeavyClipboardText(text);
+        const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
+        return insertTextAt(anchorPoint, text, {
+          deferSemanticUpgrade,
+          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已插入文本",
+        });
+      }
+      return false;
+    });
   }
 
   function onWindowKeyDown(event) {
     if (!isInteractiveMode()) {
       return;
     }
+    const key = String(event.key || "").toLowerCase();
+    const isSaveShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && key === "s";
     const target = event.target instanceof Element ? event.target : null;
     const withinCanvas =
       refs.surface?.contains(target) ||
@@ -8100,13 +11937,21 @@ export function createCanvas2DEngine(options = {}) {
     if (!withinCanvas) {
       return;
     }
-    if (state.editingId && (target === refs.richEditor || target === refs.fileMemoEditor)) {
+    if (
+      !isSaveShortcut &&
+      state.editingId &&
+      (
+        target === refs.richEditor ||
+        target === refs.fileMemoEditor ||
+        refs.tableEditor?.contains(target) ||
+        refs.codeBlockEditor?.contains(target)
+      )
+    ) {
       return;
     }
-    if (isEditableElement(target)) {
+    if (!isSaveShortcut && isEditableElement(target)) {
       return;
     }
-    const key = String(event.key || "").toLowerCase();
     if (key === "escape" && captureMode === "canvas") {
       event.preventDefault();
       captureMode = null;
@@ -8172,6 +12017,16 @@ export function createCanvas2DEngine(options = {}) {
         beginFlowNodeEdit(selected.id);
         return;
       }
+      if (selected?.type === "table") {
+        event.preventDefault();
+        beginTableEdit(selected.id, tableEditSelection);
+        return;
+      }
+      if (selected?.type === "codeBlock") {
+        event.preventDefault();
+        beginCodeBlockEdit(selected.id);
+        return;
+      }
     }
     if ((event.ctrlKey || event.metaKey) && key === "l") {
       event.preventDefault();
@@ -8235,6 +12090,7 @@ export function createCanvas2DEngine(options = {}) {
       clearTransientState();
       cancelTextEdit();
       cancelFlowNodeEdit();
+      cancelCodeBlockEdit();
       cancelFileMemoEdit();
       cancelImageMemoEdit();
       finishImageEdit();
@@ -8281,6 +12137,8 @@ export function createCanvas2DEngine(options = {}) {
     bind(refs.richEditor, "pointerdown", onRichEditorPointerDown, true);
     bind(refs.richEditor, "copy", onRichEditorCopy);
     bind(refs.richEditor, "cut", onRichEditorCut);
+    bind(refs.richEditor, "dblclick", onRichEditorDoubleClick);
+    bind(refs.richEditor, "paste", onRichEditorPaste);
     bind(refs.richEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.richEditor, "contextmenu", onRichEditorContextMenu);
     bind(refs.fileMemoEditor, "wheel", onRichEditorWheel, { passive: false });
@@ -8291,6 +12149,17 @@ export function createCanvas2DEngine(options = {}) {
     bind(refs.imageMemoEditor, "blur", onImageMemoBlur);
     bind(refs.imageMemoEditor, "input", onImageMemoInput);
     bind(refs.imageMemoEditor, "keydown", onImageMemoKeyDown);
+    bind(refs.tableEditor, "pointerdown", onTableEditorPointerDown, true);
+    bind(refs.tableEditor, "input", onTableEditorInput);
+    bind(refs.tableEditor, "keydown", onTableEditorKeyDown);
+    bind(refs.tableToolbar, "pointerdown", onTableToolbarPointerDown, true);
+    bind(refs.tableToolbar, "click", onTableToolbarClick);
+    bind(refs.codeBlockEditor, "pointerdown", onCodeBlockEditorPointerDown, true);
+    bind(refs.codeBlockEditor, "keydown", onCodeBlockEditorKeyDown);
+    bind(refs.codeBlockToolbar, "pointerdown", onCodeBlockToolbarPointerDown, true);
+    bind(refs.codeBlockToolbar, "click", onCodeBlockToolbarClick);
+    bind(refs.codeBlockToolbar, "input", onCodeBlockToolbarInput);
+    bind(refs.codeBlockToolbar, "change", onCodeBlockToolbarInput);
     bind(window, "keydown", onWindowKeyDown, true);
     bind(window, "keyup", onWindowKeyUp, true);
     bind(window, "resize", resize);
@@ -8316,6 +12185,18 @@ export function createCanvas2DEngine(options = {}) {
     bind(refs.richSelectionToolbar, "keydown", onRichSelectionToolbarKeyDown);
     bind(refs.richSelectionToolbar, "focusout", onRichSelectionToolbarFocusOut);
     bind(refs.imageToolbar, "click", onImageToolbarClick);
+    bind(refs.richDisplayHost, "pointermove", onRichDisplayPointerMove);
+    bind(refs.richDisplayHost, "pointerleave", onRichDisplayPointerLeave);
+    bind(refs.richDisplayHost, "pointerdown", onRichDisplayPointerDown, true);
+    bind(refs.richDisplayHost, "pointerup", onRichDisplayPointerUp, true);
+    bind(refs.richDisplayHost, "dblclick", onRichDisplayDoubleClick);
+    bind(refs.richDisplayHost, "click", onRichDisplayClick);
+    bind(refs.codeBlockDisplayHost, "pointermove", onCodeBlockDisplayPointerMove);
+    bind(refs.codeBlockDisplayHost, "pointerleave", onCodeBlockDisplayPointerLeave);
+    bind(refs.codeBlockDisplayHost, "pointerdown", onCodeBlockDisplayPointerDown, true);
+    bind(refs.codeBlockDisplayHost, "pointerup", onCodeBlockDisplayPointerUp, true);
+    bind(refs.codeBlockDisplayHost, "dblclick", onCodeBlockDisplayDoubleClick);
+    bind(refs.codeBlockDisplayHost, "click", onCodeBlockDisplayClick);
   }
 
   function mount(hostElement) {
@@ -8355,12 +12236,11 @@ export function createCanvas2DEngine(options = {}) {
         // Ignore teardown failures.
       }
     });
-    if (richTextAdapter) {
-      richTextAdapter.destroy();
-      richTextAdapter = null;
-    }
+    richTextSession.destroy();
+    codeBlockEditor.clear();
     cancelTextEdit();
     cancelFlowNodeEdit();
+    cancelCodeBlockEdit();
     cancelFileMemoEdit();
     cancelImageMemoEdit();
     finishImageEdit();

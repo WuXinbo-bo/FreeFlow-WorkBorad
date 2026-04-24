@@ -1,6 +1,13 @@
 import { createId, htmlToPlainText, normalizeRichHtml, normalizeRichHtmlInlineFontSizes, sanitizeText } from "../utils.js";
-import { FLOW_NODE_TEXT_LAYOUT, measureRichTextBox } from "../rendererText.js";
+import { FLOW_NODE_TEXT_LAYOUT } from "../rendererText.js";
 import { normalizeTextFontSize } from "./text.js";
+import { normalizeTextContentModel } from "../textModel/textContentModel.js";
+import {
+  LEGACY_TEXT_RESIZE_MODE_WRAP,
+  TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+  normalizeTextBoxLayoutModel,
+} from "../textModel/textBoxLayoutModel.js";
+import { measureTextElementLayout } from "../textLayout/measureTextElementLayout.js";
 
 export const FLOW_NODE_MIN_WIDTH = 160;
 export const FLOW_NODE_MIN_HEIGHT = 72;
@@ -11,8 +18,13 @@ export function normalizeFlowNodeWrapMode(value = "") {
 }
 
 export function getFlowNodeMinSize(element = {}, options = {}) {
-  const html = normalizeRichHtml(element.html || "");
-  const plainText = sanitizeText(element.plainText || element.text || htmlToPlainText(html));
+  const content = normalizeTextContentModel(element, {
+    html: element.html || "",
+    plainText: element.plainText || element.text || "",
+    fontSize: element.fontSize || 18,
+  });
+  const html = normalizeRichHtml(content.html || "");
+  const plainText = sanitizeText(content.plainText || htmlToPlainText(html));
   const fontSize = normalizeTextFontSize(element.fontSize || 18, 18);
   const paddingX = FLOW_NODE_TEXT_LAYOUT.paddingX;
   const paddingY = FLOW_NODE_TEXT_LAYOUT.paddingY;
@@ -26,19 +38,30 @@ export function getFlowNodeMinSize(element = {}, options = {}) {
   }
 
   const innerWidth = Math.max(1, widthHint - paddingX * 2);
-  const richSize = measureRichTextBox({
-    html,
-    text: plainText,
-    width: innerWidth,
+  const layout = normalizeTextBoxLayoutModel({
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    textResizeMode: LEGACY_TEXT_RESIZE_MODE_WRAP,
+    widthHint: innerWidth,
+    minWidth: 1,
+    minHeight: 1,
+    maxWidth: innerWidth,
+  });
+  const measured = measureTextElementLayout({
+    ...content,
+    textBoxLayoutMode: layout.layoutMode,
+    textResizeMode: layout.legacyResizeMode,
+    widthHint: layout.widthHint,
+    minWidth: layout.minWidth,
+    minHeight: layout.minHeight,
+    maxWidth: layout.maxWidth,
     fontSize,
-    scale: 1,
     lineHeightRatio: FLOW_NODE_TEXT_LAYOUT.lineHeightRatio,
     fontWeight: FLOW_NODE_TEXT_LAYOUT.fontWeight,
     boldWeight: FLOW_NODE_TEXT_LAYOUT.boldWeight,
   });
 
-  const estimatedWidth = Math.ceil(Number(richSize?.width || 0) + paddingX * 2);
-  const estimatedHeight = Math.ceil(Number(richSize?.height || 0) + paddingY * 2);
+  const estimatedWidth = Math.ceil(layout.widthHint + paddingX * 2);
+  const estimatedHeight = Math.ceil(Number(measured?.frameHeight || measured?.contentHeight || 0) + paddingY * 2);
 
   return {
     width: Math.max(FLOW_NODE_MIN_WIDTH, estimatedWidth || 0),
@@ -47,13 +70,22 @@ export function getFlowNodeMinSize(element = {}, options = {}) {
 }
 
 export function createFlowNodeElement(point, html = "", plainText = "") {
-  const cleanHtml = normalizeRichHtmlInlineFontSizes(html || "");
-  const cleanText = sanitizeText(plainText || htmlToPlainText(cleanHtml));
+  const content = normalizeTextContentModel(
+    {
+      html: normalizeRichHtmlInlineFontSizes(html || ""),
+      plainText: plainText || "",
+      fontSize: 18,
+    },
+    { fontSize: 18 }
+  );
+  const cleanHtml = content.html;
+  const cleanText = content.plainText;
   const base = {
     id: createId("flow"),
     type: "flowNode",
     html: cleanHtml,
     plainText: cleanText,
+    richTextDocument: content.richTextDocument,
     wrapMode: FLOW_NODE_WRAP_MODE,
     x: Number(point?.x) || 0,
     y: Number(point?.y) || 0,
@@ -77,8 +109,20 @@ export function normalizeFlowNodeElement(element = {}) {
     element.html || "",
     element.plainText || element.text || ""
   );
-  const nextHtml = normalizeRichHtmlInlineFontSizes(element.html ?? base.html ?? "");
-  const nextPlainText = sanitizeText(element.plainText ?? element.text ?? htmlToPlainText(nextHtml) ?? base.plainText ?? "");
+  const content = normalizeTextContentModel(
+    {
+      ...element,
+      html: normalizeRichHtmlInlineFontSizes(element.html ?? base.html ?? ""),
+      plainText: element.plainText ?? element.text ?? "",
+    },
+    {
+      html: base.html ?? "",
+      plainText: base.plainText ?? "",
+      fontSize: element.fontSize ?? base.fontSize,
+    }
+  );
+  const nextHtml = content.html;
+  const nextPlainText = sanitizeText(content.plainText ?? htmlToPlainText(nextHtml) ?? base.plainText ?? "");
   const next = {
     ...base,
     ...element,
@@ -86,6 +130,7 @@ export function normalizeFlowNodeElement(element = {}) {
     type: "flowNode",
     html: nextHtml,
     plainText: nextPlainText,
+    richTextDocument: content.richTextDocument,
     wrapMode: normalizeFlowNodeWrapMode(element.wrapMode ?? base.wrapMode),
     x: Number(element.x ?? base.x) || 0,
     y: Number(element.y ?? base.y) || 0,

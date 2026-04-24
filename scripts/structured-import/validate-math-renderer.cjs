@@ -77,23 +77,15 @@ async function main() {
   const result = await pipeline.render(pipelineOutput);
   assert(result.ok === true, "math render should succeed");
   assert(result.rendererId === MATH_RENDERER_ID, "math renderer id mismatch");
-  assert(result.result.operations.length === 3, "math operation count mismatch");
+  assert(result.result.operations.length === 1, "math operation count mismatch");
 
   const blockOperation = result.result.operations[0];
   assert(blockOperation.type === "render-math-block", "math block operation mismatch");
   assert(blockOperation.element.type === "mathBlock", "math block element type mismatch");
   assert(blockOperation.structure.displayMode === true, "math block display mode mismatch");
   assert(blockOperation.element.fallbackText === "$$\\int_0^1 x^2 \\, dx$$", "math block fallback mismatch");
-
-  const inlineOperation = result.result.operations[1];
-  assert(inlineOperation.type === "render-math-inline", "math inline operation mismatch");
-  assert(inlineOperation.element.type === "mathInline", "math inline element type mismatch");
-  assert(inlineOperation.structure.displayMode === false, "math inline display mode mismatch");
-  assert(inlineOperation.element.fallbackText === "$x^2+y^2$", "math inline fallback mismatch");
-
-  const nestedInlineOperation = result.result.operations[2];
-  assert(nestedInlineOperation.layout.quoteDepth === 1, "nested inline quoteDepth mismatch");
-  assert(nestedInlineOperation.structure.parentType === "paragraph", "nested inline parentType mismatch");
+  assert(result.result.stats.mathBlockCount === 1, "math block count mismatch");
+  assert(result.result.stats.mathInlineCount === 0, "math inline count should remain zero");
 
   console.log("[math-renderer] ok: 1 scenario validated");
 }

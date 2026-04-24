@@ -23,6 +23,27 @@ async function main() {
         },
       },
       {
+        id: "code-1",
+        type: "codeBlock",
+        x: 100,
+        y: 300,
+        width: 300,
+        height: 150,
+        language: "js",
+        text: "const a = 1;\nconsole.log(a);",
+      },
+      {
+        id: "math-1",
+        type: "mathBlock",
+        x: 440,
+        y: 300,
+        width: 220,
+        height: 100,
+        formula: "\\frac{a}{b}",
+        fallbackText: "$$\\frac{a}{b}$$",
+        displayMode: true,
+      },
+      {
         id: "text-1",
         type: "text",
         x: 420,
@@ -49,18 +70,35 @@ async function main() {
   const tableHit = hitTestHostInteraction(board, { x: 130, y: 120 }, 1);
   assert.equal(tableHit.zone, "table-cell");
   assert.equal(tableHit.detail.rowIndex, 0);
+  assert.equal(tableHit.detail.columnIndex, 0);
+
+  const tableRightHit = hitTestHostInteraction(board, { x: 330, y: 120 }, 1);
+  assert.equal(tableRightHit.zone, "table-cell");
+  assert.equal(tableRightHit.detail.columnIndex, 1);
 
   const taskHit = hitTestHostInteraction(board, { x: 430, y: 110 }, 1);
   assert.equal(taskHit.zone, "task-checkbox");
 
-  const selection = collectHostSelection(board, { x: 90, y: 90 }, { x: 650, y: 210 });
-  assert.equal(selection.ids.length, 2);
+  const codeContentHit = hitTestHostInteraction(board, { x: 116, y: 334 }, 1);
+  assert.equal(codeContentHit.zone, "code-content");
+
+  const codeContainerHit = hitTestHostInteraction(board, { x: 102, y: 306 }, 1);
+  assert.equal(codeContainerHit.zone, "element");
+
+  const mathFormulaHit = hitTestHostInteraction(board, { x: 500, y: 350 }, 1);
+  assert.equal(mathFormulaHit.zone, "math-formula");
+
+  const mathContainerHit = hitTestHostInteraction(board, { x: 444, y: 304 }, 1);
+  assert.equal(mathContainerHit.zone, "element");
+
+  const selection = collectHostSelection(board, { x: 90, y: 90 }, { x: 680, y: 470 });
+  assert.equal(selection.ids.length, 4);
 
   const dragSelection = buildHostDragSelection(board, selection.ids);
   assert.equal(dragSelection.draggable, true);
-  assert.equal(dragSelection.items.length, 2);
+  assert.equal(dragSelection.items.length, 4);
 
-  console.log("[host-interaction-adapter] ok: 1 scenario validated");
+  console.log("[host-interaction-adapter] ok: geometry-aligned scenarios validated");
 }
 
 main().catch((error) => {
