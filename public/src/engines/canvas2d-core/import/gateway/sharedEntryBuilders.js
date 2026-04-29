@@ -254,6 +254,25 @@ export function defaultCreateDescriptorId(prefix) {
 
 function createTextLikeEntry(entryId, mimeType, value, detectionOptions = null) {
   const normalized = String(value || "");
+  if (containsMarkdownMathSyntax(normalized)) {
+    return createTypedTextEntry(
+      entryId,
+      mimeType,
+      INPUT_ENTRY_KINDS.MARKDOWN,
+      normalized,
+      {
+        markdown: normalized,
+        text: normalized,
+      },
+      {
+        type: DETECTED_TEXT_TYPES.MARKDOWN,
+        confidence: "high",
+        matchedRule: "strong-inline-math-signal",
+        entryKind: INPUT_ENTRY_KINDS.MARKDOWN,
+        sourceKind: INPUT_SOURCE_KINDS.MARKDOWN,
+      }
+    );
+  }
   const detected = detectTextContentType(normalized, detectionOptions || undefined);
   const routed = resolveTextLikeDetectedKind(detected);
   if (routed === INPUT_ENTRY_KINDS.MARKDOWN) {
@@ -499,6 +518,21 @@ function normalizeTextDetectionOptions(textDetectionOptions, codeEntryStrategy) 
     normalized.codeEntryStrategy = strategy;
   }
   return normalized;
+}
+
+function containsMarkdownMathSyntax(value = "") {
+  const source = String(value || "");
+  if (!source.trim()) {
+    return false;
+  }
+  return (
+    /\$[^$\n]+?\$/.test(source) ||
+    /\\\([^()\n]+?\\\)/.test(source) ||
+    /^\s*\$\$\s*$/m.test(source) ||
+    /^\s*\\\[\s*$/m.test(source) ||
+    /^\s*\$\$[\s\S]+?\$\$\s*$/m.test(source) ||
+    /^\s*\\\[[\s\S]+?\\\]\s*$/m.test(source)
+  );
 }
 
 function basenameFromPath(filePath) {

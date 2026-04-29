@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
   pickImageSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-image-save-path", payload),
   pickTextSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-text-save-path", payload),
   pickPdfSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-pdf-save-path", payload),
+  exportRichTextDocx: (payload) => ipcRenderer.invoke("desktop-shell:export-rich-text-docx", payload),
+  exportWordDocx: (payload) => ipcRenderer.invoke("desktop-shell:export-word-docx", payload),
   readFile: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file", targetPath),
   readFileBase64: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file-base64", targetPath),
   writeFile: (targetPath, data) => ipcRenderer.invoke("desktop-shell:write-file", targetPath, data),

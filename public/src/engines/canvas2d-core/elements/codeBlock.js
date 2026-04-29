@@ -6,6 +6,7 @@ import {
   measureCodeBlockLayoutFast,
   resolveCodeBlockAutoHeight,
 } from "../codeBlock/measureCodeBlockLayout.js";
+import { normalizeCodeBlockLanguageTag } from "../codeBlock/languageRegistry.js";
 
 export const CODE_BLOCK_MIN_WIDTH = 220;
 export const CODE_BLOCK_MIN_HEIGHT = 84;
@@ -54,7 +55,7 @@ export function normalizeCodeTheme(value = "") {
 }
 
 export function normalizeCodeBlockLanguage(value = "") {
-  return String(value || "").trim().toLowerCase();
+  return normalizeCodeBlockLanguageTag(value);
 }
 
 export function resolveCodeBlockContent(element = {}) {
@@ -208,7 +209,10 @@ export function normalizeCodeBlockElement(element = {}) {
   };
   if (normalized.autoHeight) {
     const layout = measureCodeBlockLayout(normalized, { widthHint: normalized.width });
-    normalized.width = Math.max(CODE_BLOCK_MIN_WIDTH, Number(layout.estimatedWidth || normalized.width) || normalized.width);
+    normalized.width = Math.max(
+      CODE_BLOCK_MIN_WIDTH,
+      Number(normalized.width || element.width || base.width) || CODE_BLOCK_MIN_WIDTH
+    );
     normalized.height = Math.max(CODE_BLOCK_MIN_HEIGHT, Number(layout.height || normalized.height) || normalized.height);
     normalized.layoutCache = createCodeBlockLayoutCache(layout);
   } else {
@@ -247,9 +251,7 @@ export function updateCodeBlockElement(element = {}, patch = {}, options = {}) {
       widthHint: Number(next.width || 0),
       forceAutoHeight: true,
     });
-    const widthExplicit = Object.prototype.hasOwnProperty.call(patch || {}, "width");
-    const targetWidth = widthExplicit ? Number(layout.width || next.width) || next.width : layout.estimatedWidth;
-    next.width = Math.max(CODE_BLOCK_MIN_WIDTH, Number(targetWidth || next.width) || next.width);
+    next.width = Math.max(CODE_BLOCK_MIN_WIDTH, Number(next.width || element.width || 0) || CODE_BLOCK_MIN_WIDTH);
     next.height = Math.max(CODE_BLOCK_MIN_HEIGHT, Number(layout.height || next.height) || next.height);
     next.layoutCache = createCodeBlockLayoutCache(layout);
   } else if (!next.layoutCache) {

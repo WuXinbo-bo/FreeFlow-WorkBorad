@@ -99,6 +99,8 @@ function collectClipboardEntries(clipboardData, { internalClipboardMime }) {
     entries.push(createFileEntry(file, `clipboard-file-${entryIndex++}`));
   }
 
+  reconcileClipboardHtmlMathEntries(entries);
+
   return {
     entries,
     mimeTypes,
@@ -188,3 +190,57 @@ function fileNameFromPath(filePath) {
 }
 
 export { DEFAULT_INTERNAL_CLIPBOARD_MIME };
+
+function reconcileClipboardHtmlMathEntries(entries = []) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return;
+  }
+  const htmlEntryIndex = entries.findIndex(
+    (entry) => String(entry?.mimeType || "").toLowerCase() === "text/html" && typeof entry?.raw?.html === "string"
+  );
+  if (htmlEntryIndex < 0) {
+    return;
+  }
+  const textEntry = entries.find(
+    (entry) =>
+      (String(entry?.mimeType || "").toLowerCase() === "text/plain" ||
+        String(entry?.mimeType || "").toLowerCase() === "text") &&
+      typeof entry?.raw?.text === "string"
+  );
+  if (!textEntry) {
+    return;
+  }
+  const text = String(textEntry.raw.text || "");
+  const html = String(entries[htmlEntryIndex]?.raw?.html || "");
+  if (!containsMarkdownMathSyntax(text) || htmlContainsRenderableMath(html)) {
+    return;
+  }
+  entries.splice(htmlEntryIndex, 1);
+}
+
+function containsMarkdownMathSyntax(value = "") {
+  const source = String(value || "");
+  if (!source.trim()) {
+    return false;
+  }
+  return (
+    /\$[^$\n]+?\$/.test(source) ||
+    /\\\([^()\n]+?\\\)/.test(source) ||
+    /^\s*\$\$\s*$/m.test(source) ||
+    /^\s*\\\[\s*$/m.test(source) ||
+    /^\s*\$\$[\s\S]+?\$\$\s*$/m.test(source) ||
+    /^\s*\\\[[\s\S]+?\\\]\s*$/m.test(source)
+  );
+}
+
+function htmlContainsRenderableMath(value = "") {
+  const html = String(value || "");
+  if (!html.trim()) {
+    return false;
+  }
+  return (
+    /\bkatex(?:-display)?\b/i.test(html) ||
+    /data-role=(?:"|')math-(?:inline|block)(?:"|')/i.test(html) ||
+    /data-ff-rich-math=(?:"|')(?:inline|block)(?:"|')/i.test(html)
+  );
+}

@@ -5,6 +5,9 @@ export const TABLE_MIN_HEIGHT = 84;
 export const TABLE_STRUCTURED_IMPORT_KIND = "structured-import-v1";
 const DEFAULT_TABLE_COLUMN_COUNT = 3;
 const DEFAULT_TABLE_ROW_COUNT = 3;
+const IMPORTED_TABLE_TARGET_WIDTH = 820;
+const IMPORTED_TABLE_COLUMN_WIDTH = 152;
+const IMPORTED_TABLE_MAX_WIDTH = 1280;
 
 export function normalizeStructuredTableMeta(value = {}) {
   if (!value || typeof value !== "object") {
@@ -165,6 +168,8 @@ export function flattenTableStructureToMatrix(structure = {}) {
       rowIndex,
       columnIndex,
       plainText: "",
+      html: "",
+      richTextDocument: null,
       header: rowIndex === 0 && Boolean(normalized.hasHeader),
       align: "",
       sourceRowIndex: rowIndex,
@@ -187,6 +192,11 @@ export function flattenTableStructureToMatrix(structure = {}) {
             rowIndex: y,
             columnIndex: x,
             plainText: y === rowIndex && x === startColumn ? String(cell?.plainText || "") : "",
+            html: y === rowIndex && x === startColumn ? String(cell?.html || "") : "",
+            richTextDocument:
+              y === rowIndex && x === startColumn && cell?.richTextDocument && typeof cell.richTextDocument === "object"
+                ? JSON.parse(JSON.stringify(cell.richTextDocument))
+                : null,
             header: Boolean(cell?.header),
             align: String(cell?.align || ""),
             sourceRowIndex: rowIndex,
@@ -215,9 +225,15 @@ export function createTableStructureFromMatrix(matrix = [], options = {}) {
       const text = typeof value === "object" && value
         ? String(value.plainText || value.text || "")
         : String(value || "");
+      const html = typeof value === "object" && value ? String(value.html || "").trim() : "";
       return normalizeTableCell(
         {
           plainText: text,
+          html,
+          richTextDocument:
+            typeof value === "object" && value?.richTextDocument && typeof value.richTextDocument === "object"
+              ? JSON.parse(JSON.stringify(value.richTextDocument))
+              : null,
           header: typeof value === "object" && value != null ? Boolean(value.header) : rowIndex === 0 && hasHeader,
           align: typeof value === "object" && value != null ? value.align : "",
         },
@@ -247,7 +263,7 @@ export function updateTableElementStructure(element = {}, structure = {}) {
     columns: normalizedTable.columns,
     rows: normalizedTable.rows.length,
     table: normalizedTable,
-    width: Math.max(TABLE_MIN_WIDTH, Number(element?.width || 0) || size.width, size.width),
+    width: Math.max(TABLE_MIN_WIDTH, Number(element?.width || 0) || size.width),
     height: Math.max(TABLE_MIN_HEIGHT, Number(element?.height || 0) || size.height, size.height),
   });
 }
@@ -276,6 +292,10 @@ function normalizeTableCell(cell = {}, rowIndex = 0, cellIndex = 0) {
     cellIndex,
     plainText,
     html: String(cell.html || "").trim(),
+    richTextDocument:
+      cell.richTextDocument && typeof cell.richTextDocument === "object"
+        ? JSON.parse(JSON.stringify(cell.richTextDocument))
+        : null,
     header: Boolean(cell.header ?? cell?.attrs?.header),
     align: normalizeAlign(cell.align ?? cell?.attrs?.align),
     colSpan: normalizePositiveInteger(cell.colSpan ?? cell?.attrs?.colSpan, 1),
@@ -285,7 +305,13 @@ function normalizeTableCell(cell = {}, rowIndex = 0, cellIndex = 0) {
 
 function estimateTableElementSize(structure = {}) {
   const columns = Math.max(1, Number(structure?.columns) || 1);
-  const width = Math.max(TABLE_MIN_WIDTH, Math.min(1200, columns * 140));
+  const width = Math.max(
+    TABLE_MIN_WIDTH,
+    Math.min(
+      IMPORTED_TABLE_MAX_WIDTH,
+      Math.max(IMPORTED_TABLE_TARGET_WIDTH, columns * IMPORTED_TABLE_COLUMN_WIDTH)
+    )
+  );
   const rows = Array.isArray(structure?.rows) ? structure.rows : [];
   const height = Math.max(
     TABLE_MIN_HEIGHT,

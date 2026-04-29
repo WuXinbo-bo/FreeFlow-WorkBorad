@@ -1,5 +1,6 @@
 import { resolvePdfExportOptions } from "./pdfExportOptions.js";
 import { savePdfBytes } from "./savePdfBytes.js";
+import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 
 const A4_PORTRAIT = Object.freeze({
   width: 595.28,
@@ -49,7 +50,7 @@ function fitImageToPage(imageWidth, imageHeight, pageWidth, pageHeight, padding 
 }
 
 export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults = {}) {
-  const { PDFDocument } = await import("../../../../assets/vendor/pdf-lib.esm.min.js");
+  const { PDFDocument } = await loadVendorEsmModule("pdf-lib");
   const options = resolvePdfExportOptions(inputOptions, defaults);
   if (typeof renderBoard !== "function") {
     return {

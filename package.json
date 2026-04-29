@@ -14,6 +14,8 @@
     "prepare:desktop-build": "node scripts/prepare-desktop-build.js",
     "check:desktop-packaging": "node scripts/check-desktop-packaging.js",
     "check:desktop-upgrade": "node scripts/check-desktop-upgrade.js",
+    "check:canvas2d-regression": "node scripts/check-canvas2d-regression.js",
+    "check:canvas2d-paste-optimization": "node scripts/check-canvas2d-paste-optimization.js",
     "pack:win": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --dir --win nsis",
     "pack:win:local": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --dir --win nsis",
     "dist:portable": "npm run prepare:desktop-build && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win portable",
@@ -37,9 +39,11 @@
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/lang-xml": "^6.1.0",
     "codemirror": "^6.0.2",
+    "docx": "^9.5.1",
     "express": "^5.2.1",
     "file-type": "^22.0.0",
     "highlight.js": "^11.11.1",
+    "html-to-docx": "^1.8.0",
     "katex": "^0.16.45",
     "koffi": "^2.15.2",
     "mermaid": "^11.14.0",
@@ -54,6 +58,7 @@
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
+    "xlsx": "^0.18.5",
     "yauzl": "^3.2.0"
   },
   "devDependencies": {

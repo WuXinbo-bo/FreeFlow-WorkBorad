@@ -2,10 +2,16 @@ import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 import {
+  getCodeBlockLanguageDisplayLabel,
+  normalizeCodeBlockLanguageTag,
+} from "../../../codeBlock/languageRegistry.js";
+import {
+  IMPORTED_TEXT_WRAP_TARGET_WIDTH,
   resolveImportedTextBoxLayout,
 } from "../text/sharedTextRenderUtils.js";
 
 export const CODE_BLOCK_RENDERER_ID = "code-block-renderer";
+const IMPORTED_CODE_BLOCK_TARGET_WIDTH = IMPORTED_TEXT_WRAP_TARGET_WIDTH;
 
 export function createCodeBlockRenderer(options = {}) {
   const id = options.id || CODE_BLOCK_RENDERER_ID;
@@ -80,13 +86,13 @@ function collectCodeBlocks(nodes = [], context = { quoteDepth: 0, parentType: "d
 
 function buildCodeOperation(block, index, renderInput) {
   const code = sanitizeText(String(block?.node?.text || ""));
-  const language = String(block?.node?.attrs?.language || "").trim().toLowerCase();
+  const language = normalizeCodeBlockLanguageTag(block?.node?.attrs?.language || "");
   const sourceMeta = {
     descriptorId: String(renderInput?.descriptorId || ""),
     parserId: String(renderInput?.parserId || ""),
     entryId: String(renderInput?.entryId || ""),
   };
-  const title = buildTextTitle(language ? `${language} 代码块` : "Markdown 代码块");
+  const title = buildTextTitle(language ? `${getCodeBlockLanguageDisplayLabel(language)} 代码块` : "Markdown 代码块");
   const lineCount = countLines(code);
   const initialLayout = resolveImportedTextBoxLayout(code, 16, {
     forceWrap: true,
@@ -112,7 +118,7 @@ function buildCodeOperation(block, index, renderInput) {
       text: code,
       plainText: code,
       fontSize: 16,
-      width: Math.max(initialLayout.width || 0, estimateCodeWidth(code)),
+      width: Math.max(IMPORTED_CODE_BLOCK_TARGET_WIDTH, Number(initialLayout.width || 0) || 0),
       height: Math.max(initialLayout.height || 0, estimateCodeHeight(code)),
       x: 0,
       y: 0,
@@ -136,12 +142,6 @@ function buildCodeOperation(block, index, renderInput) {
     meta: sourceMeta,
     sourceOrder: deriveNodeSourceOrder(block?.node, index),
   };
-}
-
-function estimateCodeWidth(code) {
-  const lines = sanitizeText(code || "").split("\n");
-  const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
-  return Math.max(220, Math.min(920, Math.round(64 + longest * 9.2)));
 }
 
 function estimateCodeHeight(code) {

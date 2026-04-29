@@ -20,6 +20,7 @@ export function createRichTextEditingSession({
   onSelectionChange = null,
   onRequestCommit = null,
   onRequestCancel = null,
+  onRequestExternalLink = null,
 } = {}) {
   let host = editorElement instanceof HTMLDivElement ? editorElement : null;
   let adapter = null;
@@ -34,6 +35,7 @@ export function createRichTextEditingSession({
         onCommit: () => onRequestCommit?.(),
         onCancel: () => onRequestCancel?.(),
         onSelectionChange: () => onSelectionChange?.(),
+        onRequestExternalLink: () => onRequestExternalLink?.(),
       });
     }
     return adapter;
@@ -184,10 +186,16 @@ export function createRichTextEditingSession({
       return ensureAdapter()?.getSelectionText?.() || "";
     },
     command(name, value) {
-      ensureAdapter()?.command?.(name, value);
+      return ensureAdapter()?.command?.(name, value) || false;
     },
     deleteSelection() {
       return ensureAdapter()?.deleteSelection?.() || false;
+    },
+    selectAll() {
+      ensureAdapter()?.selectAll?.();
+    },
+    moveCaretToEnd() {
+      ensureAdapter()?.moveCaretToEnd?.();
     },
     syncContent({ itemId, html = "", plainText = "", fontSize = 20, force = false } = {}) {
       const nextAdapter = ensureAdapter();

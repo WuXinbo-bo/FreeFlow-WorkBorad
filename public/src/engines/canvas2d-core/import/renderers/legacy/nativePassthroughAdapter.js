@@ -65,21 +65,22 @@ function collectPassthroughItems(compatibility) {
 }
 
 function buildPassthroughOperation(item, index, compatibility) {
-  const operation = {
-    type: "bridge-native-item",
-    legacyType: String(item?.legacyType || ""),
-    order: index,
-    element: { ...item.item },
+    const operation = {
+      type: "bridge-native-item",
+      legacyType: String(item?.legacyType || ""),
+      order: index,
+      element: { ...item.item },
     structure: {
       entryId: String(item?.entryId || ""),
       originId: String(item?.originId || ""),
       legacyType: String(item?.legacyType || ""),
     },
-    meta: {
-      descriptorId: String(compatibility?.descriptorId || ""),
-      parserId: String(compatibility?.parserId || ""),
-    },
-  };
+      meta: {
+        descriptorId: String(compatibility?.descriptorId || ""),
+        parserId: String(compatibility?.parserId || ""),
+        regenerateId: true,
+      },
+    };
   operation.element = buildNativeElementFromPassthroughOperation(operation);
   return operation;
 }

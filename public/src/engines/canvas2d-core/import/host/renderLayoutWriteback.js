@@ -1,4 +1,5 @@
 import { getElementBounds, normalizeElement } from "../../elements/index.js";
+import { createId } from "../../utils.js";
 import {
   getTextMinSize,
   TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
@@ -8,47 +9,71 @@ import {
 import { buildCodeBlockElementFromRenderOperation } from "../renderers/code/codeBlockElementBridge.js";
 import { buildMathElementFromRenderOperation } from "../renderers/math/mathElementBridge.js";
 import { buildTableElementFromRenderOperation } from "../renderers/table/tableElementBridge.js";
+import {
+  IMPORTED_TEXT_WRAP_TARGET_WIDTH,
+} from "../renderers/text/sharedTextRenderUtils.js";
+
+const IMPORTED_PASTE_FRAME_WIDTH = IMPORTED_TEXT_WRAP_TARGET_WIDTH;
 
 export function applyRenderLayoutWriteback(plan = {}, options = {}) {
   const operations = normalizeOperationsForWriteback(Array.isArray(plan?.operations) ? plan.operations : []);
+  return buildRenderLayoutWritebackResult(operations, options);
+}
+
+export async function applyRenderLayoutWritebackAsync(plan = {}, options = {}) {
+  const operations = normalizeOperationsForWriteback(Array.isArray(plan?.operations) ? plan.operations : []);
+  return buildRenderLayoutWritebackResultAsync(operations, options);
+}
+
+function createWritebackRuntime(options = {}) {
   const anchorPoint = normalizePoint(options.anchorPoint);
   const defaultGap = normalizePositiveNumber(options.defaultGap, 24);
   const laneGap = normalizePositiveNumber(options.laneGap, 28);
-  const committed = [];
-  const laneOffsets = new Map();
+  return {
+    anchorPoint,
+    defaultGap,
+    laneGap,
+    committed: [],
+    laneOffsets: new Map(),
+  };
+}
 
-  operations.forEach((operation, index) => {
-    const sourceElement = buildElementForWriteback(operation, index);
-    if (!sourceElement) {
-      return;
-    }
-    const normalized = normalizeElement(sourceElement);
-    const layout = operation?.layout && typeof operation.layout === "object" ? operation.layout : {};
-    const laneKey = String(layout.strategy || "flow-stack");
-    const laneState = laneOffsets.get(laneKey) || {
-      x: anchorPoint.x,
-      y: anchorPoint.y,
-      maxWidth: 0,
-    };
-    const placed = placeElementByLayout(normalized, laneState, layout, {
-      anchorPoint,
-      defaultGap,
-      laneGap,
-    });
-    laneOffsets.set(laneKey, placed.nextLaneState);
-
-    committed.push({
-      operation,
-      item: placed.item,
-      bounds: getElementBounds(placed.item),
-      layout: {
-        strategy: laneKey,
-        stackIndex: Number(layout.stackIndex) || index,
-        quoteDepth: Number(layout.quoteDepth) || 0,
-      },
-    });
+function appendWritebackOperation(runtime, operation, index) {
+  const sourceElement = buildElementForWriteback(operation, index);
+  if (!sourceElement) {
+    return;
+  }
+  const normalized = normalizeElement(sourceElement);
+  const framed = normalizeImportedPasteFrame(normalized);
+  const layout = operation?.layout && typeof operation.layout === "object" ? operation.layout : {};
+  const laneKey = String(layout.strategy || "flow-stack");
+  const laneState = runtime.laneOffsets.get(laneKey) || {
+    x: runtime.anchorPoint.x,
+    y: runtime.anchorPoint.y,
+    maxWidth: 0,
+  };
+  const placed = placeElementByLayout(framed, laneState, layout, {
+    anchorPoint: runtime.anchorPoint,
+    defaultGap: runtime.defaultGap,
+    laneGap: runtime.laneGap,
   });
+  runtime.laneOffsets.set(laneKey, placed.nextLaneState);
 
+  runtime.committed.push({
+    operation,
+    item: placed.item,
+    bounds: getElementBounds(placed.item),
+    layout: {
+      strategy: laneKey,
+      stackIndex: Number(layout.stackIndex) || index,
+      quoteDepth: Number(layout.quoteDepth) || 0,
+    },
+  });
+}
+
+function finalizeWritebackRuntime(runtime) {
+  const committed = Array.isArray(runtime?.committed) ? runtime.committed : [];
+  const anchorPoint = normalizePoint(runtime?.anchorPoint);
   return {
     kind: "layout-writeback-result",
     items: committed.map((entry) => entry.item),
@@ -61,10 +86,52 @@ export function applyRenderLayoutWriteback(plan = {}, options = {}) {
   };
 }
 
+function buildRenderLayoutWritebackResult(operations = [], options = {}) {
+  const runtime = createWritebackRuntime(options);
+  operations.forEach((operation, index) => {
+    appendWritebackOperation(runtime, operation, index);
+  });
+  return finalizeWritebackRuntime(runtime);
+}
+
+async function buildRenderLayoutWritebackResultAsync(operations = [], options = {}) {
+  const runtime = createWritebackRuntime(options);
+  const yieldControl = typeof options.yieldControl === "function" ? options.yieldControl : null;
+  const yieldBatchSize = Math.max(1, Number(options.yieldBatchSize) || 16);
+  const yieldBudgetMs = Math.max(4, Number(options.yieldBudgetMs) || 8);
+  let batchStartedAt =
+    typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+
+  for (let index = 0; index < operations.length; index += 1) {
+    appendWritebackOperation(runtime, operations[index], index);
+    if (!yieldControl || index >= operations.length - 1) {
+      continue;
+    }
+    const processedCount = index + 1;
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+    const shouldYield = processedCount % yieldBatchSize === 0 || now - batchStartedAt >= yieldBudgetMs;
+    if (!shouldYield) {
+      continue;
+    }
+    await yieldControl({
+      processedCount,
+      totalCount: operations.length,
+    });
+    batchStartedAt =
+      typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  }
+
+  return finalizeWritebackRuntime(runtime);
+}
+
 function buildElementForWriteback(operation = {}, index = 0) {
   const sourceElement = operation?.element && typeof operation.element === "object" ? operation.element : {};
   const resolvedType = String(sourceElement.type || "").trim() || resolveFallbackElementType(operation);
-  const resolvedId = sourceElement.id || `${resolvedType || "item"}-${index + 1}`;
+  const shouldRegenerateId = operation?.meta?.regenerateId === true;
+  const resolvedId = shouldRegenerateId
+    ? createId(resolvedType || "item")
+    : (sourceElement.id || createId(resolvedType || "item"));
   const bridgeKind = resolveStructuredBridgeKind(operation, sourceElement);
   if (bridgeKind === "codeBlock") {
     return {
@@ -101,6 +168,65 @@ function buildElementForWriteback(operation = {}, index = 0) {
     id: resolvedId,
     type: resolvedType,
   };
+}
+
+function normalizeImportedPasteFrame(item = {}) {
+  if (!item || typeof item !== "object") {
+    return item;
+  }
+  const type = String(item.type || "").trim();
+  const width = IMPORTED_PASTE_FRAME_WIDTH;
+  if (type === "text") {
+    return normalizeElement({
+      ...item,
+      width,
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      wrapMode: TEXT_WRAP_MODE_MANUAL,
+      structuredImport: {
+        ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+        initialFrameWidth: width,
+      },
+    });
+  }
+  if (type === "codeBlock") {
+    return {
+      ...normalizeElement({
+      ...item,
+      width,
+      autoHeight: true,
+      structuredImport: {
+        ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+        initialFrameWidth: width,
+      },
+      }),
+      width,
+    };
+  }
+  if (type === "table") {
+    return normalizeElement({
+      ...item,
+      width,
+      structuredImport: {
+        ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+        initialFrameWidth: width,
+      },
+    });
+  }
+  if (type === "mathBlock" || type === "mathInline") {
+    return normalizeElement({
+      ...item,
+      width,
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      wrapMode: TEXT_WRAP_MODE_MANUAL,
+      structuredImport: {
+        ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+        initialFrameWidth: width,
+      },
+    });
+  }
+  return item;
 }
 
 function resolveStructuredBridgeKind(operation = {}, element = {}) {
@@ -279,11 +405,11 @@ function placeElementByLayout(item, laneState, layout, options) {
   const indentX = options.anchorPoint.x + quoteDepth * 20;
 
   if (strategy === "inline-anchor") {
-    const nextItem = normalizeElement({
+    const nextItem = normalizeImportedPasteFrame(normalizeElement({
       ...item,
       x: laneState.x || indentX,
       y: laneState.y || options.anchorPoint.y,
-    });
+    }));
     const bounds = getElementBounds(nextItem);
     return {
       item: nextItem,
@@ -296,11 +422,11 @@ function placeElementByLayout(item, laneState, layout, options) {
   }
 
   const nextY = laneState.y || options.anchorPoint.y;
-  const nextItem = normalizeElement({
+  const nextItem = normalizeImportedPasteFrame(normalizeElement({
     ...item,
     x: indentX,
     y: nextY,
-  });
+  }));
   const bounds = getElementBounds(nextItem);
   return {
     item: nextItem,

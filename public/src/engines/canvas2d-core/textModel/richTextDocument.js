@@ -49,6 +49,25 @@ export const RICH_TEXT_MARK_TYPES = Object.freeze({
 const DEFAULT_BLOCK_TYPE = RICH_TEXT_BLOCK_TYPES.PARAGRAPH;
 const DEFAULT_INLINE_NODE_TYPE = RICH_TEXT_INLINE_NODE_TYPES.TEXT;
 
+function stripLatexEditingDelimiters(value = "", displayMode = false) {
+  const source = sanitizeText(String(value || "")).trim();
+  if (!source) {
+    return "";
+  }
+  if (displayMode) {
+    const fenced = source.match(/^\$\$\s*[\r\n]?([\s\S]*?)[\r\n]?\s*\$\$$/);
+    if (fenced) {
+      return sanitizeText(String(fenced[1] || "")).trim();
+    }
+    return source.replace(/^\$\$+/, "").replace(/\$\$+$/, "").trim();
+  }
+  const inlineWrapped = source.match(/^\$(?!\$)([\s\S]*?)(?<!\$)\$$/);
+  if (inlineWrapped) {
+    return sanitizeText(String(inlineWrapped[1] || "")).trim();
+  }
+  return source.replace(/^\$/, "").replace(/\$$/, "").trim();
+}
+
 const BLOCK_TYPE_ALIASES = Object.freeze({
   "html-block": RICH_TEXT_BLOCK_TYPES.HTML,
   html: RICH_TEXT_BLOCK_TYPES.HTML,
@@ -115,6 +134,7 @@ export const TEXT_LINK_KIND_HINTS = Object.freeze([
   "plain-link",
   "preview-candidate",
   "embed-candidate",
+  "canvas-link",
 ]);
 export const TEXT_LINK_FETCH_STATES = Object.freeze(["idle", "pending", "ready", "error", "stale"]);
 const LINK_KIND_HINT_SET = new Set(TEXT_LINK_KIND_HINTS);
@@ -146,9 +166,28 @@ function normalizeUrlString(value) {
   if (!raw || raw.length > 4096) {
     return "";
   }
+  if (/^freeflow:\/\/canvas\/item\//i.test(raw)) {
+    return raw;
+  }
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      return new URL(raw).toString();
+    } catch {
+      return "";
+    }
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+    return encodeURI(`file:///${raw.replace(/\\/g, "/")}`);
+  }
+  if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
+    return encodeURI(`file:${raw.replace(/\\/g, "/")}`);
+  }
+  if (/^\/[^/]/.test(raw)) {
+    return encodeURI(`file://${raw}`);
+  }
   try {
     const parsed = new URL(raw);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
+    if (!["http:", "https:", "freeflow:", "mailto:", "tel:", "file:"].includes(parsed.protocol)) {
       return "";
     }
     return parsed.toString();
@@ -594,7 +633,7 @@ export function serializeRichTextBlockToHtml(block = null) {
     const ordered = attrs.ordered === true;
     const tag = ordered ? "ol" : "ul";
     const start = ordered && Number.isFinite(Number(attrs.start)) ? ` start="${Number(attrs.start)}"` : "";
-    const taskAttr = !ordered && attrs.task === true ? ' data-ff-task-list="true"' : "";
+    const taskAttr = attrs.task === true ? ' data-ff-task-list="true"' : "";
     return `<${tag}${start}${taskAttr}>${serializeRichTextBlocksToHtml(block.blocks || [])}</${tag}>`;
   }
   if (type === RICH_TEXT_BLOCK_TYPES.LIST_ITEM) {
@@ -1051,7 +1090,7 @@ function parseElementToBlock(element) {
   if (element.getAttribute("data-role") === "math-block") {
     return {
       type: RICH_TEXT_BLOCK_TYPES.MATH_BLOCK,
-      plainText: sanitizeText(String(element.textContent || "")),
+      plainText: stripLatexEditingDelimiters(String(element.textContent || ""), true),
       attrs: {
         sourceFormat: "latex",
         displayMode: true,
@@ -1124,7 +1163,9 @@ function createParagraphBlockFromElement(element) {
 }
 
 function parseListBlock(element, ordered = false) {
-  const isTaskList = element.getAttribute("data-ff-task-list") === "true";
+  const isTaskList =
+    element.getAttribute("data-ff-task-list") === "true" ||
+    element.querySelector(":scope > li[data-ff-task-item='true']") instanceof HTMLElement;
   const listItems = Array.from(element.children)
     .filter((child) => child instanceof HTMLElement && child.tagName.toLowerCase() === "li")
     .map((child, index) => parseListItemBlock(child, index))
@@ -1280,7 +1321,7 @@ function parseInlineNodes(nodes = [], activeMarks = []) {
     if (element.getAttribute("data-role") === "math-inline") {
       result.push(createInlineNodeWithMarks({
         type: RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE,
-        text: sanitizeText(String(element.textContent || "")),
+        text: stripLatexEditingDelimiters(String(element.textContent || ""), false),
         attrs: {
           sourceFormat: "latex",
           displayMode: false,

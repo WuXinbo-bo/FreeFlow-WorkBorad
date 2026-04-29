@@ -4,8 +4,10 @@ export function createCodeBlockEditor(host, options = {}) {
   let currentLanguage = "";
   let textarea = null;
   let currentWrap = false;
+  let currentTabSize = 2;
   let onInputHandler = null;
   let onBlurHandler = null;
+  let onKeyDownHandler = null;
 
   function detachTextarea() {
     if (!(textarea instanceof HTMLTextAreaElement)) {
@@ -17,9 +19,114 @@ export function createCodeBlockEditor(host, options = {}) {
     if (onBlurHandler) {
       textarea.removeEventListener("blur", onBlurHandler);
     }
+    if (onKeyDownHandler) {
+      textarea.removeEventListener("keydown", onKeyDownHandler);
+    }
     onInputHandler = null;
     onBlurHandler = null;
+    onKeyDownHandler = null;
     textarea.remove();
+  }
+
+  function normalizeTabSize(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return 2;
+    }
+    return Math.max(1, Math.min(8, Math.round(number) || 2));
+  }
+
+  function emitChange(node) {
+    options.onChange?.(node?.value || "");
+  }
+
+  function replaceRange(node, rangeStart, rangeEnd, nextText, { selectionStart = null, selectionEnd = null } = {}) {
+    if (!(node instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    const start = Math.max(0, Number(rangeStart || 0));
+    const end = Math.max(start, Number(rangeEnd || start));
+    const value = String(node.value || "");
+    node.value = `${value.slice(0, start)}${nextText}${value.slice(end)}`;
+    const nextStart = selectionStart == null ? start + String(nextText || "").length : Math.max(0, Number(selectionStart || 0));
+    const nextEnd = selectionEnd == null ? nextStart : Math.max(nextStart, Number(selectionEnd || nextStart));
+    node.selectionStart = nextStart;
+    node.selectionEnd = nextEnd;
+    emitChange(node);
+    return true;
+  }
+
+  function replaceSelection(node, nextText, options = {}) {
+    if (!(node instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    return replaceRange(node, node.selectionStart, node.selectionEnd, nextText, options);
+  }
+
+  function handleTabKey(node, event) {
+    if (!(node instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const indentUnit = " ".repeat(currentTabSize);
+    const value = String(node.value || "");
+    const start = Math.max(0, Number(node.selectionStart || 0));
+    const end = Math.max(start, Number(node.selectionEnd || start));
+    const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const selectedText = value.slice(start, end);
+    const multiLine = start !== end && selectedText.includes("\n");
+    if (!event.shiftKey) {
+      if (!multiLine) {
+        return replaceSelection(node, indentUnit);
+      }
+      const blockEnd = end < value.length && value[end] === "\n" ? end : Math.max(end, value.indexOf("\n", end) === -1 ? value.length : value.indexOf("\n", end));
+      const block = value.slice(lineStart, blockEnd);
+      const lines = block.split("\n");
+      const indentedBlock = lines.map((line) => `${indentUnit}${line}`).join("\n");
+      return replaceRange(node, lineStart, blockEnd, indentedBlock, {
+        selectionStart: start + indentUnit.length,
+        selectionEnd: end + indentUnit.length * lines.length,
+      });
+    }
+    const blockEnd = multiLine
+      ? (end < value.length && value[end] === "\n" ? end : Math.max(end, value.indexOf("\n", end) === -1 ? value.length : value.indexOf("\n", end)))
+      : Math.max(end, value.indexOf("\n", end) === -1 ? value.length : value.indexOf("\n", end));
+    const block = value.slice(lineStart, blockEnd);
+    const lines = block.split("\n");
+    let removedBeforeStart = 0;
+    let removedTotal = 0;
+    const dedentedBlock = lines
+      .map((line, index) => {
+        const leadingIndent = line.match(new RegExp(`^(\\t| {1,${currentTabSize}})`))?.[0] || "";
+        const removeCount = leadingIndent.length;
+        if (index === 0) {
+          removedBeforeStart = Math.min(removeCount, Math.max(0, start - lineStart));
+        }
+        removedTotal += removeCount;
+        return line.slice(removeCount);
+      })
+      .join("\n");
+    return replaceRange(node, lineStart, blockEnd, dedentedBlock, {
+      selectionStart: Math.max(lineStart, start - removedBeforeStart),
+      selectionEnd: Math.max(lineStart, end - removedTotal),
+    });
+  }
+
+  function handleEnterKey(node, event) {
+    if (!(node instanceof HTMLTextAreaElement) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    const value = String(node.value || "");
+    const start = Math.max(0, Number(node.selectionStart || 0));
+    const end = Math.max(start, Number(node.selectionEnd || start));
+    const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const currentLine = value.slice(lineStart, start);
+    const indentMatch = currentLine.match(/^[ \t]+/);
+    const indent = indentMatch ? indentMatch[0].replace(/\t/g, " ".repeat(currentTabSize)) : "";
+    event.preventDefault();
+    event.stopPropagation();
+    return replaceSelection(node, `\n${indent}`);
   }
 
   function ensureTextarea() {
@@ -43,13 +150,24 @@ export function createCodeBlockEditor(host, options = {}) {
     node.style.background = "transparent";
     node.style.color = "#0f172a";
     onInputHandler = () => {
-      options.onChange?.(node.value || "");
+      emitChange(node);
     };
     onBlurHandler = () => {
       options.onBlur?.();
     };
+    onKeyDownHandler = (event) => {
+      const key = String(event.key || "").toLowerCase();
+      if (key === "tab") {
+        handleTabKey(node, event);
+        return;
+      }
+      if (key === "enter") {
+        handleEnterKey(node, event);
+      }
+    };
     node.addEventListener("input", onInputHandler);
     node.addEventListener("blur", onBlurHandler);
+    node.addEventListener("keydown", onKeyDownHandler);
     mountHost.innerHTML = "";
     mountHost.appendChild(node);
     textarea = node;
@@ -63,12 +181,15 @@ export function createCodeBlockEditor(host, options = {}) {
     }
     currentLanguage = String(session.language || "").trim().toLowerCase();
     currentWrap = session.wrap === true;
+    currentTabSize = normalizeTabSize(session.tabSize);
     const nextValue = String(session.code || "");
     if (node.value !== nextValue) {
       node.value = nextValue;
     }
     node.setAttribute("wrap", currentWrap ? "soft" : "off");
     node.setAttribute("data-language", currentLanguage);
+    node.style.tabSize = String(currentTabSize);
+    node.style.MozTabSize = String(currentTabSize);
     return node;
   }
 
@@ -117,6 +238,7 @@ export function createCodeBlockEditor(host, options = {}) {
     activeItemId = "";
     currentLanguage = "";
     currentWrap = false;
+    currentTabSize = 2;
     if (textarea) {
       textarea.value = "";
       textarea.removeAttribute("data-language");

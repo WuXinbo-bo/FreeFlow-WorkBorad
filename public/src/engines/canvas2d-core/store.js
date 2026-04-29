@@ -3,6 +3,8 @@ import { normalizeBoard } from "./elements/index.js";
 import { createHistoryState } from "./history.js";
 import { clone } from "./utils.js";
 
+const DEFAULT_PERSIST_DEBOUNCE_MS = 320;
+
 function loadBoard(disableLocalStorage = false) {
   if (disableLocalStorage) {
     return normalizeBoard({});
@@ -47,6 +49,7 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
         };
   const state = {
     board: initialBoard ? normalizeBoard(initialBoard) : loadBoard(disableLocalStorage),
+    boardRevision: 1,
     tool: "select",
     mode: "canvas2d",
     theme: theme || "light",
@@ -74,11 +77,72 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
     boardLastSavedAt: null,
     boardSaveToastAt: null,
     boardSaveToastMessage: "",
+    exportHistory: [],
+    exportHistoryUpdatedAt: 0,
   };
+
+  let cachedBoardSnapshotRevision = -1;
+  let cachedBoardSnapshot = null;
+  let pendingPersistTimer = 0;
+  let pendingPersistRevision = 0;
+
+  function clearScheduledPersist() {
+    if (pendingPersistTimer) {
+      clearTimeout(pendingPersistTimer);
+      pendingPersistTimer = 0;
+    }
+  }
+
+  function flushPersist() {
+    clearScheduledPersist();
+    if (!pendingPersistRevision) {
+      return false;
+    }
+    pendingPersistRevision = 0;
+    persistHandler(state.board);
+    return true;
+  }
+
+  function schedulePersist(delay = DEFAULT_PERSIST_DEBOUNCE_MS) {
+    pendingPersistRevision = state.boardRevision;
+    clearScheduledPersist();
+    pendingPersistTimer = setTimeout(() => {
+      flushPersist();
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function handleLifecyclePersistFlush() {
+    flushPersist();
+  }
+
+  function handleVisibilityChange() {
+    if (documentTarget?.visibilityState === "hidden") {
+      handleLifecyclePersistFlush();
+    }
+  }
+
+  const lifecycleTarget = typeof window !== "undefined" ? window : null;
+  const documentTarget = typeof document !== "undefined" ? document : null;
+  if (lifecycleTarget?.addEventListener) {
+    lifecycleTarget.addEventListener("pagehide", handleLifecyclePersistFlush);
+    lifecycleTarget.addEventListener("beforeunload", handleLifecyclePersistFlush);
+  }
+  if (documentTarget?.addEventListener) {
+    documentTarget.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
+  function cloneBoardForSnapshot() {
+    if (cachedBoardSnapshotRevision === state.boardRevision && cachedBoardSnapshot) {
+      return cachedBoardSnapshot;
+    }
+    cachedBoardSnapshot = clone(state.board);
+    cachedBoardSnapshotRevision = state.boardRevision;
+    return cachedBoardSnapshot;
+  }
 
   function getSnapshot() {
     return {
-      board: clone(state.board),
+      board: cloneBoardForSnapshot(),
       tool: state.tool,
       mode: state.mode,
       editingId: state.editingId,
@@ -97,6 +161,8 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       boardLastSavedAt: state.boardLastSavedAt,
       boardSaveToastAt: state.boardSaveToastAt,
       boardSaveToastMessage: state.boardSaveToastMessage,
+      exportHistory: Array.isArray(state.exportHistory) ? state.exportHistory.map((entry) => ({ ...entry })) : [],
+      exportHistoryUpdatedAt: Number(state.exportHistoryUpdatedAt || 0) || 0,
       alignmentSnapConfig:
         state.alignmentSnapConfig && typeof state.alignmentSnapConfig === "object"
           ? { ...state.alignmentSnapConfig }
@@ -134,13 +200,32 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       return () => subscribers.delete(listener);
     },
     persist() {
-      persistHandler(state.board);
+      schedulePersist();
+    },
+    flushPersist,
+    dispose() {
+      flushPersist();
+      if (lifecycleTarget?.removeEventListener) {
+        lifecycleTarget.removeEventListener("pagehide", handleLifecyclePersistFlush);
+        lifecycleTarget.removeEventListener("beforeunload", handleLifecyclePersistFlush);
+      }
+      if (documentTarget?.removeEventListener) {
+        documentTarget.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
     },
     replaceBoard(board) {
       state.board = normalizeBoard(board);
+      state.boardRevision += 1;
+      cachedBoardSnapshotRevision = -1;
     },
     resetView() {
       state.board.view = clone(DEFAULT_VIEW);
+      state.boardRevision += 1;
+      cachedBoardSnapshotRevision = -1;
+    },
+    touchBoard() {
+      state.boardRevision += 1;
+      cachedBoardSnapshotRevision = -1;
     },
     setTool(tool) {
       state.tool = String(tool || "select").trim().toLowerCase() || "select";

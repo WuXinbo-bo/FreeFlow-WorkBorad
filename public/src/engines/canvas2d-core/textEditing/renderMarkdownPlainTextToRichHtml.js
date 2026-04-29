@@ -22,6 +22,12 @@ function renderInlineMarkdown(text = "") {
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) =>
     store(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${renderInlineMarkdown(label)}</a>`)
   );
+  html = html.replace(/\$([^$\n]+)\$/g, (_, formula) =>
+    store(`<span data-role="math-inline">${escapeHtml(String(formula || "").trim())}</span>`)
+  );
+  html = html.replace(/\\\(([^()\n]+)\\\)/g, (_, formula) =>
+    store(`<span data-role="math-inline">${escapeHtml(String(formula || "").trim())}</span>`)
+  );
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
   html = html.replace(/~~([^~]+)~~/g, "<s>$1</s>");
@@ -46,6 +52,15 @@ function isTableSeparator(line = "") {
 }
 
 function renderParagraph(lines = []) {
+  const joined = (Array.isArray(lines) ? lines : []).join("\n").trim();
+  const singleLineDisplayDollar = joined.match(/^\$\$([\s\S]+)\$\$$/);
+  if (singleLineDisplayDollar) {
+    return `<div data-role="math-block">${escapeHtml(String(singleLineDisplayDollar[1] || "").trim())}</div>`;
+  }
+  const singleLineDisplayBracket = joined.match(/^\\\[([\s\S]+)\\\]$/);
+  if (singleLineDisplayBracket) {
+    return `<div data-role="math-block">${escapeHtml(String(singleLineDisplayBracket[1] || "").trim())}</div>`;
+  }
   const content = lines.map((line) => renderInlineMarkdown(line)).join("<br>");
   return `<p>${content || "<br>"}</p>`;
 }
@@ -118,6 +133,32 @@ export function renderMarkdownPlainTextToRichHtml(text = "") {
       blocks.push(`<pre data-ff-code-block="true"><code>${escapeHtml(fence.join("\n"))}</code></pre>`);
       continue;
     }
+    if (/^\s*\$\$\s*$/.test(line)) {
+      const mathLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*\$\$\s*$/.test(lines[index])) {
+        mathLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push(`<div data-role="math-block">${escapeHtml(mathLines.join("\n").trim())}</div>`);
+      continue;
+    }
+    if (/^\s*\\\[\s*$/.test(line)) {
+      const mathLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*\\\]\s*$/.test(lines[index])) {
+        mathLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push(`<div data-role="math-block">${escapeHtml(mathLines.join("\n").trim())}</div>`);
+      continue;
+    }
     if (/^\s*>/.test(line)) {
       const quoteLines = [];
       while (index < lines.length && /^\s*>/.test(lines[index])) {
@@ -172,12 +213,14 @@ export function renderMarkdownPlainTextToRichHtml(text = "") {
     index += 1;
     while (index < lines.length && String(lines[index] || "").trim()) {
       const nextLine = lines[index];
-      if (
-        /^(#{1,6})\s+/.test(nextLine) ||
-        /^```/.test(nextLine) ||
-        /^\s*>/.test(nextLine) ||
-        /^\s*[-*+]\s+/.test(nextLine) ||
-        /^\s*\d+\.\s+/.test(nextLine) ||
+        if (
+          /^(#{1,6})\s+/.test(nextLine) ||
+          /^```/.test(nextLine) ||
+          /^\s*\$\$\s*$/.test(nextLine) ||
+          /^\s*\\\[\s*$/.test(nextLine) ||
+          /^\s*>/.test(nextLine) ||
+          /^\s*[-*+]\s+/.test(nextLine) ||
+          /^\s*\d+\.\s+/.test(nextLine) ||
         /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(nextLine)
       ) {
         break;

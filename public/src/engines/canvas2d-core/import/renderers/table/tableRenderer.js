@@ -1,6 +1,7 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import { inlineNodesToHtml, inlineNodesToPlainText } from "../text/sharedTextRenderUtils.js";
+import { IMPORTED_TEXT_WRAP_TARGET_WIDTH } from "../text/sharedTextRenderUtils.js";
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const TABLE_RENDERER_ID = "table-renderer";
@@ -306,14 +307,14 @@ function flattenListNode(listNode, level = 0, orderedStart = 1, includeHtml = fa
 
 function estimateTableWidth(structure) {
   const columns = Math.max(1, Number(structure?.columns) || 1);
-  const columnWidths = new Array(columns).fill(140);
+  const columnWidths = new Array(columns).fill(120);
 
   structure.rows.forEach((row) => {
     let columnIndex = 0;
     row.cells.forEach((cell) => {
       const width = estimateCellWidth(cell.plainText);
       const span = Math.max(1, cell.colSpan);
-      const distributed = Math.max(120, Math.round(width / span));
+      const distributed = Math.max(104, Math.round(width / span));
       for (let offset = 0; offset < span && columnIndex + offset < columnWidths.length; offset += 1) {
         columnWidths[columnIndex + offset] = Math.max(columnWidths[columnIndex + offset], distributed);
       }
@@ -321,7 +322,8 @@ function estimateTableWidth(structure) {
     });
   });
 
-  return Math.max(260, Math.min(1200, columnWidths.reduce((sum, width) => sum + width, 0)));
+  const measuredWidth = columnWidths.reduce((sum, width) => sum + width, 0);
+  return Math.max(260, Math.min(1200, Math.max(IMPORTED_TEXT_WRAP_TARGET_WIDTH, measuredWidth)));
 }
 
 function estimateTableHeight(structure) {

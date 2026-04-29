@@ -120,6 +120,30 @@ function MenuIcon() {
   );
 }
 
+function ExportHistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+      <path d="M12 4.6v8.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d="M8.8 10.8 12 13.9l3.2-3.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.2 15.6v1.2a2 2 0 0 0 2 2h7.6a2 2 0 0 0 2-2v-1.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function ChevronIcon({ open = false }) {
   return <span className={`canvas2d-engine-menu-chevron${open ? " is-open" : ""}`} aria-hidden="true">⌄</span>;
 }
@@ -139,6 +163,41 @@ function formatPathLabel(pathValue = "", emptyText = "未设置") {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function formatExportRecordTime(value) {
+  const numeric = Number(value || 0);
+  if (!numeric) {
+    return "";
+  }
+  try {
+    return new Date(numeric).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function getExportKindLabel(kind = "") {
+  const normalized = String(kind || "").trim().toLowerCase();
+  if (normalized === "pdf") return "PDF";
+  if (normalized === "png") return "PNG";
+  if (normalized === "word") return "Word";
+  if (normalized === "txt") return "TXT";
+  return normalized ? normalized.toUpperCase() : "导出";
+}
+
+function getExportScopeLabel(scope = "") {
+  const normalized = String(scope || "").trim().toLowerCase();
+  if (normalized === "board") return "画布";
+  if (normalized === "selection") return "选区";
+  if (normalized === "rich-text") return "富文本";
+  if (normalized === "capture") return "截图";
+  return "导出";
 }
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
@@ -230,7 +289,9 @@ function Canvas2DControls({ engine }) {
   const [pdfExportKind, setPdfExportKind] = useState("PDF");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [exportHistoryOpen, setExportHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [searchHighlight, setSearchHighlight] = useState(null);
@@ -241,6 +302,7 @@ function Canvas2DControls({ engine }) {
   const captureMenuRef = useRef(null);
   const menuRef = useRef(null);
   const searchRef = useRef(null);
+  const exportHistoryRef = useRef(null);
   const searchInputRef = useRef(null);
   const searchHighlightTimerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -320,12 +382,16 @@ function Canvas2DControls({ engine }) {
       if (searchRef.current && searchRef.current.contains(event.target)) {
         return;
       }
+      if (exportHistoryRef.current && exportHistoryRef.current.contains(event.target)) {
+        return;
+      }
       setDrawMenuOpen(false);
       setCaptureMenuOpen(false);
       setCapturePdfMenuOpen(false);
       setCapturePngMenuOpen(false);
       setMenuOpen(false);
       setSearchOpen(false);
+      setExportHistoryOpen(false);
     }
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
@@ -386,6 +452,10 @@ function Canvas2DControls({ engine }) {
   const searchResults = useMemo(
     () => buildCanvasSearchResults(snapshot?.board?.items || [], deferredSearchQuery, 10),
     [snapshot?.board?.items, deferredSearchQuery]
+  );
+  const exportHistory = useMemo(
+    () => (Array.isArray(snapshot?.exportHistory) ? snapshot.exportHistory.slice(0, 10) : []),
+    [snapshot?.exportHistory, snapshot?.exportHistoryUpdatedAt]
   );
   const searchHighlightStyle = useMemo(() => {
     if (!searchHighlight?.bounds) {
@@ -492,6 +562,14 @@ function Canvas2DControls({ engine }) {
   const closeSearch = () => {
     setSearchOpen(false);
     setSearchActiveIndex(0);
+  };
+
+  const handleOpenExportHistoryTarget = (target) => {
+    const value = String(target || "").trim();
+    if (!value) {
+      return;
+    }
+    bridge.openExternalUrl?.(value);
   };
 
   const focusSearchResult = (result) => {
@@ -628,9 +706,11 @@ function Canvas2DControls({ engine }) {
         "--canvas2d-overlay-scale": overlayScale,
       }}
     >
-      <div className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}`}>
+      <div
+        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed ? " is-info-collapsed" : ""}`}
+      >
       <div className="canvas2d-engine-corner canvas2d-engine-corner-top-left" aria-label="工作白板模式信息">
-        <div className="canvas2d-floating-card canvas2d-floating-card-info is-compact">
+        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact${infoPanelCollapsed ? " is-collapsed" : ""}`}>
           <div className="canvas2d-brand-row" aria-label="FreeFlow 品牌">
             <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
             <img
@@ -638,45 +718,57 @@ function Canvas2DControls({ engine }) {
               src="/assets/brand/FreeFlow_logo.svg"
               alt="FreeFlow logo"
             />
-          </div>
-          {editingTitle ? (
-            <input
-              ref={titleInputRef}
-              className="canvas2d-board-title-input"
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.target.value)}
-              onBlur={() => {
-                void commitTitleRename();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitTitleRename();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setEditingTitle(false);
-                }
-              }}
-            />
-          ) : (
-            <div
-              className="canvas2d-floating-title canvas2d-board-title"
-              title={boardTitle}
-              onDoubleClick={() => setEditingTitle(true)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                bridge.revealBoardInFolder();
-              }}
+            <button
+              type="button"
+              className="canvas2d-info-collapse-toggle"
+              onClick={() => setInfoPanelCollapsed((value) => !value)}
+              title={infoPanelCollapsed ? "展开画布信息" : "收起画布信息"}
+              aria-label={infoPanelCollapsed ? "展开画布信息" : "收起画布信息"}
+              aria-pressed={infoPanelCollapsed}
             >
-              {boardTitle}
+              <span aria-hidden="true">{infoPanelCollapsed ? "›" : "‹"}</span>
+            </button>
+          </div>
+          <div className="canvas2d-info-detail">
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                className="canvas2d-board-title-input"
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                onBlur={() => {
+                  void commitTitleRename();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void commitTitleRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setEditingTitle(false);
+                  }
+                }}
+              />
+            ) : (
+              <div
+                className="canvas2d-floating-title canvas2d-board-title"
+                title={boardTitle}
+                onDoubleClick={() => setEditingTitle(true)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  bridge.revealBoardInFolder();
+                }}
+              >
+                {boardTitle}
+              </div>
+            )}
+            <div className="canvas2d-floating-meta">
+              <span className={`canvas2d-badge${autosaveEnabled ? " is-on" : " is-off"}`}>
+                自动保存 {autosaveEnabled ? "开" : "关"}
+              </span>
+              {autosaveEnabled && autosaveAt ? <span className="canvas2d-badge is-time">上次 {autosaveAt}</span> : null}
             </div>
-          )}
-          <div className="canvas2d-floating-meta">
-            <span className={`canvas2d-badge${autosaveEnabled ? " is-on" : " is-off"}`}>
-              自动保存 {autosaveEnabled ? "开" : "关"}
-            </span>
-            {autosaveEnabled && autosaveAt ? <span className="canvas2d-badge is-time">上次 {autosaveAt}</span> : null}
           </div>
         </div>
       </div>
@@ -1289,24 +1381,94 @@ function Canvas2DControls({ engine }) {
           </div>
         </div>
       </div>
-      <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
-        <CanvasSearchOverlay
-          isOpen={searchOpen}
-          query={searchQuery}
-          results={searchResults}
-          activeIndex={searchActiveIndex}
-          highlightQuery={searchQuery}
-          onOpen={openSearch}
-          onClose={closeSearch}
-          onQueryChange={(value) => {
-            setSearchQuery(value);
-            setSearchActiveIndex(0);
-          }}
-          onKeyDown={handleSearchKeyDown}
-          onHoverResult={setSearchActiveIndex}
-          onSelectResult={handleSearchSelect}
-          inputRef={searchInputRef}
-        />
+      <div className="canvas2d-engine-search-stack">
+        <div className="canvas2d-engine-search-row">
+          <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
+            <CanvasSearchOverlay
+              isOpen={searchOpen}
+              query={searchQuery}
+              results={searchResults}
+              activeIndex={searchActiveIndex}
+              highlightQuery={searchQuery}
+              onOpen={openSearch}
+              onClose={closeSearch}
+              onQueryChange={(value) => {
+                setSearchQuery(value);
+                setSearchActiveIndex(0);
+              }}
+              onKeyDown={handleSearchKeyDown}
+              onHoverResult={setSearchActiveIndex}
+              onSelectResult={handleSearchSelect}
+              inputRef={searchInputRef}
+            />
+          </div>
+          <div ref={exportHistoryRef} className="canvas2d-engine-export-history-wrap" aria-label="导出历史入口">
+            <button
+              type="button"
+              className={`canvas2d-engine-export-history-trigger${exportHistoryOpen ? " is-active" : ""}`}
+              onClick={() => setExportHistoryOpen((value) => !value)}
+              title="查看最近导出记录"
+              aria-label="查看最近导出记录"
+            >
+              <span className="canvas2d-engine-export-history-icon" aria-hidden="true">
+                <ExportHistoryIcon />
+              </span>
+            </button>
+            {exportHistory.length ? (
+              <span className="canvas2d-engine-export-history-badge" aria-hidden="true">
+                {Math.min(10, exportHistory.length)}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="canvas2d-engine-export-history-layer">
+          {exportHistoryOpen ? (
+            <div className="canvas2d-engine-export-history-panel">
+              <div className="canvas2d-engine-export-history-panel-head">
+                <strong>导出记录</strong>
+                <span>当前画布最近 10 次</span>
+              </div>
+              <div className="canvas2d-engine-export-history-list">
+                {exportHistory.length ? (
+                  exportHistory.map((entry) => {
+                    const jumpTarget = String(entry?.jumpTarget || entry?.filePath || "").trim();
+                    const pathLabel = String(entry?.filePath || entry?.fileName || "").trim();
+                    const interactive = Boolean(jumpTarget);
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className={`canvas2d-engine-export-history-item${interactive ? "" : " is-disabled"}`}
+                        onClick={() => {
+                          if (interactive) {
+                            handleOpenExportHistoryTarget(jumpTarget);
+                          }
+                        }}
+                        disabled={!interactive}
+                        title={interactive ? pathLabel || jumpTarget : "当前记录未保存本地路径"}
+                      >
+                        <span className="canvas2d-engine-export-history-item-main">
+                          <strong>{entry.title || "导出记录"}</strong>
+                          <span>{pathLabel || "浏览器下载未返回本地路径"}</span>
+                        </span>
+                        <span className="canvas2d-engine-export-history-item-meta">
+                          <span>{getExportScopeLabel(entry.scope)}</span>
+                          <span>{getExportKindLabel(entry.kind)}</span>
+                          <span>{formatExportRecordTime(entry.exportedAt)}</span>
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="canvas2d-engine-export-history-empty">
+                    <strong>还没有导出记录</strong>
+                    <span>导出 Word、PDF、PNG 后会出现在这里。</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
       </div>
       </div>

@@ -38,6 +38,11 @@ import {
   updateTableElementStructure,
 } from "./elements/table.js";
 import {
+  serializeTableMatrixToMarkdown,
+  serializeTableMatrixToPlainText,
+  serializeTableMatrixToTsv,
+} from "./elements/tableFormats.js";
+import {
   createCodeBlockElement,
   isMermaidCodeBlock,
   normalizeCodeBlockElement,
@@ -63,6 +68,7 @@ import {
   TEXT_RESIZE_MODE_WRAP,
   TEXT_WRAP_MODE_MANUAL,
 } from "./elements/text.js";
+import { buildTextElementFromMathElement } from "./elements/mathText.js";
 import { measureTextElementLayout } from "./textLayout/measureTextElementLayout.js";
 import { createLightImageEditor } from "./editors/lightImageEditor.js";
 import { createCodeBlockEditor } from "./editors/codeBlockEditor.js";
@@ -87,18 +93,39 @@ import {
 import { resolveImportedTextBoxLayout } from "./import/renderers/text/sharedTextRenderUtils.js";
 import { renderLatexToStaticHtml } from "./import/renderers/markdown/markdownStaticRenderer.js";
 import { measureCodeBlockLayout } from "./codeBlock/measureCodeBlockLayout.js";
-import { renderCodeBlockStatic } from "./codeBlock/renderCodeBlockStatic.js";
+import { cleanupCodeBlockStaticNode, renderCodeBlockStatic } from "./codeBlock/renderCodeBlockStatic.js";
+import {
+  CODE_BLOCK_LANGUAGE_OPTIONS,
+  getCodeBlockLanguageDisplayLabel,
+  getCodeBlockLanguageFileExtension,
+  isWeakCodeLanguageTag as isWeakCodeLanguageTagFromRegistry,
+  normalizeCodeBlockLanguageTag,
+} from "./codeBlock/languageRegistry.js";
 import {
   createHistoryState,
   markHistoryBaseline,
   pushHistory,
   pushPatchHistory,
   redoHistory,
+  takeHistoryMetadataSnapshot,
   takeHistorySnapshot,
   undoHistory,
 } from "./history.js";
 import { hitTestElement, hitTestHandle, invalidateHitTestSpatialIndex } from "./hitTest.js";
-import { getStructuredTableSceneGrid, scaleSceneValue } from "./viewportMetrics.js";
+import { getStructuredTableSceneGrid, normalizeMathRenderState, scaleSceneValue } from "./viewportMetrics.js";
+import {
+  getSceneRecord,
+  invalidateSceneIndex,
+  querySceneIndex,
+  queryVisibleSceneItems,
+  resolveSceneIndex,
+} from "./scene/sceneIndex.js";
+import { createSceneRegistry } from "./scene/sceneRegistry.js";
+import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
+import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
+import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
+import { createRenderScheduler } from "./render/renderScheduler.js";
+import { buildUnifiedPreviewSummaryMarkup } from "./previewSummaryMarkup.js";
 import {
   buildFileCardContextMenuHtml,
   getFileCardHit,
@@ -108,6 +135,14 @@ import {
 } from "./fileCardModule.js";
 import { createRenderer } from "./renderer.js";
 import { placeMenuNearPoint, placeSubmenuNearTrigger } from "./menuPositioning.js";
+import {
+  buildCodeBlockContextMenuHtml,
+  buildLockDeleteTailHtml,
+  buildMathContextMenuHtml,
+  buildRichEditorContextMenuHtml,
+  buildRichTextItemContextMenuHtml,
+  buildTableContextMenuHtml,
+} from "./contextMenu/menuSchemaBuilders.js";
 import { clearLegacyBoardStorage, createCanvas2DStore } from "./store.js";
 import { createPanPointer } from "./tools/panTool.js";
 import { getMarqueeSelection, hasDragExceededThreshold, resolveSelectionTarget } from "./tools/selectTool.js";
@@ -136,6 +171,14 @@ import {
   renderBoardToCanvas as renderExportBoardToCanvas,
 } from "./export/renderBoardToCanvas.js";
 import { buildExportReadyBoardItems } from "./export/buildExportReadyBoardItems.js";
+import { createHostExportAssetAdapter } from "./export/host/hostExportAssetAdapter.js";
+import { createHostExportFileAdapter } from "./export/host/hostExportFileAdapter.js";
+import {
+  getCopyOperationMeta,
+  getExportOperationMeta,
+  resolveCopyExportAction,
+} from "./export/copyExportProtocol.js";
+import { createStructuredExportRuntime } from "./export/runtime/createStructuredExportRuntime.js";
 import {
   createInputDescriptor,
   INPUT_CHANNELS,
@@ -148,7 +191,10 @@ import {
   ensureRichTextDocumentFields,
   RICH_TEXT_BLOCK_TYPES,
   serializeRichTextBlocksToHtml,
+  serializeRichTextDocumentToHtml,
+  serializeRichTextDocumentToPlainText,
 } from "./textModel/richTextDocument.js";
+import { serializeRichTextDocumentToMarkdown } from "./textModel/serializeRichTextDocumentToMarkdown.js";
 import {
   createRichTextClipboardPayload,
   parseRichTextClipboardPayload,
@@ -166,6 +212,8 @@ import { API_ROUTES, readJsonResponse } from "../../api/http.js";
 const TOOL_SET = new Set(["select", "text", ...DRAW_TOOLS]);
 const DEFAULT_TEXT_FONT_SIZE = 20;
 const TEXT_EDIT_MAX_WIDTH = 3200;
+const IMPORTED_PASTE_FRAME_WIDTH = 760;
+const TEXT_BLOCK_SPLIT_GAP = 12;
 const TEXT_STYLE_PRESETS = Object.freeze({
   body: {
     label: "正文",
@@ -194,6 +242,25 @@ const RICH_BLOCK_TYPE_OPTIONS = Object.freeze([
   { value: "heading-5", label: "##### 五级标题" },
   { value: "heading-6", label: "###### 六级标题" },
 ]);
+const RICH_TOOLBAR_DEFAULT_COLOR_SLOTS = Object.freeze(["#0f172a", "#dc2626", "#2563eb"]);
+const RICH_TOOLBAR_DEFAULT_PRESET_COLORS = Object.freeze([
+  "#0f172a",
+  "#334155",
+  "#dc2626",
+  "#f97316",
+  "#ca8a04",
+  "#16a34a",
+  "#0ea5e9",
+  "#2563eb",
+  "#7c3aed",
+  "#db2777",
+]);
+const RICH_TOOLBAR_PRESET_COLOR_LIMIT = 16;
+const RICH_TOOLBAR_COLOR_LABELS = Object.freeze({
+  "#0f172a": "黑色",
+  "#dc2626": "红色",
+  "#2563eb": "蓝色",
+});
 const MARKDOWN_SEMANTIC_TEXT_TYPES = new Set([
   DETECTED_TEXT_TYPES.MARKDOWN,
   DETECTED_TEXT_TYPES.TABLE,
@@ -228,20 +295,33 @@ function buildRichBlockTypeSelectHtml(dataAction = "block-type", ariaLabel = "�
 function buildRichQuoteMenuHtml() {
   return `
     <div class="canvas2d-rich-submenu" data-submenu="blockquote">
-      <button type="button" class="canvas2d-rich-btn" data-action="blockquote" title="引用">❝</button>
       <button
         type="button"
         class="canvas2d-rich-btn canvas2d-rich-submenu-toggle"
         data-action="toggle-blockquote-menu"
-        aria-label="引用层级菜单"
+        aria-label="引用菜单"
         aria-expanded="false"
-        title="引用层级"
-      >▾</button>
-      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="引用层级菜单">
+        title="引用"
+      >❝</button>
+      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="引用菜单">
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote" title="引用">引用</button>
         <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote-indent" title="引用层级加一">层级 +</button>
         <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote-outdent" title="引用层级减一">层级 -</button>
       </div>
     </div>
+  `;
+}
+
+function buildRichSubmenuActionButton(action, title, icon, label) {
+  return `
+    <button
+      type="button"
+      class="canvas2d-rich-btn canvas2d-rich-submenu-item canvas2d-rich-submenu-item-wide"
+      data-action="${action}"
+      aria-label="${title}"
+      title="${title}"
+      style="display:flex;align-items:center;justify-content:flex-start;gap:8px;min-width:132px;padding:0 10px;"
+    ><span class="canvas2d-rich-submenu-item-icon" style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;">${icon}</span><span class="canvas2d-rich-submenu-item-label" style="white-space:nowrap;">${label}</span></button>
   `;
 }
 
@@ -256,11 +336,118 @@ function buildRichMathMenuHtml() {
         aria-expanded="false"
         title="公式"
       >fx</button>
-      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="公式菜单">
-        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="insert-math-inline" title="插入行内公式">行内公式</button>
-        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="insert-math-block" title="插入独行公式">独行公式</button>
-        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="edit-math-source" title="编辑当前公式">编辑公式</button>
+      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="公式菜单" style="min-width:148px;display:flex;flex-direction:column;gap:6px;">
+        ${buildRichSubmenuActionButton("insert-math-inline", "行内公式", "fx", "行内公式")}
+        ${buildRichSubmenuActionButton("insert-math-block", "独立公式", "∑", "独立公式")}
       </div>
+    </div>
+  `;
+}
+
+function buildRichLinkMenuHtml() {
+  return `
+    <div class="canvas2d-rich-submenu" data-submenu="link">
+      <button
+        type="button"
+        class="canvas2d-rich-btn canvas2d-rich-submenu-toggle"
+        data-action="toggle-link-menu"
+        aria-label="链接菜单"
+        aria-expanded="false"
+        title="链接"
+      >🔗</button>
+      <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="链接菜单" style="min-width:148px;display:flex;flex-direction:column;gap:6px;">
+        ${buildRichSubmenuActionButton("link", "外部链接", "↗", "外部链接")}
+        ${buildRichSubmenuActionButton("link-canvas", "画布链接", "◎", "画布链接")}
+        ${buildRichSubmenuActionButton("link-remove", "删除链接", "✕", "删除链接")}
+      </div>
+    </div>
+  `;
+}
+
+function buildRichColorControlsHtml() {
+  const slotsHtml = RICH_TOOLBAR_DEFAULT_COLOR_SLOTS.map(
+    (color, index) =>
+      `<button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-role="rich-color-slot" data-slot-index="${index}" data-color="${color}" title="${
+        RICH_TOOLBAR_COLOR_LABELS[String(color || "").toLowerCase()] || "文本颜色"
+      }"></button>`
+  ).join("");
+  return `
+    ${slotsHtml}
+    <div class="canvas2d-rich-color-control" data-role="rich-color-control">
+      <button
+        type="button"
+        class="canvas2d-rich-btn canvas2d-rich-color-toggle"
+        data-action="toggle-color-panel"
+        aria-label="自定义颜色"
+        aria-expanded="false"
+        title="自定义颜色"
+      >+</button>
+      <div class="canvas2d-rich-color-panel is-hidden" data-role="rich-color-panel" aria-label="颜色面板">
+        <div class="canvas2d-rich-color-panel-head" data-role="rich-color-panel-head">
+          <label class="canvas2d-rich-color-picker-wrap" data-role="rich-color-picker-wrap">
+            <input type="color" class="canvas2d-rich-color-picker" data-action="color-picker" value="${RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[2]}"/>
+          </label>
+          <button type="button" class="canvas2d-rich-btn canvas2d-rich-color-reset" data-action="color-reset-default">恢复默认</button>
+        </div>
+        <div class="canvas2d-rich-color-presets" data-role="rich-color-presets">
+          <div class="canvas2d-rich-color-presets-grid" data-role="rich-color-presets-grid"></div>
+        </div>
+        <div class="canvas2d-rich-color-panel-foot" data-role="rich-color-panel-foot">
+          <button type="button" class="canvas2d-rich-btn canvas2d-rich-color-add" data-action="color-add-preset" title="保存到常用预设">+</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildCodeBlockLanguageSelectHtml() {
+  return CODE_BLOCK_LANGUAGE_OPTIONS.map(
+    (option) => `<option value="${option.value}">${option.label}</option>`
+  ).join("");
+}
+
+function buildPersistentRichToolbarHtml() {
+  return `
+    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-single">
+      ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
+      <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+      ${buildRichMathMenuHtml()}
+      ${buildRichQuoteMenuHtml()}
+      <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
+      ${buildRichLinkMenuHtml()}
+      ${buildRichColorControlsHtml()}
+    </div>
+  `;
+}
+
+function buildSelectionRichToolbarHtml() {
+  return `
+    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top">
+      ${buildRichBlockTypeSelectHtml("block-type", "块级语义")}
+      <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+    </div>
+    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom">
+      ${buildRichMathMenuHtml()}
+      ${buildRichQuoteMenuHtml()}
+      <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
+      ${buildRichLinkMenuHtml()}
+      ${buildRichColorControlsHtml()}
     </div>
   `;
 }
@@ -281,13 +468,59 @@ function hasRenderedKatexMarkup(markup = "") {
   return /\bkatex(?:-display)?\b/i.test(String(markup || ""));
 }
 
+function getMathWorkerUrl() {
+  if (typeof document !== "undefined" && document.baseURI) {
+    return new URL("./vendor/katex/katex-render-worker.js", document.baseURI).toString();
+  }
+  if (typeof location !== "undefined" && location.href) {
+    return new URL("./vendor/katex/katex-render-worker.js", location.href).toString();
+  }
+  return "";
+}
+
+function canScheduleMathMarkupUpgrade(formula = "") {
+  return Boolean(String(formula || "").trim());
+}
+
 function getCodeBlockContent(item) {
   return sanitizeText(String(item?.code ?? item?.text ?? item?.plainText ?? ""));
 }
 
+function serializeCodeBlockToMarkdown(item) {
+  const code = getCodeBlockContent(item);
+  const language = normalizeCodeBlockLanguageTag(item?.language || "");
+  const fence = language || "";
+  return `\`\`\`${fence}\n${code}\n\`\`\``;
+}
+
 function getCodeBlockItemTitle(item) {
-  const language = String(item?.language || "").trim().toLowerCase();
-  return buildTextTitle(language ? `${language} 代码块` : "代码块");
+  const language = normalizeCodeBlockLanguageTag(item?.language || "");
+  return buildTextTitle(language ? `${getCodeBlockLanguageDisplayLabel(language)} 代码块` : "代码块");
+}
+
+function describeCodeBlockToolbarState(item, { dirty = false } = {}) {
+  const language = normalizeCodeBlockLanguageTag(item?.language || "");
+  const parts = [getCodeBlockLanguageDisplayLabel(language)];
+  if (isMermaidCodeBlock(item)) {
+    parts.push(item?.previewMode === "source" ? "源码" : "预览");
+  }
+  parts.push(item?.wrap === true ? "换行" : "单行");
+  parts.push(item?.showLineNumbers === false ? "无行号" : "行号");
+  if (dirty) {
+    parts.push("未保存");
+  }
+  return parts.join(" · ");
+}
+
+function getCodeBlockPreviewControlState(item) {
+  const mermaid = isMermaidCodeBlock(item);
+  const previewing = mermaid && item?.previewMode !== "source";
+  return {
+    enabled: mermaid,
+    active: previewing,
+    label: mermaid ? (previewing ? "源码" : "预览") : "预览",
+    title: mermaid ? (previewing ? "切换到源码" : "切换到预览") : "仅 Mermaid 支持预览",
+  };
 }
 
 function convertPlainClipboardTextToSemanticHtml(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
@@ -301,7 +534,7 @@ function convertPlainClipboardTextToSemanticHtml(text = "", baseFontSize = DEFAU
   }
   let result = "";
   const detected = detectTextContentType(source);
-  if (MARKDOWN_SEMANTIC_TEXT_TYPES.has(detected?.type)) {
+  if (MARKDOWN_SEMANTIC_TEXT_TYPES.has(detected?.type) || hasMarkdownMathSyntax(source)) {
     result = sanitizeHtml(normalizeRichHtmlInlineFontSizes(renderMarkdownPlainTextToRichHtml(source), baseFontSize)).trim();
     writeClipboardSemanticHtmlCache(source, baseFontSize, result);
     return result;
@@ -318,19 +551,39 @@ function convertPlainClipboardTextToSemanticHtml(text = "", baseFontSize = DEFAU
   return "";
 }
 
+function hasMarkdownMathSyntax(text = "") {
+  const source = sanitizeText(String(text || ""));
+  if (!source) {
+    return false;
+  }
+  return (
+    /\$[^$\n]+?\$/.test(source) ||
+    /\\\([^()\n]+?\\\)/.test(source) ||
+    /^\s*\$\$\s*$/m.test(source) ||
+    /^\s*\\\[\s*$/m.test(source) ||
+    /^\s*\$\$[\s\S]+?\$\$\s*$/m.test(source) ||
+    /^\s*\\\[[\s\S]+?\\\]\s*$/m.test(source)
+  );
+}
+
+function htmlContainsRenderableMath(html = "") {
+  const source = String(html || "");
+  if (!source) {
+    return false;
+  }
+  return (
+    /\bkatex(?:-display)?\b/i.test(source) ||
+    /data-role=(?:"|')math-(?:inline|block)(?:"|')/i.test(source) ||
+    /data-ff-rich-math=(?:"|')(?:inline|block)(?:"|')/i.test(source)
+  );
+}
+
 async function convertPlainClipboardTextToSemanticHtmlAsync(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
   const source = sanitizeText(text || "").trim();
   if (!source) {
     return "";
   }
-  const cached = readClipboardSemanticHtmlCache(source, baseFontSize);
-  if (cached !== null) {
-    return cached;
-  }
-  await yieldForHeavyClipboardText(source);
-  const html = convertPlainClipboardTextToSemanticHtml(source, baseFontSize);
-  writeClipboardSemanticHtmlCache(source, baseFontSize, html);
-  return html;
+  return convertPlainClipboardTextToSemanticHtml(source, baseFontSize);
 }
 
 function shouldFenceAsCodeMarkdown(detected = null) {
@@ -357,19 +610,7 @@ function shouldFenceAsCodeMarkdown(detected = null) {
 }
 
 function isWeakCodeLanguageTag(language = "") {
-  const normalized = String(language || "").trim().toLowerCase();
-  return (
-    !normalized ||
-    normalized === "text" ||
-    normalized === "plain" ||
-    normalized === "plaintext" ||
-    normalized === "markdown" ||
-    normalized === "md" ||
-    normalized === "mdx" ||
-    normalized === "gfm" ||
-    normalized === "txt" ||
-    normalized === "none"
-  );
+  return isWeakCodeLanguageTagFromRegistry(language);
 }
 
 function convertMisclassifiedCodeBlockToText(item, fontSizeFallback = DEFAULT_TEXT_FONT_SIZE) {
@@ -397,9 +638,53 @@ const CLIPBOARD_SEMANTIC_VERY_HEAVY_TEXT_THRESHOLD = 80000;
 const CLIPBOARD_SEMANTIC_DEGRADE_THRESHOLD = 12000;
 const RICH_OVERLAY_CULL_PADDING_PX = 160;
 const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
+const RICH_OVERLAY_DETAIL_CACHE_LIMIT = 180;
+const RICH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
+const RICH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
+const MATH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
+const MATH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
+const CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE = 0.15;
+const CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE = 0.15;
+const CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE = 0.15;
+const CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE = 0.15;
+const MATH_MARKUP_CACHE_LIMIT = 160;
+const OVERLAY_IDLE_TASK_TIMEOUT_MS = 96;
+const OVERLAY_IDLE_MIN_TIME_REMAINING_MS = 4;
+const OVERLAY_IDLE_FLUSH_BUDGET_MS = 10;
+const RICH_OVERLAY_IDLE_BATCH_LIMIT = 4;
+const MATH_OVERLAY_IDLE_BATCH_LIMIT = 3;
+const HISTORY_AUTO_PATCH_ITEM_LIMIT = 64;
+const HISTORY_AUTO_PATCH_ORDER_LIMIT = 256;
+const PASTE_BATCH_YIELD_ITEM_THRESHOLD = 24;
+const PASTE_BATCH_YIELD_CHUNK_SIZE = 24;
+const PASTE_NON_BLOCKING_TEXT_THRESHOLD = 8000;
+const PASTE_NON_BLOCKING_HTML_THRESHOLD = 16000;
 const INTERNAL_DRAG_MARKER_ATTR = "data-freeflow-canvas2d-marker";
 const LINK_SEMANTIC_ENABLED_KEY = "ai_worker_canvas2d_link_semantic_enabled_v1";
+const EXPORT_HISTORY_STORAGE_KEY = "ai_worker_canvas2d_export_history_v1";
+const EXPORT_HISTORY_LIMIT = 10;
+const CANVAS_INTERNAL_LINK_SCHEME = "freeflow://canvas/item/";
+const CANVAS_INTERNAL_LINK_TYPE = "canvas-item";
+const EXTERNAL_LINK_TYPE = "external";
+const TABLE_EDITOR_MIN_SCREEN_WIDTH = 320;
+const TABLE_EDITOR_MIN_SCREEN_HEIGHT = 168;
+const TABLE_EDITOR_MAX_SCREEN_WIDTH = 1120;
+const TABLE_EDITOR_MAX_SCREEN_HEIGHT = 760;
+const TABLE_EDITOR_VIEWPORT_PADDING = 16;
 const clipboardSemanticHtmlCache = new Map();
+const mathMarkupCache = new Map();
+const pendingMathRenderTasks = new WeakMap();
+const pendingMathRenderByCacheKey = new Map();
+const richOverlayDetailHtmlCache = new Map();
+const pendingRichOverlayDetailTasks = new WeakMap();
+const pendingRichOverlayDetailByCacheKey = new Map();
+let mathWorkerState = {
+  supported: typeof Worker !== "undefined",
+  disabled: false,
+  worker: null,
+  nextRequestId: 0,
+  requestsById: new Map(),
+};
 
 function getClipboardSemanticCacheKey(text = "", baseFontSize = DEFAULT_TEXT_FONT_SIZE) {
   return `${Math.max(8, Number(baseFontSize) || DEFAULT_TEXT_FONT_SIZE)}::${String(text || "")}`;
@@ -428,6 +713,139 @@ function writeClipboardSemanticHtmlCache(text = "", baseFontSize = DEFAULT_TEXT_
   }
 }
 
+function normalizeExportHistoryBoardKey(value = "") {
+  return String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function readExportHistoryStorage() {
+  try {
+    const raw = localStorage.getItem(EXPORT_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeExportHistoryStorage(cache = {}) {
+  try {
+    localStorage.setItem(EXPORT_HISTORY_STORAGE_KEY, JSON.stringify(cache));
+  } catch {
+    // Ignore export history persistence failures.
+  }
+}
+
+function normalizeExportHistoryEntry(entry = {}) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const exportedAt = Number(entry.exportedAt || entry.timestamp || Date.now()) || Date.now();
+  const kind = String(entry.kind || "").trim().toLowerCase();
+  const scope = String(entry.scope || "").trim().toLowerCase();
+  const title = String(entry.title || "").trim();
+  const filePath = String(entry.filePath || "").trim();
+  const fileName = String(entry.fileName || "").trim();
+  const jumpTarget = String(entry.jumpTarget || filePath || "").trim();
+  const id = String(entry.id || `${exportedAt}_${kind}_${scope}_${fileName || title}`.replace(/\s+/g, "_"));
+  return {
+    id,
+    exportedAt,
+    kind,
+    scope,
+    title: title || fileName || "导出记录",
+    filePath,
+    fileName,
+    jumpTarget,
+  };
+}
+
+function normalizeExportHistoryList(list = []) {
+  return (Array.isArray(list) ? list : [])
+    .map((entry) => normalizeExportHistoryEntry(entry))
+    .filter(Boolean)
+    .sort((left, right) => Number(right.exportedAt || 0) - Number(left.exportedAt || 0))
+    .slice(0, EXPORT_HISTORY_LIMIT);
+}
+
+function createIdleBatchQueue({ process, perFlushLimit = 4, timeout = OVERLAY_IDLE_TASK_TIMEOUT_MS } = {}) {
+  const queuedKeys = [];
+  const queuedSet = new Set();
+  let cancelScheduledFlush = null;
+
+  function ensureFlushScheduled() {
+    if (cancelScheduledFlush || !queuedKeys.length) {
+      return;
+    }
+    cancelScheduledFlush = scheduleIdleTask((deadline) => {
+      cancelScheduledFlush = null;
+      flush(deadline);
+    }, timeout);
+  }
+
+  function flush(deadline = null) {
+    const startTime =
+      typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+    let processed = 0;
+    while (queuedKeys.length) {
+      if (processed >= perFlushLimit) {
+        break;
+      }
+      if (
+        processed > 0 &&
+        deadline &&
+        typeof deadline.timeRemaining === "function" &&
+        deadline.timeRemaining() < OVERLAY_IDLE_MIN_TIME_REMAINING_MS
+      ) {
+        break;
+      }
+      const now =
+        typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      if (processed > 0 && now - startTime >= OVERLAY_IDLE_FLUSH_BUDGET_MS) {
+        break;
+      }
+      const key = queuedKeys.shift();
+      queuedSet.delete(key);
+      process?.(key);
+      processed += 1;
+    }
+    if (queuedKeys.length) {
+      ensureFlushScheduled();
+    }
+  }
+
+  return {
+    enqueue(key) {
+      if (!key || queuedSet.has(key)) {
+        return;
+      }
+      queuedSet.add(key);
+      queuedKeys.push(key);
+      ensureFlushScheduled();
+    },
+    remove(key) {
+      if (!key || !queuedSet.has(key)) {
+        return;
+      }
+      queuedSet.delete(key);
+      const index = queuedKeys.indexOf(key);
+      if (index >= 0) {
+        queuedKeys.splice(index, 1);
+      }
+    },
+    clear() {
+      queuedKeys.length = 0;
+      queuedSet.clear();
+      if (typeof cancelScheduledFlush === "function") {
+        cancelScheduledFlush();
+      }
+      cancelScheduledFlush = null;
+    },
+  };
+}
+
 function yieldToNextFrame() {
   if (typeof requestAnimationFrame === "function") {
     return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -440,16 +858,6 @@ function yieldToIdleWindow(timeout = 32) {
     return new Promise((resolve) => requestIdleCallback(() => resolve(), { timeout }));
   }
   return yieldToNextFrame();
-}
-
-async function yieldForHeavyClipboardText(text = "") {
-  const length = String(text || "").length;
-  if (length >= CLIPBOARD_SEMANTIC_HEAVY_TEXT_THRESHOLD) {
-    await yieldToNextFrame();
-  }
-  if (length >= CLIPBOARD_SEMANTIC_VERY_HEAVY_TEXT_THRESHOLD) {
-    await yieldToIdleWindow(48);
-  }
 }
 
 function shouldDeferSemanticUpgradeForText(text = "") {
@@ -536,6 +944,158 @@ function getLinkSemanticSignature(item) {
   });
 }
 
+function normalizeComparableUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    return new URL(raw, globalThis?.location?.href || "https://freeflow.local/").toString();
+  } catch {
+    return raw;
+  }
+}
+
+function isCanvasInternalLinkUrl(url = "") {
+  return String(url || "").trim().toLowerCase().startsWith(CANVAS_INTERNAL_LINK_SCHEME);
+}
+
+function buildCanvasInternalLinkUrl(itemId = "") {
+  const normalizedItemId = String(itemId || "").trim();
+  if (!normalizedItemId) {
+    return "";
+  }
+  return `${CANVAS_INTERNAL_LINK_SCHEME}${encodeURIComponent(normalizedItemId)}`;
+}
+
+function resolveCanvasInternalLinkTargetId(url = "") {
+  const raw = String(url || "").trim();
+  if (!isCanvasInternalLinkUrl(raw)) {
+    return "";
+  }
+  const encodedTarget = raw.slice(CANVAS_INTERNAL_LINK_SCHEME.length);
+  if (!encodedTarget) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(encodedTarget).trim();
+  } catch {
+    return encodedTarget.trim();
+  }
+}
+
+function normalizeUserLinkInput(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (isCanvasInternalLinkUrl(raw)) {
+    return raw;
+  }
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      return new URL(raw).toString();
+    } catch {
+      return "";
+    }
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+    const normalizedPath = raw.replace(/\\/g, "/");
+    return encodeURI(`file:///${normalizedPath}`);
+  }
+  if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
+    const normalizedPath = raw.replace(/\\/g, "/");
+    return encodeURI(`file:${normalizedPath}`);
+  }
+  if (/^\/[^/]/.test(raw)) {
+    return encodeURI(`file://${raw}`);
+  }
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:", "mailto:", "tel:", "file:", "freeflow:"].includes(parsed.protocol)) {
+      return "";
+    }
+    return parsed.toString();
+  } catch {
+    if (/^www\./i.test(raw)) {
+      try {
+        return new URL(`https://${raw}`).toString();
+      } catch {
+        return "";
+      }
+    }
+    if (/^[^\s]+\.[^\s]+/.test(raw) && !raw.includes("://")) {
+      try {
+        return new URL(`https://${raw}`).toString();
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  }
+}
+
+function applyLinkSemanticsToRichDisplayNode(node, item) {
+  if (!(node instanceof HTMLDivElement) || !item || item.type !== "text") {
+    return;
+  }
+  const anchors = Array.from(node.querySelectorAll("a[href]"));
+  if (!anchors.length) {
+    return;
+  }
+  const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
+  const metaCache = item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
+  anchors.forEach((anchor) => {
+    const href = String(anchor.getAttribute("href") || anchor.href || "").trim();
+    const normalizedHref = normalizeComparableUrl(href);
+    if (!normalizedHref) {
+      return;
+    }
+    const matchedToken = tokens.find((token) => normalizeComparableUrl(token?.url || "") === normalizedHref) || null;
+    const meta =
+      metaCache[href] && typeof metaCache[href] === "object"
+        ? metaCache[href]
+        : metaCache[normalizedHref] && typeof metaCache[normalizedHref] === "object"
+          ? metaCache[normalizedHref]
+          : {};
+    const canvasTargetId = resolveCanvasInternalLinkTargetId(href || normalizedHref);
+    const linkType = canvasTargetId ? CANVAS_INTERNAL_LINK_TYPE : EXTERNAL_LINK_TYPE;
+    const kindHint = canvasTargetId
+      ? "canvas-link"
+      : String(matchedToken?.kindHint || "link").trim().toLowerCase() || "link";
+    anchor.setAttribute("data-link-token", "1");
+    anchor.setAttribute("data-link-url", href || normalizedHref);
+    anchor.setAttribute("data-link-kind", kindHint);
+    anchor.setAttribute("data-link-type", linkType);
+    if (canvasTargetId) {
+      anchor.setAttribute("data-link-target-id", canvasTargetId);
+    } else {
+      anchor.removeAttribute("data-link-target-id");
+    }
+    anchor.setAttribute(
+      "data-link-state",
+      String(meta?.fetchState || matchedToken?.fetchState || "unknown").trim().toLowerCase() || "unknown"
+    );
+    if (Number.isFinite(Number(matchedToken?.rangeStart))) {
+      anchor.setAttribute("data-link-range-start", String(Number(matchedToken.rangeStart)));
+    }
+    if (Number.isFinite(Number(matchedToken?.rangeEnd))) {
+      anchor.setAttribute("data-link-range-end", String(Number(matchedToken.rangeEnd)));
+    }
+    if (linkType === EXTERNAL_LINK_TYPE) {
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener noreferrer");
+    } else {
+      anchor.removeAttribute("target");
+      anchor.removeAttribute("rel");
+    }
+    const title = String(meta?.title || href || normalizedHref).trim();
+    if (title) {
+      anchor.setAttribute("title", title);
+    }
+  });
+}
+
 function getTextResizeMode(item) {
   return normalizeTextResizeMode(
     item?.textResizeMode || deriveTextResizeModeFromLayoutMode(getTextBoxLayoutMode(item)),
@@ -616,6 +1176,12 @@ function normalizeEditedRichTextContent(item, html, fontSize) {
     }
   );
   const plainText = initialContent.plainText;
+  // Keep explicit anchor mappings stable:
+  // when user edits href without changing displayed text, remapping from plain text
+  // would rebuild links from text content and overwrite the edited href.
+  if (/<a\b[^>]*href\s*=/i.test(String(html || ""))) {
+    return initialContent;
+  }
   if (!shouldRemapPlainTextToSemanticHtml(initialContent, plainText)) {
     return initialContent;
   }
@@ -634,6 +1200,31 @@ function normalizeEditedRichTextContent(item, html, fontSize) {
       fontSize,
     }
   );
+}
+
+function normalizeEditedTableCellContent(cell, html, fontSize = DEFAULT_TEXT_FONT_SIZE) {
+  return ensureRichTextDocumentFields(
+    {
+      ...(cell && typeof cell === "object" ? cell : {}),
+      html,
+      plainText: htmlToPlainText(html),
+      text: htmlToPlainText(html),
+      richTextDocument: cell?.richTextDocument || null,
+    },
+    {
+      fontSize,
+    }
+  );
+}
+
+function renderTableCellStaticHtml(cell = {}, fontSize = DEFAULT_TEXT_FONT_SIZE) {
+  const normalizedHtml = sanitizeHtml(
+    normalizeRichHtmlInlineFontSizes(normalizeRichHtml(String(cell?.html || "").trim()), fontSize)
+  ).trim();
+  if (normalizedHtml) {
+    return normalizedHtml;
+  }
+  return escapeRichTextHtml(String(cell?.plainText || "")).replace(/\n/g, "<br>");
 }
 
 function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT_TEXT_FONT_SIZE) {
@@ -658,6 +1249,193 @@ function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT
     widthHint: Math.max(240, currentWidth, Number(importedLayout?.width || 0) || 0),
     heightHint: currentHeight,
   };
+}
+
+function extractStandaloneMathBlockSegments(html = "") {
+  if (typeof document === "undefined") {
+    return [];
+  }
+  const source = String(html || "").trim();
+  if (!source) {
+    return [];
+  }
+  const root = document.createElement("div");
+  root.innerHTML = source;
+  const segments = [];
+  const textBuffer = document.createElement("div");
+  const flushTextBuffer = () => {
+    const bufferHtml = String(textBuffer.innerHTML || "").trim();
+    textBuffer.innerHTML = "";
+    if (!bufferHtml) {
+      return;
+    }
+    const plainText = sanitizeText(htmlToPlainText(bufferHtml));
+    if (!plainText.trim() && !/<(?:img|table|blockquote|pre|ul|ol|hr)\b/i.test(bufferHtml)) {
+      return;
+    }
+    segments.push({
+      type: "text",
+      html: bufferHtml,
+      plainText,
+    });
+  };
+  Array.from(root.childNodes).forEach((node) => {
+    if (node instanceof HTMLElement && String(node.getAttribute("data-role") || "").trim().toLowerCase() === "math-block") {
+      flushTextBuffer();
+      const formula = sanitizeText(String(node.textContent || "")).trim();
+      if (formula) {
+        segments.push({
+          type: "math-block",
+          formula,
+        });
+      }
+      return;
+    }
+    textBuffer.appendChild(node.cloneNode(true));
+  });
+  flushTextBuffer();
+  return segments;
+}
+
+function buildSplitTextSegmentItem(baseItem, segment, { x = 0, y = 0, width = 240, fontSize = DEFAULT_TEXT_FONT_SIZE } = {}) {
+  const html = normalizeRichHtmlInlineFontSizes(String(segment?.html || ""), fontSize).trim();
+  const plainText = sanitizeText(segment?.plainText || htmlToPlainText(html));
+  const content = ensureRichTextDocumentFields(
+    {
+      ...baseItem,
+      html,
+      plainText,
+      text: plainText,
+      fontSize,
+      x,
+      y,
+      width,
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    },
+    {
+      fontSize,
+    }
+  );
+  const measured = measureTextElementLayout(
+    {
+      ...baseItem,
+      html: content.html,
+      plainText: content.plainText,
+      text: content.plainText,
+      richTextDocument: content.richTextDocument,
+      fontSize,
+      width,
+      height: Math.max(40, Number(baseItem?.height || 0) || 40),
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    },
+    {
+      includeHtmlMeasurement: true,
+      widthHint: width,
+    }
+  );
+  const normalizedItem = normalizeTextElement({
+    ...baseItem,
+    id: createId("text"),
+    x,
+    y,
+    width,
+    height: Math.max(40, Math.ceil(Number(measured.height || 0) || 40)),
+    fontSize,
+    html: content.html,
+    plainText: content.plainText,
+    text: content.plainText,
+    richTextDocument: content.richTextDocument,
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    wrapMode: TEXT_WRAP_MODE_MANUAL,
+    title: buildTextTitle(content.plainText || "文本"),
+    linkTokens: Array.isArray(baseItem?.linkTokens) ? baseItem.linkTokens : [],
+    urlMetaCache: baseItem?.urlMetaCache && typeof baseItem.urlMetaCache === "object" ? baseItem.urlMetaCache : {},
+  });
+  const semanticData = syncTextLinkSemanticFields(normalizedItem, content.plainText, content.richTextDocument, {
+    semanticEnabled: true,
+  });
+  normalizedItem.linkTokens = semanticData.linkTokens;
+  normalizedItem.urlMetaCache = semanticData.urlMetaCache;
+  if (semanticData.richTextDocument) {
+    normalizedItem.richTextDocument = semanticData.richTextDocument;
+  }
+  normalizedItem.width = width;
+  normalizedItem.height = Math.max(40, Math.ceil(Number(measured.height || normalizedItem.height || 0) || 40));
+  return normalizedItem;
+}
+
+function buildSplitMathBlockItem(baseItem, formula = "", { x = 0, y = 0, width = 240, fontSize = DEFAULT_TEXT_FONT_SIZE } = {}) {
+  const mathItem = buildTextElementFromMathElement(
+    {
+      formula,
+      displayMode: true,
+      sourceFormat: "latex",
+      renderState: "ready",
+      locked: Boolean(baseItem?.locked),
+    },
+    {
+      x,
+      y,
+      width,
+      fontSize: Math.max(fontSize, 22),
+    }
+  );
+  const measured = measureTextElementLayout(
+    {
+      ...mathItem,
+      width,
+      height: Math.max(72, Number(mathItem.height || 0) || 72),
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    },
+    {
+      includeHtmlMeasurement: true,
+      widthHint: width,
+    }
+  );
+  const normalizedItem = normalizeTextElement({
+    ...mathItem,
+    x,
+    y,
+    width,
+    height: Math.max(72, Math.ceil(Number(measured.height || mathItem.height || 0) || 72)),
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    wrapMode: TEXT_WRAP_MODE_MANUAL,
+    color: baseItem?.color || "#0f172a",
+  });
+  normalizedItem.width = width;
+  normalizedItem.height = Math.max(72, Math.ceil(Number(measured.height || normalizedItem.height || 0) || 72));
+  return normalizedItem;
+}
+
+function buildStandaloneMathBlockSplitItems(baseItem, html = "", options = {}) {
+  const segments = extractStandaloneMathBlockSegments(html);
+  const hasStandaloneMath = segments.some((segment) => segment.type === "math-block");
+  if (!hasStandaloneMath) {
+    return null;
+  }
+  const x = Number(baseItem?.x || 0) || 0;
+  const startY = Number(baseItem?.y || 0) || 0;
+  const width = Math.max(160, Number(options.width || baseItem?.width || 0) || 240);
+  const fontSize = Number(options.fontSize || baseItem?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE;
+  const items = [];
+  let cursorY = startY;
+  segments.forEach((segment) => {
+    const nextItem =
+      segment.type === "math-block"
+        ? buildSplitMathBlockItem(baseItem, segment.formula, { x, y: cursorY, width, fontSize })
+        : buildSplitTextSegmentItem(baseItem, segment, { x, y: cursorY, width, fontSize });
+    if (!nextItem) {
+      return;
+    }
+    items.push(nextItem);
+    cursorY += Math.max(40, Number(nextItem.height || 0) || 40) + TEXT_BLOCK_SPLIT_GAP;
+  });
+  return items.length ? items : null;
 }
 
 function syncTextLinkSemanticFields(item, plainText = "", richTextDocument = null, options = {}) {
@@ -775,19 +1553,34 @@ function applyRichEditorTypographyTokens(editor) {
 
 function getRichOverlayViewportBounds(surface, fallbackWidth = 0, fallbackHeight = 0, cullPadding = RICH_OVERLAY_CULL_PADDING_PX) {
   const surfaceRect = surface?.getBoundingClientRect?.();
-  const width = Math.max(
-    1,
+  const measuredWidth =
     Number(surfaceRect?.width || 0) ||
-      Number(surface?.clientWidth || 0) ||
-      Number(fallbackWidth || 0) ||
-      1
-  );
+    Number(surface?.clientWidth || 0) ||
+    Number(fallbackWidth || 0) ||
+    0;
+  const measuredHeight =
+    Number(surfaceRect?.height || 0) ||
+    Number(surface?.clientHeight || 0) ||
+    Number(fallbackHeight || 0) ||
+    0;
+  const viewportFallbackWidth =
+    typeof window !== "undefined"
+      ? Math.max(
+          Number(window.innerWidth || 0) || 0,
+          Number(document?.documentElement?.clientWidth || 0) || 0
+        )
+      : 0;
+  const viewportFallbackHeight =
+    typeof window !== "undefined"
+      ? Math.max(
+          Number(window.innerHeight || 0) || 0,
+          Number(document?.documentElement?.clientHeight || 0) || 0
+        )
+      : 0;
+  const width = Math.max(1, measuredWidth > 4 ? measuredWidth : Math.max(measuredWidth, viewportFallbackWidth, 1));
   const height = Math.max(
     1,
-    Number(surfaceRect?.height || 0) ||
-      Number(surface?.clientHeight || 0) ||
-      Number(fallbackHeight || 0) ||
-      1
+    measuredHeight > 4 ? measuredHeight : Math.max(measuredHeight, viewportFallbackHeight, 1)
   );
   const padding = Math.max(0, Number(cullPadding || 0));
   return {
@@ -826,6 +1619,613 @@ function getRichOverlayScaleBucket(scale = 1) {
   return String(Math.round(normalized / step) * step);
 }
 
+function isDetailedOverlayScale(scale = 1, minScale = 0.5) {
+  return Math.max(0.1, Number(scale) || 1) >= Math.max(0.1, Number(minScale) || 0.5);
+}
+
+function isCanvasLodScale(scale = 1, minScale = 0.15) {
+  return Math.max(0.1, Number(scale) || 1) <= Math.max(0.1, Number(minScale) || 0.15);
+}
+
+function hideOverlayHost(host, virtualizer, { onRemove = null } = {}) {
+  if (!(host instanceof HTMLDivElement)) {
+    return;
+  }
+  host.classList.add("is-hidden");
+  host.style.display = "none";
+  virtualizer?.clear?.({
+    removeNodes: true,
+    onRemove,
+  });
+}
+
+function showOverlayHost(host) {
+  if (!(host instanceof HTMLDivElement)) {
+    return;
+  }
+  host.classList.remove("is-hidden");
+  host.style.display = "block";
+}
+
+function buildOverlayTextPreview(text = "", maxLength = 240) {
+  const source = sanitizeText(String(text || ""));
+  if (!source) {
+    return "";
+  }
+  const normalized = source.replace(/\n{3,}/g, "\n\n");
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function hashOverlayContent(value = "") {
+  const source = String(value || "");
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function readRichOverlayDetailHtmlCache(key = "") {
+  if (!key || !richOverlayDetailHtmlCache.has(key)) {
+    return "";
+  }
+  const cached = richOverlayDetailHtmlCache.get(key) || "";
+  richOverlayDetailHtmlCache.delete(key);
+  richOverlayDetailHtmlCache.set(key, cached);
+  return cached;
+}
+
+function writeRichOverlayDetailHtmlCache(key = "", html = "") {
+  if (!key) {
+    return;
+  }
+  if (richOverlayDetailHtmlCache.has(key)) {
+    richOverlayDetailHtmlCache.delete(key);
+  }
+  richOverlayDetailHtmlCache.set(key, html);
+  while (richOverlayDetailHtmlCache.size > RICH_OVERLAY_DETAIL_CACHE_LIMIT) {
+    const oldestKey = richOverlayDetailHtmlCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    richOverlayDetailHtmlCache.delete(oldestKey);
+  }
+}
+
+function getRichOverlayDetailHtmlCacheKey(item, linkSignature = "") {
+  const plainText = String(item?.plainText || item?.text || "");
+  const rawHtml = String(item?.html || "");
+  return [
+    String(item?.id || ""),
+    Number(item?.updatedAt || 0),
+    Number(item?.fontSize || 0),
+    rawHtml.length,
+    hashOverlayContent(rawHtml),
+    plainText.length,
+    hashOverlayContent(plainText),
+    hashOverlayContent(linkSignature),
+  ].join("|");
+}
+
+function resolveCachedRichOverlayDetailHtml(item, linkSignature = "") {
+  const cacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
+  const cached = readRichOverlayDetailHtmlCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const html = normalizeRichHtmlInlineFontSizes(
+    resolveRichTextDisplayHtml({
+      text: item?.plainText || item?.text || "",
+      html: item?.html || "",
+      linkTokens: item?.linkTokens || [],
+    }),
+    item?.fontSize || DEFAULT_TEXT_FONT_SIZE
+  );
+  writeRichOverlayDetailHtmlCache(cacheKey, html);
+  return html;
+}
+
+function cancelPendingRichOverlayDetail(node) {
+  const pending = pendingRichOverlayDetailTasks.get(node);
+  if (pending?.cancel) {
+    pending.cancel();
+  }
+  pendingRichOverlayDetailTasks.delete(node);
+}
+
+function applyRichOverlayDetailHtmlToNode(
+  node,
+  {
+    detailRenderSignature = "",
+    html = "",
+    item = null,
+    linkSignature = "",
+    scale = 1,
+    scaleBucket = "1",
+  } = {}
+) {
+  if (!(node instanceof HTMLDivElement)) {
+    return false;
+  }
+  if (node.dataset.detailRenderSignature !== detailRenderSignature) {
+    return false;
+  }
+  if (!html.trim()) {
+    return false;
+  }
+  const contentMutated = node.dataset.contentMode !== "detail" || node.dataset.html !== html;
+  if (contentMutated) {
+    node.innerHTML = html;
+    node.dataset.html = html;
+    node.dataset.text = "";
+    node.dataset.contentMode = "detail";
+  }
+  if (item?.type === "text" && (contentMutated || node.dataset.linkSignature !== linkSignature)) {
+    applyLinkSemanticsToRichDisplayNode(node, item);
+    node.dataset.linkSignature = linkSignature;
+  }
+  if (contentMutated || node.dataset.inlineScaleBucket !== scaleBucket) {
+    applyInlineFontSizingToContainer(node, scale);
+    node.dataset.inlineScaleBucket = scaleBucket;
+  }
+  if (contentMutated) {
+    applyRichTypographyTokens(node);
+  }
+  return contentMutated;
+}
+
+function scheduleRichOverlayDetailHtml(
+  node,
+  {
+    cacheKey = "",
+    detailRenderSignature = "",
+    item = null,
+    linkSignature = "",
+    scale = 1,
+    scaleBucket = "1",
+  } = {}
+) {
+  if (!(node instanceof HTMLDivElement) || !cacheKey || !item) {
+    return;
+  }
+  const activeTask = pendingRichOverlayDetailTasks.get(node);
+  if (activeTask?.detailRenderSignature === detailRenderSignature) {
+    return;
+  }
+  cancelPendingRichOverlayDetail(node);
+  const cachedHtml = readRichOverlayDetailHtmlCache(cacheKey);
+  if (cachedHtml) {
+    applyRichOverlayDetailHtmlToNode(node, {
+      detailRenderSignature,
+      html: cachedHtml,
+      item,
+      linkSignature,
+      scale,
+      scaleBucket,
+    });
+    return;
+  }
+  const existing = pendingRichOverlayDetailByCacheKey.get(cacheKey);
+  if (existing) {
+    existing.subscribers.push({ node, detailRenderSignature, item, linkSignature, scale, scaleBucket });
+    pendingRichOverlayDetailTasks.set(node, {
+      cacheKey,
+      detailRenderSignature,
+      cancel: () => {
+        const entry = pendingRichOverlayDetailByCacheKey.get(cacheKey);
+        if (!entry) {
+          return;
+        }
+        entry.subscribers = entry.subscribers.filter((subscriber) => subscriber.node !== node);
+        if (!entry.subscribers.length) {
+          pendingRichOverlayDetailByCacheKey.delete(cacheKey);
+          richOverlayDetailQueue.remove(cacheKey);
+        }
+      },
+    });
+    return;
+  }
+  const entry = {
+    item,
+    subscribers: [{ node, detailRenderSignature, item, linkSignature, scale, scaleBucket }],
+  };
+  pendingRichOverlayDetailByCacheKey.set(cacheKey, entry);
+  richOverlayDetailQueue.enqueue(cacheKey);
+  pendingRichOverlayDetailTasks.set(node, {
+    cacheKey,
+    detailRenderSignature,
+    cancel: () => {
+      const activeEntry = pendingRichOverlayDetailByCacheKey.get(cacheKey);
+      if (!activeEntry) {
+        return;
+      }
+      activeEntry.subscribers = activeEntry.subscribers.filter((subscriber) => subscriber.node !== node);
+      if (!activeEntry.subscribers.length) {
+        pendingRichOverlayDetailByCacheKey.delete(cacheKey);
+        richOverlayDetailQueue.remove(cacheKey);
+      }
+    },
+  });
+}
+
+function getMathMarkupCacheKey(formula = "", displayMode = false) {
+  return `${displayMode ? "block" : "inline"}::${String(formula || "").trim()}`;
+}
+
+function readMathMarkupCache(key = "") {
+  if (!key || !mathMarkupCache.has(key)) {
+    return "";
+  }
+  const cached = mathMarkupCache.get(key) || "";
+  mathMarkupCache.delete(key);
+  mathMarkupCache.set(key, cached);
+  return cached;
+}
+
+function writeMathMarkupCache(key = "", markup = "") {
+  if (!key) {
+    return;
+  }
+  if (mathMarkupCache.has(key)) {
+    mathMarkupCache.delete(key);
+  }
+  mathMarkupCache.set(key, markup);
+  while (mathMarkupCache.size > MATH_MARKUP_CACHE_LIMIT) {
+    const oldestKey = mathMarkupCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    mathMarkupCache.delete(oldestKey);
+  }
+}
+
+function applyMathRenderResultToSubscribers(entry, cacheKey, markup = "", { transport = "", fallbackToMainThread = false } = {}) {
+  const hasMarkup = markup && hasRenderedKatexMarkup(markup);
+  if (hasMarkup) {
+    writeMathMarkupCache(cacheKey, markup);
+  }
+  entry?.subscribers?.forEach((subscriber) => {
+    pendingMathRenderTasks.delete(subscriber.node);
+    const finalMarkup =
+      hasMarkup || !fallbackToMainThread ? markup : renderMathMarkup(entry?.formula, { displayMode: entry?.displayMode === true });
+    const finalHasMarkup = finalMarkup && hasRenderedKatexMarkup(finalMarkup);
+    if (finalHasMarkup) {
+      writeMathMarkupCache(cacheKey, finalMarkup);
+    }
+    if (subscriber.item && typeof subscriber.item === "object") {
+      subscriber.item.renderState = finalHasMarkup ? "ready" : "fallback";
+      // Mark the overlay as settled so detail mode does not retry indefinitely on fallback-only hosts.
+      subscriber.item.mathOverlayReady = true;
+    }
+    applyMathMarkupToNode(subscriber.node, subscriber.contentSignature, finalHasMarkup ? finalMarkup : "", {
+      fallbackText: subscriber.fallbackText,
+      state: finalHasMarkup ? "ready" : "fallback",
+      transport: transport || (finalHasMarkup ? "main-thread" : "fallback"),
+    });
+  });
+}
+
+function scheduleIdleTask(callback, timeout = OVERLAY_IDLE_TASK_TIMEOUT_MS) {
+  if (typeof requestIdleCallback === "function") {
+    const handle = requestIdleCallback((deadline) => callback(deadline || null), { timeout });
+    return () => cancelIdleCallback(handle);
+  }
+  if (typeof requestAnimationFrame === "function") {
+    const handle = requestAnimationFrame(() => callback(null));
+    return () => cancelAnimationFrame(handle);
+  }
+  const handle = setTimeout(() => callback(null), 0);
+  return () => clearTimeout(handle);
+}
+
+function scheduleAnimationFrameTask(callback) {
+  if (typeof requestAnimationFrame === "function") {
+    const handle = requestAnimationFrame(() => callback());
+    return () => cancelAnimationFrame(handle);
+  }
+  const handle = setTimeout(() => callback(), 0);
+  return () => clearTimeout(handle);
+}
+
+const richOverlayDetailQueue = createIdleBatchQueue({
+  perFlushLimit: RICH_OVERLAY_IDLE_BATCH_LIMIT,
+  process: (cacheKey) => {
+    const entry = pendingRichOverlayDetailByCacheKey.get(cacheKey);
+    if (!entry) {
+      return;
+    }
+    pendingRichOverlayDetailByCacheKey.delete(cacheKey);
+    const item = entry.item;
+    const html = normalizeRichHtmlInlineFontSizes(
+      resolveRichTextDisplayHtml({
+        text: item?.plainText || item?.text || "",
+        html: item?.html || "",
+        linkTokens: item?.linkTokens || [],
+      }),
+      item?.fontSize || DEFAULT_TEXT_FONT_SIZE
+    );
+    writeRichOverlayDetailHtmlCache(cacheKey, html);
+    entry.subscribers.forEach((subscriber) => {
+      pendingRichOverlayDetailTasks.delete(subscriber.node);
+      applyRichOverlayDetailHtmlToNode(subscriber.node, {
+        detailRenderSignature: subscriber.detailRenderSignature,
+        html,
+        item: subscriber.item,
+        linkSignature: subscriber.linkSignature,
+        scale: subscriber.scale,
+        scaleBucket: subscriber.scaleBucket,
+      });
+    });
+  },
+});
+
+const mathOverlayRenderQueue = createIdleBatchQueue({
+  perFlushLimit: MATH_OVERLAY_IDLE_BATCH_LIMIT,
+  process: (cacheKey) => {
+    const entry = pendingMathRenderByCacheKey.get(cacheKey);
+    if (!entry) {
+      return;
+    }
+    if (scheduleMathWorkerRender(cacheKey, entry)) {
+      return;
+    }
+    pendingMathRenderByCacheKey.delete(cacheKey);
+    applyMathRenderResultToSubscribers(entry, cacheKey, renderMathMarkup(entry.formula, { displayMode: entry.displayMode }), {
+      transport: "main-thread",
+    });
+  },
+});
+
+function markMathWorkerUnavailable() {
+  mathWorkerState.disabled = true;
+  if (mathWorkerState.worker) {
+    try {
+      mathWorkerState.worker.terminate();
+    } catch {
+      // Ignore worker terminate failures and keep fallback path alive.
+    }
+  }
+  mathWorkerState.worker = null;
+}
+
+function flushPendingMathWorkerRequestsToMainThread() {
+  const pendingRequests = Array.from(mathWorkerState.requestsById.entries());
+  mathWorkerState.requestsById.clear();
+  pendingRequests.forEach(([, request]) => {
+    const entry = pendingMathRenderByCacheKey.get(request.cacheKey);
+    if (!entry) {
+      return;
+    }
+    pendingMathRenderByCacheKey.delete(request.cacheKey);
+    applyMathRenderResultToSubscribers(entry, request.cacheKey, "", {
+      transport: "main-thread",
+      fallbackToMainThread: true,
+    });
+  });
+}
+
+function settleMathWorkerRequest(requestId, response = {}) {
+  const request = mathWorkerState.requestsById.get(requestId);
+  if (!request) {
+    return;
+  }
+  mathWorkerState.requestsById.delete(requestId);
+  const entry = pendingMathRenderByCacheKey.get(request.cacheKey);
+  if (!entry) {
+    return;
+  }
+  pendingMathRenderByCacheKey.delete(request.cacheKey);
+  applyMathRenderResultToSubscribers(entry, request.cacheKey, String(response.markup || ""), {
+    transport: String(response.transport || "worker"),
+    fallbackToMainThread: response.ok !== true,
+  });
+}
+
+function getMathWorker() {
+  if (!mathWorkerState.supported || mathWorkerState.disabled) {
+    return null;
+  }
+  if (mathWorkerState.worker) {
+    return mathWorkerState.worker;
+  }
+  const workerUrl = getMathWorkerUrl();
+  if (!workerUrl) {
+    mathWorkerState.disabled = true;
+    return null;
+  }
+  try {
+    const worker = new Worker(workerUrl);
+    worker.onmessage = (event) => {
+      const payload = event?.data || {};
+      const requestId = Number(payload.id);
+      if (!Number.isFinite(requestId)) {
+        return;
+      }
+      settleMathWorkerRequest(requestId, payload);
+    };
+    worker.onerror = () => {
+      markMathWorkerUnavailable();
+      flushPendingMathWorkerRequestsToMainThread();
+    };
+    mathWorkerState.worker = worker;
+    return worker;
+  } catch {
+    mathWorkerState.disabled = true;
+    return null;
+  }
+}
+
+function scheduleMathWorkerRender(cacheKey, entry) {
+  const worker = getMathWorker();
+  if (!worker || !cacheKey || !entry?.formula) {
+    return false;
+  }
+  const requestId = ++mathWorkerState.nextRequestId;
+  mathWorkerState.requestsById.set(requestId, {
+    cacheKey,
+    formula: entry.formula,
+    displayMode: entry.displayMode === true,
+  });
+  try {
+    worker.postMessage({
+      id: requestId,
+      cacheKey,
+      formula: entry.formula,
+      displayMode: entry.displayMode === true,
+    });
+    entry.subscribers?.forEach((subscriber) => {
+      if (subscriber?.node instanceof HTMLDivElement) {
+        subscriber.node.dataset.mathRenderTransport = "worker";
+      }
+    });
+    return true;
+  } catch {
+    mathWorkerState.requestsById.delete(requestId);
+    markMathWorkerUnavailable();
+    return false;
+  }
+}
+
+function cancelPendingMathRender(node) {
+  const pending = pendingMathRenderTasks.get(node);
+  if (pending?.cancel) {
+    pending.cancel();
+  }
+  pendingMathRenderTasks.delete(node);
+}
+
+function applyMathMarkupToNode(node, contentSignature, markup = "", { fallbackText = "", state = "ready", transport = "" } = {}) {
+  if (!(node instanceof HTMLDivElement)) {
+    return;
+  }
+  if (node.dataset.contentSignature !== contentSignature) {
+    return;
+  }
+  if (markup) {
+    node.innerHTML = markup;
+  } else {
+    node.textContent = fallbackText;
+  }
+  node.dataset.mathRenderState = state;
+  node.dataset.mathRenderTransport = String(transport || "");
+}
+
+function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayMode = false, contentSignature = "", fallbackText = "", item = null } = {}) {
+  if (!(node instanceof HTMLDivElement) || !cacheKey || !formula) {
+    return;
+  }
+  const activeTask = pendingMathRenderTasks.get(node);
+  if (activeTask?.cacheKey === cacheKey && activeTask?.contentSignature === contentSignature) {
+    return;
+  }
+  cancelPendingMathRender(node);
+  const cached = readMathMarkupCache(cacheKey);
+  if (cached) {
+    applyMathMarkupToNode(node, contentSignature, cached, { fallbackText, state: "ready", transport: "cache" });
+    return;
+  }
+  const existing = pendingMathRenderByCacheKey.get(cacheKey);
+  if (existing) {
+    existing.subscribers.push({ node, contentSignature, fallbackText, item });
+    pendingMathRenderTasks.set(node, {
+      cacheKey,
+      contentSignature,
+      cancel: () => {
+        const entry = pendingMathRenderByCacheKey.get(cacheKey);
+        if (!entry) {
+          return;
+        }
+        entry.subscribers = entry.subscribers.filter((subscriber) => subscriber.node !== node);
+        if (!entry.subscribers.length) {
+          pendingMathRenderByCacheKey.delete(cacheKey);
+          mathOverlayRenderQueue.remove(cacheKey);
+        }
+      },
+    });
+    node.dataset.mathRenderState = "pending";
+    return;
+  }
+  const entry = {
+    formula,
+    displayMode,
+    subscribers: [{ node, contentSignature, fallbackText, item }],
+  };
+  pendingMathRenderByCacheKey.set(cacheKey, entry);
+  mathOverlayRenderQueue.enqueue(cacheKey);
+  pendingMathRenderTasks.set(node, {
+    cacheKey,
+    contentSignature,
+    cancel: () => {
+      const activeEntry = pendingMathRenderByCacheKey.get(cacheKey);
+      if (!activeEntry) {
+        return;
+      }
+      activeEntry.subscribers = activeEntry.subscribers.filter((subscriber) => subscriber.node !== node);
+      if (!activeEntry.subscribers.length) {
+        pendingMathRenderByCacheKey.delete(cacheKey);
+        mathOverlayRenderQueue.remove(cacheKey);
+      }
+    },
+  });
+  node.dataset.mathRenderState = "pending";
+}
+
+function resolveRichOverlaySkeletonLayout({ width = 120, height = 48, isFlowNode = false } = {}) {
+  const safeWidth = Math.max(32, Number(width) || 120);
+  const safeHeight = Math.max(24, Number(height) || 48);
+  const area = safeWidth * safeHeight;
+  const lineCount = area >= 120000 ? 4 : area >= 4200 ? 3 : 2;
+  const aspectRatio = safeWidth / Math.max(1, safeHeight);
+  const clusterWidth = Math.max(
+    isFlowNode ? 28 : 34,
+    Math.min(
+      isFlowNode ? 54 : 60,
+      Math.round(aspectRatio > 1.6 ? (isFlowNode ? 34 : 38) : (isFlowNode ? 44 : 48))
+    )
+  );
+  const lineHeight = area >= 120000 ? 8 : area >= 4200 ? 7 : 6;
+  const gap = lineCount >= 4 ? 8 : 10;
+  const ratios = isFlowNode
+    ? [0.88, 0.62, 0.74, 0.56]
+    : [0.96, 0.7, 0.82, 0.6];
+  return {
+    lineCount,
+    clusterWidth,
+    lineHeight,
+    gap,
+    widths: Array.from({ length: lineCount }, (_, index) => Math.max(18, Math.round(clusterWidth * (ratios[index] || 0.64)))),
+  };
+}
+
+function buildRichOverlaySkeletonMarkup({ width = 120, height = 48, isFlowNode = false, showPanel = false } = {}) {
+  const layout = resolveRichOverlaySkeletonLayout({ width, height, isFlowNode });
+  const widthRatios = layout.widths.map((lineWidth) => {
+    const denominator = Math.max(layout.clusterWidth || 1, lineWidth || 1);
+    return Math.max(0.24, Math.min(0.96, lineWidth / denominator));
+  });
+  return buildUnifiedPreviewSummaryMarkup({
+    width,
+    height,
+    showHeader: showPanel,
+    lineCount: layout.lineCount,
+    widths: widthRatios,
+    align: "left",
+  });
+}
+
+function resolveRichOverlaySummaryMode({ scale = 1, width = 0, height = 0 } = {}) {
+  const normalizedScale = Math.max(0.1, Number(scale) || 1);
+  const area = Math.max(1, Number(width || 0) || 0) * Math.max(1, Number(height || 0) || 0);
+  if (normalizedScale < RICH_OVERLAY_PREVIEW_MIN_SCALE || area < 2600) {
+    return "summary-skeleton";
+  }
+  return "summary-skeleton";
+}
+
 function getRichOverlayClassSignature(item) {
   return JSON.stringify({
     flow: item?.type === "flowNode",
@@ -844,7 +2244,6 @@ function getRichOverlayStyleSignature({
   fontWeight = TEXT_FONT_WEIGHT,
   color = "#0f172a",
   widthCss = "",
-  heightCss = "",
   minHeightCss = "",
   maxWidthCss = "",
   display = "block",
@@ -863,7 +2262,6 @@ function getRichOverlayStyleSignature({
     String(fontWeight || TEXT_FONT_WEIGHT),
     String(color || "#0f172a"),
     String(widthCss || ""),
-    String(heightCss || ""),
     String(minHeightCss || ""),
     String(maxWidthCss || ""),
     String(display || "block"),
@@ -909,14 +2307,52 @@ function getMathOverlayTypography(item, scale = 1) {
   };
 }
 
-function getMathOverlayStyleSignature({ left = 0, top = 0, fontSize = 16, paddingX = 0, paddingY = 0 } = {}) {
+function getMathOverlayStyleSignature({
+  left = 0,
+  top = 0,
+  fontSize = 16,
+  paddingX = 0,
+  paddingY = 0,
+  widthCss = "",
+  minHeightCss = "",
+  whiteSpace = "normal",
+  justifyContent = "center",
+} = {}) {
   return [
     Math.round(Number(left || 0) * 100) / 100,
     Math.round(Number(top || 0) * 100) / 100,
     Math.round(Number(fontSize || 0) * 100) / 100,
     Math.round(Number(paddingX || 0) * 100) / 100,
     Math.round(Number(paddingY || 0) * 100) / 100,
+    String(widthCss || ""),
+    String(minHeightCss || ""),
+    String(whiteSpace || "normal"),
+    String(justifyContent || "center"),
   ].join("|");
+}
+
+function resolveMathOverlaySummaryMode({ scale = 1, width = 0, height = 0, displayMode = false } = {}) {
+  const normalizedScale = Math.max(0.1, Number(scale) || 1);
+  const safeWidth = Math.max(1, Number(width || 0) || 0);
+  const safeHeight = Math.max(1, Number(height || 0) || 0);
+  const area = safeWidth * safeHeight;
+  if (normalizedScale < MATH_OVERLAY_PREVIEW_MIN_SCALE || area < (displayMode ? 2200 : 1200)) {
+    return "summary-skeleton";
+  }
+  return "summary-skeleton";
+}
+
+function buildMathOverlaySummaryMarkup({
+  displayMode = false,
+  width = 0,
+  height = 0,
+} = {}) {
+  return buildRichOverlaySkeletonMarkup({
+    width: Math.max(24, Number(width || 0) || 0),
+    height: Math.max(18, Number(height || 0) || 0),
+    isFlowNode: false,
+    showPanel: displayMode,
+  });
 }
 
 function readMathOverlayFrame(node, scale = 1) {
@@ -1520,6 +2956,8 @@ export function createCanvas2DEngine(options = {}) {
   const { state } = store;
   state.alignmentSnapConfig = createAlignmentSnapConfig(options.alignmentSnap);
   state.alignmentSnap = createAlignmentSnapState();
+  state.exportHistory = [];
+  state.exportHistoryUpdatedAt = 0;
 
   state.board.items = state.board.items.map((item) => {
     if (item?.type === "text") {
@@ -1547,6 +2985,51 @@ export function createCanvas2DEngine(options = {}) {
     }
     return item;
   });
+
+  function resolveActiveExportHistoryBoardKey() {
+    return normalizeExportHistoryBoardKey(state.boardFilePath || state.boardFileName || "未命名画布");
+  }
+
+  function syncExportHistoryForActiveBoard({ emit = true } = {}) {
+    const cache = readExportHistoryStorage();
+    const boardKey = resolveActiveExportHistoryBoardKey();
+    state.exportHistory = normalizeExportHistoryList(cache[boardKey]);
+    state.exportHistoryUpdatedAt = Date.now();
+    if (emit) {
+      store.emit();
+    }
+    return state.exportHistory;
+  }
+
+  function persistExportHistoryForActiveBoard(entries = []) {
+    const cache = readExportHistoryStorage();
+    const boardKey = resolveActiveExportHistoryBoardKey();
+    cache[boardKey] = normalizeExportHistoryList(entries);
+    writeExportHistoryStorage(cache);
+    state.exportHistory = cache[boardKey];
+    state.exportHistoryUpdatedAt = Date.now();
+    store.emit();
+    return state.exportHistory;
+  }
+
+  function recordExportHistory(entry = {}) {
+    const normalized = normalizeExportHistoryEntry(entry);
+    if (!normalized) {
+      return [];
+    }
+    const existing = Array.isArray(state.exportHistory) ? state.exportHistory : [];
+    const deduped = existing.filter(
+      (item) =>
+        !(
+          String(item.filePath || "").trim() === normalized.filePath &&
+          String(item.kind || "").trim() === normalized.kind &&
+          Math.abs(Number(item.exportedAt || 0) - Number(normalized.exportedAt || 0)) < 1000
+        )
+    );
+    return persistExportHistoryForActiveBoard([normalized, ...deduped]);
+  }
+
+  syncExportHistoryForActiveBoard({ emit: false });
 
   function normalizeExportName(value, fallback) {
     const base = String(value || "").trim() || fallback;
@@ -1747,10 +3230,14 @@ export function createCanvas2DEngine(options = {}) {
 
   const getAllowLocalFileAccess = () => state.board?.preferences?.allowLocalFileAccess !== false;
   const getBoardBackgroundPattern = () => normalizeBoardBackgroundPattern(state.board?.preferences?.backgroundPattern);
+  const sceneRegistry = createSceneRegistry({
+    getSceneIndex: () => getSceneIndexRuntime(),
+    getSelectedIds: () => state.board.selectedIds,
+  });
   const imageModule = createImageModule();
   const shapeModule = createShapeModule();
   const flowModule = createFlowModule({
-    getItemById: (id) => state.board.items.find((entry) => entry.id === id),
+    getItemById: (id) => sceneRegistry.getItemById(id),
   });
   const elementRenderers = [
     shapeModule.createRenderer(),
@@ -1772,6 +3259,12 @@ export function createCanvas2DEngine(options = {}) {
         return navigator.clipboard.readText();
       }
       return "";
+    },
+    readClipboardItems: async () => {
+      if (navigator.clipboard?.read) {
+        return navigator.clipboard.read();
+      }
+      return [];
     },
     writeClipboardPayload: async (payload) => {
       if (!(navigator.clipboard?.write) || typeof ClipboardItem === "undefined") {
@@ -1837,6 +3330,10 @@ export function createCanvas2DEngine(options = {}) {
     sanitizeText,
     sanitizeHtml,
     htmlToPlainText,
+    hasMarkdownMathText: hasMarkdownMathSyntax,
+    htmlContainsRenderableMath,
+    convertPlainTextToSemanticHtml: (text) =>
+      convertPlainClipboardTextToSemanticHtmlAsync(text, DEFAULT_TEXT_FONT_SIZE),
     isImageFile: imageModule.isImageFile,
     getFilePath: (file) => {
       if (typeof globalThis?.desktopShell?.getPathForFile === "function") {
@@ -1855,6 +3352,10 @@ export function createCanvas2DEngine(options = {}) {
   const refs = {
     host: null,
     surface: null,
+    fixedOverlayHost: null,
+    canvasLinkBindingOverlay: null,
+    canvasLinkBindingHint: null,
+    richExternalLinkPanel: null,
     canvas: null,
     ctx: null,
     editor: null,
@@ -1870,6 +3371,7 @@ export function createCanvas2DEngine(options = {}) {
     fileMemoEditor: null,
     imageMemoEditor: null,
     tableEditor: null,
+    tableCellRichEditor: null,
     tableToolbar: null,
     uiHost: null,
     contextMenu: null,
@@ -1881,9 +3383,10 @@ export function createCanvas2DEngine(options = {}) {
   const cleanupFns = [];
   let resizeObserver = null;
   let mounted = false;
-  let renderFrame = 0;
+  let renderScheduler = null;
   let lastContextMenuPoint = null;
   let lastContextMenuTargetId = null;
+  let lastContextMenuSource = "canvas";
   let pendingImportAnchor = null;
   let suppressNativeDrag = false;
   let suppressBlankCanvasContextMenuUntil = 0;
@@ -1894,19 +3397,65 @@ export function createCanvas2DEngine(options = {}) {
   let boardLoadInFlight = null;
   let boardSaveInFlight = null;
   let boardSelectionPersistPromise = Promise.resolve();
+  let deferredStoreEmitHandle = 0;
+  let cancelDeferredStoreEmit = null;
+  let deferredStoreEmitPending = false;
   const urlMetaHydrationTasks = new Map();
+  const queuedUrlMetaHydrationTasks = new Map();
+  const fileCardIdHydrationInFlight = new Set();
+  const fileCardSourceHydrationInFlight = new Set();
+  const pendingHydrationSyncItemIds = new Set();
+  let pendingHydrationSyncSceneChange = false;
+  let pendingHydrationSyncReason = "";
+  let cancelPendingHydrationSync = null;
   const deferredTextSemanticUpgradeTasks = new Map();
   let clipboardProcessingStatusToken = 0;
+  let deferredImportedAssetPersistPromise = Promise.resolve();
   let linkSemanticEnabled = true;
   let lastEditorItemId = null;
   let lastFileMemoItemId = null;
   let lastImageMemoItemId = null;
   let lastTableEditItemId = null;
   let lastCodeBlockEditItemId = null;
+  const codeBlockCopyFeedbackTimers = new Map();
   let codeBlockEditorLayoutFrame = 0;
   let codeBlockEditorPreciseLayoutTimer = 0;
   let pendingCodeBlockEditorLayoutMode = "precise";
-  let tableEditSelection = { rowIndex: 0, columnIndex: 0 };
+let tableEditSelection = { rowIndex: 0, columnIndex: 0 };
+let tableEditRange = null;
+let tableEditFrame = null;
+let tableEditSelectionMode = "cell";
+let tableCellEditState = {
+  active: false,
+  rowIndex: 0,
+  columnIndex: 0,
+};
+let tableInteractionUiState = {
+  pointerInsideEditor: false,
+  pointerInsideToolbar: false,
+  hoveredCell: null,
+};
+let tableStructureDragState = {
+  kind: "",
+  pointerId: null,
+  active: false,
+  anchorIndex: -1,
+  targetIndex: -1,
+  startPrimary: 0,
+  startSecondary: 0,
+  startRow: 0,
+  endRow: 0,
+  startColumn: 0,
+  endColumn: 0,
+};
+let tablePointerSelectionState = {
+  pointerId: null,
+  anchor: null,
+  pendingCell: null,
+  multiSelectActive: false,
+  nativeTextSelection: false,
+  draggingRange: false,
+};
   let flowDraft = null;
   const richDisplayMap = new Map();
   const codeBlockDisplayMap = new Map();
@@ -1915,24 +3464,117 @@ export function createCanvas2DEngine(options = {}) {
   const codeBlockItemsById = new Map();
   const codeBlockEditLayoutCache = new Map();
   const mathDisplayMap = new Map();
+  const richOverlayVirtualizer = createOverlayVirtualizer({ nodeMap: richDisplayMap });
+  const mathOverlayVirtualizer = createOverlayVirtualizer({ nodeMap: mathDisplayMap });
+  const codeBlockOverlayVirtualizer = createOverlayVirtualizer({
+    nodeMap: codeBlockDisplayMap,
+    visibleIds: codeBlockVisibleIds,
+  });
+  const nonEditingSceneEventBridge = createSceneEventBridge({
+    resolveScenePoint: (event) => toScenePoint(Number(event?.clientX || 0), Number(event?.clientY || 0)),
+    resolveTarget: (scenePoint) => hitTestCanvasElement(scenePoint, state.board.view.scale),
+  });
+  const richDisplayEventBridge = createStaticDisplayEventBridge({
+    itemSelector: ".canvas2d-rich-item[data-id]",
+    resolveItemById: (itemId) =>
+      sceneRegistry.getItemById(itemId, "text") || sceneRegistry.getItemById(itemId, "flowNode") || null,
+    selectItem: ({ itemId, reason }) => {
+      if (reason === "contextmenu" && shouldPreserveMultiSelectionForContextTarget(itemId)) {
+        state.lastSelectionSource = state.lastSelectionSource || "marquee";
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+        return;
+      }
+      state.board.selectedIds = [itemId];
+      state.lastSelectionSource = null;
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    },
+    hideContextMenu: () => hideContextMenu(),
+    onPointerDownForward: (event) => onPointerDown(event),
+    onContextMenuForward: (event) => onContextMenu(event),
+    onDoubleClickItem: (_event, context) => {
+      if (context.item?.type === "text") {
+        beginTextEdit(context.itemId);
+        return;
+      }
+      if (context.item?.type === "flowNode") {
+        beginFlowNodeEdit(context.itemId);
+      }
+    },
+    onClickItem: (_event, context) => {
+      state.board.selectedIds = [context.itemId];
+      state.lastSelectionSource = null;
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    },
+    stopDoubleClickPropagation: true,
+  });
+  const codeBlockDisplayEventBridge = createStaticDisplayEventBridge({
+    itemSelector: ".canvas2d-code-block-item",
+    actionSelector: "[data-action]",
+    resolveItemById: (itemId) => sceneRegistry.getItemById(itemId, "codeBlock") || null,
+    selectItem: ({ itemId, reason }) => {
+      if (reason === "contextmenu" && shouldPreserveMultiSelectionForContextTarget(itemId)) {
+        state.lastSelectionSource = state.lastSelectionSource || "marquee";
+        markCodeBlockOverlayDirty(itemId);
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+        return;
+      }
+      state.board.selectedIds = [itemId];
+      if (reason === "contextmenu") {
+        state.lastSelectionSource = null;
+      }
+      markCodeBlockOverlayDirty(itemId);
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    },
+    hideContextMenu: () => hideContextMenu(),
+    onPointerDownForward: (event) => onPointerDown(event),
+    onContextMenuForward: (event) => onContextMenu(event),
+    onDoubleClickItem: (_event, context) => {
+      beginCodeBlockEdit(context.itemId);
+    },
+    onClickItem: (_event, context) => {
+      state.board.selectedIds = [context.itemId];
+      markCodeBlockOverlayDirty(context.itemId);
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    },
+  });
   let codeBlockOverlayNeedsFullRescan = true;
   let lastCodeBlockOverlayViewportKey = "";
   let lastCodeBlockOverlayHoverId = "";
   let lastCodeBlockOverlaySelectionKey = "";
   let lastCodeBlockOverlayEditingId = "";
   let lastCodeBlockOverlayInteractive = true;
+  let pendingSceneIndexInvalidation = false;
+  let pendingHitTestInvalidation = false;
   let pointerOverCanvas = false;
   let editBaselineSnapshot = null;
+  let deferredBlankEditExit = null;
+  let deferredBlankEditExitFrame = 0;
+  let blockedCanvasPointerDown = null;
   linkSemanticEnabled = readLinkSemanticEnabled();
   const richTextSession = createRichTextEditingSession({
     editorElement: refs.richEditor,
     onSelectionChange: () => syncRichTextToolbar(),
     onRequestCommit: () => commitRichEdit(),
     onRequestCancel: () => cancelRichEdit(),
+    onRequestExternalLink: () => runRichLinkCommand(),
+  });
+  const tableCellRichTextSession = createRichTextEditingSession({
+    editorElement: refs.tableCellRichEditor,
+    onSelectionChange: () => syncRichTextToolbar(),
+    onRequestCommit: () => commitActiveTableCellRichEdit(),
+    onRequestCancel: () => cancelActiveTableCellRichEdit(),
+    onRequestExternalLink: () => runRichLinkCommand(),
   });
   let richFontSize = DEFAULT_TEXT_FONT_SIZE;
+  let richToolbarColorSlots = RICH_TOOLBAR_DEFAULT_COLOR_SLOTS.slice();
+  let richToolbarPresetColors = RICH_TOOLBAR_DEFAULT_PRESET_COLORS.slice();
+  let pendingRichColorPreview = "";
+  let richColorPreviewFrame = 0;
+  let richColorPreviewCommitTimer = 0;
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
+  let pendingCanvasLinkBinding = false;
+  let pendingRichExternalLinkEdit = null;
   function clearCodeBlockEditLayoutCache(itemId = "") {
     if (!itemId) {
       codeBlockEditLayoutCache.clear();
@@ -2151,9 +3793,8 @@ export function createCanvas2DEngine(options = {}) {
     lastCodeBlockOverlaySelectionKey = "";
     lastCodeBlockOverlayEditingId = "";
     lastCodeBlockOverlayInteractive = isInteractiveMode();
-    if (clearNodes && codeBlockDisplayMap.size) {
-      codeBlockDisplayMap.forEach((node) => node.remove());
-      codeBlockDisplayMap.clear();
+    if (clearNodes) {
+      codeBlockOverlayVirtualizer.clear({ removeNodes: true });
     }
   }
 
@@ -2187,21 +3828,23 @@ export function createCanvas2DEngine(options = {}) {
     const height = Math.max(1, Number(item.height || 1)) * scale;
     const isVisible = hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
     const isEditing = state.editingId === item.id && state.editingType === "code-block";
-    let node = codeBlockDisplayMap.get(item.id);
+    const syntaxHighlighting = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE);
+    const showLineNumbers = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE);
+    const showHeader = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE);
+    const summaryMode = !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
     if (!isVisible) {
-      if (node) {
-        node.style.display = "none";
-      }
-      codeBlockVisibleIds.delete(item.id);
+      codeBlockOverlayVirtualizer.hideNode(item.id);
       return;
     }
+    const node = codeBlockOverlayVirtualizer.ensureNode(item.id, () => {
+      const nextNode = document.createElement("div");
+      refs.codeBlockDisplayHost.appendChild(nextNode);
+      return nextNode;
+    });
     if (!node) {
-      node = document.createElement("div");
-      refs.codeBlockDisplayHost.appendChild(node);
-      codeBlockDisplayMap.set(item.id, node);
+      return;
     }
-    codeBlockVisibleIds.add(item.id);
-    node.style.display = "block";
+    codeBlockOverlayVirtualizer.showNode(item.id);
     node.style.pointerEvents = isEditing ? "none" : "auto";
     node.style.left = `${Math.round(left)}px`;
     node.style.top = `${Math.round(top)}px`;
@@ -2217,26 +3860,30 @@ export function createCanvas2DEngine(options = {}) {
       Number(item.fontSize || 16),
       String(item.previewMode || "preview"),
     ].join("|");
-    const viewSignature = [
+    const renderSignature = [
       Math.round(scale * 1000),
-      Math.round(left),
-      Math.round(top),
-      Math.round(width),
-      Math.round(height),
+      summaryMode ? 1 : 0,
+      syntaxHighlighting ? 1 : 0,
+      showLineNumbers ? 1 : 0,
+      showHeader ? 1 : 0,
       state.hoverId === item.id ? 1 : 0,
       state.board.selectedIds.includes(item.id) ? 1 : 0,
       item.locked === true ? 1 : 0,
       isEditing ? 1 : 0,
     ].join("|");
-    if (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderViewSignature !== viewSignature) {
+    if (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderSignature !== renderSignature) {
       renderCodeBlockStatic(node, item, {
         scale,
         hover: state.hoverId === item.id,
         selected: state.board.selectedIds.includes(item.id),
         editing: isEditing,
+        summaryMode,
+        syntaxHighlighting,
+        showLineNumbers,
+        showHeader,
       });
       node.dataset.renderContentSignature = contentSignature;
-      node.dataset.renderViewSignature = viewSignature;
+      node.dataset.renderSignature = renderSignature;
     }
     node.style.pointerEvents = isEditing ? "none" : "auto";
     node.style.opacity = isEditing ? "0.82" : "1";
@@ -2246,6 +3893,7 @@ export function createCanvas2DEngine(options = {}) {
     onChange: () => {
       scheduleCodeBlockEditorLayoutSync("fast");
       scheduleCodeBlockEditorLayoutSync("precise");
+      syncCodeBlockToolbar();
     },
     onBlur: () => {
       if (state.editingType === "code-block") {
@@ -2255,7 +3903,7 @@ export function createCanvas2DEngine(options = {}) {
   });
   const onHintLogoLoaded = () => scheduleRender();
   const lightImageEditor = createLightImageEditor({
-    getImageItemById: (id) => state.board.items.find((entry) => entry.id === id && entry.type === "image"),
+    getImageItemById: (id) => sceneRegistry.getItemById(id, "image"),
     isLockedItem,
     updateImageItem: (id, updater, reason, statusText) => updateImageItem(id, updater, reason, statusText),
     setStatus,
@@ -2285,53 +3933,317 @@ export function createCanvas2DEngine(options = {}) {
     internalClipboardMime: CANVAS_CLIPBOARD_MIME,
     readClipboardText: () => clipboardBroker.readSystemClipboardText(),
     readClipboardFiles: () => clipboardBroker.readSystemClipboardFiles(),
-    getInternalPayload: () => clipboardBroker.getPayload(),
+    getInternalPayload: async () => ((await shouldUseInternalClipboard()) ? clipboardBroker.getPayload() : null),
+  });
+  const exportAssetAdapter = createHostExportAssetAdapter({
+    allowLocalFileAccess: () => getAllowLocalFileAccess(),
+    readFileBase64: (sourcePath) =>
+      typeof globalThis?.desktopShell?.readFileBase64 === "function"
+        ? globalThis.desktopShell.readFileBase64(sourcePath)
+        : null,
+  });
+  const exportFileAdapter = createHostExportFileAdapter({
+    useLocalFileSystem: () => useLocalFileSystem,
+    saveImageDataToImportFolder,
+    setSaveToast,
+  });
+  const structuredExportRuntime = createStructuredExportRuntime({
+    renderer,
+    getElementBounds,
+    getFlowEdgeBounds,
+    allowLocalFileAccess: () => getAllowLocalFileAccess(),
+    assetAdapter: exportAssetAdapter,
+    fileAdapter: exportFileAdapter,
+    resolveDefaultFileName: () => getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
   });
 
   function isInteractiveMode() {
     return state.mode === "canvas2d" && getCanvasOfficeEngineMode() === "canvas2d";
   }
 
-  function scheduleRender() {
-    if (renderFrame || !refs.canvas || !refs.ctx) {
+  let sceneRevision = 1;
+
+  function flushDeferredStoreEmit() {
+    deferredStoreEmitPending = false;
+    if (typeof cancelDeferredStoreEmit === "function") {
+      cancelDeferredStoreEmit();
+    }
+    cancelDeferredStoreEmit = null;
+    deferredStoreEmitHandle = 0;
+    store.emit();
+  }
+
+  function scheduleDeferredStoreEmit() {
+    deferredStoreEmitPending = true;
+    if (deferredStoreEmitHandle || typeof cancelDeferredStoreEmit === "function") {
       return;
     }
-    renderFrame = requestAnimationFrame(() => {
-      renderFrame = 0;
-      renderer.render({
-        ctx: refs.ctx,
-        canvas: refs.canvas,
-        view: state.board.view,
-        items: state.board.items,
-        selectedIds: state.board.selectedIds,
-        hoverId: state.hoverId,
-        selectionRect: state.selectionRect,
-        draftElement: state.draftElement,
-        editingId: state.editingId,
-        imageEditState: lightImageEditor.getState(),
-        flowDraft,
-        alignmentSnap: state.alignmentSnap,
-        alignmentSnapConfig: state.alignmentSnapConfig,
-        allowLocalFileAccess: getAllowLocalFileAccess(),
-        backgroundStyle: {
-          fill: "#ffffff",
-          pattern: getBoardBackgroundPattern(),
-        },
-        renderTextInCanvas: RENDER_TEXT_IN_CANVAS,
-      });
-      syncEditorLayout();
-      syncRichTextToolbar();
-      syncRichTextOverlays();
-      syncCodeBlockOverlays();
-      syncMathOverlays();
-      syncCodeBlockToolbar();
-      syncImageToolbar();
-      syncCanvasCursor();
+    cancelDeferredStoreEmit = scheduleAnimationFrameTask(() => {
+      flushDeferredStoreEmit();
+    });
+    deferredStoreEmitHandle = 1;
+  }
+
+  function flushPendingSceneGraphInvalidation() {
+    if (pendingSceneIndexInvalidation) {
+      invalidateSceneIndex(state.board.items);
+      pendingSceneIndexInvalidation = false;
+    }
+    if (pendingHitTestInvalidation) {
+      invalidateHitTestSpatialIndex(state.board.items);
+      pendingHitTestInvalidation = false;
+    }
+  }
+
+  function markSceneGraphDirty({ hitTest = true } = {}) {
+    sceneRevision += 1;
+    pendingSceneIndexInvalidation = true;
+    if (hitTest) {
+      pendingHitTestInvalidation = true;
+    }
+  }
+
+  function markHitTestDirty() {
+    pendingHitTestInvalidation = true;
+  }
+
+  function getSceneIndexRuntime(options = {}) {
+    flushPendingSceneGraphInvalidation();
+    return resolveSceneIndex(state.board.items, {
+      revision: sceneRevision,
+      forceRebuild: Boolean(options.forceRebuild),
     });
   }
 
-  function syncBoard({ persist = true, emit = true, markDirty = persist } = {}) {
-    markCodeBlockOverlayDirty([], { fullRescan: true });
+  function hitTestCanvasElement(point, scale = 1) {
+    flushPendingSceneGraphInvalidation();
+    return hitTestElement(state.board.items, point, scale);
+  }
+
+  function getViewportPixelSize() {
+    return {
+      width: Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || refs.surface?.clientWidth || 0) || 1),
+      height: Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || refs.surface?.clientHeight || 0) || 1),
+    };
+  }
+
+  function queryVisibleItemsByTypes(types = [], options = {}) {
+    const viewport = getViewportPixelSize();
+    const sceneIndex = getSceneIndexRuntime(options);
+    return queryVisibleSceneItems(sceneIndex, state.board.view, viewport.width, viewport.height, {
+      marginPx: Number(options.marginPx ?? 220) || 220,
+      types,
+      excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
+    });
+  }
+
+  function buildVisibleSceneRecordBuckets(records = []) {
+    const buckets = new Map();
+    (Array.isArray(records) ? records : []).forEach((record) => {
+      const itemType = String(record?.itemType || record?.item?.type || "").trim();
+      if (!itemType) {
+        return;
+      }
+      const bucket = buckets.get(itemType) || [];
+      bucket.push(record);
+      buckets.set(itemType, bucket);
+    });
+    return buckets;
+  }
+
+  function getVisibleSceneRecordsByTypes(visibleScene = null, types = [], options = {}) {
+    const targetTypes = Array.from(
+      new Set((Array.isArray(types) ? types : []).map((type) => String(type || "").trim()).filter(Boolean))
+    );
+    if (!targetTypes.length) {
+      return [];
+    }
+    if (visibleScene?.recordsByType instanceof Map) {
+      return targetTypes.flatMap((type) => visibleScene.recordsByType.get(type) || []);
+    }
+    return queryVisibleItemsByTypes(targetTypes, options).records;
+  }
+
+  function getItemByIdFast(itemId = "", expectedType = "") {
+    return sceneRegistry.getItemById(itemId, expectedType);
+  }
+
+  function getHoverItemFast(expectedType = "") {
+    return sceneRegistry.getItemById(state.hoverId, expectedType);
+  }
+
+  function getSelectedItemsFast(expectedType = "") {
+    return sceneRegistry.getSelectedItems(expectedType);
+  }
+
+  function getSingleSelectedItemFast(expectedType = "") {
+    return sceneRegistry.getSingleSelectedItem(expectedType);
+  }
+
+  function shouldPreserveMultiSelectionForContextTarget(itemId = "") {
+    const normalizedId = String(itemId || "").trim();
+    return Boolean(
+      normalizedId &&
+      state.board.selectedIds.length >= 2 &&
+      state.board.selectedIds.map((id) => String(id || "").trim()).includes(normalizedId)
+    );
+  }
+
+  function getSelectedItemsBounds() {
+    const selectedItems = getSelectedItemsFast();
+    if (!selectedItems.length) {
+      return null;
+    }
+    return selectedItems.reduce((bounds, item) => {
+      const itemBounds = getElementBounds(item);
+      if (!itemBounds) {
+        return bounds;
+      }
+      const next = {
+        left: Number(itemBounds.left || 0),
+        top: Number(itemBounds.top || 0),
+        right: Number(itemBounds.right ?? (Number(itemBounds.left || 0) + Number(itemBounds.width || 0))),
+        bottom: Number(itemBounds.bottom ?? (Number(itemBounds.top || 0) + Number(itemBounds.height || 0))),
+      };
+      if (!bounds) {
+        return next;
+      }
+      return {
+        left: Math.min(bounds.left, next.left),
+        top: Math.min(bounds.top, next.top),
+        right: Math.max(bounds.right, next.right),
+        bottom: Math.max(bounds.bottom, next.bottom),
+      };
+    }, null);
+  }
+
+  function isScenePointInsideBounds(point, bounds, padding = 0) {
+    if (!point || !bounds) {
+      return false;
+    }
+    const pad = Math.max(0, Number(padding || 0) || 0);
+    const x = Number(point.x || 0);
+    const y = Number(point.y || 0);
+    return x >= bounds.left - pad && x <= bounds.right + pad && y >= bounds.top - pad && y <= bounds.bottom + pad;
+  }
+
+  function collectRenderFrameInput({ dirtyState = null, layerState = null } = {}) {
+    if (!refs.canvas || !refs.ctx) {
+      return null;
+    }
+    const sceneIndex = getSceneIndexRuntime();
+    const sceneKey = "board-scene-cache-v3";
+    const visibleScene = queryVisibleSceneItems(
+      sceneIndex,
+      state.board.view,
+      Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1),
+      Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1),
+      { marginPx: 220 }
+    );
+    visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
+    return {
+      sceneIndex,
+      sceneKey,
+      visibleScene,
+      dirtyState,
+      layerState,
+    };
+  }
+
+  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, dirtyState = null, layerState = null } = {}) {
+    if (!refs.canvas || !refs.ctx) {
+      return null;
+    }
+    renderer.render({
+      ctx: refs.ctx,
+      canvas: refs.canvas,
+      view: state.board.view,
+      items: state.board.items,
+      visibleItems: visibleScene?.items || [],
+      sceneIndex,
+      sceneKey,
+      selectedIds: state.board.selectedIds,
+      hoverId: state.hoverId,
+      selectionRect: state.selectionRect,
+      draftElement: state.draftElement,
+      editingId: state.editingId,
+      imageEditState: lightImageEditor.getState(),
+      flowDraft,
+      alignmentSnap: state.alignmentSnap,
+      alignmentSnapConfig: state.alignmentSnapConfig,
+      allowLocalFileAccess: getAllowLocalFileAccess(),
+      backgroundStyle: {
+        fill: "#ffffff",
+        pattern: getBoardBackgroundPattern(),
+      },
+      renderTextInCanvas: RENDER_TEXT_IN_CANVAS,
+      dirtyState,
+      layerState,
+    });
+    syncEditorLayout();
+    syncRichTextToolbar();
+    syncRichTextOverlays(visibleScene);
+    syncCodeBlockOverlays(visibleScene);
+    syncMathOverlays(visibleScene);
+    syncCodeBlockToolbar();
+    syncImageToolbar();
+    syncCanvasCursor();
+    return refs.canvas?.__ffRenderStats || null;
+  }
+
+  function ensureRenderScheduler() {
+    if (renderScheduler) {
+      return renderScheduler;
+    }
+    renderScheduler = createRenderScheduler({
+      collectFrameInput: collectRenderFrameInput,
+      renderFrame: performRenderFrame,
+    });
+    return renderScheduler;
+  }
+
+  function scheduleRender(options = {}) {
+    if (!refs.canvas || !refs.ctx) {
+      return 0;
+    }
+    return ensureRenderScheduler().schedule({
+      reason: String(options.reason || "render").trim() || "render",
+      backgroundDirty: Boolean(options.backgroundDirty),
+      sceneDirty: Boolean(options.sceneDirty),
+      viewDirty: Boolean(options.viewDirty),
+      interactionDirty: options.interactionDirty !== false,
+      overlayDirty: Boolean(options.overlayDirty),
+      hitTestDirty: Boolean(options.hitTestDirty),
+      fullOverlayRescan: Boolean(options.fullOverlayRescan),
+      itemIds: Array.isArray(options.itemIds) ? options.itemIds : [],
+    });
+  }
+
+  function syncBoard({
+    persist = true,
+    emit = true,
+    markDirty = persist,
+    sceneChange = true,
+    backgroundChange = false,
+    viewChange = false,
+    interactionChange = (!sceneChange && !backgroundChange) || viewChange,
+    boardChange = sceneChange || viewChange,
+    hitTestChange = sceneChange,
+    fullOverlayRescan = sceneChange,
+    reason = "",
+    itemIds = [],
+  } = {}) {
+    if (sceneChange) {
+      markSceneGraphDirty({ hitTest: hitTestChange });
+    } else if (hitTestChange) {
+      markHitTestDirty();
+    }
+    if (boardChange) {
+      store.touchBoard?.();
+    }
+    if (fullOverlayRescan) {
+      markCodeBlockOverlayDirty([], { fullRescan: true });
+    }
     if (markDirty) {
       markBoardDirty();
     }
@@ -2339,16 +4251,28 @@ export function createCanvas2DEngine(options = {}) {
       store.persist();
     }
     if (emit) {
-      store.emit();
+      scheduleDeferredStoreEmit();
     }
-    scheduleRender();
+    scheduleRender({
+      reason:
+        String(reason || "").trim() ||
+        (sceneChange ? "scene-sync" : viewChange ? "view-sync" : hitTestChange ? "hit-test-sync" : "ui-sync"),
+      backgroundDirty: backgroundChange,
+      sceneDirty: sceneChange,
+      viewDirty: viewChange,
+      interactionDirty: Boolean(interactionChange),
+      overlayDirty: fullOverlayRescan,
+      hitTestDirty: hitTestChange,
+      fullOverlayRescan,
+      itemIds,
+    });
   }
 
   function clearAlignmentSnap(reason = "reset", { render = false } = {}) {
     const hadActiveSnap = hasActiveAlignmentSnap(state.alignmentSnap);
     resetAlignmentSnapState(state.alignmentSnap, reason);
     if (render && hadActiveSnap) {
-      scheduleRender();
+      scheduleRender({ reason: "pointer-pan", viewDirty: true, interactionDirty: false });
     }
   }
 
@@ -2364,7 +4288,7 @@ export function createCanvas2DEngine(options = {}) {
       store.emit();
     }
     if (render) {
-      scheduleRender();
+      scheduleRender({ reason: "pointer-pan-intent", viewDirty: true, interactionDirty: false });
     }
     return state.alignmentSnapConfig;
   }
@@ -2379,10 +4303,36 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function getAlignmentSnapCandidates(activeId = "", options = {}) {
-    return collectSnapCandidates(state.board.items, activeId, {
-      view: state.board.view,
-      excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
+    const activeRecord = getSceneRecord(getSceneIndexRuntime(), activeId);
+    if (!activeRecord?.bounds) {
+      return collectSnapCandidates(state.board.items, activeId, {
+        view: state.board.view,
+        excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
+      });
+    }
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1) || 1);
+    const thresholdPx = Math.max(
+      24,
+      Number(options.thresholdPx || state.alignmentSnapConfig?.thresholdPx || 8) * 4
+    );
+    const paddingScene = thresholdPx / scale;
+    const queryBounds = {
+      left: activeRecord.bounds.left - paddingScene,
+      top: activeRecord.bounds.top - paddingScene,
+      right: activeRecord.bounds.right + paddingScene,
+      bottom: activeRecord.bounds.bottom + paddingScene,
+    };
+    const candidateRecords = querySceneIndex(getSceneIndexRuntime(), queryBounds, {
+      excludeIds: [activeId, ...(Array.isArray(options.excludeIds) ? options.excludeIds : [])],
     });
+    return collectSnapCandidates(
+      candidateRecords.map((record) => record.item),
+      activeId,
+      {
+        view: state.board.view,
+        excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
+      }
+    );
   }
 
   function setStatus(text, tone = "neutral") {
@@ -2414,15 +4364,57 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function openExternalUrl(url = "") {
-    const targetUrl = String(url || "").trim();
-    if (!targetUrl) {
+    const rawUrl = String(url || "").trim();
+    if (!rawUrl) {
       return false;
     }
+    const looksLikeLocalPath =
+      /^[a-zA-Z]:[\\/]/.test(rawUrl) || /^\\\\[^\\]+\\[^\\]+/.test(rawUrl) || /^\/[^/]/.test(rawUrl);
+    if (looksLikeLocalPath && typeof globalThis?.desktopShell?.revealPath === "function") {
+      void globalThis.desktopShell.revealPath(rawUrl);
+      return true;
+    }
+    if (looksLikeLocalPath && typeof globalThis?.desktopShell?.openPath === "function") {
+      void globalThis.desktopShell.openPath(rawUrl);
+      return true;
+    }
+    const targetUrl = normalizeUserLinkInput(rawUrl) || rawUrl;
+    let parsedUrl = null;
     try {
       // Validate URL before trying to open.
-      // eslint-disable-next-line no-new
-      new URL(targetUrl);
+      parsedUrl = new URL(targetUrl);
     } catch (_error) {
+      if (typeof globalThis?.desktopShell?.revealPath === "function") {
+        void globalThis.desktopShell.revealPath(rawUrl);
+        return true;
+      }
+      if (typeof globalThis?.desktopShell?.openPath === "function") {
+        void globalThis.desktopShell.openPath(rawUrl);
+        return true;
+      }
+      return false;
+    }
+    if (!parsedUrl || !["http:", "https:", "mailto:", "tel:", "file:"].includes(parsedUrl.protocol)) {
+      return false;
+    }
+    if (parsedUrl.protocol === "file:") {
+      const normalizedPathname = decodeURIComponent(String(parsedUrl.pathname || ""));
+      const localPath = normalizedPathname.replace(/^\/([a-zA-Z]:\/)/, "$1").replace(/\//g, "\\");
+      const filePath = parsedUrl.host
+        ? `\\\\${parsedUrl.host}${normalizedPathname.replace(/\//g, "\\")}`
+        : localPath;
+      if (typeof globalThis?.desktopShell?.revealPath === "function") {
+        void globalThis.desktopShell.revealPath(filePath || rawUrl);
+        return true;
+      }
+      if (typeof globalThis?.desktopShell?.openPath === "function") {
+        void globalThis.desktopShell.openPath(filePath || rawUrl);
+        return true;
+      }
+      if (typeof window?.open === "function") {
+        window.open(parsedUrl.toString(), "_blank", "noopener,noreferrer");
+        return true;
+      }
       return false;
     }
     if (typeof globalThis?.desktopShell?.openExternal === "function") {
@@ -2445,11 +4437,7 @@ export function createCanvas2DEngine(options = {}) {
   }
 
   function findTextItemById(itemId = "") {
-    const targetId = String(itemId || "").trim();
-    if (!targetId) {
-      return null;
-    }
-    return state.board.items.find((entry) => entry.id === targetId && entry.type === "text") || null;
+    return getItemByIdFast(itemId, "text");
   }
 
   function mergeTextItemUrlMeta(itemId = "", url = "", meta = null) {
@@ -2482,6 +4470,134 @@ export function createCanvas2DEngine(options = {}) {
     syncBoard({ persist: false, emit: true, markDirty: false });
     return true;
   }
+
+  function flushPendingHydrationSync() {
+    if (typeof cancelPendingHydrationSync === "function") {
+      cancelPendingHydrationSync();
+    }
+    cancelPendingHydrationSync = null;
+    if (!pendingHydrationSyncItemIds.size && !pendingHydrationSyncSceneChange) {
+      pendingHydrationSyncReason = "";
+      return false;
+    }
+    const itemIds = Array.from(pendingHydrationSyncItemIds);
+    const sceneChange = pendingHydrationSyncSceneChange;
+    const reason = pendingHydrationSyncReason || (sceneChange ? "hydrate-deferred-scene" : "hydrate-deferred-meta");
+    pendingHydrationSyncItemIds.clear();
+    pendingHydrationSyncSceneChange = false;
+    pendingHydrationSyncReason = "";
+    syncBoard({
+      persist: true,
+      emit: true,
+      sceneChange,
+      fullOverlayRescan: false,
+      reason,
+      itemIds,
+    });
+    return true;
+  }
+
+  function scheduleDeferredHydrationSync(itemIds = [], { sceneChange = false, reason = "" } = {}) {
+    const ids = Array.isArray(itemIds) ? itemIds : [itemIds];
+    ids.forEach((itemId) => {
+      const normalizedId = String(itemId || "").trim();
+      if (normalizedId) {
+        pendingHydrationSyncItemIds.add(normalizedId);
+      }
+    });
+    pendingHydrationSyncSceneChange = pendingHydrationSyncSceneChange || Boolean(sceneChange);
+    if (!pendingHydrationSyncReason && reason) {
+      pendingHydrationSyncReason = String(reason || "").trim();
+    }
+    if (typeof cancelPendingHydrationSync === "function") {
+      return;
+    }
+    cancelPendingHydrationSync = scheduleIdleTask(() => {
+      flushPendingHydrationSync();
+    }, 96);
+  }
+
+  async function processDeferredFileCardIdHydration(itemId = "") {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId || fileCardIdHydrationInFlight.has(normalizedId)) {
+      return;
+    }
+    const item = sceneRegistry.getItemById(normalizedId) || state.board.items.find((entry) => String(entry?.id || "") === normalizedId);
+    if (!item || (item.type !== "fileCard" && item.type !== "image") || !item.sourcePath || item.fileId) {
+      return;
+    }
+    if (typeof globalThis?.desktopShell?.getFileId !== "function") {
+      return;
+    }
+    fileCardIdHydrationInFlight.add(normalizedId);
+    try {
+      const result = await globalThis.desktopShell.getFileId(String(item.sourcePath || ""));
+      const fileId = String(result?.fileId || result || "");
+      if (fileId && item.fileId !== fileId) {
+        item.fileId = fileId;
+        scheduleDeferredHydrationSync(normalizedId, {
+          sceneChange: false,
+          reason: "resolve-file-card-id",
+        });
+      }
+    } catch {
+      // Ignore file id resolution failures.
+    } finally {
+      fileCardIdHydrationInFlight.delete(normalizedId);
+    }
+  }
+
+  const fileCardIdHydrationQueue = createIdleBatchQueue({
+    perFlushLimit: 3,
+    timeout: 96,
+    process: (itemId) => {
+      void processDeferredFileCardIdHydration(itemId);
+    },
+  });
+
+  async function processDeferredFileCardSourceHydration(itemId = "") {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId || fileCardSourceHydrationInFlight.has(normalizedId)) {
+      return;
+    }
+    const item = sceneRegistry.getItemById(normalizedId) || state.board.items.find((entry) => String(entry?.id || "") === normalizedId);
+    if (!item || (item.type !== "fileCard" && item.type !== "image")) {
+      return;
+    }
+    fileCardSourceHydrationInFlight.add(normalizedId);
+    try {
+      const changed = await resolveFileCardSourcesForItems([item]);
+      if (changed) {
+        scheduleDeferredHydrationSync(normalizedId, {
+          sceneChange: true,
+          reason: "resolve-file-card-paths",
+        });
+      }
+    } finally {
+      fileCardSourceHydrationInFlight.delete(normalizedId);
+    }
+  }
+
+  const fileCardSourceHydrationQueue = createIdleBatchQueue({
+    perFlushLimit: 2,
+    timeout: 144,
+    process: (itemId) => {
+      void processDeferredFileCardSourceHydration(itemId);
+    },
+  });
+
+  const urlMetaHydrationQueue = createIdleBatchQueue({
+    perFlushLimit: 2,
+    timeout: 96,
+    process: (taskKey) => {
+      const entry = queuedUrlMetaHydrationTasks.get(taskKey);
+      if (!entry) {
+        return;
+      }
+      queuedUrlMetaHydrationTasks.delete(taskKey);
+      void hydrateUrlMetaForItem(entry.itemId, entry.token, entry.existingMeta);
+    },
+  });
 
   async function hydrateUrlMetaForItem(itemId = "", token = null, existingMeta = null) {
     const url = String(token?.url || "").trim();
@@ -2560,7 +4676,16 @@ export function createCanvas2DEngine(options = {}) {
       if (hasRichMeta && isResolved) {
         return;
       }
-      void hydrateUrlMetaForItem(item.id, token, metaEntry);
+      const taskKey = `${String(item.id || "").trim()}::${url}`;
+      if (!taskKey || urlMetaHydrationTasks.has(taskKey) || queuedUrlMetaHydrationTasks.has(taskKey)) {
+        return;
+      }
+      queuedUrlMetaHydrationTasks.set(taskKey, {
+        itemId: item.id,
+        token,
+        existingMeta: metaEntry,
+      });
+      urlMetaHydrationQueue.enqueue(taskKey);
     });
   }
 
@@ -2574,18 +4699,6 @@ export function createCanvas2DEngine(options = {}) {
     refs.linkTooltip.innerHTML = "";
   }
 
-  function normalizeComparableUrl(url = "") {
-    const raw = String(url || "").trim();
-    if (!raw) {
-      return "";
-    }
-    try {
-      return new URL(raw, window.location.href).toString();
-    } catch {
-      return raw;
-    }
-  }
-
   function resolveLinkDescriptorFromAnchor(target) {
     const linkEl = target instanceof Element ? target.closest("a[href], a[data-link-token='1']") : null;
     if (!(linkEl instanceof HTMLAnchorElement)) {
@@ -2596,8 +4709,8 @@ export function createCanvas2DEngine(options = {}) {
     if (!itemId) {
       return null;
     }
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "text");
-    if (!item || state.editingId === item.id) {
+    const item = sceneRegistry.getItemById(itemId);
+    if (!item || (item.type !== "text" && item.type !== "flowNode") || state.editingId === item.id) {
       return null;
     }
     const rawUrl = String(linkEl.getAttribute("data-link-url") || linkEl.getAttribute("href") || linkEl.href || "").trim();
@@ -2605,6 +4718,9 @@ export function createCanvas2DEngine(options = {}) {
     if (!normalizedUrl) {
       return null;
     }
+    const canvasTargetIdFromAttr = String(linkEl.getAttribute("data-link-target-id") || "").trim();
+    const canvasTargetId = canvasTargetIdFromAttr || resolveCanvasInternalLinkTargetId(rawUrl || normalizedUrl);
+    const linkType = canvasTargetId ? CANVAS_INTERNAL_LINK_TYPE : EXTERNAL_LINK_TYPE;
     const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
     const rangeStart = Number(linkEl.getAttribute("data-link-range-start"));
     const rangeEnd = Number(linkEl.getAttribute("data-link-range-end"));
@@ -2632,53 +4748,11 @@ export function createCanvas2DEngine(options = {}) {
       linkEl,
       url: rawUrl || normalizedUrl,
       normalizedUrl,
+      linkType,
+      canvasTargetId,
       token,
       meta,
     };
-  }
-
-  function applyLinkSemanticsToRichDisplayNode(node, item) {
-    if (!(node instanceof HTMLDivElement) || !item || item.type !== "text") {
-      return;
-    }
-    const anchors = Array.from(node.querySelectorAll("a[href]"));
-    if (!anchors.length) {
-      return;
-    }
-    const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
-    const metaCache = item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {};
-    anchors.forEach((anchor) => {
-      const href = String(anchor.getAttribute("href") || anchor.href || "").trim();
-      const normalizedHref = normalizeComparableUrl(href);
-      if (!normalizedHref) {
-        return;
-      }
-      const matchedToken = tokens.find((token) => normalizeComparableUrl(token?.url || "") === normalizedHref) || null;
-      const meta = metaCache[href] && typeof metaCache[href] === "object"
-        ? metaCache[href]
-        : metaCache[normalizedHref] && typeof metaCache[normalizedHref] === "object"
-          ? metaCache[normalizedHref]
-          : {};
-      anchor.setAttribute("data-link-token", "1");
-      anchor.setAttribute("data-link-url", href || normalizedHref);
-      anchor.setAttribute("data-link-kind", String(matchedToken?.kindHint || "link").trim() || "link");
-      anchor.setAttribute(
-        "data-link-state",
-        String(meta?.fetchState || matchedToken?.fetchState || "unknown").trim().toLowerCase() || "unknown"
-      );
-      if (Number.isFinite(Number(matchedToken?.rangeStart))) {
-        anchor.setAttribute("data-link-range-start", String(Number(matchedToken.rangeStart)));
-      }
-      if (Number.isFinite(Number(matchedToken?.rangeEnd))) {
-        anchor.setAttribute("data-link-range-end", String(Number(matchedToken.rangeEnd)));
-      }
-      anchor.setAttribute("target", "_blank");
-      anchor.setAttribute("rel", "noopener noreferrer");
-      const title = String(meta?.title || href || normalizedHref).trim();
-      if (title) {
-        anchor.setAttribute("title", title);
-      }
-    });
   }
 
   function updateLinkMetaTooltip(descriptor = null, clientX = 0, clientY = 0) {
@@ -2694,6 +4768,29 @@ export function createCanvas2DEngine(options = {}) {
       hideLinkMetaTooltip();
       return;
     }
+    if (descriptor.linkType === CANVAS_INTERNAL_LINK_TYPE) {
+      const targetItem = descriptor.canvasTargetId ? sceneRegistry.getItemById(descriptor.canvasTargetId) : null;
+      const title = targetItem
+        ? String(targetItem.title || targetItem.name || targetItem.id || "画布元素")
+        : "画布元素";
+      const desc = targetItem
+        ? `点击跳转到 ${String(targetItem.type || "item")}`
+        : "目标元素不存在";
+      refs.linkTooltip.innerHTML = `
+        <div class="canvas2d-link-tooltip-title">${escapeRichTextHtml(title)}</div>
+        <div class="canvas2d-link-tooltip-desc">${escapeRichTextHtml(desc)}</div>
+        <div class="canvas2d-link-tooltip-state">canvas-link</div>
+      `;
+      refs.linkTooltip.classList.remove("is-hidden");
+      const hostRect = refs.surface.getBoundingClientRect();
+      const panelWidth = Math.max(160, Math.min(280, refs.linkTooltip.offsetWidth || 220));
+      const panelHeight = Math.max(44, refs.linkTooltip.offsetHeight || 64);
+      const left = Math.min(Math.max(12, Number(clientX || 0) - hostRect.left + 12), Math.max(12, hostRect.width - panelWidth - 12));
+      const top = Math.min(Math.max(12, Number(clientY || 0) - hostRect.top + 12), Math.max(12, hostRect.height - panelHeight - 12));
+      refs.linkTooltip.style.left = `${left}px`;
+      refs.linkTooltip.style.top = `${top}px`;
+      return;
+    }
     const token = descriptor.token && typeof descriptor.token === "object" ? descriptor.token : {};
     const meta = descriptor.meta && typeof descriptor.meta === "object" ? descriptor.meta : {};
     const title = String(meta.title || url).trim();
@@ -2706,8 +4803,8 @@ export function createCanvas2DEngine(options = {}) {
     `;
     refs.linkTooltip.classList.remove("is-hidden");
     const hostRect = refs.surface.getBoundingClientRect();
-    const panelWidth = Math.max(200, Math.min(360, refs.linkTooltip.offsetWidth || 260));
-    const panelHeight = Math.max(56, refs.linkTooltip.offsetHeight || 82);
+    const panelWidth = Math.max(160, Math.min(280, refs.linkTooltip.offsetWidth || 220));
+    const panelHeight = Math.max(44, refs.linkTooltip.offsetHeight || 64);
     const left = Math.min(Math.max(12, Number(clientX || 0) - hostRect.left + 12), Math.max(12, hostRect.width - panelWidth - 12));
     const top = Math.min(Math.max(12, Number(clientY || 0) - hostRect.top + 12), Math.max(12, hostRect.height - panelHeight - 12));
     refs.linkTooltip.style.left = `${left}px`;
@@ -2993,6 +5090,7 @@ export function createCanvas2DEngine(options = {}) {
     }
     state.boardFilePath = cleanPath;
     state.boardFileName = cleanPath ? getFileName(cleanPath) : "未命名画布";
+    syncExportHistoryForActiveBoard({ emit: false });
     if (emit) {
       store.emit();
     }
@@ -3032,7 +5130,7 @@ export function createCanvas2DEngine(options = {}) {
     }
     if (!state.boardDirty) {
       state.boardDirty = true;
-      store.emit();
+      scheduleDeferredStoreEmit();
     }
   }
 
@@ -3691,22 +5789,165 @@ export function createCanvas2DEngine(options = {}) {
     }
   }
 
+  function commitInsertedItemsPatchHistory(beforeSnapshot, insertedItems = [], reason = "", patchKind = "item-insert-batch", options = {}) {
+    const normalizedItems = Array.isArray(insertedItems) ? insertedItems.filter(Boolean) : [];
+    const insertedItemIds = Array.from(
+      new Set(
+        normalizedItems
+          .map((item) => String(item?.id || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!beforeSnapshot || !insertedItemIds.length) {
+      return false;
+    }
+    const changed = pushPatchHistory(
+      state.history,
+      {
+        patchKind,
+        itemId: insertedItemIds[0] || "",
+        itemIds: insertedItemIds,
+        beforeItems: Array.isArray(options.beforeItems) ? options.beforeItems : [],
+        afterItems: normalizedItems,
+        beforeOrderIds: Array.isArray(options.beforeOrderIds) ? options.beforeOrderIds : [],
+        afterOrderIds: Array.isArray(options.afterOrderIds) ? options.afterOrderIds : [],
+        beforeSelectedIds: Array.isArray(beforeSnapshot.selectedIds) ? beforeSnapshot.selectedIds : [],
+        afterSelectedIds: Array.isArray(state.board.selectedIds) ? state.board.selectedIds : [],
+        beforeView: beforeSnapshot.view || DEFAULT_VIEW,
+        afterView: state.board.view || DEFAULT_VIEW,
+        beforeEditingId: beforeSnapshot.editingId || null,
+        beforeEditingType: beforeSnapshot.editingType || null,
+        afterEditingId: state.editingId || null,
+        afterEditingType: state.editingType || null,
+      },
+      reason
+    );
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: changed,
+      sceneChange: true,
+      fullOverlayRescan: options.fullOverlayRescan !== false,
+      itemIds: insertedItemIds,
+      reason: patchKind,
+    });
+    return changed;
+  }
+
   function pushItems(items = [], { reason = "", statusText = "" } = {}) {
     if (!Array.isArray(items) || !items.length) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
-    state.board.items.push(...items);
-    state.board.selectedIds = items.map((item) => item.id);
-    void hydrateFileCardIds(items);
-    commitHistory(before, reason);
+    const insertItems = normalizeImportedPasteFrameItems(items);
+    const before = takeHistoryMetadataSnapshot(state);
+    state.board.items.push(...insertItems);
+    state.board.selectedIds = insertItems.map((item) => item.id);
+    void hydrateFileCardIds(insertItems);
+    commitInsertedItemsPatchHistory(before, insertItems, reason, "item-insert-batch", {
+      fullOverlayRescan: true,
+    });
     if (statusText) {
       setStatus(statusText);
     }
     return true;
   }
 
-  async function hydrateFileCardIds(items = []) {
+  function shouldNormalizeImportedPasteFrameItem(item = {}) {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    return item.type === "text" || item.type === "codeBlock" || item.type === "table" || item.type === "mathBlock" || item.type === "mathInline";
+  }
+
+  function normalizeImportedPasteFrameItem(item = {}) {
+    if (!shouldNormalizeImportedPasteFrameItem(item)) {
+      return normalizeElement(item);
+    }
+    const width = IMPORTED_PASTE_FRAME_WIDTH;
+    if (item.type === "text" || item.type === "mathBlock" || item.type === "mathInline") {
+      return normalizeElement({
+        ...item,
+        width,
+        textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+        textResizeMode: TEXT_RESIZE_MODE_WRAP,
+        wrapMode: TEXT_WRAP_MODE_MANUAL,
+        structuredImport: {
+          ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+          initialFrameWidth: width,
+        },
+      });
+    }
+    if (item.type === "codeBlock") {
+      return {
+        ...normalizeElement({
+        ...item,
+        width,
+        autoHeight: true,
+        structuredImport: {
+          ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+          initialFrameWidth: width,
+        },
+        }),
+        width,
+      };
+    }
+    if (item.type === "table") {
+      return normalizeElement({
+        ...item,
+        width,
+        structuredImport: {
+          ...(item.structuredImport && typeof item.structuredImport === "object" ? item.structuredImport : {}),
+          initialFrameWidth: width,
+        },
+      });
+    }
+    return normalizeElement(item);
+  }
+
+  function normalizeImportedPasteFrameItems(items = []) {
+    return buildExportReadyBoardItems((Array.isArray(items) ? items : []).map((item) => normalizeImportedPasteFrameItem(item)));
+  }
+
+  function scheduleDeferredImportedAssetPersistence(items = [], { reason = "clipboard-import-asset-persist" } = {}) {
+    const targets = (Array.isArray(items) ? items : []).filter((item) => item?.type === "image");
+    if (!targets.length) {
+      return false;
+    }
+    deferredImportedAssetPersistPromise = deferredImportedAssetPersistPromise
+      .then(async () => {
+        await yieldToIdleWindow(120);
+        let saved = 0;
+        const changedIds = [];
+        for (const item of targets) {
+          try {
+            const ok = await saveImageItemToImportFolder(item);
+            if (!ok) {
+              continue;
+            }
+            saved += 1;
+            const itemId = String(item?.id || "").trim();
+            if (itemId) {
+              changedIds.push(itemId);
+            }
+          } catch {
+            // Ignore background asset persistence failures for pasted content.
+          }
+        }
+        if (saved) {
+          if (changedIds.length) {
+            scheduleDeferredHydrationSync(changedIds, {
+              sceneChange: true,
+              reason,
+            });
+          }
+          setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
+        }
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  function hydrateFileCardIds(items = []) {
     if (typeof globalThis?.desktopShell?.getFileId !== "function") {
       return;
     }
@@ -3714,24 +5955,15 @@ export function createCanvas2DEngine(options = {}) {
       (item) => (item?.type === "fileCard" || item?.type === "image") && item.sourcePath && !item.fileId
     );
     if (!targets.length) {
-      return;
+      return false;
     }
-    let changed = false;
-    for (const item of targets) {
-      try {
-        const result = await globalThis.desktopShell.getFileId(String(item.sourcePath || ""));
-        const fileId = String(result?.fileId || result || "");
-        if (fileId && item.fileId !== fileId) {
-          item.fileId = fileId;
-          changed = true;
-        }
-      } catch {
-        // Ignore file id resolution failures.
+    targets.forEach((item) => {
+      const itemId = String(item?.id || "").trim();
+      if (itemId) {
+        fileCardIdHydrationQueue.enqueue(itemId);
       }
-    }
-    if (changed) {
-      syncBoard({ persist: true, emit: true });
-    }
+    });
+    return true;
   }
 
   async function resolveFileCardSourcesForItems(fileCards = []) {
@@ -3783,10 +6015,13 @@ export function createCanvas2DEngine(options = {}) {
 
   async function resolveFileCardSources() {
     const fileCards = state.board.items.filter((item) => item.type === "fileCard" || item.type === "image");
-    const changed = await resolveFileCardSourcesForItems(fileCards);
-    if (changed) {
-      syncBoard({ persist: true, emit: true });
-    }
+    fileCards.forEach((item) => {
+      const itemId = String(item?.id || "").trim();
+      if (itemId) {
+        fileCardSourceHydrationQueue.enqueue(itemId);
+      }
+    });
+    return false;
   }
 
   function applyHistorySnapshot(snapshot, { persist = true } = {}) {
@@ -3814,10 +6049,143 @@ export function createCanvas2DEngine(options = {}) {
     return true;
   }
 
+  function applyHistoryPatchEntry(entry, targetKey = "after", { persist = true } = {}) {
+    if (!entry || entry.kind !== "patch") {
+      return false;
+    }
+    const itemIds = Array.isArray(entry.itemIds) && entry.itemIds.length
+      ? entry.itemIds.map((itemId) => String(itemId || "").trim()).filter(Boolean)
+      : [String(entry.itemId || entry[`${targetKey}Item`]?.id || "").trim()].filter(Boolean);
+    const patchItems = Array.isArray(entry[`${targetKey}Items`]) && entry[`${targetKey}Items`].length
+      ? entry[`${targetKey}Items`].map((item) => normalizeElement(clone(item)))
+      : entry[`${targetKey}Item`]
+        ? [normalizeElement(clone(entry[`${targetKey}Item`]))]
+        : [];
+    const patchItemMap = new Map(
+      patchItems
+        .map((item) => [String(item?.id || "").trim(), item])
+        .filter(([itemId]) => Boolean(itemId))
+    );
+    itemIds.forEach((itemId) => {
+      const nextItem = patchItemMap.get(itemId) || null;
+      const currentIndex = state.board.items.findIndex((item) => String(item?.id || "") === itemId);
+      if (nextItem) {
+        if (currentIndex >= 0) {
+          state.board.items[currentIndex] = nextItem;
+        } else {
+          state.board.items.push(nextItem);
+        }
+        return;
+      }
+      if (currentIndex >= 0) {
+        state.board.items.splice(currentIndex, 1);
+      }
+    });
+    const orderIds = Array.isArray(entry[`${targetKey}OrderIds`])
+      ? entry[`${targetKey}OrderIds`].map((itemId) => String(itemId || "").trim()).filter(Boolean)
+      : [];
+    if (orderIds.length) {
+      const itemMap = new Map(
+        state.board.items
+          .map((item) => [String(item?.id || "").trim(), item])
+          .filter(([itemId]) => Boolean(itemId))
+      );
+      const reordered = [];
+      const visited = new Set();
+      orderIds.forEach((itemId) => {
+        const item = itemMap.get(itemId);
+        if (!item || visited.has(itemId)) {
+          return;
+        }
+        reordered.push(item);
+        visited.add(itemId);
+      });
+      state.board.items.forEach((item) => {
+        const itemId = String(item?.id || "").trim();
+        if (!itemId || visited.has(itemId)) {
+          return;
+        }
+        reordered.push(item);
+      });
+      state.board.items = reordered;
+    }
+    state.board.selectedIds = Array.isArray(entry[`${targetKey}SelectedIds`])
+      ? entry[`${targetKey}SelectedIds`].map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
+    state.board.view = createView(entry[`${targetKey}View`] || DEFAULT_VIEW);
+    state.editingId = entry[`${targetKey}EditingId`] || null;
+    state.editingType = entry[`${targetKey}EditingType`] || null;
+    if (!state.editingId) {
+      refs.editor?.classList.add("is-hidden");
+      refs.richEditor?.classList.add("is-hidden");
+      refs.codeBlockEditor?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+    }
+    clearCodeBlockEditLayoutCache();
+    markCodeBlockOverlayDirty([], { fullRescan: true });
+    syncBoard({ persist, emit: true, sceneChange: true, fullOverlayRescan: true, itemIds });
+    return true;
+  }
+
   function commitHistory(before, reason = "") {
     const after = takeHistorySnapshot(state);
-    const changed = pushHistory(state.history, before, after, reason);
-    syncBoard({ persist: true, emit: true, markDirty: changed });
+    const changedItemIds = getChangedHistorySnapshotItemIds(before, after);
+    const beforeOrderIds = Array.isArray(before?.items)
+      ? before.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+      : [];
+    const afterOrderIds = Array.isArray(after?.items)
+      ? after.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+      : [];
+    const orderChanged = beforeOrderIds.join("|") !== afterOrderIds.join("|");
+    const selectionChanged =
+      (Array.isArray(before?.selectedIds) ? before.selectedIds : []).join("|") !==
+      (Array.isArray(after?.selectedIds) ? after.selectedIds : []).join("|");
+    const viewChanged =
+      JSON.stringify(before?.view || DEFAULT_VIEW) !== JSON.stringify(after?.view || DEFAULT_VIEW);
+    const editingChanged =
+      String(before?.editingId || "") !== String(after?.editingId || "") ||
+      String(before?.editingType || "") !== String(after?.editingType || "");
+    const canPatchOrder =
+      !orderChanged || Math.max(beforeOrderIds.length, afterOrderIds.length) <= HISTORY_AUTO_PATCH_ORDER_LIMIT;
+    const hasPatchableMetaChange = selectionChanged || viewChanged || editingChanged || orderChanged;
+    const shouldUsePatchHistory =
+      canPatchOrder &&
+      ((changedItemIds.length > 0 && changedItemIds.length <= HISTORY_AUTO_PATCH_ITEM_LIMIT) ||
+        (!changedItemIds.length && hasPatchableMetaChange));
+    const changed = shouldUsePatchHistory
+      ? pushPatchHistory(
+          state.history,
+          {
+            patchKind: "history-auto-patch",
+            itemId: changedItemIds[0] || "",
+            itemIds: changedItemIds,
+            beforeItems: getHistorySnapshotItems(before, changedItemIds),
+            afterItems: getHistorySnapshotItems(after, changedItemIds),
+            beforeOrderIds: orderChanged && canPatchOrder ? beforeOrderIds : [],
+            afterOrderIds: orderChanged && canPatchOrder ? afterOrderIds : [],
+            beforeSelectedIds: Array.isArray(before?.selectedIds) ? before.selectedIds : [],
+            afterSelectedIds: Array.isArray(after?.selectedIds) ? after.selectedIds : [],
+            beforeView: before?.view || DEFAULT_VIEW,
+            afterView: after?.view || DEFAULT_VIEW,
+            beforeEditingId: before?.editingId || null,
+            beforeEditingType: before?.editingType || null,
+            afterEditingId: after?.editingId || null,
+            afterEditingType: after?.editingType || null,
+          },
+          reason
+        )
+      : pushHistory(state.history, before, after, reason);
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: changed,
+      sceneChange: true,
+      fullOverlayRescan: true,
+      itemIds: changedItemIds,
+      reason: "history-commit",
+    });
     return changed;
   }
 
@@ -3828,17 +6196,95 @@ export function createCanvas2DEngine(options = {}) {
     return snapshot.items.find((entry) => String(entry?.id || "") === String(itemId || "")) || null;
   }
 
-  function commitCodeBlockPatchHistory(beforeSnapshot, itemId, afterItem, reason = "") {
-    if (!beforeSnapshot || !itemId) {
+  function getHistorySnapshotItems(snapshot, itemIds = []) {
+    if (!snapshot || !Array.isArray(snapshot.items)) {
+      return [];
+    }
+    const targetIds = Array.from(
+      new Set(
+        (Array.isArray(itemIds) ? itemIds : [])
+          .map((itemId) => String(itemId || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!targetIds.length) {
+      return [];
+    }
+    const targetSet = new Set(targetIds);
+    return snapshot.items.filter((entry) => targetSet.has(String(entry?.id || "").trim()));
+  }
+
+  function getCurrentBoardItemsByIds(itemIds = []) {
+    const targetIds = Array.from(
+      new Set(
+        (Array.isArray(itemIds) ? itemIds : [])
+          .map((itemId) => String(itemId || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!targetIds.length) {
+      return [];
+    }
+    const targetSet = new Set(targetIds);
+    return state.board.items.filter((entry) => targetSet.has(String(entry?.id || "").trim()));
+  }
+
+  function getSnapshotItemSignatureMap(snapshot) {
+    const signatureMap = new Map();
+    const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    items.forEach((item) => {
+      const itemId = String(item?.id || "").trim();
+      if (!itemId) {
+        return;
+      }
+      let signature = "";
+      try {
+        signature = JSON.stringify(item);
+      } catch {
+        signature = String(item?.updatedAt || item?.createdAt || "") || itemId;
+      }
+      signatureMap.set(itemId, signature);
+    });
+    return signatureMap;
+  }
+
+  function getChangedHistorySnapshotItemIds(beforeSnapshot, afterSnapshot) {
+    const beforeMap = getSnapshotItemSignatureMap(beforeSnapshot);
+    const afterMap = getSnapshotItemSignatureMap(afterSnapshot);
+    if (!beforeMap.size && !afterMap.size) {
+      return [];
+    }
+    const allIds = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+    const changedIds = [];
+    allIds.forEach((itemId) => {
+      if (beforeMap.get(itemId) !== afterMap.get(itemId)) {
+        changedIds.push(itemId);
+      }
+    });
+    return changedIds;
+  }
+
+  function commitItemsPatchHistory(beforeSnapshot, itemIds = [], reason = "", patchKind = "items-edit", options = {}) {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(itemIds) ? itemIds : [])
+          .map((itemId) => String(itemId || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!beforeSnapshot || !normalizedIds.length) {
       return false;
     }
     const changed = pushPatchHistory(
       state.history,
       {
-        patchKind: "codeBlock-edit",
-        itemId,
-        beforeItem: getHistorySnapshotItem(beforeSnapshot, itemId),
-        afterItem: afterItem || null,
+        patchKind,
+        itemId: normalizedIds[0] || "",
+        itemIds: normalizedIds,
+        beforeItems: getHistorySnapshotItems(beforeSnapshot, normalizedIds),
+        afterItems: getCurrentBoardItemsByIds(normalizedIds),
+        beforeOrderIds: Array.isArray(options.beforeOrderIds) ? options.beforeOrderIds : [],
+        afterOrderIds: Array.isArray(options.afterOrderIds) ? options.afterOrderIds : [],
         beforeSelectedIds: Array.isArray(beforeSnapshot.selectedIds) ? beforeSnapshot.selectedIds : [],
         afterSelectedIds: Array.isArray(state.board.selectedIds) ? state.board.selectedIds : [],
         beforeView: beforeSnapshot.view || DEFAULT_VIEW,
@@ -3850,8 +6296,49 @@ export function createCanvas2DEngine(options = {}) {
       },
       reason
     );
-    syncBoard({ persist: true, emit: true, markDirty: changed });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: changed,
+      sceneChange: true,
+      fullOverlayRescan: options.fullOverlayRescan !== false,
+      itemIds: normalizedIds,
+      reason: patchKind,
+    });
     return changed;
+  }
+
+  function commitOrderPatchHistory(beforeSnapshot, itemIds = [], reason = "", patchKind = "item-reorder") {
+    const beforeOrderIds = Array.isArray(beforeSnapshot?.items)
+      ? beforeSnapshot.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+      : [];
+    const afterOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
+    return commitItemsPatchHistory(beforeSnapshot, itemIds, reason, patchKind, {
+      beforeOrderIds,
+      afterOrderIds,
+    });
+  }
+
+  function commitItemPatchHistory(beforeSnapshot, itemId, afterItem, reason = "", patchKind = "item-edit") {
+    if (!beforeSnapshot || !itemId) {
+      return false;
+    }
+    return commitItemsPatchHistory(beforeSnapshot, [itemId], reason, patchKind, {
+      beforeOrderIds: [],
+      afterOrderIds: [],
+      fullOverlayRescan: true,
+    });
+  }
+
+  function commitCodeBlockPatchHistory(beforeSnapshot, itemId, afterItem, reason = "") {
+    if (!beforeSnapshot || !itemId) {
+      return false;
+    }
+    return commitItemsPatchHistory(beforeSnapshot, [itemId], reason, "codeBlock-edit", {
+      beforeOrderIds: [],
+      afterOrderIds: [],
+      fullOverlayRescan: false,
+    });
   }
 
   function getCanvasRect() {
@@ -3879,9 +6366,18 @@ export function createCanvas2DEngine(options = {}) {
     }
     const rect = refs.canvas.getBoundingClientRect();
     const dpr = Math.max(1, window.devicePixelRatio || 1);
-    refs.canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    refs.canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    scheduleRender();
+    const nextWidth = Math.max(1, Math.round(rect.width * dpr));
+    const nextHeight = Math.max(1, Math.round(rect.height * dpr));
+    const sizeChanged = refs.canvas.width !== nextWidth || refs.canvas.height !== nextHeight;
+    refs.canvas.width = nextWidth;
+    refs.canvas.height = nextHeight;
+    scheduleRender({
+      reason: sizeChanged ? "resize" : "resize-sync",
+      backgroundDirty: true,
+      viewDirty: true,
+      interactionDirty: true,
+      overlayDirty: true,
+    });
   }
 
   function syncCanvasCursor() {
@@ -3928,6 +6424,47 @@ export function createCanvas2DEngine(options = {}) {
     refs.surface = refs.host;
     if (!(refs.surface instanceof HTMLElement)) {
       throw new Error("工作白板宿主不存在");
+    }
+
+    const overlayParent =
+      refs.surface.parentElement instanceof HTMLElement ? refs.surface.parentElement : refs.surface;
+    refs.fixedOverlayHost = overlayParent.querySelector("#canvas-fixed-overlay-host");
+    if (!(refs.fixedOverlayHost instanceof HTMLDivElement)) {
+      refs.fixedOverlayHost = document.createElement("div");
+      refs.fixedOverlayHost.id = "canvas-fixed-overlay-host";
+      refs.fixedOverlayHost.className = "canvas-fixed-overlay-host";
+      overlayParent.appendChild(refs.fixedOverlayHost);
+      cleanupFns.push(() => {
+        refs.fixedOverlayHost?.remove?.();
+        refs.fixedOverlayHost = null;
+      });
+    }
+
+    refs.canvasLinkBindingOverlay = refs.fixedOverlayHost.querySelector("#canvas2d-link-binding-overlay");
+    if (!(refs.canvasLinkBindingOverlay instanceof HTMLDivElement)) {
+      refs.canvasLinkBindingOverlay = document.createElement("div");
+      refs.canvasLinkBindingOverlay.id = "canvas2d-link-binding-overlay";
+      refs.canvasLinkBindingOverlay.className = "canvas2d-link-binding-overlay is-hidden";
+      refs.canvasLinkBindingOverlay.setAttribute("aria-hidden", "true");
+      refs.fixedOverlayHost.appendChild(refs.canvasLinkBindingOverlay);
+    }
+
+    refs.canvasLinkBindingHint = refs.fixedOverlayHost.querySelector("#canvas2d-link-binding-hint");
+    if (!(refs.canvasLinkBindingHint instanceof HTMLDivElement)) {
+      refs.canvasLinkBindingHint = document.createElement("div");
+      refs.canvasLinkBindingHint.id = "canvas2d-link-binding-hint";
+      refs.canvasLinkBindingHint.className = "canvas2d-link-binding-hint is-hidden";
+      refs.canvasLinkBindingHint.setAttribute("aria-hidden", "true");
+      refs.canvasLinkBindingHint.innerHTML = `
+        <div class="canvas2d-link-binding-hint-title">正在绑定画布链接</div>
+        <div class="canvas2d-link-binding-hint-text">点击任意画布元素作为跳转目标</div>
+        <div class="canvas2d-link-binding-hint-chips" aria-hidden="true">
+          <span class="canvas2d-link-binding-hint-chip">已进入绑定模式</span>
+          <span class="canvas2d-link-binding-hint-chip">点击目标元素</span>
+          <span class="canvas2d-link-binding-hint-chip">Esc 取消</span>
+        </div>
+      `;
+      refs.fixedOverlayHost.appendChild(refs.canvasLinkBindingHint);
     }
 
     refs.uiHost = refs.surface.querySelector("#canvas2d-react-ui-host");
@@ -3977,29 +6514,32 @@ export function createCanvas2DEngine(options = {}) {
       refs.surface.appendChild(refs.imageMemoEditor);
     }
 
-    refs.tableEditor = refs.surface.querySelector("#canvas-table-editor");
+    refs.tableEditor =
+      refs.surface.querySelector("#canvas-table-editor") || refs.fixedOverlayHost.querySelector("#canvas-table-editor");
     if (!(refs.tableEditor instanceof HTMLDivElement)) {
       refs.tableEditor = document.createElement("div");
       refs.tableEditor.id = "canvas-table-editor";
       refs.tableEditor.className = "canvas-table-editor is-hidden";
       refs.tableEditor.setAttribute("aria-label", "编辑表格");
       refs.surface.appendChild(refs.tableEditor);
+    } else if (refs.tableEditor.parentElement !== refs.surface) {
+      refs.surface.appendChild(refs.tableEditor);
     }
+    ensureTableCellRichEditorHost();
 
-    refs.tableToolbar = refs.surface.querySelector("#canvas-table-toolbar");
+    refs.tableToolbar = refs.fixedOverlayHost.querySelector("#canvas-table-toolbar");
     if (!(refs.tableToolbar instanceof HTMLDivElement)) {
       refs.tableToolbar = document.createElement("div");
       refs.tableToolbar.id = "canvas-table-toolbar";
       refs.tableToolbar.className = "canvas-table-toolbar is-hidden";
       refs.tableToolbar.innerHTML = `
-        <button type="button" class="canvas2d-rich-btn" data-action="table-add-row">+ 行</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="table-add-column">+ 列</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="table-delete-row">- 行</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="table-delete-column">- 列</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="table-toggle-header">表头</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="table-done">完成</button>
+        <div class="canvas-table-toolbar-group">
+          <button type="button" class="canvas-table-tool is-toggle-header" data-action="table-toggle-header" aria-label="切换表头" title="切换表头"></button>
+          <button type="button" class="canvas-table-tool is-more" data-action="table-more" aria-label="更多表格操作" title="更多表格操作"></button>
+          <button type="button" class="canvas-table-tool is-done" data-action="table-done" aria-label="完成表格编辑" title="完成表格编辑"></button>
+        </div>
       `;
-      refs.surface.appendChild(refs.tableToolbar);
+      refs.fixedOverlayHost.appendChild(refs.tableToolbar);
     }
 
     refs.richEditor = refs.surface.querySelector("#canvas-rich-editor");
@@ -4071,9 +6611,9 @@ export function createCanvas2DEngine(options = {}) {
       refs.linkTooltip.setAttribute("aria-hidden", "true");
       refs.linkTooltip.style.position = "absolute";
       refs.linkTooltip.style.zIndex = "39";
-      refs.linkTooltip.style.maxWidth = "360px";
-      refs.linkTooltip.style.padding = "8px 10px";
-      refs.linkTooltip.style.borderRadius = "8px";
+      refs.linkTooltip.style.maxWidth = "280px";
+      refs.linkTooltip.style.padding = "6px 8px";
+      refs.linkTooltip.style.borderRadius = "7px";
       refs.linkTooltip.style.background = "rgba(248, 250, 252, 0.97)";
       refs.linkTooltip.style.border = "1px solid rgba(148, 163, 184, 0.45)";
       refs.linkTooltip.style.boxShadow = "0 8px 20px rgba(15, 23, 42, 0.15)";
@@ -4081,6 +6621,32 @@ export function createCanvas2DEngine(options = {}) {
       refs.linkTooltip.style.left = "-9999px";
       refs.linkTooltip.style.top = "-9999px";
       refs.surface.appendChild(refs.linkTooltip);
+    }
+
+    refs.richExternalLinkPanel = refs.fixedOverlayHost.querySelector("#canvas2d-rich-link-panel");
+    if (!(refs.richExternalLinkPanel instanceof HTMLDivElement)) {
+      refs.richExternalLinkPanel = document.createElement("div");
+      refs.richExternalLinkPanel.id = "canvas2d-rich-link-panel";
+      refs.richExternalLinkPanel.className = "canvas2d-rich-link-panel is-hidden";
+      refs.richExternalLinkPanel.setAttribute("aria-hidden", "true");
+      refs.richExternalLinkPanel.innerHTML = `
+        <label class="canvas2d-rich-link-panel-field">
+          <span class="canvas2d-rich-link-panel-label">链接地址</span>
+          <input
+            type="text"
+            class="canvas2d-rich-link-panel-input"
+            data-role="rich-link-input"
+            placeholder="输入 https://example.com 或本地文件路径"
+            spellcheck="false"
+          />
+        </label>
+        <div class="canvas2d-rich-link-panel-actions">
+          <button type="button" class="canvas2d-rich-btn" data-action="rich-link-apply">应用</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="rich-link-remove">移除</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="rich-link-close">完成</button>
+        </div>
+      `;
+      refs.fixedOverlayHost.appendChild(refs.richExternalLinkPanel);
     }
 
     refs.dragIndicator = refs.surface.querySelector("#canvas2d-export-drag-indicator");
@@ -4181,26 +6747,8 @@ export function createCanvas2DEngine(options = {}) {
     if (!(refs.richToolbar instanceof HTMLDivElement)) {
       refs.richToolbar = document.createElement("div");
       refs.richToolbar.id = "canvas2d-rich-toolbar";
-      refs.richToolbar.className = "canvas2d-rich-toolbar is-hidden";
-      refs.richToolbar.innerHTML = `
-        ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
-        <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
-        ${buildRichMathMenuHtml()}
-        ${buildRichQuoteMenuHtml()}
-        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="link">🔗</button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#0f172a" title="黑色"></button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#dc2626" title="红色"></button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#2563eb" title="蓝色"></button>
-      `;
+      refs.richToolbar.className = "canvas2d-rich-toolbar canvas2d-rich-toolbar-persistent is-hidden";
+      refs.richToolbar.innerHTML = buildPersistentRichToolbarHtml();
       refs.surface.appendChild(refs.richToolbar);
     }
     syncRichToolbarEnhancements(refs.richToolbar);
@@ -4213,23 +6761,12 @@ export function createCanvas2DEngine(options = {}) {
       refs.codeBlockToolbar.innerHTML = `
         <label class="canvas2d-rich-select-wrap">
           <select class="canvas2d-rich-select" data-action="code-language" aria-label="代码语言">
-            <option value="">plain text</option>
-            <option value="javascript">javascript</option>
-            <option value="typescript">typescript</option>
-            <option value="python">python</option>
-            <option value="json">json</option>
-            <option value="html">html</option>
-            <option value="css">css</option>
-            <option value="markdown">markdown</option>
-            <option value="sql">sql</option>
-            <option value="cpp">cpp</option>
-            <option value="java">java</option>
-            <option value="mermaid">mermaid</option>
+            ${buildCodeBlockLanguageSelectHtml()}
           </select>
         </label>
-        <button type="button" class="canvas2d-rich-btn" data-action="code-copy">Copy</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="code-wrap">Wrap</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="code-line-numbers">123</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-copy" aria-label="复制代码" title="复制代码">复制</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-wrap" aria-label="切换自动换行" title="切换自动换行">换行</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-line-numbers" aria-label="切换行号" title="切换行号">行号</button>
         <label class="canvas2d-rich-select-wrap">
           <select class="canvas2d-rich-select" data-action="code-font-size" aria-label="代码字号">
             <option value="12">12</option>
@@ -4240,10 +6777,31 @@ export function createCanvas2DEngine(options = {}) {
             <option value="24">24</option>
           </select>
         </label>
-        <button type="button" class="canvas2d-rich-btn" data-action="code-preview-toggle">View</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="code-done">完成</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-preview-toggle" aria-label="切换预览">预览</button>
+        <div class="canvas-code-block-toolbar-meta" data-role="code-block-meta" aria-live="polite"></div>
+        <button type="button" class="canvas2d-rich-btn" data-action="code-done" aria-label="完成代码编辑" title="完成代码编辑">完成</button>
       `;
       refs.surface.appendChild(refs.codeBlockToolbar);
+    }
+    const codeBlockToolbarMeta = refs.codeBlockToolbar.querySelector('[data-role="code-block-meta"]');
+    if (codeBlockToolbarMeta instanceof HTMLElement) {
+      codeBlockToolbarMeta.style.display = "inline-flex";
+      codeBlockToolbarMeta.style.alignItems = "center";
+      codeBlockToolbarMeta.style.justifyContent = "center";
+      codeBlockToolbarMeta.style.minWidth = "88px";
+      codeBlockToolbarMeta.style.maxWidth = "180px";
+      codeBlockToolbarMeta.style.height = "28px";
+      codeBlockToolbarMeta.style.padding = "0 10px";
+      codeBlockToolbarMeta.style.borderRadius = "999px";
+      codeBlockToolbarMeta.style.background = "rgba(241, 245, 249, 0.92)";
+      codeBlockToolbarMeta.style.border = "1px solid rgba(203, 213, 225, 0.92)";
+      codeBlockToolbarMeta.style.color = "#475569";
+      codeBlockToolbarMeta.style.fontSize = "12px";
+      codeBlockToolbarMeta.style.fontWeight = "600";
+      codeBlockToolbarMeta.style.whiteSpace = "nowrap";
+      codeBlockToolbarMeta.style.overflow = "hidden";
+      codeBlockToolbarMeta.style.textOverflow = "ellipsis";
+      codeBlockToolbarMeta.textContent = "代码块";
     }
 
     refs.richSelectionToolbar = refs.surface.querySelector("#canvas2d-rich-selection-toolbar");
@@ -4251,28 +6809,11 @@ export function createCanvas2DEngine(options = {}) {
       refs.richSelectionToolbar = document.createElement("div");
       refs.richSelectionToolbar.id = "canvas2d-rich-selection-toolbar";
       refs.richSelectionToolbar.className = "canvas2d-rich-toolbar canvas2d-rich-selection-toolbar is-hidden";
-      refs.richSelectionToolbar.innerHTML = `
-        ${buildRichBlockTypeSelectHtml("block-type", "块级语义")}
-        <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
-        ${buildRichMathMenuHtml()}
-        ${buildRichQuoteMenuHtml()}
-        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#0f172a" title="黑色"></button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#dc2626" title="红色"></button>
-        <button type="button" class="canvas2d-rich-btn color-swatch" data-action="color" data-color="#2563eb" title="蓝色"></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="link" title="链接">🔗</button>
-      `;
+      refs.richSelectionToolbar.innerHTML = buildSelectionRichToolbarHtml();
       refs.surface.appendChild(refs.richSelectionToolbar);
     }
     syncRichToolbarEnhancements(refs.richSelectionToolbar);
+    syncAllRichToolbarColorControls();
 
     refs.imageToolbar = lightImageEditor.mount(refs.surface);
 
@@ -4280,11 +6821,37 @@ export function createCanvas2DEngine(options = {}) {
     if (!refs.ctx) {
       throw new Error("无法获取 Canvas2D 上下文");
     }
+    syncCanvasLinkBindingUi();
+  }
+
+  function syncCanvasLinkBindingUi() {
+    const active = Boolean(pendingCanvasLinkBinding);
+    refs.surface?.classList.toggle("is-canvas-link-binding", active);
+    if (refs.canvasLinkBindingOverlay instanceof HTMLDivElement) {
+      refs.canvasLinkBindingOverlay.classList.toggle("is-hidden", !active);
+      refs.canvasLinkBindingOverlay.setAttribute("aria-hidden", active ? "false" : "true");
+    }
+    if (refs.canvasLinkBindingHint instanceof HTMLDivElement) {
+      refs.canvasLinkBindingHint.classList.toggle("is-hidden", !active);
+      refs.canvasLinkBindingHint.setAttribute("aria-hidden", active ? "false" : "true");
+    }
   }
 
   function syncEditorLayout() {
     const hasEditing = Boolean(state.editingId);
     if (!hasEditing) {
+      if (richColorPreviewFrame) {
+        cancelAnimationFrame(richColorPreviewFrame);
+        richColorPreviewFrame = 0;
+      }
+      if (richColorPreviewCommitTimer) {
+        clearTimeout(richColorPreviewCommitTimer);
+        richColorPreviewCommitTimer = 0;
+      }
+      pendingRichColorPreview = "";
+      pendingCanvasLinkBinding = false;
+      syncCanvasLinkBindingUi();
+      closeRichExternalLinkEditor();
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
       refs.codeBlockEditor?.classList.add("is-hidden");
@@ -4298,6 +6865,8 @@ export function createCanvas2DEngine(options = {}) {
       lastFileMemoItemId = null;
       lastImageMemoItemId = null;
       lastTableEditItemId = null;
+      tableEditRange = null;
+      tableEditFrame = null;
       lastCodeBlockEditItemId = null;
       lightImageEditor.finishEdit();
       richTextSession.clear({ destroyAdapter: false });
@@ -4339,9 +6908,7 @@ export function createCanvas2DEngine(options = {}) {
       return;
     }
     const isFlowNode = state.editingType === "flow-node";
-    const item = state.board.items.find(
-      (entry) => entry.id === state.editingId && (isFlowNode ? entry.type === "flowNode" : entry.type === "text")
-    );
+    const item = sceneRegistry.getItemById(state.editingId, isFlowNode ? "flowNode" : "text");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
@@ -4372,18 +6939,450 @@ export function createCanvas2DEngine(options = {}) {
     if (!state.editingId || (state.editingType !== "text" && state.editingType !== "flow-node")) {
       return null;
     }
-    return (
-      state.board.items.find(
-        (entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode")
-      ) || null
-    );
+    return sceneRegistry.getItemById(state.editingId) || null;
+  }
+
+  function getTableCellKey(rowIndex = 0, columnIndex = 0) {
+    return `${Math.max(0, Number(rowIndex) || 0)}:${Math.max(0, Number(columnIndex) || 0)}`;
+  }
+
+  function getActiveTableCellRichEditingContext() {
+    if (state.editingType !== "table" || !tableCellEditState.active) {
+      return null;
+    }
+    const item = getTableEditItem();
+    if (!item) {
+      return null;
+    }
+    return {
+      item,
+      rowIndex: Math.max(0, Number(tableCellEditState.rowIndex) || 0),
+      columnIndex: Math.max(0, Number(tableCellEditState.columnIndex) || 0),
+      cellKey: getTableCellKey(tableCellEditState.rowIndex, tableCellEditState.columnIndex),
+      session: tableCellRichTextSession,
+      editorElement: refs.tableCellRichEditor,
+    };
+  }
+
+  function getActiveRichSessionContext() {
+    const tableCellContext = getActiveTableCellRichEditingContext();
+    if (tableCellContext) {
+      return tableCellContext;
+    }
+    const item = getActiveRichEditingItem();
+    if (!item || !richTextSession.isActive()) {
+      return null;
+    }
+    return {
+      item,
+      rowIndex: -1,
+      columnIndex: -1,
+      cellKey: "",
+      session: richTextSession,
+      editorElement: refs.richEditor,
+    };
+  }
+
+  function getActiveRichSession() {
+    return getActiveRichSessionContext()?.session || null;
+  }
+
+  function getActiveRichSessionIdentity() {
+    const context = getActiveRichSessionContext();
+    if (!context) {
+      return null;
+    }
+    return {
+      itemId: String(context.item?.id || ""),
+      itemType: String(context.item?.type || context.session?.getItemType?.() || ""),
+      cellKey: String(context.cellKey || ""),
+    };
+  }
+
+  function resolveRichCommandTarget() {
+    const active = getActiveRichEditingItem();
+    if (active && (active.type === "text" || active.type === "flowNode")) {
+      return active;
+    }
+    const selected = getSingleSelectedItemFast();
+    if (!selected || (selected.type !== "text" && selected.type !== "flowNode")) {
+      return null;
+    }
+    if (state.editingId !== selected.id) {
+      if (selected.type === "flowNode") {
+        beginFlowNodeEdit(selected.id);
+      } else {
+        beginTextEdit(selected.id);
+      }
+    }
+    const rebound = getActiveRichEditingItem();
+    return rebound && (rebound.type === "text" || rebound.type === "flowNode") ? rebound : null;
+  }
+
+  function isRecognizedExternalLinkValue(value = "") {
+    const raw = String(value || "").trim();
+    if (!raw || isCanvasInternalLinkUrl(raw)) {
+      return false;
+    }
+    return Boolean(normalizeUserLinkInput(raw));
+  }
+
+  function closeRichExternalLinkEditor({ restoreFocus = false } = {}) {
+    pendingRichExternalLinkEdit = null;
+    if (refs.richExternalLinkPanel instanceof HTMLDivElement) {
+      refs.richExternalLinkPanel.classList.add("is-hidden");
+      refs.richExternalLinkPanel.setAttribute("aria-hidden", "true");
+    }
+    const activeSession = getActiveRichSession();
+    if (restoreFocus && activeSession?.isActive?.()) {
+      requestAnimationFrame(() => {
+        activeSession.focus();
+        activeSession.captureSelection?.();
+      });
+    }
+  }
+
+  function syncRichExternalLinkEditorUi() {
+    if (!(refs.richExternalLinkPanel instanceof HTMLDivElement) || !(refs.surface instanceof HTMLDivElement)) {
+      return;
+    }
+    const stateValue = pendingRichExternalLinkEdit;
+    const activeContext = getActiveRichSessionContext();
+    const activeIdentity = getActiveRichSessionIdentity();
+    if (
+      !stateValue ||
+      !activeContext ||
+      !activeIdentity ||
+      !activeContext.session?.isActive?.() ||
+      stateValue.itemId !== activeIdentity.itemId ||
+      stateValue.itemType !== activeIdentity.itemType ||
+      stateValue.cellKey !== activeIdentity.cellKey
+    ) {
+      refs.richExternalLinkPanel.classList.add("is-hidden");
+      refs.richExternalLinkPanel.setAttribute("aria-hidden", "true");
+      return;
+    }
+    const input = refs.richExternalLinkPanel.querySelector('[data-role="rich-link-input"]');
+    const removeButton = refs.richExternalLinkPanel.querySelector('[data-action="rich-link-remove"]');
+    if (input instanceof HTMLInputElement) {
+      if (document.activeElement !== input || input.value !== String(stateValue.rawValue || "")) {
+        input.value = String(stateValue.rawValue || "");
+      }
+    }
+    if (removeButton instanceof HTMLButtonElement) {
+      removeButton.disabled = !stateValue.editingExistingLink && !String(stateValue.rawValue || "").trim();
+    }
+    refs.richExternalLinkPanel.classList.remove("is-hidden");
+    refs.richExternalLinkPanel.setAttribute("aria-hidden", "false");
+    const hostRect = refs.surface.getBoundingClientRect();
+    const anchorRect = stateValue.anchorRect || null;
+    const width = Math.max(280, refs.richExternalLinkPanel.offsetWidth || refs.richExternalLinkPanel.getBoundingClientRect().width || 320);
+    const height = Math.max(1, refs.richExternalLinkPanel.offsetHeight || refs.richExternalLinkPanel.getBoundingClientRect().height || 0);
+    const margin = 12;
+    const gap = 12;
+    let anchorCenterX = hostRect.width / 2;
+    let anchorTop = margin;
+    let anchorBottom = margin;
+    if (anchorRect) {
+      anchorCenterX = ((Number(anchorRect.left || 0) + Number(anchorRect.right || 0)) / 2) - hostRect.left;
+      anchorTop = Number(anchorRect.top || 0) - hostRect.top;
+      anchorBottom = Number(anchorRect.bottom || 0) - hostRect.top;
+    } else if (refs.richSelectionToolbar instanceof HTMLDivElement && !refs.richSelectionToolbar.classList.contains("is-hidden")) {
+      const toolbarRect = refs.richSelectionToolbar.getBoundingClientRect();
+      anchorCenterX = ((toolbarRect.left + toolbarRect.right) / 2) - hostRect.left;
+      anchorTop = toolbarRect.top - hostRect.top;
+      anchorBottom = toolbarRect.bottom - hostRect.top;
+    } else if (refs.richToolbar instanceof HTMLDivElement && !refs.richToolbar.classList.contains("is-hidden")) {
+      const toolbarRect = refs.richToolbar.getBoundingClientRect();
+      anchorCenterX = ((toolbarRect.left + toolbarRect.right) / 2) - hostRect.left;
+      anchorTop = toolbarRect.top - hostRect.top;
+      anchorBottom = toolbarRect.bottom - hostRect.top;
+    }
+    let left = Math.round(anchorCenterX - width / 2);
+    let top = Math.round(anchorBottom + gap);
+    if (top + height > hostRect.height - margin) {
+      top = Math.round(anchorTop - height - gap);
+    }
+    const maxLeft = Math.max(margin, hostRect.width - width - margin);
+    const maxTop = Math.max(margin, hostRect.height - height - margin);
+    left = Math.max(margin, Math.min(left, maxLeft));
+    top = Math.max(margin, Math.min(top, maxTop));
+    refs.richExternalLinkPanel.style.left = `${left}px`;
+    refs.richExternalLinkPanel.style.top = `${top}px`;
+  }
+
+  function focusRichExternalLinkEditorInput({ select = true } = {}) {
+    const input = refs.richExternalLinkPanel?.querySelector?.('[data-role="rich-link-input"]');
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      input.focus();
+      if (select) {
+        input.select();
+      }
+    });
+  }
+
+  function openRichExternalLinkEditor({ prefill = "", selectionText = "", editingExistingLink = false, anchorRect = null } = {}) {
+    const activeContext = getActiveRichSessionContext();
+    const activeSession = activeContext?.session || null;
+    const targetItem = activeContext?.item || resolveRichCommandTarget();
+    if (!targetItem || !activeSession?.isActive?.()) {
+      setStatus("请先选中文本或进入文本编辑态");
+      return false;
+    }
+    const normalizedSelectionText = String(selectionText || "").trim();
+    const normalizedPrefill = String(prefill || "").trim();
+    pendingRichExternalLinkEdit = {
+      itemId: targetItem.id,
+      itemType: String(activeContext?.item?.type || activeSession.getItemType?.() || ""),
+      cellKey: String(activeContext?.cellKey || ""),
+      selectionText: normalizedSelectionText,
+      rawValue: normalizedPrefill,
+      editingExistingLink: Boolean(editingExistingLink),
+      autoDetected: Boolean(!editingExistingLink && normalizedSelectionText && normalizedPrefill && normalizedSelectionText === normalizedPrefill),
+      anchorRect:
+        anchorRect && Number.isFinite(Number(anchorRect.left)) && Number.isFinite(Number(anchorRect.top))
+          ? {
+              left: Number(anchorRect.left || 0),
+              top: Number(anchorRect.top || 0),
+              right: Number(anchorRect.right || 0),
+              bottom: Number(anchorRect.bottom || 0),
+            }
+          : null,
+    };
+    closeRichToolbarSubmenus();
+    syncRichExternalLinkEditorUi();
+    focusRichExternalLinkEditorInput();
+    setStatus("外部链接模式：输入链接后应用，Esc 可关闭");
+    return true;
+  }
+
+  function applyRichExternalLinkEditor({ closeAfterApply = false, remove = false } = {}) {
+    const activeContext = getActiveRichSessionContext();
+    const activeIdentity = getActiveRichSessionIdentity();
+    const activeSession = activeContext?.session || null;
+    if (
+      !pendingRichExternalLinkEdit ||
+      !activeContext ||
+      !activeIdentity ||
+      !activeSession?.isActive?.() ||
+      pendingRichExternalLinkEdit.itemId !== activeIdentity.itemId ||
+      pendingRichExternalLinkEdit.itemType !== activeIdentity.itemType ||
+      pendingRichExternalLinkEdit.cellKey !== activeIdentity.cellKey
+    ) {
+      return false;
+    }
+    const input = refs.richExternalLinkPanel?.querySelector?.('[data-role="rich-link-input"]');
+    const raw = remove ? "" : String(input instanceof HTMLInputElement ? input.value : pendingRichExternalLinkEdit.rawValue || "").trim();
+    pendingRichExternalLinkEdit.rawValue = raw;
+    const normalizedUrl = normalizeUserLinkInput(raw);
+    if (raw && !normalizedUrl) {
+      setStatus("链接格式无效（支持 http/https/mailto/tel/file/本地路径）");
+      focusRichExternalLinkEditorInput({ select: true });
+      return false;
+    }
+    const selection = activeSession.getSelectionSnapshot?.() || null;
+    const hasEditableSelection = Boolean(selection?.inside && !selection?.collapsed);
+    if (normalizedUrl && !pendingRichExternalLinkEdit.editingExistingLink && !hasEditableSelection) {
+      setStatus("请先选中要加链接的文本");
+      focusRichExternalLinkEditorInput({ select: true });
+      return false;
+    }
+    activeSession.focus();
+    if (normalizedUrl && hasEditableSelection) {
+      activeSession.command("unlink");
+    }
+    const ok = normalizedUrl ? activeSession.command("createLink", normalizedUrl) : activeSession.command("unlink");
+    if (!ok) {
+      setStatus("链接创建失败，请重新选中文本后再试");
+      focusRichExternalLinkEditorInput({ select: true });
+      return false;
+    }
+    pendingRichExternalLinkEdit.editingExistingLink = Boolean(normalizedUrl);
+    pendingRichExternalLinkEdit.rawValue = normalizedUrl || "";
+    pendingRichExternalLinkEdit.autoDetected = false;
+    if (activeContext?.editorElement) {
+      applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
+    }
+    syncActiveRichEditingItemState();
+    syncRichTextToolbar();
+    syncRichExternalLinkEditorUi();
+    setStatus(normalizedUrl ? "已更新外部链接" : "已移除外部链接");
+    if (closeAfterApply) {
+      closeRichExternalLinkEditor({ restoreFocus: true });
+    } else {
+      focusRichExternalLinkEditorInput({ select: true });
+    }
+    return true;
+  }
+
+  function runRichLinkCommand() {
+    const activeContext = getActiveRichSessionContext();
+    const activeSession = activeContext?.session || null;
+    const targetItem = activeContext?.item || resolveRichCommandTarget();
+    if (!targetItem || !activeSession?.isActive?.()) {
+      setStatus("请先选中文本或进入文本编辑态");
+      return;
+    }
+    activeSession.captureSelection?.();
+    const formatState = activeSession.getFormatState() || {};
+    const selection = activeSession.getSelectionSnapshot?.() || null;
+    const hasEditableSelection = Boolean(selection?.inside && !selection?.collapsed);
+    const editingExistingLink = Boolean(formatState.link && formatState.currentLinkHref);
+    if (!hasEditableSelection && !editingExistingLink) {
+      setStatus("请先选中要加链接的文本，或将光标放到已有链接内");
+      return;
+    }
+    activeSession.focus();
+    const currentHref = String(formatState.currentLinkHref || "").trim();
+    const selectionText = String(selection?.text || "").trim();
+    const suggestedUrl =
+      (!isCanvasInternalLinkUrl(currentHref) && currentHref) ||
+      (isRecognizedExternalLinkValue(selectionText) ? selectionText : "");
+    openRichExternalLinkEditor({
+      prefill: suggestedUrl,
+      selectionText,
+      editingExistingLink: Boolean(editingExistingLink && !isCanvasInternalLinkUrl(currentHref)),
+      anchorRect: selection?.rect || null,
+    });
+  }
+
+  function runRichCanvasLinkCommand() {
+    const activeContext = getActiveRichSessionContext();
+    const activeSession = activeContext?.session || null;
+    const targetItem = activeContext?.item || resolveRichCommandTarget();
+    if (!targetItem || !activeSession?.isActive?.()) {
+      setStatus("请先选中文本或进入文本编辑态");
+      return;
+    }
+    const selection = activeSession.getSelectionSnapshot?.() || null;
+    if (!selection?.inside || selection?.collapsed) {
+      setStatus("请先选中要绑定链接的文本");
+      return;
+    }
+    activeSession.focus();
+    activeSession.captureSelection?.();
+    pendingCanvasLinkBinding = true;
+    syncCanvasLinkBindingUi();
+    closeRichToolbarSubmenus();
+    setStatus("画布链接模式：请在画布中点击目标元素（Esc 取消）");
+  }
+
+  function focusCanvasLinkTarget(itemId = "") {
+    const targetId = String(itemId || "").trim();
+    if (!targetId) {
+      return false;
+    }
+    const item =
+      state.board.items.find((entry) => String(entry?.id || "") === targetId) ||
+      sceneRegistry.getItemById(targetId);
+    if (!item) {
+      setStatus("目标元素不存在或已删除");
+      return false;
+    }
+    const bounds = getElementBounds(item);
+    const center = {
+      x: bounds.left + bounds.width / 2,
+      y: bounds.top + bounds.height / 2,
+    };
+    const rect = getCanvasRect();
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const nextView = {
+      ...state.board.view,
+      offsetX: rect.width / 2 - center.x * scale,
+      offsetY: rect.height / 2 - center.y * scale,
+    };
+    const applyJumpState = ({ emit = true } = {}) => {
+      state.board.view = {
+        ...nextView,
+      };
+      state.board.selectedIds = [item.id];
+      state.lastSelectionSource = "link-jump";
+      syncBoard({ persist: false, emit, sceneChange: false, viewChange: true, fullOverlayRescan: false });
+    };
+    applyJumpState();
+    requestAnimationFrame(() => {
+      if (
+        state.board.selectedIds.length === 1 &&
+        state.board.selectedIds[0] === item.id &&
+        Number(state.board.view.offsetX || 0) === Number(nextView.offsetX || 0) &&
+        Number(state.board.view.offsetY || 0) === Number(nextView.offsetY || 0)
+      ) {
+        return;
+      }
+      applyJumpState();
+    });
+    setTimeout(() => {
+      if (
+        state.board.selectedIds.length === 1 &&
+        state.board.selectedIds[0] === item.id &&
+        Number(state.board.view.offsetX || 0) === Number(nextView.offsetX || 0) &&
+        Number(state.board.view.offsetY || 0) === Number(nextView.offsetY || 0)
+      ) {
+        return;
+      }
+      applyJumpState();
+    }, 80);
+    setStatus("已跳转到画布链接目标");
+    return true;
+  }
+
+  function scheduleFocusCanvasLinkTarget(itemId = "") {
+    const targetId = String(itemId || "").trim();
+    if (!targetId) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      focusCanvasLinkTarget(targetId);
+    });
+  }
+
+  function bindCanvasLinkToSelection(itemId = "") {
+    const targetId = String(itemId || "").trim();
+    if (!targetId) {
+      setStatus("未选中有效目标元素");
+      return false;
+    }
+    const activeContext = getActiveRichSessionContext();
+    const activeSession = activeContext?.session || null;
+    const editingItem = activeContext?.item || getActiveRichEditingItem();
+    if (!editingItem || !activeSession?.isActive?.()) {
+      setStatus("请先进入文本编辑态");
+      return false;
+    }
+    if (editingItem?.id && editingItem.id === targetId) {
+      setStatus("不能把画布链接绑定到当前正在编辑的元素");
+      return false;
+    }
+    const linkUrl = buildCanvasInternalLinkUrl(targetId);
+    if (!linkUrl) {
+      setStatus("画布链接生成失败");
+      return false;
+    }
+    activeSession.focus();
+    activeSession.command("unlink");
+    const ok = activeSession.command("createLink", linkUrl);
+    if (!ok) {
+      setStatus("画布链接创建失败，请重新选中文本后再试");
+      return false;
+    }
+    syncActiveRichEditingItemState();
+    if (activeContext?.editorElement) {
+      applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
+    }
+    setStatus("已创建画布链接");
+    return true;
   }
 
   function getRichTextSelectionState() {
-    const editingItem = getActiveRichEditingItem();
-    const snapshot = richTextSession.getSelectionSnapshot() || null;
+    const activeContext = getActiveRichSessionContext();
+    const editingItem = activeContext?.item && activeContext.item.type !== "table" ? activeContext.item : null;
+    const activeSession = activeContext?.session || null;
+    const snapshot = activeSession?.getSelectionSnapshot?.() || null;
     const hasExpandedSelection = Boolean(
-      editingItem &&
+      activeContext &&
         snapshot?.inside &&
         !snapshot?.collapsed &&
         snapshot?.rect &&
@@ -4394,8 +7393,209 @@ export function createCanvas2DEngine(options = {}) {
       editingItem,
       snapshot,
       hasExpandedSelection,
-      formatState: richTextSession.getFormatState() || {},
+      formatState: activeSession?.getFormatState?.() || {},
     };
+  }
+
+  function normalizeRichToolbarColorValue(value = "", fallback = "") {
+    const source = String(value || "").trim();
+    const fallbackValue = String(fallback || "").trim();
+    if (!source) {
+      return fallbackValue;
+    }
+    if (typeof document === "undefined") {
+      return source.toLowerCase();
+    }
+    const probe = document.createElement("span");
+    probe.style.color = "";
+    probe.style.color = source;
+    if (!probe.style.color) {
+      return fallbackValue || source.toLowerCase();
+    }
+    return probe.style.color;
+  }
+
+  function toComparableRichToolbarColor(value = "", fallback = "") {
+    return normalizeRichToolbarColorValue(value, fallback).replace(/\s+/g, "").toLowerCase();
+  }
+
+  function getRichToolbarColorLabel(color = "", slotIndex = -1) {
+    const normalized = toComparableRichToolbarColor(color);
+    const defaultLabels = ["黑色", "红色", "蓝色"];
+    if (slotIndex >= 0 && slotIndex < defaultLabels.length) {
+      const defaultColor = toComparableRichToolbarColor(RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[slotIndex]);
+      if (normalized === defaultColor) {
+        return defaultLabels[slotIndex];
+      }
+    }
+    return `自定义色 ${String(color || "").trim() || "#"}`;
+  }
+
+  function normalizeRichToolbarPresetColors(colors = []) {
+    const seen = new Set();
+    const normalized = [];
+    (Array.isArray(colors) ? colors : []).forEach((entry) => {
+      const color = normalizeRichToolbarColorValue(entry, "");
+      if (!color) {
+        return;
+      }
+      const key = toComparableRichToolbarColor(color);
+      if (!key || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      normalized.push(color);
+    });
+    return normalized.slice(0, RICH_TOOLBAR_PRESET_COLOR_LIMIT);
+  }
+
+  function renderRichToolbarPresetButtons(toolbar) {
+    if (!(toolbar instanceof HTMLDivElement)) {
+      return;
+    }
+    const normalizedPresets = normalizeRichToolbarPresetColors(richToolbarPresetColors);
+    richToolbarPresetColors = normalizedPresets.length
+      ? normalizedPresets
+      : RICH_TOOLBAR_DEFAULT_PRESET_COLORS.slice(0, RICH_TOOLBAR_PRESET_COLOR_LIMIT);
+    const markup = richToolbarPresetColors
+      .map(
+        (color) =>
+          `<button type="button" class="canvas2d-rich-btn color-swatch canvas2d-rich-color-preset-btn" data-action="color-preset" data-color="${color}" title="${color}"></button>`
+      )
+      .join("");
+    toolbar.querySelectorAll('[data-role="rich-color-presets-grid"]').forEach((grid) => {
+      if (!(grid instanceof HTMLElement)) {
+        return;
+      }
+      if (grid.innerHTML !== markup) {
+        grid.innerHTML = markup;
+      }
+    });
+  }
+
+  function syncRichToolbarColorControls(toolbar, formatState = {}) {
+    if (!(toolbar instanceof HTMLDivElement)) {
+      return;
+    }
+    const activeComparableColor = toComparableRichToolbarColor(formatState.color, richToolbarColorSlots[0]);
+    toolbar.querySelectorAll('[data-role="rich-color-slot"]').forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      const slotIndex = Number(button.getAttribute("data-slot-index") || -1);
+      const slotColor = normalizeRichToolbarColorValue(
+        richToolbarColorSlots[slotIndex] || RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[slotIndex] || RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[0],
+        RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[0]
+      );
+      button.setAttribute("data-color", slotColor);
+      button.style.background = slotColor;
+      button.style.backgroundColor = slotColor;
+      button.title = getRichToolbarColorLabel(slotColor, slotIndex);
+      button.classList.toggle("is-active", activeComparableColor && activeComparableColor === toComparableRichToolbarColor(slotColor));
+    });
+    toolbar.querySelectorAll('[data-action="color-picker"]').forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      const value = normalizeRichToolbarColorValue(richToolbarColorSlots[2], RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[2]);
+      if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
+        input.value = value;
+      }
+    });
+    renderRichToolbarPresetButtons(toolbar);
+    toolbar.querySelectorAll('[data-action="color-preset"]').forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      const color = normalizeRichToolbarColorValue(button.getAttribute("data-color"), RICH_TOOLBAR_DEFAULT_COLOR_SLOTS[2]);
+      button.style.background = color;
+      button.style.backgroundColor = color;
+      button.classList.toggle("is-active", activeComparableColor && activeComparableColor === toComparableRichToolbarColor(color));
+    });
+  }
+
+  function syncAllRichToolbarColorControls(formatState = null) {
+    const resolved = formatState || getActiveRichSession()?.getFormatState?.() || {};
+    syncRichToolbarColorControls(refs.richToolbar, resolved);
+    syncRichToolbarColorControls(refs.richSelectionToolbar, resolved);
+  }
+
+  function setRichToolbarCustomColor(nextColor = "", { apply = true, closePanel = true } = {}) {
+    const normalized = normalizeRichToolbarColorValue(nextColor, "");
+    if (!normalized) {
+      return false;
+    }
+    richToolbarColorSlots[2] = normalized;
+    syncAllRichToolbarColorControls();
+    if (apply) {
+      applyRichTextCommand("color", normalized);
+    }
+    if (closePanel) {
+      closeRichToolbarSubmenus();
+    }
+    return true;
+  }
+
+  function scheduleRichColorPreview() {
+    if (richColorPreviewFrame) {
+      return;
+    }
+    richColorPreviewFrame = requestAnimationFrame(() => {
+      richColorPreviewFrame = 0;
+      const color = normalizeRichToolbarColorValue(pendingRichColorPreview, "");
+      const activeSession = getActiveRichSession();
+      if (!color || !activeSession?.isActive?.()) {
+        return;
+      }
+      activeSession.focus();
+      activeSession.command("foreColor", color);
+      activeSession.captureSelection();
+      syncRichToolbarButtons(refs.richToolbar, activeSession.getFormatState() || {}, { editingItem: getActiveRichEditingItem() });
+      syncRichToolbarButtons(refs.richSelectionToolbar, activeSession.getFormatState() || {}, { editingItem: getActiveRichEditingItem() });
+      if (richColorPreviewCommitTimer) {
+        clearTimeout(richColorPreviewCommitTimer);
+      }
+      richColorPreviewCommitTimer = setTimeout(() => {
+        richColorPreviewCommitTimer = 0;
+        syncActiveRichEditingItemState({ emit: false, refreshToolbar: true, markDirty: true });
+      }, 90);
+    });
+  }
+
+  function previewRichToolbarCustomColor(nextColor = "") {
+    const normalized = normalizeRichToolbarColorValue(nextColor, "");
+    if (!normalized) {
+      return false;
+    }
+    richToolbarColorSlots[2] = normalized;
+    pendingRichColorPreview = normalized;
+    syncAllRichToolbarColorControls();
+    scheduleRichColorPreview();
+    return true;
+  }
+
+  function addRichToolbarPresetColor(nextColor = "") {
+    const normalized = normalizeRichToolbarColorValue(nextColor, richToolbarColorSlots[2]);
+    if (!normalized) {
+      return false;
+    }
+    const comparable = toComparableRichToolbarColor(normalized);
+    if (richToolbarPresetColors.some((entry) => toComparableRichToolbarColor(entry) === comparable)) {
+      return false;
+    }
+    const next = normalizeRichToolbarPresetColors([...richToolbarPresetColors, normalized]);
+    richToolbarPresetColors = next.length ? next : richToolbarPresetColors;
+    syncAllRichToolbarColorControls();
+    return true;
+  }
+
+  function resetRichToolbarDefaultColors({ apply = false } = {}) {
+    richToolbarColorSlots = RICH_TOOLBAR_DEFAULT_COLOR_SLOTS.slice();
+    richToolbarPresetColors = RICH_TOOLBAR_DEFAULT_PRESET_COLORS.slice();
+    syncAllRichToolbarColorControls();
+    if (apply) {
+      applyRichTextCommand("color", richToolbarColorSlots[0]);
+    }
   }
 
 function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null } = {}) {
@@ -4422,24 +7622,43 @@ function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null 
         button.classList.toggle("is-active", Boolean(formatState.taskList));
       } else if (action === "blockquote") {
         button.classList.toggle("is-active", formatState.blockType === "blockquote");
+      } else if (action === "toggle-blockquote-menu") {
+        button.classList.toggle("is-active", formatState.blockType === "blockquote");
       } else if (action === "horizontal-rule") {
         button.classList.toggle("is-active", formatState.blockType === "horizontal-rule");
+      } else if (action === "insert-math" || action === "toggle-math-menu") {
+        button.classList.toggle("is-active", Boolean(formatState.canEditMath));
       } else if (action === "underline") {
         button.classList.toggle("is-active", Boolean(formatState.underline));
+      } else if (action === "color") {
+        const buttonColor = button.getAttribute("data-color") || "";
+        button.classList.toggle(
+          "is-active",
+          toComparableRichToolbarColor(buttonColor) &&
+            toComparableRichToolbarColor(buttonColor) ===
+              toComparableRichToolbarColor(formatState.color, richToolbarColorSlots[0])
+        );
       }
     });
+  syncRichToolbarColorControls(toolbar, formatState);
   toolbar.querySelectorAll(".canvas2d-rich-submenu").forEach((submenu) => {
     if (!(submenu instanceof HTMLElement)) {
       return;
     }
     const submenuType = String(submenu.getAttribute("data-submenu") || "").trim().toLowerCase();
+    const currentLinkHref = String(formatState.currentLinkHref || "").trim();
     const isActive =
       submenuType === "blockquote"
         ? formatState.blockType === "blockquote"
         : submenuType === "math"
           ? Boolean(formatState.canEditMath)
+        : submenuType === "link"
+            ? Boolean(formatState.link)
           : false;
     submenu.classList.toggle("is-active", isActive);
+    if (submenuType === "link") {
+      submenu.classList.toggle("is-canvas-link", isCanvasInternalLinkUrl(currentLinkHref));
+    }
   });
   toolbar.querySelectorAll('[data-action="block-type"]').forEach((input) => {
     if (!(input instanceof HTMLSelectElement)) {
@@ -4498,6 +7717,11 @@ function getRichToolbarSubmenuRoots() {
   return toolbars.flatMap((toolbar) => Array.from(toolbar.querySelectorAll(".canvas2d-rich-submenu")));
 }
 
+function getRichToolbarColorControlRoots() {
+  const toolbars = [refs.richToolbar, refs.richSelectionToolbar].filter((entry) => entry instanceof HTMLDivElement);
+  return toolbars.flatMap((toolbar) => Array.from(toolbar.querySelectorAll('[data-role="rich-color-control"]')));
+}
+
 function closeRichToolbarSubmenus({ except = null } = {}) {
   getRichToolbarSubmenuRoots().forEach((submenu) => {
     if (!(submenu instanceof HTMLElement)) {
@@ -4515,6 +7739,22 @@ function closeRichToolbarSubmenus({ except = null } = {}) {
       toggle.setAttribute("aria-expanded", shouldKeepOpen ? "true" : "false");
     }
   });
+  getRichToolbarColorControlRoots().forEach((control) => {
+    if (!(control instanceof HTMLElement)) {
+      return;
+    }
+    const shouldKeepOpen = except instanceof HTMLElement && control === except;
+    control.classList.toggle("is-open", shouldKeepOpen);
+    const panel = control.querySelector('[data-role="rich-color-panel"]');
+    const toggle = control.querySelector('[data-action="toggle-color-panel"]');
+    if (panel instanceof HTMLElement) {
+      panel.classList.toggle("is-hidden", !shouldKeepOpen);
+      panel.style.display = shouldKeepOpen ? "grid" : "none";
+    }
+    if (toggle instanceof HTMLElement) {
+      toggle.setAttribute("aria-expanded", shouldKeepOpen ? "true" : "false");
+    }
+  });
 }
 
 function toggleRichToolbarSubmenu(submenu) {
@@ -4523,42 +7763,160 @@ function toggleRichToolbarSubmenu(submenu) {
   }
   const nextOpen = !submenu.classList.contains("is-open");
   closeRichToolbarSubmenus({ except: nextOpen ? submenu : null });
+  if (nextOpen) {
+    syncRichToolbarSubmenuPanelPosition(submenu);
+  }
+}
+
+function syncRichToolbarColorPanelPosition(control) {
+  if (!(control instanceof HTMLElement)) {
+    return;
+  }
+  const panel = control.querySelector('[data-role="rich-color-panel"]');
+  if (!(panel instanceof HTMLElement) || !(refs.surface instanceof HTMLDivElement)) {
+    return;
+  }
+  const gap = 8;
+  const margin = 8;
+  const hostRect = refs.surface.getBoundingClientRect();
+  panel.style.top = "calc(100% + 8px)";
+  panel.style.bottom = "auto";
+  panel.style.left = "0";
+  panel.style.right = "auto";
+  panel.style.maxHeight = "";
+  panel.style.overflowY = "";
+  const controlRect = control.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const panelWidth = Math.max(1, Number(panelRect.width || 0));
+  const panelHeight = Math.max(1, Number(panelRect.height || 0));
+  const hostWidth = Math.max(1, Number(hostRect.width || 0));
+  const hostHeight = Math.max(1, Number(hostRect.height || 0));
+
+  const controlLeftInHost = controlRect.left - hostRect.left;
+  const controlRightInHost = controlRect.right - hostRect.left;
+  const controlTopInHost = controlRect.top - hostRect.top;
+  const controlBottomInHost = controlRect.bottom - hostRect.top;
+  const controlHeight = Math.max(1, Number(controlRect.height || 0));
+
+  let leftOffset = 0;
+  const initialLeft = controlLeftInHost + leftOffset;
+  const initialRight = initialLeft + panelWidth;
+  if (initialRight > hostWidth - margin) {
+    leftOffset -= initialRight - (hostWidth - margin);
+  }
+  if (controlLeftInHost + leftOffset < margin) {
+    leftOffset += margin - (controlLeftInHost + leftOffset);
+  }
+  panel.style.left = `${Math.round(leftOffset)}px`;
+  panel.style.right = "auto";
+
+  const availableBelow = hostHeight - controlBottomInHost - gap - margin;
+  const availableAbove = controlTopInHost - gap - margin;
+  if (panelHeight <= availableBelow) {
+    panel.style.top = `${gap}px`;
+    panel.style.bottom = "auto";
+    return;
+  }
+  if (panelHeight <= availableAbove) {
+    panel.style.top = "auto";
+    panel.style.bottom = `${controlRect.height + gap}px`;
+    return;
+  }
+  const placeAbove = availableAbove > availableBelow;
+  const maxHeight = Math.max(120, Math.floor(placeAbove ? availableAbove : availableBelow));
+  panel.style.maxHeight = `${maxHeight}px`;
+  panel.style.overflowY = "auto";
+  if (placeAbove) {
+    panel.style.top = "auto";
+    panel.style.bottom = `${controlHeight + gap}px`;
+  } else {
+    panel.style.top = `${gap}px`;
+    panel.style.bottom = "auto";
+  }
+}
+
+function toggleRichToolbarColorPanel(control) {
+  if (!(control instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = !control.classList.contains("is-open");
+  closeRichToolbarSubmenus({ except: nextOpen ? control : null });
+  if (nextOpen) {
+    syncRichToolbarColorPanelPosition(control);
+  }
+}
+
+function syncRichToolbarSubmenuPanelPosition(submenu) {
+  if (!(submenu instanceof HTMLElement)) {
+    return;
+  }
+  const panel = submenu.querySelector(".canvas2d-rich-submenu-panel");
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+  const gap = 8;
+  panel.style.top = "calc(100% + 8px)";
+  panel.style.bottom = "auto";
+  panel.style.left = "0";
+  panel.style.right = "auto";
+  const viewportWidth =
+    Math.max(
+      Number(window.innerWidth || 0) || 0,
+      Number(document.documentElement?.clientWidth || 0) || 0
+    ) || 0;
+  const viewportHeight =
+    Math.max(
+      Number(window.innerHeight || 0) || 0,
+      Number(document.documentElement?.clientHeight || 0) || 0
+    ) || 0;
+  const panelRect = panel.getBoundingClientRect();
+  if (viewportHeight > 0 && panelRect.bottom > viewportHeight - 8) {
+    panel.style.top = "auto";
+    panel.style.bottom = `calc(100% + ${gap}px)`;
+  }
+  const adjustedRect = panel.getBoundingClientRect();
+  if (viewportWidth > 0 && adjustedRect.right > viewportWidth - 8) {
+    panel.style.left = "auto";
+    panel.style.right = "0";
+  }
+  const finalRect = panel.getBoundingClientRect();
+  if (finalRect.left < 8) {
+    panel.style.left = "0";
+    panel.style.right = "auto";
+  }
 }
 
 function syncRichToolbarEnhancements(toolbar) {
   if (!(toolbar instanceof HTMLDivElement)) {
     return;
   }
+  toolbar.querySelectorAll(".color-swatch").forEach((swatch) => {
+    if (!(swatch instanceof HTMLElement)) {
+      return;
+    }
+    const color = normalizeRichToolbarColorValue(swatch.getAttribute("data-color"), "#0f172a");
+    swatch.style.background = color;
+    swatch.style.backgroundColor = color;
+  });
   toolbar.querySelectorAll(".canvas2d-rich-submenu").forEach((submenu) => {
     if (!(submenu instanceof HTMLElement)) {
       return;
     }
-    submenu.style.position = "relative";
-    submenu.style.display = "inline-flex";
-    submenu.style.alignItems = "center";
-    submenu.style.gap = "4px";
     const panel = submenu.querySelector(".canvas2d-rich-submenu-panel");
     if (panel instanceof HTMLElement) {
-      panel.style.position = "absolute";
-      panel.style.top = "calc(100% + 8px)";
-      panel.style.left = "0";
       panel.style.display = panel.classList.contains("is-hidden") ? "none" : "flex";
-      panel.style.flexDirection = "column";
-      panel.style.gap = "4px";
-      panel.style.padding = "8px";
-      panel.style.minWidth = "92px";
-      panel.style.borderRadius = "12px";
-      panel.style.background = "rgba(255,255,255,0.98)";
-      panel.style.border = "1px solid rgba(203, 213, 225, 0.9)";
-      panel.style.boxShadow = "0 12px 24px rgba(15, 23, 42, 0.16)";
-      panel.style.zIndex = "4";
-    }
-    const toggle = submenu.querySelector(".canvas2d-rich-submenu-toggle");
-    if (toggle instanceof HTMLElement) {
-      toggle.style.minWidth = "28px";
-      toggle.style.paddingInline = "8px";
     }
   });
+  toolbar.querySelectorAll('[data-role="rich-color-control"]').forEach((control) => {
+    if (!(control instanceof HTMLElement)) {
+      return;
+    }
+    const panel = control.querySelector('[data-role="rich-color-panel"]');
+    if (panel instanceof HTMLElement) {
+      panel.style.display = panel.classList.contains("is-hidden") ? "none" : "grid";
+    }
+  });
+  syncRichToolbarColorControls(toolbar, getActiveRichSession()?.getFormatState?.() || {});
 }
 
   function getActiveRichSelectionFontSize() {
@@ -4576,7 +7934,7 @@ function syncRichToolbarEnhancements(toolbar) {
         return Math.max(8, Math.round(value));
       }
     }
-    const formatState = richTextSession.getFormatState() || {};
+    const formatState = getActiveRichSession()?.getFormatState?.() || {};
     const logicalValue =
       (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
       Math.max(0.1, Number(state.board.view?.scale || 1));
@@ -4657,26 +8015,36 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!isInteractiveMode()) {
       refs.richToolbar.classList.add("is-hidden");
       refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichToolbarSubmenus();
       closeRichSelectionFontSizePanel();
+      closeRichExternalLinkEditor();
       return;
     }
+    const activeRichContext = getActiveRichSessionContext();
     const { editingItem, snapshot, hasExpandedSelection, formatState } = getRichTextSelectionState();
-    const shouldShow = state.tool === "text" || Boolean(editingItem);
+    const shouldShow = state.tool === "text" || Boolean(editingItem) || Boolean(activeRichContext);
     if (!shouldShow || !refs.surface) {
       refs.richToolbar.classList.add("is-hidden");
       refs.richSelectionToolbar.classList.add("is-hidden");
+      closeRichToolbarSubmenus();
       closeRichSelectionFontSizePanel();
+      closeRichExternalLinkEditor();
       return;
     }
-    refs.richToolbar.classList.remove("is-hidden");
-    syncFloatingToolbarLayout(refs.richToolbar, refs.surface, {
-      minScale: 0.72,
-      hardMinScale: 0.56,
-      preferAboveZoom: false,
-      gap: 14,
-      margin: 8,
-    });
-    if (!editingItem) {
+    if (editingItem) {
+      refs.richToolbar.classList.remove("is-hidden");
+      syncFloatingToolbarLayout(refs.richToolbar, refs.surface, {
+        minScale: 0.72,
+        hardMinScale: 0.56,
+        preferAboveZoom: false,
+        gap: 14,
+        margin: 8,
+        anchor: "bottom-left",
+      });
+    } else {
+      refs.richToolbar.classList.add("is-hidden");
+    }
+    if (!editingItem && !(state.editingType === "table" && tableCellEditState.active)) {
       refs.richToolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
         button.classList.remove("is-active");
       });
@@ -4687,6 +8055,7 @@ function syncRichToolbarEnhancements(toolbar) {
       });
       refs.richSelectionToolbar.classList.add("is-hidden");
       closeRichSelectionFontSizePanel();
+      syncRichExternalLinkEditorUi();
       return;
     }
     syncRichToolbarButtons(refs.richToolbar, formatState, { editingItem });
@@ -4701,6 +8070,7 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.richSelectionToolbar.classList.add("is-hidden");
       closeRichSelectionFontSizePanel();
     }
+    syncRichExternalLinkEditorUi();
   }
 
   function syncRichTextFontSize() {
@@ -4812,7 +8182,68 @@ function syncRichToolbarEnhancements(toolbar) {
     return beforeSignature !== getRichEditableItemSignature(item);
   }
 
+  function syncEditingTableCellState({ emit = true, refreshToolbar = true, markDirty = true } = {}) {
+    const context = getActiveTableCellRichEditingContext();
+    if (!context) {
+      return null;
+    }
+    const html = sanitizeHtml(
+      normalizeRichHtmlInlineFontSizes(
+        normalizeRichHtml(tableCellRichTextSession.getHTML() || refs.tableCellRichEditor?.innerHTML || ""),
+        Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
+      )
+    ).trim();
+    const content = normalizeEditedTableCellContent(
+      getTableCellDraftContent(context.rowIndex, context.columnIndex) || {},
+      html,
+      Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
+    );
+    const changed = writeTableCellDraftContent(context.rowIndex, context.columnIndex, content);
+    if (changed) {
+      if (markDirty) {
+        markBoardDirty();
+      }
+      if (emit) {
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      } else {
+        scheduleRender();
+      }
+    }
+    if (refreshToolbar) {
+      requestAnimationFrame(() => syncRichTextToolbar());
+    }
+    return {
+      item: context.item,
+      changed,
+      rowIndex: context.rowIndex,
+      columnIndex: context.columnIndex,
+    };
+  }
+
+  function commitActiveTableCellRichEdit({ keepFocus = false } = {}) {
+    if (!tableCellEditState.active) {
+      return false;
+    }
+    syncEditingTableCellState({ emit: false, refreshToolbar: true, markDirty: true });
+    const rowIndex = tableCellEditState.rowIndex;
+    const columnIndex = tableCellEditState.columnIndex;
+    deactivateTableCellEditing({ keepFocus });
+    getTableEditorCellElement(rowIndex, columnIndex)?.focus?.();
+    return true;
+  }
+
+  function cancelActiveTableCellRichEdit({ keepFocus = false } = {}) {
+    if (!tableCellEditState.active) {
+      return false;
+    }
+    deactivateTableCellEditing({ keepFocus });
+    return true;
+  }
+
   function syncActiveRichEditingItemState({ emit = true, refreshToolbar = true, markDirty = true } = {}) {
+    if (state.editingType === "table" && tableCellEditState.active) {
+      return syncEditingTableCellState({ emit, refreshToolbar, markDirty });
+    }
     const item = getActiveRichEditingItem();
     if (!item) {
       return null;
@@ -4824,7 +8255,7 @@ function syncRichToolbarEnhancements(toolbar) {
       changed = syncEditingFlowNodeState(item);
     }
     if (emit && changed) {
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     } else {
       scheduleRender();
     }
@@ -4849,7 +8280,7 @@ function syncRichToolbarEnhancements(toolbar) {
       });
     }
     if (state.editingType === "file-memo" && state.editingId && refs.fileMemoEditor instanceof HTMLTextAreaElement) {
-      const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "fileCard");
+      const item = sceneRegistry.getItemById(state.editingId, "fileCard");
       if (!item) {
         return null;
       }
@@ -4864,7 +8295,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return item;
     }
     if (state.editingType === "image-memo" && state.editingId && refs.imageMemoEditor instanceof HTMLTextAreaElement) {
-      const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "image");
+      const item = sceneRegistry.getItemById(state.editingId, "image");
       if (!item) {
         return null;
       }
@@ -4894,31 +8325,55 @@ function syncRichToolbarEnhancements(toolbar) {
     });
   }
 
-  function syncRichTextOverlays() {
+  function syncRichTextOverlays(visibleScene = null) {
     if (!(refs.richDisplayHost instanceof HTMLDivElement)) {
       return;
     }
     if (!isInteractiveMode()) {
-      refs.richDisplayHost.classList.add("is-hidden");
+      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingRichOverlayDetail(node);
+          node.remove?.();
+        },
+      });
       return;
     }
     if (RENDER_TEXT_IN_CANVAS) {
-      refs.richDisplayHost.classList.add("is-hidden");
-      refs.richDisplayHost.style.display = "none";
-      if (richDisplayMap.size) {
-        richDisplayMap.forEach((node) => node.remove());
-        richDisplayMap.clear();
-      }
+      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingRichOverlayDetail(node);
+          node.remove?.();
+        },
+      });
       return;
     }
-    const items = state.board.items.filter((item) => item.type === "text" || item.type === "flowNode");
-    if (!items.length) {
-      refs.richDisplayHost.classList.add("is-hidden");
-      return;
-    }
-    refs.richDisplayHost.classList.remove("is-hidden");
-
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    if (isCanvasLodScale(scale, RICH_OVERLAY_PREVIEW_MIN_SCALE)) {
+      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingRichOverlayDetail(node);
+          node.remove?.();
+        },
+      });
+      return;
+    }
+    const sceneIndex = getSceneIndexRuntime();
+    const items = [
+      ...(sceneIndex.recordsByType.get("text") || []),
+      ...(sceneIndex.recordsByType.get("flowNode") || []),
+    ].map((record) => record.item);
+    if (!items.length) {
+      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingRichOverlayDetail(node);
+          node.remove?.();
+        },
+      });
+      return;
+    }
+    showOverlayHost(refs.richDisplayHost);
+
+    const detailMode = isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
     const scaleBucket = getRichOverlayScaleBucket(scale);
@@ -4929,53 +8384,51 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.canvas?.clientHeight || refs.canvas?.height || 0
     );
 
-    const activeIds = new Set(items.map((item) => item.id));
     const visibleItems = [];
     let textLayoutWritebackChanged = false;
-    items.forEach((item) => {
+    const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["text", "flowNode"], { marginPx: 120 });
+    candidateRecords.forEach((record) => {
+      const item = record.item;
       const left = Number(item.x || 0) * scale + offsetX;
       const top = Number(item.y || 0) * scale + offsetY;
       const width = Math.max(1, Number(item.width || 1)) * scale;
       const height = Math.max(1, Number(item.height || 1)) * scale;
-      if (!hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds)) {
-        const node = richDisplayMap.get(item.id);
-        if (node) {
-          setStyleIfNeeded(node, "display", "none");
-        }
-        return;
-      }
       visibleItems.push({
         item,
         left,
         top,
         width,
         height,
+        visible: hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds),
       });
     });
+    const activeOverlayItems = visibleItems.filter(
+      ({ item, visible }) => visible || (editingId && editingId === item.id)
+    );
 
-    for (const [id, node] of richDisplayMap.entries()) {
-      if (!activeIds.has(id)) {
-        node.remove();
-        richDisplayMap.delete(id);
-      }
-    }
-
-    visibleItems.forEach(({ item, left, top, width, height }) => {
-      if (editingId && editingId === item.id) {
-        const existing = richDisplayMap.get(item.id);
-        if (existing) {
-          setStyleIfNeeded(existing, "display", "none");
-        }
-        return;
-      }
-      let node = richDisplayMap.get(item.id);
-      if (!node) {
-        node = document.createElement("div");
-        node.className = "canvas2d-rich-item";
-        node.dataset.id = item.id;
-        refs.richDisplayHost.appendChild(node);
-        richDisplayMap.set(item.id, node);
-      }
+    richOverlayVirtualizer.syncCollection({
+      items: activeOverlayItems,
+      activeIds: activeOverlayItems.map(({ item }) => item.id),
+      getId: ({ item }) => item.id,
+      hideUnprocessed: true,
+      createNode: ({ item }) => {
+        const nextNode = document.createElement("div");
+        nextNode.className = "canvas2d-rich-item";
+        nextNode.dataset.id = item.id;
+        refs.richDisplayHost.appendChild(nextNode);
+        return nextNode;
+      },
+      shouldHide: ({ item, visible }) => !visible || (editingId && editingId === item.id),
+      onRemove: (node) => {
+        cancelPendingRichOverlayDetail(node);
+        node.remove?.();
+      },
+      onHide: (node) => {
+        cancelPendingRichOverlayDetail(node);
+        setStyleIfNeeded(node, "display", "none");
+      },
+      onShow: (node) => setStyleIfNeeded(node, "display", "block"),
+      syncNode: (node, { item, left, top, width, height }) => {
       const classSignature = getRichOverlayClassSignature(item);
       if (node.dataset.classSignature !== classSignature) {
         node.classList.toggle("is-flow-node", item.type === "flowNode");
@@ -4989,53 +8442,96 @@ function syncRichToolbarEnhancements(toolbar) {
       const padding = item.type === "flowNode" ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
       const lineHeightRatio = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
       const linkSignature = item.type === "text" ? getLinkSemanticSignature(item) : "";
-      const html = normalizeRichHtmlInlineFontSizes(
-        resolveRichTextDisplayHtml({
-          text: item.plainText || item.text || "",
-          html: item.html || "",
-          linkTokens: item.linkTokens || [],
-        }),
-        item.fontSize || DEFAULT_TEXT_FONT_SIZE
-      );
+      const overlayMode = detailMode ? "detail" : resolveRichOverlaySummaryMode({ scale, width, height });
+      const detailCacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
+      const detailRenderSignature = `${detailCacheKey}|${scaleBucket}`;
+      node.classList.toggle("is-summary-skeleton", overlayMode === "summary-skeleton");
       let contentMutated = false;
-      if (html.trim()) {
-        if (node.dataset.html !== html) {
-          node.innerHTML = html;
-          node.dataset.html = html;
-          node.dataset.text = "";
-          contentMutated = true;
-        }
-        if (item.type === "text" && (contentMutated || node.dataset.linkSignature !== linkSignature)) {
-          applyLinkSemanticsToRichDisplayNode(node, item);
-          node.dataset.linkSignature = linkSignature;
-        }
-        if (contentMutated || node.dataset.inlineScaleBucket !== scaleBucket) {
-          applyInlineFontSizingToContainer(node, scale);
-          node.dataset.inlineScaleBucket = scaleBucket;
-        }
-        if (contentMutated) {
-          applyRichTypographyTokens(node);
+      if (overlayMode === "detail") {
+        node.dataset.detailRenderSignature = detailRenderSignature;
+        const cachedHtml = readRichOverlayDetailHtmlCache(detailCacheKey);
+        if (cachedHtml.trim()) {
+          contentMutated = applyRichOverlayDetailHtmlToNode(node, {
+            detailRenderSignature,
+            html: cachedHtml,
+            item,
+            linkSignature,
+            scale,
+            scaleBucket,
+          }) || contentMutated;
+        } else {
+          cancelPendingRichOverlayDetail(node);
+          const text = item.plainText || item.text || "";
+          if (node.dataset.contentMode !== "detail-pending" || node.dataset.text !== text) {
+            node.textContent = text;
+            node.dataset.text = text;
+            node.dataset.html = "";
+            node.dataset.inlineScaleBucket = "";
+            node.dataset.linkSignature = "";
+            node.dataset.contentMode = "detail-pending";
+            contentMutated = true;
+          }
+          scheduleRichOverlayDetailHtml(node, {
+            cacheKey: detailCacheKey,
+            detailRenderSignature,
+            item,
+            linkSignature,
+            scale,
+            scaleBucket,
+          });
         }
       } else {
-        const text = item.plainText || item.text || "";
-        if (node.dataset.text !== text) {
-          node.textContent = text;
-          node.dataset.text = text;
+        cancelPendingRichOverlayDetail(node);
+        const logicalSummaryWidth = Math.max(24, Number(item.width || 0) || 24);
+        const logicalSummaryHeight = Math.max(18, Number(item.height || 0) || 18);
+        const logicalSummaryPaddingX = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.paddingX : 0;
+        const logicalSummaryPaddingY = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.paddingY : 0;
+        const summarySignature = [
+          overlayMode,
+          item.type === "flowNode" ? "flow" : "text",
+          Math.round(logicalSummaryWidth),
+          Math.round(logicalSummaryHeight),
+          Math.round(logicalSummaryPaddingX),
+          Math.round(logicalSummaryPaddingY),
+          hashOverlayContent(String(item.plainText || item.text || "")),
+        ].join("|");
+        if (node.dataset.contentMode !== overlayMode || node.dataset.text !== summarySignature) {
+          node.innerHTML = buildRichOverlaySkeletonMarkup({
+            width: Math.max(24, logicalSummaryWidth - logicalSummaryPaddingX * 2),
+            height: Math.max(18, logicalSummaryHeight - logicalSummaryPaddingY * 2),
+            isFlowNode: item.type === "flowNode",
+            showPanel: false,
+          });
+          node.dataset.text = summarySignature;
           node.dataset.html = "";
           node.dataset.inlineScaleBucket = "";
           node.dataset.linkSignature = "";
+          node.dataset.contentMode = overlayMode;
           contentMutated = true;
         }
       }
       setStyleIfNeeded(node, "display", "block");
-      const boxStyles = getRichOverlayBoxStyles(item, scale);
+      const baseBoxStyles = getRichOverlayBoxStyles(item, scale);
+      const boxStyles = overlayMode !== "detail"
+        ? {
+            ...baseBoxStyles,
+            display: "block",
+            widthCss: `${Math.round(width)}px`,
+            heightCss: `${Math.round(height)}px`,
+            minHeightCss: `${Math.round(height)}px`,
+            maxWidthCss: `${Math.round(width)}px`,
+            overflow: "hidden",
+          }
+        : baseBoxStyles;
       const fontWeight = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
+      const appliedPaddingX = overlayMode === "detail" ? padding.x : 0;
+      const appliedPaddingY = overlayMode === "detail" ? padding.y : 0;
       const styleSignature = getRichOverlayStyleSignature({
         left,
         top,
         fontSize,
-        paddingX: padding.x,
-        paddingY: padding.y,
+        paddingX: appliedPaddingX,
+        paddingY: appliedPaddingY,
         lineHeightRatio,
         fontWeight,
         color: item.color || "#0f172a",
@@ -5059,7 +8555,7 @@ function syncRichToolbarEnhancements(toolbar) {
         setStyleIfNeeded(node, "maxWidth", boxStyles.maxWidthCss);
         setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
         setStyleIfNeeded(node, "fontFamily", TEXT_FONT_FAMILY);
-        setStyleIfNeeded(node, "padding", `${padding.y}px ${padding.x}px`);
+        setStyleIfNeeded(node, "padding", `${appliedPaddingY}px ${appliedPaddingX}px`);
         setStyleIfNeeded(node, "lineHeight", String(lineHeightRatio));
         setStyleIfNeeded(node, "fontWeight", fontWeight);
         setStyleIfNeeded(node, "color", item.color || "#0f172a");
@@ -5069,7 +8565,8 @@ function syncRichToolbarEnhancements(toolbar) {
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (item.type === "text") {
+      if (overlayMode === "detail" && item.type === "text") {
+        const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
           node.dataset.layoutWritebackSignature = writebackSignature;
@@ -5078,41 +8575,64 @@ function syncRichToolbarEnhancements(toolbar) {
           }
         }
       }
+      },
     });
     if (textLayoutWritebackChanged) {
-      invalidateHitTestSpatialIndex(state.board.items);
-      syncBoard({ persist: false, emit: true, markDirty: false });
+      markSceneGraphDirty();
+      syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
     }
   }
 
-  function syncMathOverlays() {
+  function syncMathOverlays(visibleScene = null) {
     if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
       return;
     }
+    if (state.editingType === "table") {
+      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingMathRender(node);
+          node.remove?.();
+        },
+      });
+      return;
+    }
     if (!isInteractiveMode()) {
-      refs.mathDisplayHost.classList.add("is-hidden");
-      refs.mathDisplayHost.style.display = "none";
-      if (mathDisplayMap.size) {
-        mathDisplayMap.forEach((node) => node.remove());
-        mathDisplayMap.clear();
-      }
+      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingMathRender(node);
+          node.remove?.();
+        },
+      });
       return;
     }
 
-    const items = state.board.items.filter((item) => item.type === "mathBlock" || item.type === "mathInline");
+    const sceneIndex = getSceneIndexRuntime();
+    const items = [
+      ...(sceneIndex.recordsByType.get("mathBlock") || []),
+      ...(sceneIndex.recordsByType.get("mathInline") || []),
+    ].map((record) => record.item);
     if (!items.length) {
-      refs.mathDisplayHost.classList.add("is-hidden");
-      refs.mathDisplayHost.style.display = "none";
-      if (mathDisplayMap.size) {
-        mathDisplayMap.forEach((node) => node.remove());
-        mathDisplayMap.clear();
-      }
+      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingMathRender(node);
+          node.remove?.();
+        },
+      });
       return;
     }
 
-    refs.mathDisplayHost.classList.remove("is-hidden");
-    refs.mathDisplayHost.style.display = "block";
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    if (isCanvasLodScale(scale, MATH_OVERLAY_PREVIEW_MIN_SCALE)) {
+      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingMathRender(node);
+          node.remove?.();
+        },
+      });
+      return;
+    }
+    showOverlayHost(refs.mathDisplayHost);
+    const detailMode = isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
@@ -5120,74 +8640,135 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.canvas?.clientWidth || refs.canvas?.width || 0,
       refs.canvas?.clientHeight || refs.canvas?.height || 0
     );
-    const activeIds = new Set(items.map((item) => item.id));
     let mathLayoutWritebackChanged = false;
 
-    for (const [id, node] of mathDisplayMap.entries()) {
-      if (!activeIds.has(id)) {
-        node.remove();
-        mathDisplayMap.delete(id);
-      }
-    }
-
-    items.forEach((item) => {
+    const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["mathBlock", "mathInline"], {
+      marginPx: 120,
+    });
+    const visibleItems = candidateRecords.map((record) => {
+      const item = record.item;
       const left = Number(item.x || 0) * scale + offsetX;
       const top = Number(item.y || 0) * scale + offsetY;
       const width = Math.max(1, Number(item.width || 1)) * scale;
       const height = Math.max(1, Number(item.height || 1)) * scale;
-      if (!hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds)) {
-        const hiddenNode = mathDisplayMap.get(item.id);
-        if (hiddenNode) {
-          setStyleIfNeeded(hiddenNode, "display", "none");
-        }
-        return;
-      }
+      return {
+        item,
+        left,
+        top,
+        width,
+        height,
+        visible: hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds),
+      };
+    });
+    const activeMathItems = visibleItems.filter(({ visible }) => visible);
 
-      let node = mathDisplayMap.get(item.id);
-      if (!node) {
-        node = document.createElement("div");
-        node.className = "canvas2d-math-item";
-        node.dataset.id = item.id;
-        refs.mathDisplayHost.appendChild(node);
-        mathDisplayMap.set(item.id, node);
-      }
-
+    mathOverlayVirtualizer.syncCollection({
+      items: activeMathItems,
+      activeIds: activeMathItems.map(({ item }) => item.id),
+      getId: ({ item }) => item.id,
+      hideUnprocessed: true,
+      createNode: ({ item }) => {
+        const nextNode = document.createElement("div");
+        nextNode.className = "canvas2d-math-item";
+        nextNode.dataset.id = item.id;
+        refs.mathDisplayHost.appendChild(nextNode);
+        return nextNode;
+      },
+      onRemove: (node) => {
+        cancelPendingMathRender(node);
+        node.remove?.();
+      },
+      shouldHide: ({ visible }) => !visible,
+      onHide: (node) => {
+        cancelPendingMathRender(node);
+        setStyleIfNeeded(node, "display", "none");
+      },
+      syncNode: (node, { item, left, top, width, height }) => {
       const displayMode = item.displayMode !== false;
-      const katexReady = Boolean(globalThis?.katex && typeof globalThis.katex.renderToString === "function");
-      const shouldRetryRender = item.mathOverlayReady !== true && katexReady;
-      const markup = renderMathMarkup(item.formula || "", { displayMode });
+      const formula = String(item.formula || "");
+      const overlayMode = detailMode ? "detail" : resolveMathOverlaySummaryMode({ scale, width, height, displayMode });
+      const shouldRetryRender =
+        overlayMode === "detail" &&
+        item.mathOverlayReady !== true &&
+        canScheduleMathMarkupUpgrade(formula) &&
+        node.dataset.mathRenderState !== "pending";
       const stateToken = normalizeMathRenderState(item);
       const fallbackText = String(item.fallbackText || item.formula || "").trim() || (displayMode ? "[公式]" : "[行内公式]");
-      const contentSignature = getMathOverlaySignature(item);
+      const contentSignature = `${getMathOverlaySignature(item)}|${overlayMode}`;
       if (node.dataset.contentSignature !== contentSignature || shouldRetryRender) {
-        if (markup && hasRenderedKatexMarkup(markup)) {
-          node.innerHTML = markup;
-          item.renderState = "ready";
-          item.mathOverlayReady = true;
-        } else {
-          node.innerHTML = markup || "";
-          if (!markup) {
+        if (overlayMode === "detail") {
+          const cacheKey = getMathMarkupCacheKey(formula, displayMode);
+          const cachedMarkup = readMathMarkupCache(cacheKey);
+          if (cachedMarkup && hasRenderedKatexMarkup(cachedMarkup)) {
+            applyMathMarkupToNode(node, contentSignature, cachedMarkup, {
+              fallbackText,
+              state: "ready",
+              transport: "cache",
+            });
+            item.renderState = "ready";
+            item.mathOverlayReady = true;
+          } else {
             node.textContent = fallbackText;
+            node.dataset.mathRenderState = "pending";
+            node.dataset.mathRenderTransport = "";
+            item.renderState = stateToken === "error" ? "error" : "fallback";
+            item.mathOverlayReady = false;
+            if (canScheduleMathMarkupUpgrade(formula)) {
+              scheduleMathMarkupUpgrade(node, {
+                cacheKey,
+                formula,
+                displayMode,
+                contentSignature,
+                fallbackText,
+                item,
+              });
+            }
           }
-          item.renderState = stateToken === "error" ? "error" : "fallback";
-          item.mathOverlayReady = false;
+        } else {
+          cancelPendingMathRender(node);
+          node.innerHTML = buildMathOverlaySummaryMarkup({
+            displayMode,
+            width,
+            height,
+          });
+          node.dataset.mathRenderState = "summary";
+          node.dataset.mathRenderTransport = "summary";
         }
         node.dataset.contentSignature = contentSignature;
+        node.dataset.contentMode = overlayMode;
       }
 
       const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, scale);
       setStyleIfNeeded(node, "display", displayMode ? "block" : "inline-flex");
-      const styleSignature = getMathOverlayStyleSignature({ left, top, fontSize, paddingX, paddingY });
+      const widthCss = overlayMode === "detail" ? "auto" : `${Math.round(width)}px`;
+      const minHeightCss = `${Math.max(1, Math.round(height))}px`;
+      const appliedPaddingX = overlayMode === "detail" ? paddingX : 0;
+      const appliedPaddingY = overlayMode === "detail" ? paddingY : 0;
+      const whiteSpace = overlayMode === "detail" ? (displayMode ? "normal" : "nowrap") : "normal";
+      const justifyContent = overlayMode === "detail" ? (displayMode ? "center" : "flex-start") : "center";
+      const styleSignature = getMathOverlayStyleSignature({
+        left,
+        top,
+        fontSize,
+        paddingX: appliedPaddingX,
+        paddingY: appliedPaddingY,
+        widthCss,
+        minHeightCss,
+        whiteSpace,
+        justifyContent,
+      });
       if (node.dataset.styleSignature !== styleSignature) {
         setStyleIfNeeded(node, "position", "absolute");
         setStyleIfNeeded(node, "left", `${left}px`);
         setStyleIfNeeded(node, "top", `${top}px`);
-        setStyleIfNeeded(node, "padding", `${paddingY}px ${paddingX}px`);
+        setStyleIfNeeded(node, "width", widthCss);
+        setStyleIfNeeded(node, "minHeight", minHeightCss);
+        setStyleIfNeeded(node, "padding", `${appliedPaddingY}px ${appliedPaddingX}px`);
         setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
-        setStyleIfNeeded(node, "lineHeight", displayMode ? "normal" : "1.1");
+        setStyleIfNeeded(node, "lineHeight", overlayMode === "detail" && !displayMode ? "1.1" : "normal");
         setStyleIfNeeded(node, "alignItems", "center");
-        setStyleIfNeeded(node, "justifyContent", displayMode ? "center" : "flex-start");
-        setStyleIfNeeded(node, "whiteSpace", displayMode ? "normal" : "nowrap");
+        setStyleIfNeeded(node, "justifyContent", justifyContent);
+        setStyleIfNeeded(node, "whiteSpace", whiteSpace);
         setStyleIfNeeded(node, "color", "rgba(15, 23, 42, 0.96)");
         node.dataset.styleSignature = styleSignature;
       }
@@ -5195,19 +8776,27 @@ function syncRichToolbarEnhancements(toolbar) {
       if (node.dataset.layoutWritebackSignature !== contentSignature) {
         node.dataset.layoutWritebackSignature = contentSignature;
       }
-      if (maybeWritebackMathOverlayFrame(item, node, scale)) {
+      if (overlayMode === "detail" && node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, scale)) {
         mathLayoutWritebackChanged = true;
       }
+      },
     });
 
     if (mathLayoutWritebackChanged) {
-      invalidateHitTestSpatialIndex(state.board.items);
-      syncBoard({ persist: false, emit: true, markDirty: false });
+      markSceneGraphDirty();
+      syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
     }
   }
 
-  function syncCodeBlockOverlays() {
+  function syncCodeBlockOverlays(visibleScene = null) {
     if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    if (state.editingType === "table") {
+      refs.codeBlockDisplayHost.classList.add("is-hidden");
+      refs.codeBlockDisplayHost.style.display = "none";
+      resetCodeBlockOverlayState({ clearNodes: true });
+      lastCodeBlockOverlayInteractive = false;
       return;
     }
     const interactive = isInteractiveMode();
@@ -5218,7 +8807,8 @@ function syncRichToolbarEnhancements(toolbar) {
       lastCodeBlockOverlayInteractive = interactive;
       return;
     }
-    const items = state.board.items.filter((item) => item.type === "codeBlock");
+    const sceneIndex = getSceneIndexRuntime();
+    const items = (sceneIndex.recordsByType.get("codeBlock") || []).map((record) => record.item);
     if (!items.length) {
       refs.codeBlockDisplayHost.classList.add("is-hidden");
       refs.codeBlockDisplayHost.style.display = "none";
@@ -5229,6 +8819,13 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.codeBlockDisplayHost.classList.remove("is-hidden");
     refs.codeBlockDisplayHost.style.display = "block";
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE)) {
+      refs.codeBlockDisplayHost.classList.add("is-hidden");
+      refs.codeBlockDisplayHost.style.display = "none";
+      resetCodeBlockOverlayState({ clearNodes: true });
+      lastCodeBlockOverlayInteractive = interactive;
+      return;
+    }
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
@@ -5243,12 +8840,10 @@ function syncRichToolbarEnhancements(toolbar) {
       viewportKey !== lastCodeBlockOverlayViewportKey ||
       items.length !== codeBlockItemsById.size;
 
-    if (shouldRescan) {
-      codeBlockItemsById.clear();
-      items.forEach((item) => {
-        codeBlockItemsById.set(item.id, item);
-      });
-    }
+    codeBlockItemsById.clear();
+    items.forEach((item) => {
+      codeBlockItemsById.set(item.id, item);
+    });
 
     const nextHoverId = codeBlockItemsById.has(state.hoverId) ? String(state.hoverId || "") : "";
     const nextEditingId =
@@ -5271,19 +8866,54 @@ function syncRichToolbarEnhancements(toolbar) {
     lastCodeBlockOverlayEditingId = nextEditingId;
     lastCodeBlockOverlaySelectionKey = selectionKey;
 
-    const activeIds = new Set(items.map((item) => item.id));
-    for (const [id, node] of codeBlockDisplayMap.entries()) {
-      if (!activeIds.has(id)) {
-        node.remove();
-        codeBlockDisplayMap.delete(id);
-        codeBlockVisibleIds.delete(id);
-      }
+    let candidateItems = getVisibleSceneRecordsByTypes(visibleScene, ["codeBlock"], { marginPx: 160 }).map(
+      (record) => record.item
+    );
+    if (!candidateItems.length && items.length) {
+      const fallbackVisible = queryVisibleItemsByTypes(["codeBlock"], { marginPx: 320 });
+      candidateItems = Array.isArray(fallbackVisible?.items) ? fallbackVisible.items : [];
     }
+    if (!candidateItems.length && items.length && viewportBounds.bottom - viewportBounds.top <= 12) {
+      candidateItems = items.slice();
+    }
+    const activeVisibleItems = candidateItems.filter((item) => {
+      const left = Number(item.x || 0) * scale + offsetX;
+      const top = Number(item.y || 0) * scale + offsetY;
+      const width = Math.max(1, Number(item.width || 1)) * scale;
+      const height = Math.max(1, Number(item.height || 1)) * scale;
+      return hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
+    });
+    const activeIds = activeVisibleItems.map((item) => item.id);
+    codeBlockOverlayVirtualizer.syncActiveIds(activeIds, {
+      onRemove: (node) => {
+        cleanupCodeBlockStaticNode(node);
+        node.remove?.();
+      },
+    });
 
     if (shouldRescan) {
       codeBlockVisibleIds.clear();
-      items.forEach((item) => {
-        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+      codeBlockOverlayVirtualizer.syncCollection({
+        items: activeVisibleItems,
+        activeIds,
+        getId: (item) => item.id,
+        hideUnprocessed: true,
+        createNode: () => {
+          const nextNode = document.createElement("div");
+          refs.codeBlockDisplayHost.appendChild(nextNode);
+          return nextNode;
+        },
+        onRemove: (node) => {
+          cleanupCodeBlockStaticNode(node);
+          node.remove?.();
+        },
+        onHide: (node) => {
+          cleanupCodeBlockStaticNode(node);
+          setStyleIfNeeded(node, "display", "none");
+        },
+        syncNode: (_, item) => {
+          syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+        },
       });
     } else {
       const idsToUpdate = new Set([
@@ -5300,12 +8930,12 @@ function syncRichToolbarEnhancements(toolbar) {
       idsToUpdate.forEach((itemId) => {
         const item = codeBlockItemsById.get(itemId);
         if (!item) {
-          const node = codeBlockDisplayMap.get(itemId);
-          if (node) {
-            node.remove();
-            codeBlockDisplayMap.delete(itemId);
-          }
-          codeBlockVisibleIds.delete(itemId);
+          codeBlockOverlayVirtualizer.removeNode(itemId, {
+            onRemove: (node) => {
+              cleanupCodeBlockStaticNode(node);
+              node.remove?.();
+            },
+          });
           return;
         }
         syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
@@ -5319,7 +8949,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function beginTextEdit(itemId) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "text");
+    const item = sceneRegistry.getItemById(itemId, "text");
     if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
       return false;
     }
@@ -5349,7 +8979,7 @@ function syncRichToolbarEnhancements(toolbar) {
     applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       richTextSession.focus();
       syncRichTextToolbar();
@@ -5358,7 +8988,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function beginFlowNodeEdit(itemId) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "flowNode");
+    const item = sceneRegistry.getItemById(itemId, "flowNode");
     if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
       return false;
     }
@@ -5389,7 +9019,7 @@ function syncRichToolbarEnhancements(toolbar) {
     applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       richTextSession.focus();
       syncRichTextToolbar();
@@ -5401,7 +9031,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.editingId || state.editingType !== "text") {
       return false;
     }
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "text");
+    const item = sceneRegistry.getItemById(state.editingId, "text");
     if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
       state.editingId = null;
       state.editingType = null;
@@ -5444,8 +9074,55 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.richEditor.classList.add("is-hidden");
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      commitHistory(before, "删除空白文本");
+      commitItemPatchHistory(before, item.id, null, "删除空白文本", "text-edit");
       setStatus("已删除空白文本");
+      if (state.tool === "text" && shouldExitTextToolAfterEdit) {
+        shouldExitTextToolAfterEdit = false;
+        setTool("select");
+      }
+      return true;
+    }
+    const splitItems = buildStandaloneMathBlockSplitItems(item, canonicalHtml, {
+      width: Math.max(80, Number(item.width || 0) || 80),
+      fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE),
+    });
+    if (Array.isArray(splitItems) && splitItems.length) {
+      splitItems.forEach((entry) => {
+        if (entry?.type === "text") {
+          scheduleUrlMetaHydrationForItem(entry);
+        }
+      });
+      const itemIndex = state.board.items.findIndex((entry) => entry.id === item.id);
+      if (itemIndex >= 0) {
+        state.board.items.splice(itemIndex, 1, ...splitItems);
+      } else {
+        state.board.items.push(...splitItems);
+      }
+      if (state.hoverId === item.id) {
+        state.hoverId = splitItems[0]?.id || null;
+      }
+      state.editingId = null;
+      state.editingType = null;
+      state.board.selectedIds = splitItems.map((entry) => entry.id);
+      refs.richEditor.classList.add("is-hidden");
+      richTextSession.clear({ destroyAdapter: false });
+      editBaselineSnapshot = null;
+      const changedIds = [item.id, ...splitItems.map((entry) => entry.id)];
+      const beforeOrderIds = Array.isArray(before?.items)
+        ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
+        : [];
+      const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
+      const changed = commitItemsPatchHistory(before, changedIds, "拆分独立公式", "text-math-block-split", {
+        beforeOrderIds,
+        afterOrderIds,
+        fullOverlayRescan: true,
+      });
+      if (!changed) {
+        syncBoard({ persist: false, emit: true, markDirty: false });
+      } else {
+        setStatus("已拆分独立公式");
+        persistCommittedBoardIfPossible();
+      }
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
         shouldExitTextToolAfterEdit = false;
         setTool("select");
@@ -5459,6 +9136,7 @@ function syncRichToolbarEnhancements(toolbar) {
       ? refreshTextLinkSemantics(
           {
             ...item,
+            html: canonicalHtml,
             richTextDocument: content.richTextDocument,
           },
           plainText
@@ -5510,7 +9188,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.richEditor.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    const changed = commitHistory(before, "更新文本");
+    const changed = commitItemPatchHistory(before, item.id, item, "更新文本", "text-edit");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
@@ -5532,7 +9210,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.editingId || state.editingType !== "flow-node") {
       return false;
     }
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "flowNode");
+    const item = sceneRegistry.getItemById(state.editingId, "flowNode");
     if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
       state.editingId = null;
       state.editingType = null;
@@ -5567,7 +9245,7 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.richEditor.classList.add("is-hidden");
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      commitHistory(before, "删除空白节点");
+      commitItemPatchHistory(before, item.id, null, "删除空白节点", "flow-node-edit");
       setStatus("已删除空白节点");
       return true;
     }
@@ -5584,7 +9262,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.richEditor.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    const changed = commitHistory(before, "更新节点");
+    const changed = commitItemPatchHistory(before, item.id, item, "更新节点", "flow-node-edit");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -5603,7 +9281,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.richEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -5622,15 +9300,85 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function getTableEditItem() {
-    return state.editingType === "table"
-      ? state.board.items.find((entry) => entry.id === state.editingId && entry.type === "table") || null
-      : null;
+    return state.editingType === "table" ? sceneRegistry.getItemById(state.editingId, "table") || null : null;
+  }
+
+  function clampTableEditorValue(value, min, max) {
+    const safeMin = Number.isFinite(min) ? min : value;
+    const safeMax = Number.isFinite(max) ? max : value;
+    return Math.min(safeMax, Math.max(safeMin, value));
+  }
+
+  function getTableEditorViewportSize() {
+    const surfaceWidth = Math.max(
+      240,
+      Number(refs.fixedOverlayHost?.clientWidth || refs.surface?.clientWidth || refs.canvas?.clientWidth || refs.canvas?.width || 0) || 240
+    );
+    const surfaceHeight = Math.max(
+      180,
+      Number(refs.fixedOverlayHost?.clientHeight || refs.surface?.clientHeight || refs.canvas?.clientHeight || refs.canvas?.height || 0) || 180
+    );
+    return { width: surfaceWidth, height: surfaceHeight };
+  }
+
+  function resolveTableEditorDimension(value, minSize, availableSize, preferredMax) {
+    const preferred = Math.min(preferredMax, Math.max(minSize, Number(value || 0) || minSize));
+    const lowerBound = Math.min(minSize, availableSize);
+    return clampTableEditorValue(preferred, lowerBound, availableSize);
+  }
+
+  function getTableEditorScreenRect(item) {
+    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
+    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
+    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const height = Math.max(1, Number(item.height || 1)) * scale;
+    return { left, top, width, height };
+  }
+
+  function resolveTableEditFrame(item, { baseFrame = null } = {}) {
+    const screenRect = getTableEditorScreenRect(item);
+    const width = Math.max(1, Math.round(Number(screenRect?.width || baseFrame?.width || 0) || 1));
+    const height = Math.max(1, Math.round(Number(screenRect?.height || baseFrame?.height || 0) || 1));
+    const left = Math.round(Number(screenRect?.left || baseFrame?.left || 0) || 0);
+    const top = Math.round(Number(screenRect?.top || baseFrame?.top || 0) || 0);
+    return {
+      left,
+      top,
+      width,
+      height,
+    };
+  }
+
+  function ensureTableEditFrame(item, options = {}) {
+    if (!item) {
+      tableEditFrame = null;
+      return null;
+    }
+    if (!tableEditFrame || options.force) {
+      tableEditFrame = resolveTableEditFrame(item, { baseFrame: options.baseFrame || tableEditFrame });
+      return tableEditFrame;
+    }
+    tableEditFrame = resolveTableEditFrame(item, { baseFrame: tableEditFrame });
+    return tableEditFrame;
   }
 
   function buildTableEditorHtml(item) {
-    const matrix = flattenTableStructureToMatrix(item?.table || {});
-    return `
-      <div class="canvas-table-editor-scroll">
+  const matrix = flattenTableStructureToMatrix(item?.table || {});
+  return `
+      <div class="canvas-table-editor-rails" data-role="table-rails" aria-hidden="false">
+        <button
+          type="button"
+          class="canvas-table-corner-handle"
+          data-role="table-corner-handle"
+          data-table-handle-kind="all"
+          aria-label="全选表格"
+          title="全选表格"
+        ></button>
+        <div class="canvas-table-column-rail" data-role="table-column-rail"></div>
+        <div class="canvas-table-row-rail" data-role="table-row-rail"></div>
+      </div>
+      <div class="canvas-table-editor-scroll" data-role="table-scroll">
         <table class="canvas-table-editor-grid">
           <tbody>
             ${matrix
@@ -5640,14 +9388,18 @@ function syncRichToolbarEnhancements(toolbar) {
                     ${row
                       .map((cell, columnIndex) => {
                         const tag = cell.header ? "th" : "td";
+                        const cellHtml = renderTableCellStaticHtml(cell);
+                        const cellPlainText = sanitizeText(String(cell?.plainText || htmlToPlainText(cellHtml)));
                         return `
                           <${tag}
-                            contenteditable="true"
                             spellcheck="false"
+                            tabindex="-1"
                             data-row-index="${rowIndex}"
                             data-column-index="${columnIndex}"
                             data-header="${cell.header ? "1" : "0"}"
-                          >${escapeRichTextHtml(cell.plainText || "")}</${tag}>
+                            data-cell-html="${escapeRichTextHtml(String(cell?.html || ""))}"
+                            data-cell-plain-text="${escapeRichTextHtml(cellPlainText)}"
+                          ><div class="canvas-table-cell-static" data-role="table-cell-static">${cellHtml}</div></${tag}>
                         `;
                       })
                       .join("")}
@@ -5658,7 +9410,39 @@ function syncRichToolbarEnhancements(toolbar) {
           </tbody>
         </table>
       </div>
+      <button
+        type="button"
+        class="canvas-table-edge-btn is-row"
+        data-role="table-add-row"
+        data-action="table-add-row"
+        aria-label="在当前行后插入一行"
+        title="在当前行后插入一行"
+      ></button>
+      <button
+        type="button"
+        class="canvas-table-edge-btn is-column"
+        data-role="table-add-column"
+        data-action="table-add-column"
+        aria-label="在当前列后插入一列"
+        title="在当前列后插入一列"
+      ></button>
     `;
+  }
+
+  function ensureTableCellRichEditorHost() {
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      return null;
+    }
+    refs.tableCellRichEditor = refs.tableEditor.querySelector("#canvas-table-cell-rich-editor");
+    if (!(refs.tableCellRichEditor instanceof HTMLDivElement)) {
+      refs.tableCellRichEditor = document.createElement("div");
+      refs.tableCellRichEditor.id = "canvas-table-cell-rich-editor";
+      refs.tableCellRichEditor.className = "canvas-table-cell-rich-editor is-hidden";
+      refs.tableCellRichEditor.setAttribute("aria-label", "编辑表格单元格");
+      refs.tableEditor.appendChild(refs.tableCellRichEditor);
+    }
+    tableCellRichTextSession.setEditorElement(refs.tableCellRichEditor);
+    return refs.tableCellRichEditor;
   }
 
   function getTableEditorCellElement(rowIndex = 0, columnIndex = 0) {
@@ -5667,21 +9451,995 @@ function syncRichToolbarEnhancements(toolbar) {
     ) || null;
   }
 
+  function normalizeTableCellCoordinate(rowIndex = 0, columnIndex = 0) {
+    return {
+      rowIndex: Math.max(0, Number(rowIndex) || 0),
+      columnIndex: Math.max(0, Number(columnIndex) || 0),
+    };
+  }
+
+  function createTableSelectionRange(anchor = tableEditSelection, focus = tableEditSelection) {
+    const normalizedAnchor = normalizeTableCellCoordinate(anchor?.rowIndex, anchor?.columnIndex);
+    const normalizedFocus = normalizeTableCellCoordinate(focus?.rowIndex, focus?.columnIndex);
+    return {
+      anchor: normalizedAnchor,
+      focus: normalizedFocus,
+      startRow: Math.min(normalizedAnchor.rowIndex, normalizedFocus.rowIndex),
+      endRow: Math.max(normalizedAnchor.rowIndex, normalizedFocus.rowIndex),
+      startColumn: Math.min(normalizedAnchor.columnIndex, normalizedFocus.columnIndex),
+      endColumn: Math.max(normalizedAnchor.columnIndex, normalizedFocus.columnIndex),
+    };
+  }
+
+  function getTableEditSelectionRange() {
+    return tableEditRange || createTableSelectionRange(tableEditSelection, tableEditSelection);
+  }
+
+  function deriveTableSelectionMode(matrix = null, range = getTableEditSelectionRange()) {
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    const startRow = Math.max(0, Math.min(rowCount - 1, Number(range?.startRow) || 0));
+    const endRow = Math.max(0, Math.min(rowCount - 1, Number(range?.endRow) || 0));
+    const startColumn = Math.max(0, Math.min(columnCount - 1, Number(range?.startColumn) || 0));
+    const endColumn = Math.max(0, Math.min(columnCount - 1, Number(range?.endColumn) || 0));
+    const coversAllRows = startRow === 0 && endRow === rowCount - 1;
+    const coversAllColumns = startColumn === 0 && endColumn === columnCount - 1;
+    if (coversAllRows && coversAllColumns) {
+      return "all";
+    }
+    if (coversAllColumns) {
+      return "row";
+    }
+    if (coversAllRows) {
+      return "column";
+    }
+    return "cell";
+  }
+
+  function syncTableSelectionMode(matrix = null, explicitMode = "") {
+    tableEditSelectionMode = explicitMode || deriveTableSelectionMode(matrix);
+    return tableEditSelectionMode;
+  }
+
+  function clearTablePointerSelectionTimer() {}
+
+  function resetTablePointerSelectionState() {
+    tablePointerSelectionState.pointerId = null;
+    tablePointerSelectionState.anchor = null;
+    tablePointerSelectionState.pendingCell = null;
+    tablePointerSelectionState.multiSelectActive = false;
+    tablePointerSelectionState.nativeTextSelection = false;
+    tablePointerSelectionState.draggingRange = false;
+  }
+
+  function resetTableInteractionUiState() {
+    tableInteractionUiState.pointerInsideEditor = false;
+    tableInteractionUiState.pointerInsideToolbar = false;
+    tableInteractionUiState.hoveredCell = null;
+  }
+
+  function resetTableStructureDragState() {
+    tableStructureDragState = {
+      kind: "",
+      pointerId: null,
+      active: false,
+      anchorIndex: -1,
+      targetIndex: -1,
+      startPrimary: 0,
+      startSecondary: 0,
+      startRow: 0,
+      endRow: 0,
+      startColumn: 0,
+      endColumn: 0,
+    };
+    refs.tableEditor?.classList.remove("is-row-dragging", "is-column-dragging");
+  }
+
+  function setTableInteractionPointerState(source = "editor", active = false) {
+    if (source === "toolbar") {
+      tableInteractionUiState.pointerInsideToolbar = Boolean(active);
+    } else {
+      tableInteractionUiState.pointerInsideEditor = Boolean(active);
+      if (!active) {
+        tableInteractionUiState.hoveredCell = null;
+      }
+    }
+  }
+
+  function setTableHoveredCell(rowIndex = 0, columnIndex = 0) {
+    tableInteractionUiState.hoveredCell = normalizeTableCellCoordinate(rowIndex, columnIndex);
+  }
+
+  function getTableUiAnchorCell() {
+    if (tableInteractionUiState.pointerInsideEditor && tableInteractionUiState.hoveredCell) {
+      return tableInteractionUiState.hoveredCell;
+    }
+    return normalizeTableCellCoordinate(tableEditSelection.rowIndex, tableEditSelection.columnIndex);
+  }
+
+  function isTableInteractionChromeRevealed() {
+    return (
+      tableInteractionUiState.pointerInsideEditor ||
+      tableInteractionUiState.pointerInsideToolbar ||
+      tableCellEditState.active ||
+      tablePointerSelectionState.multiSelectActive ||
+      tableStructureDragState.active
+    );
+  }
+
+  function selectEntireTable(matrix = buildTableMatrixFromEditor()) {
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    tableEditSelection = normalizeTableCellCoordinate(0, 0);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: 0, columnIndex: 0 },
+      { rowIndex: rowCount - 1, columnIndex: columnCount - 1 }
+    );
+    syncTableSelectionMode(matrix, "all");
+    syncTableEditorSelectionUI();
+  }
+
+  function selectTableRow(rowIndex = 0, matrix = buildTableMatrixFromEditor()) {
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    const safeRowIndex = Math.max(0, Math.min(rowCount - 1, Number(rowIndex) || 0));
+    tableEditSelection = normalizeTableCellCoordinate(safeRowIndex, 0);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: safeRowIndex, columnIndex: 0 },
+      { rowIndex: safeRowIndex, columnIndex: columnCount - 1 }
+    );
+    syncTableSelectionMode(matrix, "row");
+    syncTableEditorSelectionUI();
+  }
+
+  function selectTableColumn(columnIndex = 0, matrix = buildTableMatrixFromEditor()) {
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    const safeColumnIndex = Math.max(0, Math.min(columnCount - 1, Number(columnIndex) || 0));
+    tableEditSelection = normalizeTableCellCoordinate(0, safeColumnIndex);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: 0, columnIndex: safeColumnIndex },
+      { rowIndex: rowCount - 1, columnIndex: safeColumnIndex }
+    );
+    syncTableSelectionMode(matrix, "column");
+    syncTableEditorSelectionUI();
+  }
+
+  function setTableCellEditingState(rowIndex = 0, columnIndex = 0, active = false) {
+    tableCellEditState = {
+      active: Boolean(active),
+      rowIndex: Math.max(0, Number(rowIndex) || 0),
+      columnIndex: Math.max(0, Number(columnIndex) || 0),
+    };
+  }
+
+  function isTableCellEditing(rowIndex = 0, columnIndex = 0) {
+    return (
+      tableCellEditState.active &&
+      tableCellEditState.rowIndex === Math.max(0, Number(rowIndex) || 0) &&
+      tableCellEditState.columnIndex === Math.max(0, Number(columnIndex) || 0)
+    );
+  }
+
+  function setTableEditSelection(rowIndex = 0, columnIndex = 0, { extend = false } = {}) {
+    const focus = normalizeTableCellCoordinate(rowIndex, columnIndex);
+    const anchor = extend ? tableEditRange?.anchor || tableEditSelection || focus : focus;
+    tableEditSelection = focus;
+    tableEditRange = createTableSelectionRange(anchor, focus);
+    syncTableSelectionMode(null, extend ? "" : "cell");
+    return tableEditRange;
+  }
+
+  function getTableEditSelectionBounds(matrix = null) {
+    const range = getTableEditSelectionRange();
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    return {
+      startRow: Math.max(0, Math.min(rowCount - 1, Number(range.startRow) || 0)),
+      endRow: Math.max(0, Math.min(rowCount - 1, Number(range.endRow) || 0)),
+      startColumn: Math.max(0, Math.min(columnCount - 1, Number(range.startColumn) || 0)),
+      endColumn: Math.max(0, Math.min(columnCount - 1, Number(range.endColumn) || 0)),
+      anchor: range.anchor,
+      focus: range.focus,
+    };
+  }
+
+  function isTableSelectionMultiCell(matrix = null) {
+    const bounds = getTableEditSelectionBounds(matrix);
+    return bounds.startRow !== bounds.endRow || bounds.startColumn !== bounds.endColumn;
+  }
+
+  function getTableRowOperationBounds(matrix = buildTableMatrixFromEditor()) {
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const bounds = getTableEditSelectionBounds(matrix);
+    const mode = syncTableSelectionMode(matrix);
+    if (mode === "row" || mode === "all") {
+      return {
+        startRow: bounds.startRow,
+        endRow: bounds.endRow,
+      };
+    }
+    const safeRowIndex = Math.max(0, Math.min(rowCount - 1, Number(tableEditSelection.rowIndex) || 0));
+    return {
+      startRow: safeRowIndex,
+      endRow: safeRowIndex,
+    };
+  }
+
+  function getTableColumnOperationBounds(matrix = buildTableMatrixFromEditor()) {
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    const bounds = getTableEditSelectionBounds(matrix);
+    const mode = syncTableSelectionMode(matrix);
+    if (mode === "column" || mode === "all") {
+      return {
+        startColumn: bounds.startColumn,
+        endColumn: bounds.endColumn,
+      };
+    }
+    const safeColumnIndex = Math.max(0, Math.min(columnCount - 1, Number(tableEditSelection.columnIndex) || 0));
+    return {
+      startColumn: safeColumnIndex,
+      endColumn: safeColumnIndex,
+    };
+  }
+
+  function setTableSelectionFromAnchorCell(anchorCell = null, { preserveMode = false } = {}) {
+    const focus = normalizeTableCellCoordinate(anchorCell?.rowIndex, anchorCell?.columnIndex);
+    tableEditSelection = focus;
+    tableEditRange = createTableSelectionRange(focus, focus);
+    syncTableSelectionMode(null, preserveMode ? "" : "cell");
+    return focus;
+  }
+
+  function syncTableSelectionToUiAnchor() {
+    return setTableSelectionFromAnchorCell(getTableUiAnchorCell());
+  }
+
+  function getTableActionAnchorCellFromTarget(target = null) {
+    const actionTarget = target instanceof Element ? target.closest("[data-action]") : null;
+    const rowIndex = Number(actionTarget?.getAttribute?.("data-anchor-row-index"));
+    const columnIndex = Number(actionTarget?.getAttribute?.("data-anchor-column-index"));
+    if (Number.isFinite(rowIndex) && Number.isFinite(columnIndex)) {
+      return normalizeTableCellCoordinate(rowIndex, columnIndex);
+    }
+    return getTableUiAnchorCell();
+  }
+
+  function cloneTableMatrix(matrix = []) {
+    return (Array.isArray(matrix) ? matrix : []).map((row, rowIndex) =>
+      (Array.isArray(row) ? row : []).map((cell, columnIndex) => ({
+        plainText: String(cell?.plainText || ""),
+        html: String(cell?.html || ""),
+        richTextDocument:
+          cell?.richTextDocument && typeof cell.richTextDocument === "object"
+            ? JSON.parse(JSON.stringify(cell.richTextDocument))
+            : null,
+        header: Boolean(cell?.header),
+        align: String(cell?.align || ""),
+        rowIndex,
+        columnIndex,
+      }))
+    );
+  }
+
+  function createBlankTableCell(rowIndex = 0, columnIndex = 0, { hasHeader = false } = {}) {
+    return {
+      plainText: rowIndex === 0 && hasHeader ? `列 ${columnIndex + 1}` : "",
+      html: "",
+      richTextDocument: null,
+      header: rowIndex === 0 && hasHeader,
+      align: "",
+      rowIndex,
+      columnIndex,
+    };
+  }
+
+  function reindexTableMatrix(matrix = [], { hasHeader = false } = {}) {
+    return cloneTableMatrix(matrix).map((row, rowIndex) =>
+      row.map((cell, columnIndex) => ({
+        ...cell,
+        rowIndex,
+        columnIndex,
+        header: Boolean(hasHeader && rowIndex === 0),
+      }))
+    );
+  }
+
+  function ensureTableMatrixSize(matrix = [], rowCount = 1, columnCount = 1, { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const targetRowCount = Math.max(1, Number(rowCount) || 1);
+    const targetColumnCount = Math.max(1, Number(columnCount) || 1);
+    while (nextMatrix.length < targetRowCount) {
+      const rowIndex = nextMatrix.length;
+      nextMatrix.push(
+        Array.from({ length: targetColumnCount }, (_, columnIndex) =>
+          createBlankTableCell(rowIndex, columnIndex, { hasHeader })
+        )
+      );
+    }
+    nextMatrix.forEach((row, rowIndex) => {
+      while (row.length < targetColumnCount) {
+        row.push(createBlankTableCell(rowIndex, row.length, { hasHeader }));
+      }
+    });
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function getTableSelectionMatrix(matrix = buildTableMatrixFromEditor()) {
+    const bounds = getTableEditSelectionBounds(matrix);
+    return matrix.slice(bounds.startRow, bounds.endRow + 1).map((row) =>
+      row.slice(bounds.startColumn, bounds.endColumn + 1).map((cell) => ({
+        plainText: String(cell?.plainText || ""),
+        html: String(cell?.html || ""),
+        richTextDocument:
+          cell?.richTextDocument && typeof cell.richTextDocument === "object"
+            ? JSON.parse(JSON.stringify(cell.richTextDocument))
+            : null,
+        header: Boolean(cell?.header),
+        align: String(cell?.align || ""),
+      }))
+    );
+  }
+
+  function parseTableDelimitedText(text = "") {
+    const normalizedText = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
+    if (!normalizedText) {
+      return [];
+    }
+    const lines = normalizedText.split("\n");
+    return lines.map((line) => {
+      if (line.includes("\t")) {
+        return line.split("\t");
+      }
+      if (line.includes(",")) {
+        return line.split(",").map((part) => part.replace(/^"(.*)"$/, "$1"));
+      }
+      return [line];
+    });
+  }
+
+  function applyTableClipboardMatrix(matrix = [], pastedMatrix = [], { hasHeader = false } = {}) {
+    const baseMatrix = cloneTableMatrix(matrix);
+    const clipboardMatrix = (Array.isArray(pastedMatrix) ? pastedMatrix : []).filter((row) => Array.isArray(row));
+    if (!clipboardMatrix.length) {
+      return baseMatrix;
+    }
+    const bounds = getTableEditSelectionBounds(baseMatrix);
+    const requiredRowCount = Math.max(baseMatrix.length, bounds.startRow + clipboardMatrix.length);
+    const maxClipboardColumnCount = clipboardMatrix.reduce((max, row) => Math.max(max, row.length), 0);
+    const requiredColumnCount = Math.max(baseMatrix[0]?.length || 0, bounds.startColumn + maxClipboardColumnCount, 1);
+    const nextMatrix = ensureTableMatrixSize(baseMatrix, requiredRowCount, requiredColumnCount, { hasHeader });
+    clipboardMatrix.forEach((row, rowOffset) => {
+      row.forEach((value, columnOffset) => {
+        const targetRow = bounds.startRow + rowOffset;
+        const targetColumn = bounds.startColumn + columnOffset;
+        if (!nextMatrix[targetRow]?.[targetColumn]) {
+          return;
+        }
+        nextMatrix[targetRow][targetColumn].plainText = sanitizeText(value);
+        nextMatrix[targetRow][targetColumn].html = "";
+        nextMatrix[targetRow][targetColumn].richTextDocument = null;
+        nextMatrix[targetRow][targetColumn].header = Boolean(hasHeader && targetRow === 0);
+      });
+    });
+    tableEditSelection = normalizeTableCellCoordinate(bounds.startRow, bounds.startColumn);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: bounds.startRow, columnIndex: bounds.startColumn },
+      {
+        rowIndex: bounds.startRow + Math.max(0, clipboardMatrix.length - 1),
+        columnIndex: bounds.startColumn + Math.max(0, maxClipboardColumnCount - 1),
+      }
+    );
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function clearTableSelectionContent(matrix = [], { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const bounds = getTableEditSelectionBounds(nextMatrix);
+    for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+      for (let columnIndex = bounds.startColumn; columnIndex <= bounds.endColumn; columnIndex += 1) {
+        if (!nextMatrix[rowIndex]?.[columnIndex]) {
+          continue;
+        }
+        nextMatrix[rowIndex][columnIndex].plainText = "";
+        nextMatrix[rowIndex][columnIndex].html = "";
+        nextMatrix[rowIndex][columnIndex].richTextDocument = null;
+        nextMatrix[rowIndex][columnIndex].header = Boolean(hasHeader && rowIndex === 0);
+      }
+    }
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function insertTableRows(matrix = [], insertIndex = 0, count = 1, { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const columnCount = Math.max(1, nextMatrix[0]?.length || 1);
+    const safeInsertIndex = Math.max(0, Math.min(nextMatrix.length, Number(insertIndex) || 0));
+    const safeCount = Math.max(1, Number(count) || 1);
+    const rows = Array.from({ length: safeCount }, (_, offset) =>
+      Array.from({ length: columnCount }, (_, columnIndex) =>
+        createBlankTableCell(safeInsertIndex + offset, columnIndex, { hasHeader })
+      )
+    );
+    nextMatrix.splice(safeInsertIndex, 0, ...rows);
+    tableEditSelection = normalizeTableCellCoordinate(safeInsertIndex, tableEditSelection.columnIndex);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: safeInsertIndex, columnIndex: 0 },
+      { rowIndex: safeInsertIndex + safeCount - 1, columnIndex: Math.max(0, columnCount - 1) }
+    );
+    syncTableSelectionMode(nextMatrix, "row");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function insertTableColumns(matrix = [], insertIndex = 0, count = 1, { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const safeCount = Math.max(1, Number(count) || 1);
+    const safeInsertIndex = Math.max(0, Math.min(nextMatrix[0]?.length || 0, Number(insertIndex) || 0));
+    nextMatrix.forEach((row, rowIndex) => {
+      const cells = Array.from({ length: safeCount }, (_, offset) =>
+        createBlankTableCell(rowIndex, safeInsertIndex + offset, { hasHeader })
+      );
+      row.splice(safeInsertIndex, 0, ...cells);
+    });
+    tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex, safeInsertIndex);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: 0, columnIndex: safeInsertIndex },
+      { rowIndex: Math.max(0, nextMatrix.length - 1), columnIndex: safeInsertIndex + safeCount - 1 }
+    );
+    syncTableSelectionMode(nextMatrix, "column");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function deleteSelectedTableRows(matrix = [], { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    if (nextMatrix.length <= 1) {
+      return nextMatrix;
+    }
+    const bounds = getTableEditSelectionBounds(nextMatrix);
+    const deleteCount = bounds.endRow - bounds.startRow + 1;
+    nextMatrix.splice(bounds.startRow, deleteCount);
+    if (!nextMatrix.length) {
+      nextMatrix.push(
+        Array.from({ length: Math.max(1, matrix[0]?.length || 1) }, (_, columnIndex) =>
+          createBlankTableCell(0, columnIndex, { hasHeader })
+        )
+      );
+    }
+    tableEditSelection = normalizeTableCellCoordinate(Math.max(0, Math.min(bounds.startRow, nextMatrix.length - 1)), bounds.startColumn);
+    tableEditRange = createTableSelectionRange(tableEditSelection, tableEditSelection);
+    syncTableSelectionMode(nextMatrix, "cell");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function deleteSelectedTableColumns(matrix = [], { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    if (!nextMatrix.length || (nextMatrix[0] || []).length <= 1) {
+      return nextMatrix;
+    }
+    const bounds = getTableEditSelectionBounds(nextMatrix);
+    const deleteCount = bounds.endColumn - bounds.startColumn + 1;
+    nextMatrix.forEach((row) => row.splice(bounds.startColumn, deleteCount));
+    nextMatrix.forEach((row, rowIndex) => {
+      if (!row.length) {
+        row.push(createBlankTableCell(rowIndex, 0, { hasHeader }));
+      }
+    });
+    tableEditSelection = normalizeTableCellCoordinate(bounds.startRow, Math.max(0, Math.min(bounds.startColumn, (nextMatrix[0] || []).length - 1)));
+    tableEditRange = createTableSelectionRange(tableEditSelection, tableEditSelection);
+    syncTableSelectionMode(nextMatrix, "cell");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function moveSelectedTableRows(matrix = [], direction = "down", { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const bounds = getTableEditSelectionBounds(nextMatrix);
+    const blockSize = bounds.endRow - bounds.startRow + 1;
+    const minRow = hasHeader ? 1 : 0;
+    if (direction === "up") {
+      if (bounds.startRow <= minRow) {
+        return nextMatrix;
+      }
+      const block = nextMatrix.splice(bounds.startRow, blockSize);
+      nextMatrix.splice(bounds.startRow - 1, 0, ...block);
+      tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex - 1, tableEditSelection.columnIndex);
+    } else {
+      if (bounds.endRow >= nextMatrix.length - 1) {
+        return nextMatrix;
+      }
+      const block = nextMatrix.splice(bounds.startRow, blockSize);
+      nextMatrix.splice(bounds.startRow + 1, 0, ...block);
+      tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex + 1, tableEditSelection.columnIndex);
+    }
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: direction === "up" ? bounds.startRow - 1 : bounds.startRow + 1, columnIndex: bounds.startColumn },
+      { rowIndex: direction === "up" ? bounds.endRow - 1 : bounds.endRow + 1, columnIndex: bounds.endColumn }
+    );
+    syncTableSelectionMode(nextMatrix, "row");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function moveSelectedTableColumns(matrix = [], direction = "right", { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const bounds = getTableEditSelectionBounds(nextMatrix);
+    const blockSize = bounds.endColumn - bounds.startColumn + 1;
+    if (direction === "left") {
+      if (bounds.startColumn <= 0) {
+        return nextMatrix;
+      }
+      nextMatrix.forEach((row) => {
+        const block = row.splice(bounds.startColumn, blockSize);
+        row.splice(bounds.startColumn - 1, 0, ...block);
+      });
+      tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex, tableEditSelection.columnIndex - 1);
+    } else {
+      if (bounds.endColumn >= (nextMatrix[0] || []).length - 1) {
+        return nextMatrix;
+      }
+      nextMatrix.forEach((row) => {
+        const block = row.splice(bounds.startColumn, blockSize);
+        row.splice(bounds.startColumn + 1, 0, ...block);
+      });
+      tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex, tableEditSelection.columnIndex + 1);
+    }
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: bounds.startRow, columnIndex: direction === "left" ? bounds.startColumn - 1 : bounds.startColumn + 1 },
+      { rowIndex: bounds.endRow, columnIndex: direction === "left" ? bounds.endColumn - 1 : bounds.endColumn + 1 }
+    );
+    syncTableSelectionMode(nextMatrix, "column");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function moveTableRowBlockToIndex(matrix = [], startRow = 0, endRow = 0, targetIndex = 0, { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const safeStart = Math.max(0, Math.min(nextMatrix.length - 1, Number(startRow) || 0));
+    const safeEnd = Math.max(safeStart, Math.min(nextMatrix.length - 1, Number(endRow) || 0));
+    const safeTarget = Math.max(0, Math.min(nextMatrix.length - 1, Number(targetIndex) || 0));
+    const blockSize = safeEnd - safeStart + 1;
+    const headerLockedRow = hasHeader ? 0 : -1;
+    if (safeStart <= headerLockedRow || safeTarget <= headerLockedRow) {
+      return nextMatrix;
+    }
+    if (safeTarget >= safeStart && safeTarget <= safeEnd) {
+      return nextMatrix;
+    }
+    const block = nextMatrix.splice(safeStart, blockSize);
+    const insertIndex = safeTarget < safeStart ? safeTarget : safeTarget - blockSize + 1;
+    nextMatrix.splice(Math.max(hasHeader ? 1 : 0, insertIndex), 0, ...block);
+    const nextStart = Math.max(hasHeader ? 1 : 0, insertIndex);
+    const columnCount = Math.max(1, nextMatrix[0]?.length || 1);
+    tableEditSelection = normalizeTableCellCoordinate(nextStart, tableEditSelection.columnIndex);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: nextStart, columnIndex: 0 },
+      { rowIndex: nextStart + blockSize - 1, columnIndex: columnCount - 1 }
+    );
+    syncTableSelectionMode(nextMatrix, "row");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function moveTableColumnBlockToIndex(matrix = [], startColumn = 0, endColumn = 0, targetIndex = 0, { hasHeader = false } = {}) {
+    const nextMatrix = cloneTableMatrix(matrix);
+    const columnCount = Math.max(1, nextMatrix[0]?.length || 1);
+    const safeStart = Math.max(0, Math.min(columnCount - 1, Number(startColumn) || 0));
+    const safeEnd = Math.max(safeStart, Math.min(columnCount - 1, Number(endColumn) || 0));
+    const safeTarget = Math.max(0, Math.min(columnCount - 1, Number(targetIndex) || 0));
+    const blockSize = safeEnd - safeStart + 1;
+    if (safeTarget >= safeStart && safeTarget <= safeEnd) {
+      return nextMatrix;
+    }
+    nextMatrix.forEach((row) => {
+      const block = row.splice(safeStart, blockSize);
+      const insertIndex = safeTarget < safeStart ? safeTarget : safeTarget - blockSize + 1;
+      row.splice(Math.max(0, insertIndex), 0, ...block);
+    });
+    const nextStart = safeTarget < safeStart ? safeTarget : safeTarget - blockSize + 1;
+    tableEditSelection = normalizeTableCellCoordinate(tableEditSelection.rowIndex, nextStart);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: 0, columnIndex: nextStart },
+      { rowIndex: Math.max(0, nextMatrix.length - 1), columnIndex: nextStart + blockSize - 1 }
+    );
+    syncTableSelectionMode(nextMatrix, "column");
+    return reindexTableMatrix(nextMatrix, { hasHeader });
+  }
+
+  function syncTableEditorRails(matrix = buildTableMatrixFromEditor()) {
+    if (!(refs.tableEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    const columnRail = refs.tableEditor.querySelector('[data-role="table-column-rail"]');
+    const rowRail = refs.tableEditor.querySelector('[data-role="table-row-rail"]');
+    const cornerHandle = refs.tableEditor.querySelector('[data-role="table-corner-handle"]');
+    if (!(columnRail instanceof HTMLDivElement) || !(rowRail instanceof HTMLDivElement) || !(cornerHandle instanceof HTMLButtonElement)) {
+      return;
+    }
+    const rowCount = Math.max(1, Array.isArray(matrix) ? matrix.length : 1);
+    const columnCount = Math.max(1, Array.isArray(matrix) && matrix.length ? matrix[0]?.length || 1 : 1);
+    const bounds = getTableEditSelectionBounds(matrix);
+    const editorRect = refs.tableEditor.getBoundingClientRect();
+    cornerHandle.classList.toggle(
+      "is-selected",
+      bounds.startRow === 0 && bounds.endRow === rowCount - 1 && bounds.startColumn === 0 && bounds.endColumn === columnCount - 1
+    );
+
+    const columnHandles = Array.from({ length: columnCount }, (_, columnIndex) => {
+      const cell = getTableEditorCellElement(0, columnIndex);
+      if (!(cell instanceof HTMLElement)) {
+        return "";
+      }
+      const rect = cell.getBoundingClientRect();
+      const left = Math.round(rect.left - editorRect.left);
+      const width = Math.max(18, Math.round(rect.width));
+      const isSelected = bounds.startColumn <= columnIndex && bounds.endColumn >= columnIndex && bounds.startRow === 0 && bounds.endRow === rowCount - 1;
+      const isDropTarget =
+        tableStructureDragState.active && tableStructureDragState.kind === "column" && tableStructureDragState.targetIndex === columnIndex;
+      return `
+        <button
+          type="button"
+          class="canvas-table-axis-handle is-column${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}"
+          data-role="table-column-handle"
+          data-table-handle-kind="column"
+          data-column-index="${columnIndex}"
+          title="选择第 ${columnIndex + 1} 列，长拖可移动"
+          style="left:${left}px;width:${width}px;"
+        ></button>
+      `;
+    }).join("");
+    const rowHandles = Array.from({ length: rowCount }, (_, rowIndex) => {
+      const cell = getTableEditorCellElement(rowIndex, 0);
+      if (!(cell instanceof HTMLElement)) {
+        return "";
+      }
+      const rect = cell.getBoundingClientRect();
+      const top = Math.round(rect.top - editorRect.top);
+      const height = Math.max(18, Math.round(rect.height));
+      const isSelected = bounds.startRow <= rowIndex && bounds.endRow >= rowIndex && bounds.startColumn === 0 && bounds.endColumn === columnCount - 1;
+      const isDropTarget =
+        tableStructureDragState.active && tableStructureDragState.kind === "row" && tableStructureDragState.targetIndex === rowIndex;
+      return `
+        <button
+          type="button"
+          class="canvas-table-axis-handle is-row${isSelected ? " is-selected" : ""}${isDropTarget ? " is-drop-target" : ""}"
+          data-role="table-row-handle"
+          data-table-handle-kind="row"
+          data-row-index="${rowIndex}"
+          title="选择第 ${rowIndex + 1} 行，长拖可移动"
+          style="top:${top}px;height:${height}px;"
+        ></button>
+      `;
+    }).join("");
+    columnRail.innerHTML = columnHandles;
+    rowRail.innerHTML = rowHandles;
+    refs.tableEditor.classList.toggle("is-row-dragging", tableStructureDragState.active && tableStructureDragState.kind === "row");
+    refs.tableEditor.classList.toggle("is-column-dragging", tableStructureDragState.active && tableStructureDragState.kind === "column");
+  }
+
+  function beginTableStructureDrag(kind = "", index = 0, event = null, matrix = buildTableMatrixFromEditor()) {
+    const safeKind = kind === "column" ? "column" : kind === "row" ? "row" : "";
+    if (!safeKind || !event) {
+      return false;
+    }
+    deactivateTableCellEditing({ keepFocus: false });
+    const bounds = getTableEditSelectionBounds(matrix);
+    const rowCount = Math.max(1, matrix.length || 1);
+    const columnCount = Math.max(1, matrix[0]?.length || 1);
+    const safeIndex =
+      safeKind === "row"
+        ? Math.max(0, Math.min(rowCount - 1, Number(index) || 0))
+        : Math.max(0, Math.min(columnCount - 1, Number(index) || 0));
+    if (safeKind === "row") {
+      const reusingRange =
+        bounds.startColumn === 0 && bounds.endColumn === columnCount - 1 && safeIndex >= bounds.startRow && safeIndex <= bounds.endRow;
+      if (reusingRange) {
+        tableEditSelection = normalizeTableCellCoordinate(bounds.startRow, 0);
+        tableEditRange = createTableSelectionRange(
+          { rowIndex: bounds.startRow, columnIndex: 0 },
+          { rowIndex: bounds.endRow, columnIndex: columnCount - 1 }
+        );
+      } else {
+        selectTableRow(safeIndex, matrix);
+      }
+    } else {
+      const reusingRange =
+        bounds.startRow === 0 && bounds.endRow === rowCount - 1 && safeIndex >= bounds.startColumn && safeIndex <= bounds.endColumn;
+      if (reusingRange) {
+        tableEditSelection = normalizeTableCellCoordinate(0, bounds.startColumn);
+        tableEditRange = createTableSelectionRange(
+          { rowIndex: 0, columnIndex: bounds.startColumn },
+          { rowIndex: rowCount - 1, columnIndex: bounds.endColumn }
+        );
+      } else {
+        selectTableColumn(safeIndex, matrix);
+      }
+    }
+    const refreshedBounds = getTableEditSelectionBounds(matrix);
+    tableStructureDragState = {
+      kind: safeKind,
+      pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
+      active: false,
+      anchorIndex: safeIndex,
+      targetIndex: safeIndex,
+      startPrimary: Number(event.clientX || 0),
+      startSecondary: Number(event.clientY || 0),
+      startRow: refreshedBounds.startRow,
+      endRow: refreshedBounds.endRow,
+      startColumn: refreshedBounds.startColumn,
+      endColumn: refreshedBounds.endColumn,
+    };
+    syncTableEditorSelectionUI();
+    return true;
+  }
+
+  function updateTableStructureDrag(event) {
+    if (!tableStructureDragState.kind) {
+      return false;
+    }
+    if (tableStructureDragState.pointerId != null && event.pointerId !== tableStructureDragState.pointerId) {
+      return false;
+    }
+    const deltaPrimary = Math.abs(Number(event.clientX || 0) - Number(tableStructureDragState.startPrimary || 0));
+    const deltaSecondary = Math.abs(Number(event.clientY || 0) - Number(tableStructureDragState.startSecondary || 0));
+    if (!tableStructureDragState.active) {
+      const threshold = 6;
+      if (Math.max(deltaPrimary, deltaSecondary) < threshold) {
+        return false;
+      }
+      tableStructureDragState.active = true;
+    }
+    const selector =
+      tableStructureDragState.kind === "row" ? '[data-role="table-row-handle"]' : '[data-role="table-column-handle"]';
+    const target =
+      (event.target instanceof Element ? event.target.closest(selector) : null) ||
+      (document.elementFromPoint?.(Number(event.clientX || 0), Number(event.clientY || 0))?.closest?.(selector) || null);
+    const attrName = tableStructureDragState.kind === "row" ? "data-row-index" : "data-column-index";
+    if (target instanceof HTMLElement) {
+      tableStructureDragState.targetIndex = Math.max(0, Number(target.getAttribute(attrName) || 0));
+      syncTableEditorSelectionUI();
+      return true;
+    }
+    return false;
+  }
+
+  function finishTableStructureDrag() {
+    if (!tableStructureDragState.kind) {
+      return false;
+    }
+    const drag = { ...tableStructureDragState };
+    resetTableStructureDragState();
+    if (!drag.active || drag.targetIndex < 0) {
+      syncTableEditorSelectionUI();
+      return false;
+    }
+    mutateTableEditor((matrix) => {
+      const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+      if (drag.kind === "row") {
+        return moveTableRowBlockToIndex(matrix, drag.startRow, drag.endRow, drag.targetIndex, { hasHeader });
+      }
+      return moveTableColumnBlockToIndex(matrix, drag.startColumn, drag.endColumn, drag.targetIndex, { hasHeader });
+    });
+    setStatus(drag.kind === "row" ? "已移动所选行" : "已移动所选列");
+    return true;
+  }
+
+  async function copyTableSelectionToClipboard({ cut = false } = {}) {
+    const matrix = buildTableMatrixFromEditor();
+    const selectedMatrix = getTableSelectionMatrix(matrix);
+    const text = serializeTableMatrixToTsv(selectedMatrix);
+    if (!text.trim()) {
+      return false;
+    }
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore clipboard permission failures
+      }
+    }
+    if (cut) {
+      mutateTableEditor((draftMatrix) =>
+        clearTableSelectionContent(draftMatrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
+      );
+      setStatus("已剪切表格选区");
+    } else {
+      setStatus("已复制表格选区");
+    }
+    return true;
+  }
+
+  function openRichEditorContextMenuAt(clientX, clientY) {
+    if (!(refs.contextMenu instanceof HTMLDivElement) || !(refs.surface instanceof HTMLElement)) {
+      return;
+    }
+    refs.contextMenu.innerHTML = buildRichEditorContextMenuHtml();
+    refs.contextMenu.classList.remove("is-hidden");
+    placeMenuNearPoint({
+      panelEl: refs.contextMenu,
+      clientX: Number(clientX || 0),
+      clientY: Number(clientY || 0),
+      containerRect: refs.surface.getBoundingClientRect(),
+      viewportPadding: 12,
+      minWidth: 220,
+      minHeight: 220,
+      hiddenClass: "is-hidden",
+    });
+    lastContextMenuPoint = { x: Number(clientX || 0), y: Number(clientY || 0) };
+    lastContextMenuSource = "rich-editor";
+  }
+
+  function openTableEditorContextMenuAt(clientX, clientY) {
+    if (!(refs.contextMenu instanceof HTMLDivElement) || !(refs.surface instanceof HTMLElement)) {
+      return;
+    }
+    refs.contextMenu.innerHTML = buildTableContextMenuHtml({
+      editing: true,
+      selectionMode: syncTableSelectionMode(buildTableMatrixFromEditor()),
+    });
+    refs.contextMenu.classList.remove("is-hidden");
+    placeMenuNearPoint({
+      panelEl: refs.contextMenu,
+      clientX: Number(clientX || 0),
+      clientY: Number(clientY || 0),
+      containerRect: refs.surface.getBoundingClientRect(),
+      viewportPadding: 12,
+      minWidth: 220,
+      minHeight: 220,
+      hiddenClass: "is-hidden",
+    });
+    lastContextMenuPoint = { x: Number(clientX || 0), y: Number(clientY || 0) };
+    lastContextMenuSource = "table-editor";
+  }
+
+  function ensureTableEditorReadyForAction({ syncToUiAnchor = false, anchorCell = null } = {}) {
+    if (anchorCell) {
+      setTableSelectionFromAnchorCell(anchorCell);
+    } else if (syncToUiAnchor) {
+      syncTableSelectionToUiAnchor();
+    }
+    if (state.editingType === "table" && state.editingId) {
+      return true;
+    }
+    if (state.board.selectedIds.length !== 1) {
+      return false;
+    }
+    beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+    return true;
+  }
+
+  function handleTableActionPress(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!actionTarget || actionTarget.getAttribute("data-pointer-action-handled") === "1") {
+      return false;
+    }
+    actionTarget.setAttribute("data-pointer-action-handled", "1");
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenuClick(event);
+    return true;
+  }
+
+  function focusTableRowOperationRange(matrix = buildTableMatrixFromEditor()) {
+    const { startRow, endRow } = getTableRowOperationBounds(matrix);
+    tableEditSelection = normalizeTableCellCoordinate(startRow, 0);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: startRow, columnIndex: 0 },
+      { rowIndex: endRow, columnIndex: Math.max(0, (matrix[0]?.length || 1) - 1) }
+    );
+    syncTableSelectionMode(matrix, "row");
+    return { startRow, endRow };
+  }
+
+  function focusTableColumnOperationRange(matrix = buildTableMatrixFromEditor()) {
+    const { startColumn, endColumn } = getTableColumnOperationBounds(matrix);
+    tableEditSelection = normalizeTableCellCoordinate(0, startColumn);
+    tableEditRange = createTableSelectionRange(
+      { rowIndex: 0, columnIndex: startColumn },
+      { rowIndex: Math.max(0, matrix.length - 1), columnIndex: endColumn }
+    );
+    syncTableSelectionMode(matrix, "column");
+    return { startColumn, endColumn };
+  }
+
+  function triggerTableEdgeInsert(kind = "row", anchorCell = null) {
+    const axis = kind === "column" ? "column" : "row";
+    if (!ensureTableEditorReadyForAction({ anchorCell })) {
+      return false;
+    }
+    mutateTableEditor((matrix) => {
+      const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+      if (axis === "column") {
+        const { endColumn } = getTableColumnOperationBounds(matrix);
+        return insertTableColumns(matrix, endColumn + 1, 1, { hasHeader });
+      }
+      const { endRow } = getTableRowOperationBounds(matrix);
+      return insertTableRows(matrix, endRow + 1, 1, { hasHeader });
+    });
+    return true;
+  }
+
+  function onTableEdgeInsertMouseDown(event, kind = "row") {
+    event.preventDefault();
+    event.stopPropagation();
+    triggerTableEdgeInsert(kind, getTableActionAnchorCellFromTarget(event.currentTarget));
+  }
+
+  function onTableEdgeInsertClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
   function syncTableEditorSelectionUI() {
     if (!(refs.tableEditor instanceof HTMLDivElement)) {
       return;
     }
+    const currentMatrix = buildTableMatrixFromEditor();
+    syncTableSelectionMode(currentMatrix);
+    const bounds = getTableEditSelectionBounds(currentMatrix);
     refs.tableEditor.querySelectorAll("[data-row-index][data-column-index]").forEach((cell) => {
       if (!(cell instanceof HTMLElement)) {
         return;
       }
       const rowIndex = Number(cell.getAttribute("data-row-index"));
       const columnIndex = Number(cell.getAttribute("data-column-index"));
+      const isInRange =
+        rowIndex >= bounds.startRow &&
+        rowIndex <= bounds.endRow &&
+        columnIndex >= bounds.startColumn &&
+        columnIndex <= bounds.endColumn;
+      cell.classList.toggle("is-selected", isInRange);
       cell.classList.toggle(
-        "is-selected",
+        "is-active",
         rowIndex === Number(tableEditSelection.rowIndex) && columnIndex === Number(tableEditSelection.columnIndex)
       );
+      const isEditing = isTableCellEditing(rowIndex, columnIndex);
+      cell.classList.toggle("is-editing", isEditing);
+      cell.tabIndex = rowIndex === Number(tableEditSelection.rowIndex) && columnIndex === Number(tableEditSelection.columnIndex) ? 0 : -1;
     });
+    const anchorCellState = getTableUiAnchorCell();
+    const selectedCell = getTableEditorCellElement(anchorCellState.rowIndex, anchorCellState.columnIndex);
+    const rowAddButton = refs.tableEditor.querySelector('[data-role="table-add-row"]');
+    const columnAddButton = refs.tableEditor.querySelector('[data-role="table-add-column"]');
+    if (selectedCell instanceof HTMLElement && rowAddButton instanceof HTMLElement && columnAddButton instanceof HTMLElement) {
+      const editorRect = refs.tableEditor.getBoundingClientRect();
+      const cellRect = selectedCell.getBoundingClientRect();
+      const buttonSize = 22;
+      const chromeRevealed = isTableInteractionChromeRevealed();
+      refs.tableEditor.classList.toggle("is-chrome-revealed", chromeRevealed);
+      const rowButtonTop = clampTableEditorValue(
+        Math.round(cellRect.top - editorRect.top + cellRect.height / 2 - buttonSize / 2),
+        6,
+        Math.max(6, refs.tableEditor.clientHeight - buttonSize - 6)
+      );
+      const columnButtonLeft = clampTableEditorValue(
+        Math.round(cellRect.left - editorRect.left + cellRect.width / 2 - buttonSize / 2),
+        6,
+        Math.max(6, refs.tableEditor.clientWidth - buttonSize - 6)
+      );
+      if (chromeRevealed) {
+        rowAddButton.setAttribute("data-anchor-row-index", String(anchorCellState.rowIndex));
+        rowAddButton.setAttribute("data-anchor-column-index", String(anchorCellState.columnIndex));
+        rowAddButton.onmousedown = (event) => onTableEdgeInsertMouseDown(event, "row");
+        rowAddButton.onclick = onTableEdgeInsertClick;
+        rowAddButton.style.top = `${rowButtonTop}px`;
+        rowAddButton.style.right = "4px";
+        rowAddButton.classList.remove("is-hidden");
+        columnAddButton.setAttribute("data-anchor-row-index", String(anchorCellState.rowIndex));
+        columnAddButton.setAttribute("data-anchor-column-index", String(anchorCellState.columnIndex));
+        columnAddButton.onmousedown = (event) => onTableEdgeInsertMouseDown(event, "column");
+        columnAddButton.onclick = onTableEdgeInsertClick;
+        columnAddButton.style.left = `${columnButtonLeft}px`;
+        columnAddButton.style.bottom = "4px";
+        columnAddButton.classList.remove("is-hidden");
+      } else {
+        rowAddButton.classList.add("is-hidden");
+        columnAddButton.classList.add("is-hidden");
+      }
+    } else {
+      refs.tableEditor.classList.remove("is-chrome-revealed");
+      rowAddButton?.removeAttribute("data-anchor-row-index");
+      rowAddButton?.removeAttribute("data-anchor-column-index");
+      columnAddButton?.removeAttribute("data-anchor-row-index");
+      columnAddButton?.removeAttribute("data-anchor-column-index");
+      rowAddButton?.classList.add("is-hidden");
+      columnAddButton?.classList.add("is-hidden");
+    }
+    syncTableEditorRails(currentMatrix);
     const editingItem = getTableEditItem();
     if (!(refs.tableToolbar instanceof HTMLDivElement) || !editingItem) {
       return;
@@ -5690,31 +10448,95 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.tableToolbar
       .querySelectorAll('[data-action="table-toggle-header"]')
       .forEach((button) => button.classList.toggle("is-active", hasHeader));
+    syncTableCellRichEditorLayout();
   }
 
-  function focusTableEditorCell(rowIndex = 0, columnIndex = 0, { placeAtEnd = false } = {}) {
+  function focusTableEditorCell(rowIndex = 0, columnIndex = 0, { placeAtEnd = false, extend = false } = {}) {
     const cell = getTableEditorCellElement(rowIndex, columnIndex);
     if (!(cell instanceof HTMLElement)) {
       return;
     }
-    tableEditSelection = {
-      rowIndex: Math.max(0, Number(rowIndex) || 0),
-      columnIndex: Math.max(0, Number(columnIndex) || 0),
-    };
+    setTableEditSelection(rowIndex, columnIndex, { extend });
     syncTableEditorSelectionUI();
     cell.focus();
-    const selection = window.getSelection?.();
-    if (!selection) {
+    if (!isTableCellEditing(rowIndex, columnIndex)) {
       return;
     }
-    const range = document.createRange();
-    range.selectNodeContents(cell);
-    range.collapse(!placeAtEnd);
-    if (placeAtEnd) {
-      range.collapse(false);
+    tableCellRichTextSession.focus();
+    tableCellRichTextSession.captureSelection();
+  }
+
+  function getTableCellDraftContent(rowIndex = 0, columnIndex = 0) {
+    const targetCell = getTableEditorCellElement(rowIndex, columnIndex);
+    if (!(targetCell instanceof HTMLElement)) {
+      return null;
     }
-    selection.removeAllRanges();
-    selection.addRange(range);
+    const rawHtml = String(targetCell.getAttribute("data-cell-html") || "").trim();
+    const plainText = sanitizeText(
+      targetCell.getAttribute("data-cell-plain-text") || htmlToPlainText(rawHtml) || targetCell.textContent || ""
+    );
+    return normalizeEditedTableCellContent(
+      {
+        plainText,
+        html: rawHtml,
+      },
+      rawHtml || renderTableCellStaticHtml({ plainText }, Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)),
+      Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
+    );
+  }
+
+  function writeTableCellDraftContent(rowIndex = 0, columnIndex = 0, content = null) {
+    const targetCell = getTableEditorCellElement(rowIndex, columnIndex);
+    if (!(targetCell instanceof HTMLElement) || !content) {
+      return false;
+    }
+    const normalized = normalizeEditedTableCellContent(content, content.html || "", Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16));
+    targetCell.setAttribute("data-cell-html", String(normalized.html || ""));
+    targetCell.setAttribute("data-cell-plain-text", String(normalized.plainText || ""));
+    const staticNode = targetCell.querySelector('[data-role="table-cell-static"]');
+    if (staticNode instanceof HTMLElement) {
+      staticNode.innerHTML = renderTableCellStaticHtml(normalized, Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16));
+    } else {
+      targetCell.innerHTML = `<div class="canvas-table-cell-static" data-role="table-cell-static">${renderTableCellStaticHtml(
+        normalized,
+        Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
+      )}</div>`;
+    }
+    return true;
+  }
+
+  function syncTableCellRichEditorLayout() {
+    const context = getActiveTableCellRichEditingContext();
+    if (!(refs.tableCellRichEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    if (!context) {
+      refs.tableCellRichEditor.classList.add("is-hidden");
+      return;
+    }
+    const cell = getTableEditorCellElement(context.rowIndex, context.columnIndex);
+    if (!(cell instanceof HTMLElement) || !(refs.tableEditor instanceof HTMLDivElement)) {
+      refs.tableCellRichEditor.classList.add("is-hidden");
+      return;
+    }
+    const editorRect = refs.tableEditor.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    const tableFontSize = Math.max(1, Number(refs.tableEditor.style.fontSize.replace("px", "")) || 13);
+    refs.tableCellRichEditor.classList.remove("is-hidden");
+    tableCellRichTextSession.applyFrame({
+      left: Math.round(cellRect.left - editorRect.left),
+      top: Math.round(cellRect.top - editorRect.top),
+      width: Math.round(cellRect.width),
+      height: Math.round(cellRect.height),
+      fontSize: tableFontSize,
+      padding: `${refs.tableEditor.style.getPropertyValue("--canvas-table-editor-cell-pad-y") || "7px"} ${
+        refs.tableEditor.style.getPropertyValue("--canvas-table-editor-cell-pad-x") || "10px"
+      }`,
+      lineHeight: refs.tableEditor.style.getPropertyValue("--canvas-table-editor-line-height") || "1.35",
+      fontFamily: `"Segoe UI", "PingFang SC", sans-serif`,
+      color: "#0f172a",
+      overflow: "auto",
+    });
   }
 
   function buildTableMatrixFromEditor() {
@@ -5723,28 +10545,125 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     const rows = Array.from(refs.tableEditor.querySelectorAll("tr[data-row-index]"));
     return rows.map((rowEl, rowIndex) =>
-      Array.from(rowEl.querySelectorAll("[data-column-index]")).map((cellEl, columnIndex) => ({
-        plainText: sanitizeText(cellEl.textContent || ""),
-        header: String(cellEl.getAttribute("data-header") || "") === "1",
-        rowIndex,
-        columnIndex,
-      }))
+      Array.from(rowEl.querySelectorAll("[data-column-index]")).map((cellEl, columnIndex) => {
+        const rawHtml = String(cellEl.getAttribute("data-cell-html") || "").trim();
+        const plainText = sanitizeText(
+          cellEl.getAttribute("data-cell-plain-text") || htmlToPlainText(rawHtml) || cellEl.textContent || ""
+        );
+        const content = rawHtml
+          ? normalizeEditedTableCellContent(
+              {
+                plainText,
+                html: rawHtml,
+              },
+              rawHtml,
+              Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
+            )
+          : null;
+        return {
+          plainText: content?.plainText || plainText,
+          html: content?.html || rawHtml,
+          richTextDocument: content?.richTextDocument || null,
+          header: String(cellEl.getAttribute("data-header") || "") === "1",
+          rowIndex,
+          columnIndex,
+        };
+      })
     );
+  }
+
+  function getTableEditorCellFromEventTarget(target) {
+    return target instanceof Element ? target.closest("[data-row-index][data-column-index]") : null;
+  }
+
+  function selectTableEditorCell(rowIndex = 0, columnIndex = 0, { extend = false, keepEditing = false } = {}) {
+    const safeRowIndex = Math.max(0, Number(rowIndex) || 0);
+    const safeColumnIndex = Math.max(0, Number(columnIndex) || 0);
+    setTableHoveredCell(safeRowIndex, safeColumnIndex);
+    if (!keepEditing) {
+      deactivateTableCellEditing({ keepFocus: false });
+    }
+    setTableEditSelection(safeRowIndex, safeColumnIndex, { extend });
+    syncTableEditorSelectionUI();
+  }
+
+  function beginTableCellPointerSelection(event, rowIndex = 0, columnIndex = 0) {
+    tablePointerSelectionState.pointerId = Number.isFinite(event?.pointerId) ? event.pointerId : null;
+    tablePointerSelectionState.anchor = { rowIndex, columnIndex };
+    tablePointerSelectionState.pendingCell = { rowIndex, columnIndex };
+    tablePointerSelectionState.multiSelectActive = false;
+    tablePointerSelectionState.nativeTextSelection = false;
+    tablePointerSelectionState.draggingRange = false;
+  }
+
+  function activateTableCellEditing(rowIndex = 0, columnIndex = 0, { placeAtEnd = true, reason = "" } = {}) {
+    const normalizedReason = String(reason || "").trim().toLowerCase();
+    if (!["dblclick", "keyboard"].includes(normalizedReason)) {
+      return false;
+    }
+    tablePointerSelectionState.multiSelectActive = false;
+    tablePointerSelectionState.nativeTextSelection = false;
+    tablePointerSelectionState.draggingRange = false;
+    const draft = getTableCellDraftContent(rowIndex, columnIndex);
+    const fontSize = Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16);
+    setTableCellEditingState(rowIndex, columnIndex, true);
+    setTableEditSelection(rowIndex, columnIndex, { extend: false });
+    tableCellRichTextSession.begin({
+      itemId: String(getTableEditItem()?.id || ""),
+      itemType: "table-cell",
+      html: draft?.html || renderTableCellStaticHtml({ plainText: draft?.plainText || "" }, fontSize),
+      plainText: draft?.plainText || "",
+      fontSize,
+      baselineSnapshot: editBaselineSnapshot || null,
+    });
+    syncTableEditorSelectionUI();
+    requestAnimationFrame(() => {
+      if (isTableCellEditing(rowIndex, columnIndex)) {
+        syncTableCellRichEditorLayout();
+        if (placeAtEnd) {
+          tableCellRichTextSession.moveCaretToEnd?.();
+        } else {
+          tableCellRichTextSession.focus();
+        }
+        tableCellRichTextSession.captureSelection();
+      }
+    });
+    return true;
+  }
+
+  function deactivateTableCellEditing({ keepFocus = false } = {}) {
+    const activeRow = tableCellEditState.rowIndex;
+    const activeColumn = tableCellEditState.columnIndex;
+    const wasEditing = tableCellEditState.active;
+    setTableCellEditingState(activeRow, activeColumn, false);
+    tableCellRichTextSession.clear({ destroyAdapter: false });
+    refs.tableCellRichEditor?.classList.add("is-hidden");
+    syncTableEditorSelectionUI();
+    if (keepFocus) {
+      getTableEditorCellElement(activeRow, activeColumn)?.focus?.();
+    }
+    return wasEditing;
   }
 
   function syncTableToolbarLayout(item) {
     if (!(refs.tableToolbar instanceof HTMLDivElement) || !(refs.surface instanceof HTMLElement) || !item) {
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
-    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const frame = ensureTableEditFrame(item);
+    if (!frame) {
+      refs.tableToolbar.classList.add("is-hidden");
+      return;
+    }
     const hostRect = refs.surface.getBoundingClientRect();
-    const toolbarWidth = Math.max(1, refs.tableToolbar.offsetWidth || 320);
-    const toolbarHeight = Math.max(1, refs.tableToolbar.offsetHeight || 38);
-    const nextLeft = Math.max(8, Math.min(left + width / 2 - toolbarWidth / 2, hostRect.width - toolbarWidth - 8));
-    const nextTop = Math.max(8, Math.min(top - toolbarHeight - 10, hostRect.height - toolbarHeight - 8));
+    const toolbarWidth = Math.max(1, refs.tableToolbar.offsetWidth || 132);
+    const toolbarHeight = Math.max(1, refs.tableToolbar.offsetHeight || 34);
+    const chromeRevealed = isTableInteractionChromeRevealed();
+    if (!chromeRevealed) {
+      refs.tableToolbar.classList.add("is-hidden");
+      return;
+    }
+    const nextLeft = Math.max(8, Math.min(frame.left + frame.width - toolbarWidth - 10, hostRect.width - toolbarWidth - 8));
+    const nextTop = Math.max(8, Math.min(frame.top - toolbarHeight - 10, hostRect.height - toolbarHeight - 8));
     refs.tableToolbar.style.left = `${Math.round(nextLeft)}px`;
     refs.tableToolbar.style.top = `${Math.round(nextTop)}px`;
     refs.tableToolbar.classList.remove("is-hidden");
@@ -5755,66 +10674,223 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (!state.editingId || state.editingType !== "table") {
+      resetTableInteractionUiState();
       refs.tableEditor.classList.add("is-hidden");
       refs.tableToolbar?.classList.add("is-hidden");
       return;
     }
     refs.editor?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
+    refs.richSelectionToolbar?.classList.add("is-hidden");
     refs.fileMemoEditor?.classList.add("is-hidden");
     refs.imageMemoEditor?.classList.add("is-hidden");
+    refs.codeBlockEditor?.classList.add("is-hidden");
+    refs.codeBlockToolbar?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     const item = getTableEditItem();
     if (!item) {
       state.editingId = null;
       state.editingType = null;
+      resetTableInteractionUiState();
       refs.tableEditor.classList.add("is-hidden");
       refs.tableToolbar?.classList.add("is-hidden");
       lastTableEditItemId = null;
+      tableEditRange = null;
+      tableEditFrame = null;
+      resetTablePointerSelectionState();
+      setTableCellEditingState(0, 0, false);
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
-    const width = Math.max(1, Number(item.width || 1)) * scale;
-    const height = Math.max(1, Number(item.height || 1)) * scale;
+    const frame = ensureTableEditFrame(item);
+    if (!frame) {
+      resetTableInteractionUiState();
+      refs.tableEditor.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      return;
+    }
     if (lastTableEditItemId !== item.id || !refs.tableEditor.querySelector("table")) {
       refs.tableEditor.innerHTML = buildTableEditorHtml(item);
+      ensureTableCellRichEditorHost();
       lastTableEditItemId = item.id;
     }
-    refs.tableEditor.style.left = `${Math.round(left)}px`;
-    refs.tableEditor.style.top = `${Math.round(top)}px`;
-    refs.tableEditor.style.width = `${Math.round(width)}px`;
-    refs.tableEditor.style.height = `${Math.round(height)}px`;
-    refs.tableEditor.style.fontSize = `${Math.max(9, scaleSceneValue(state.board.view, 12, { min: 9 }))}px`;
+    const tableScrollHost = refs.tableEditor.querySelector('[data-role="table-scroll"]');
+    if (tableScrollHost instanceof HTMLElement && tableScrollHost.dataset.scrollBound !== "1") {
+      tableScrollHost.addEventListener("scroll", onTableEditorScroll, { passive: true });
+      tableScrollHost.dataset.scrollBound = "1";
+    }
+    refs.tableEditor.style.left = `${frame.left}px`;
+    refs.tableEditor.style.top = `${frame.top}px`;
+    refs.tableEditor.style.width = `${frame.width}px`;
+    refs.tableEditor.style.height = `${frame.height}px`;
+    const tableGrid = getStructuredTableSceneGrid(item);
+    const scale = Math.max(0.1, Number(state.board.view?.scale || 1));
+    const tableFontSize = Math.max(1, scaleSceneValue({ scale }, 12, { min: 9 }));
+    const cellPadX = scaleSceneValue({ scale }, 8, { min: 5 });
+    const cellPadY = scaleSceneValue({ scale }, 6, { min: 4 });
+    const lineHeight = Math.max(tableFontSize * 1.35, scaleSceneValue({ scale }, 15, { min: 11 }));
+    const rowHeight = Math.max(1, Number(frame.height || 0) / Math.max(1, Number(tableGrid?.rowCount || 1)));
+    refs.tableEditor.style.fontSize = `${tableFontSize}px`;
+    refs.tableEditor.style.setProperty("--canvas-table-editor-font-size", `${tableFontSize}px`);
+    refs.tableEditor.style.setProperty("--canvas-table-editor-cell-pad-x", `${cellPadX}px`);
+    refs.tableEditor.style.setProperty("--canvas-table-editor-cell-pad-y", `${cellPadY}px`);
+    refs.tableEditor.style.setProperty("--canvas-table-editor-line-height", `${lineHeight}px`);
+    refs.tableEditor.style.setProperty("--canvas-table-editor-row-height", `${rowHeight}px`);
     refs.tableEditor.classList.remove("is-hidden");
     syncTableToolbarLayout(item);
     syncTableEditorSelectionUI();
   }
 
   function getCodeBlockEditItem() {
-    return state.editingType === "code-block"
-      ? state.board.items.find((entry) => entry.id === state.editingId && entry.type === "codeBlock") || null
-      : null;
+    return state.editingType === "code-block" ? sceneRegistry.getItemById(state.editingId, "codeBlock") || null : null;
   }
 
   function getSelectedCodeBlockItem() {
-    if (state.board.selectedIds.length !== 1) {
-      return null;
-    }
-    return state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "codeBlock") || null;
+    return sceneRegistry.getSingleSelectedItem("codeBlock");
   }
 
-  function copyCodeBlockContent(item) {
+  function getCodeBlockDraftDirtyState(item) {
+    if (!item || state.editingType !== "code-block" || !codeBlockEditor.isEditing(item.id)) {
+      return false;
+    }
+    return sanitizeText(codeBlockEditor.getValue() || "") !== getCodeBlockContent(item);
+  }
+
+  function syncCodeBlockToolbarMeta(item) {
+    const meta = refs.codeBlockToolbar?.querySelector?.('[data-role="code-block-meta"]');
+    if (!(meta instanceof HTMLElement) || !item) {
+      return;
+    }
+    const dirty = getCodeBlockDraftDirtyState(item);
+    meta.textContent = describeCodeBlockToolbarState(item, { dirty });
+    meta.title = describeCodeBlockToolbarState(item, { dirty });
+    meta.dataset.dirty = dirty ? "1" : "0";
+    meta.style.background = dirty ? "rgba(254, 249, 195, 0.96)" : "rgba(241, 245, 249, 0.92)";
+    meta.style.borderColor = dirty ? "rgba(245, 158, 11, 0.45)" : "rgba(203, 213, 225, 0.92)";
+    meta.style.color = dirty ? "#92400e" : "#475569";
+  }
+
+  function setCodeBlockCopyButtonFeedback(button, copied = false) {
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    const defaultLabel = String(button.dataset.copyDefaultLabel || button.textContent || "复制").trim() || "复制";
+    button.dataset.copyDefaultLabel = defaultLabel;
+    button.classList.toggle("is-copied", copied);
+    button.textContent = copied ? "已复制" : defaultLabel;
+    button.setAttribute("aria-label", copied ? "代码已复制" : defaultLabel);
+    button.setAttribute("title", copied ? "代码已复制" : defaultLabel);
+  }
+
+  async function writeClipboardTextWithFallback(text = "") {
+    const content = String(text || "");
+    if (!content) {
+      return false;
+    }
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+        return true;
+      }
+    } catch {
+      // Fall through to execCommand-based fallback for older/electron-limited runtimes.
+    }
+    if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+      return false;
+    }
+    const helper = document.createElement("textarea");
+    helper.value = content;
+    helper.setAttribute("readonly", "true");
+    helper.style.position = "fixed";
+    helper.style.opacity = "0";
+    helper.style.pointerEvents = "none";
+    helper.style.left = "-9999px";
+    helper.style.top = "-9999px";
+    document.body.appendChild(helper);
+    helper.focus();
+    helper.select();
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    }
+    helper.remove();
+    return copied;
+  }
+
+  function collectCodeBlockCopyButtons(itemId = "") {
+    const buttons = [];
+    const normalizedId = String(itemId || "").trim();
+    if (normalizedId && refs.codeBlockDisplayHost instanceof HTMLElement) {
+      const staticButton = refs.codeBlockDisplayHost.querySelector(
+        `.canvas2d-code-block-item[data-id="${normalizedId}"] [data-action="copy-code"]`
+      );
+      if (staticButton instanceof HTMLElement) {
+        buttons.push(staticButton);
+      }
+    }
+    const toolbarItem = getCodeBlockEditItem() || getSelectedCodeBlockItem();
+    if (
+      refs.codeBlockToolbar instanceof HTMLElement &&
+      toolbarItem &&
+      (!normalizedId || String(toolbarItem.id || "") === normalizedId)
+    ) {
+      const toolbarButton = refs.codeBlockToolbar.querySelector('[data-action="code-copy"]');
+      if (toolbarButton instanceof HTMLElement) {
+        buttons.push(toolbarButton);
+      }
+    }
+    return buttons;
+  }
+
+  function flashCodeBlockCopyFeedback(itemId = "") {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    const previousTimer = codeBlockCopyFeedbackTimers.get(normalizedId);
+    if (previousTimer) {
+      clearTimeout(previousTimer);
+    }
+    const buttons = collectCodeBlockCopyButtons(normalizedId);
+    buttons.forEach((button) => setCodeBlockCopyButtonFeedback(button, true));
+    const timer = setTimeout(() => {
+      collectCodeBlockCopyButtons(normalizedId).forEach((button) => setCodeBlockCopyButtonFeedback(button, false));
+      codeBlockCopyFeedbackTimers.delete(normalizedId);
+    }, 1400);
+    codeBlockCopyFeedbackTimers.set(normalizedId, timer);
+  }
+
+  async function copyCodeBlockContent(item) {
     const content = getCodeBlockContent(item);
     if (!content.trim()) {
       setStatus("代码块为空");
       return false;
     }
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(content).catch(() => {});
+    const copied = await writeClipboardTextWithFallback(content);
+    if (!copied) {
+      setStatus("代码复制失败", "warning");
+      return false;
     }
+    flashCodeBlockCopyFeedback(item.id);
     setStatus("代码已复制");
+    return true;
+  }
+
+  async function copyCodeBlockTextContent(item, format = "plain") {
+    const meta = getCopyOperationMeta(item?.type, format);
+    const content = (meta?.format || format) === "markdown" ? serializeCodeBlockToMarkdown(item) : getCodeBlockContent(item);
+    if (!content.trim()) {
+      setStatus("代码块为空");
+      return false;
+    }
+    const copied = await writeClipboardTextWithFallback(content);
+    if (!copied) {
+      setStatus("复制失败", "warning");
+      return false;
+    }
+    flashCodeBlockCopyFeedback(item?.id || "");
+    setStatus(`已复制${meta?.label || "纯文本"}`);
     return true;
   }
 
@@ -5828,18 +10904,38 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     refs.codeBlockToolbar.querySelectorAll('[data-action="code-wrap"]').forEach((button) => {
-      button.classList.toggle("is-active", item.wrap === true);
+      const active = item.wrap === true;
+      button.classList.toggle("is-active", active);
+      if (button instanceof HTMLElement) {
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+        button.setAttribute("title", active ? "关闭自动换行" : "开启自动换行");
+      }
     });
     refs.codeBlockToolbar.querySelectorAll('[data-action="code-line-numbers"]').forEach((button) => {
-      button.classList.toggle("is-active", item.showLineNumbers !== false);
+      const active = item.showLineNumbers !== false;
+      button.classList.toggle("is-active", active);
+      if (button instanceof HTMLElement) {
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+        button.setAttribute("title", active ? "隐藏行号" : "显示行号");
+      }
     });
     refs.codeBlockToolbar.querySelectorAll('[data-action="code-preview-toggle"]').forEach((button) => {
-      button.classList.toggle("is-active", isMermaidCodeBlock(item) && item.previewMode !== "source");
-      button.textContent = isMermaidCodeBlock(item) && item.previewMode !== "source" ? "Source" : "View";
+      const previewState = getCodeBlockPreviewControlState(item);
+      const active = previewState.active;
+      button.classList.toggle("is-active", active);
+      if (button instanceof HTMLElement) {
+        button.textContent = previewState.label;
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+        button.setAttribute("title", previewState.title);
+        button.setAttribute("aria-label", previewState.title);
+        button.toggleAttribute("disabled", !previewState.enabled);
+        button.style.opacity = previewState.enabled ? "1" : "0.45";
+        button.style.cursor = previewState.enabled ? "pointer" : "not-allowed";
+      }
     });
     refs.codeBlockToolbar.querySelectorAll('[data-action="code-language"]').forEach((input) => {
       if (input instanceof HTMLSelectElement) {
-        input.value = String(item.language || "");
+        input.value = normalizeCodeBlockLanguageTag(item.language || "");
       }
     });
     refs.codeBlockToolbar.querySelectorAll('[data-action="code-font-size"]').forEach((input) => {
@@ -5847,22 +10943,16 @@ function syncRichToolbarEnhancements(toolbar) {
         input.value = String(Math.max(12, Number(item.fontSize || 16)));
       }
     });
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
-    const width = Math.max(1, Number(item.width || 1)) * scale;
-    const height = Math.max(1, Number(item.height || 1)) * scale;
-    syncFloatingToolbarLayout(refs.codeBlockToolbar, refs.surface, {
-      anchorRect: {
-        left,
-        top,
-        width,
-        height,
-      },
-      placement: "top",
-      offset: 10,
-      minPadding: 8,
-    });
+    const copyButton = refs.codeBlockToolbar.querySelector('[data-action="code-copy"]');
+    if (copyButton instanceof HTMLElement) {
+      setCodeBlockCopyButtonFeedback(copyButton, codeBlockCopyFeedbackTimers.has(String(item.id || "")));
+    }
+    syncCodeBlockToolbarMeta(item);
+    refs.codeBlockToolbar.style.left = "18px";
+    refs.codeBlockToolbar.style.bottom = "18px";
+    refs.codeBlockToolbar.style.top = "auto";
+    refs.codeBlockToolbar.style.right = "auto";
+    refs.codeBlockToolbar.style.transform = "none";
     refs.codeBlockToolbar.classList.remove("is-hidden");
   }
 
@@ -5894,21 +10984,25 @@ function syncRichToolbarEnhancements(toolbar) {
     const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
     const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
     const width = Math.max(1, Number(item.width || 1)) * scale;
+    const hasEditorDraft = codeBlockEditor.isEditing(item.id);
+    const draftCode = hasEditorDraft ? codeBlockEditor.getValue() : "";
+    const sessionCode = hasEditorDraft ? draftCode : getCodeBlockContent(item);
     if (lastCodeBlockEditItemId !== item.id || !codeBlockEditor.isEditing(item.id)) {
       codeBlockEditor.begin({
         itemId: item.id,
-        code: getCodeBlockContent(item),
+        code: sessionCode,
         language: item.language,
         showLineNumbers: item.showLineNumbers !== false,
         wrap: item.wrap === true,
+        tabSize: Math.max(1, Math.min(8, Number(item.tabSize || 2) || 2)),
       });
       lastCodeBlockEditItemId = item.id;
     } else {
       codeBlockEditor.setLanguage(item.language);
       codeBlockEditor.setWrap(item.wrap === true);
     }
-    const draftCode = codeBlockEditor.getValue() || getCodeBlockContent(item);
-    const draftLayout = measureCodeBlockEditorLayout(item, draftCode, {
+    const currentCode = hasEditorDraft ? codeBlockEditor.getValue() : sessionCode;
+    const draftLayout = measureCodeBlockEditorLayout(item, currentCode, {
       widthHint: Number(item.width || 0),
       mode: layoutMode,
     });
@@ -5922,12 +11016,17 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.codeBlockEditor.style.setProperty("color", "#0f172a", "important");
     refs.codeBlockEditor.style.setProperty("box-shadow", "0 8px 24px rgba(15, 23, 42, 0.12)", "important");
     refs.codeBlockEditor.dataset.layoutMode = String(draftLayout.layoutMode || layoutMode || "precise");
+    refs.codeBlockEditor.dataset.dirty = getCodeBlockDraftDirtyState(item) ? "1" : "0";
+    refs.codeBlockEditor.setAttribute(
+      "title",
+      getCodeBlockDraftDirtyState(item) ? "代码块正在编辑，存在未提交改动" : "代码块正在编辑"
+    );
     refs.codeBlockEditor.classList.remove("is-hidden");
     syncCodeBlockToolbar();
   }
 
   function beginCodeBlockEdit(itemId) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "codeBlock");
+    const item = sceneRegistry.getItemById(itemId, "codeBlock");
     if (!item || !(refs.codeBlockEditor instanceof HTMLDivElement)) {
       return false;
     }
@@ -5952,7 +11051,7 @@ function syncRichToolbarEnhancements(toolbar) {
     cancelCodeBlockEditorLayoutSync();
     syncCodeBlockEditorLayout("fast");
     scheduleCodeBlockEditorLayoutSync("precise");
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       codeBlockEditor.focus();
       syncCodeBlockToolbar();
@@ -6044,12 +11143,12 @@ function syncRichToolbarEnhancements(toolbar) {
     codeBlockEditor.clear();
     editBaselineSnapshot = null;
     markCodeBlockOverlayDirty(activeItemId);
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
   function beginTableEdit(itemId, selection = null) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "table");
+    const item = sceneRegistry.getItemById(itemId, "table");
     if (!item || !(refs.tableEditor instanceof HTMLDivElement)) {
       return false;
     }
@@ -6068,13 +11167,13 @@ function syncRichToolbarEnhancements(toolbar) {
     state.editingId = item.id;
     state.editingType = "table";
     state.board.selectedIds = [item.id];
-    tableEditSelection = {
-      rowIndex: Math.max(0, Number(selection?.rowIndex) || 0),
-      columnIndex: Math.max(0, Number(selection?.columnIndex) || 0),
-    };
+    setTableEditSelection(selection?.rowIndex, selection?.columnIndex);
+    setTableCellEditingState(tableEditSelection.rowIndex, tableEditSelection.columnIndex, false);
+    resetTablePointerSelectionState();
+    tableEditFrame = resolveTableEditFrame(item, { baseFrame: null });
     lastTableEditItemId = null;
     syncTableEditorLayout();
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       focusTableEditorCell(tableEditSelection.rowIndex, tableEditSelection.columnIndex);
     });
@@ -6085,6 +11184,9 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.editingId || state.editingType !== "table") {
       return false;
     }
+    if (tableCellEditState.active) {
+      commitActiveTableCellRichEdit({ keepFocus: false });
+    }
     const item = getTableEditItem();
     if (!item || !(refs.tableEditor instanceof HTMLDivElement)) {
       state.editingId = null;
@@ -6092,6 +11194,8 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.tableEditor?.classList.add("is-hidden");
       refs.tableToolbar?.classList.add("is-hidden");
       lastTableEditItemId = null;
+      tableEditRange = null;
+      tableEditFrame = null;
       return false;
     }
     const before = editBaselineSnapshot || takeHistorySnapshot(state);
@@ -6108,8 +11212,12 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.tableEditor.classList.add("is-hidden");
     refs.tableToolbar?.classList.add("is-hidden");
     lastTableEditItemId = null;
+    tableEditRange = null;
+    tableEditFrame = null;
+    resetTablePointerSelectionState();
+    setTableCellEditingState(0, 0, false);
     editBaselineSnapshot = null;
-    const changed = commitHistory(before, "更新表格");
+    const changed = commitItemPatchHistory(before, item.id, item, "更新表格", "table-edit");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -6123,13 +11231,20 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.editingType !== "table") {
       return false;
     }
+    if (tableCellEditState.active) {
+      cancelActiveTableCellRichEdit({ keepFocus: false });
+    }
     state.editingId = null;
     state.editingType = null;
     refs.tableEditor?.classList.add("is-hidden");
     refs.tableToolbar?.classList.add("is-hidden");
     lastTableEditItemId = null;
+    tableEditRange = null;
+    tableEditFrame = null;
+    resetTablePointerSelectionState();
+    setTableCellEditingState(0, 0, false);
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -6137,6 +11252,9 @@ function syncRichToolbarEnhancements(toolbar) {
     const item = getTableEditItem();
     if (!(refs.tableEditor instanceof HTMLDivElement) || !item || typeof mutator !== "function") {
       return;
+    }
+    if (tableCellEditState.active) {
+      commitActiveTableCellRichEdit({ keepFocus: false });
     }
     const matrix = buildTableMatrixFromEditor();
     const mutationResult = mutator(matrix.map((row) => row.map((cell) => ({ ...cell })))) || matrix;
@@ -6152,13 +11270,30 @@ function syncRichToolbarEnhancements(toolbar) {
     item.rows = structure.rows.length;
     const normalizedItem = updateTableElementStructure(item, structure);
     Object.assign(item, normalizedItem);
+    tableEditFrame = resolveTableEditFrame(item, { baseFrame: tableEditFrame });
     refs.tableEditor.innerHTML = buildTableEditorHtml(item);
+    ensureTableCellRichEditorHost();
     syncTableEditorLayout();
+    const preservedRange = tableEditRange ? createTableSelectionRange(tableEditRange.anchor, tableEditRange.focus) : null;
+    const preservedSelectionMode = tableEditSelectionMode;
+    const focusRowIndex = Math.min(tableEditSelection.rowIndex, Math.max(0, structure.rows.length - 1));
+    const focusColumnIndex = Math.min(tableEditSelection.columnIndex, Math.max(0, structure.columns - 1));
     requestAnimationFrame(() => {
-      focusTableEditorCell(
-        Math.min(tableEditSelection.rowIndex, Math.max(0, structure.rows.length - 1)),
-        Math.min(tableEditSelection.columnIndex, Math.max(0, structure.columns - 1))
-      );
+      focusTableEditorCell(focusRowIndex, focusColumnIndex);
+      if (preservedRange) {
+        tableEditRange = createTableSelectionRange(
+          {
+            rowIndex: Math.min(preservedRange.anchor.rowIndex, Math.max(0, structure.rows.length - 1)),
+            columnIndex: Math.min(preservedRange.anchor.columnIndex, Math.max(0, structure.columns - 1)),
+          },
+          {
+            rowIndex: Math.min(preservedRange.focus.rowIndex, Math.max(0, structure.rows.length - 1)),
+            columnIndex: Math.min(preservedRange.focus.columnIndex, Math.max(0, structure.columns - 1)),
+          }
+        );
+        syncTableSelectionMode(nextMatrix, preservedSelectionMode);
+        syncTableEditorSelectionUI();
+      }
     });
   }
 
@@ -6193,7 +11328,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.richEditor?.classList.add("is-hidden");
     refs.imageMemoEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "fileCard");
+    const item = sceneRegistry.getItemById(state.editingId, "fileCard");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
@@ -6221,7 +11356,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function beginFileMemoEdit(itemId) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "fileCard");
+    const item = sceneRegistry.getItemById(itemId, "fileCard");
     if (!item || !(refs.fileMemoEditor instanceof HTMLTextAreaElement)) {
       return false;
     }
@@ -6237,7 +11372,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.fileMemoEditor.value = String(item.memo || "");
     lastFileMemoItemId = item.id;
     syncFileMemoLayout();
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       refs.fileMemoEditor?.focus();
       refs.fileMemoEditor?.select();
@@ -6249,7 +11384,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.editingId || state.editingType !== "file-memo") {
       return false;
     }
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "fileCard");
+    const item = sceneRegistry.getItemById(state.editingId, "fileCard");
     if (!item || !(refs.fileMemoEditor instanceof HTMLTextAreaElement)) {
       state.editingId = null;
       state.editingType = null;
@@ -6267,7 +11402,7 @@ function syncRichToolbarEnhancements(toolbar) {
     lastFileMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    const changed = commitHistory(before, "更新文件卡备注");
+    const changed = commitItemPatchHistory(before, item.id, item, "更新文件卡备注", "file-memo-edit");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -6287,7 +11422,7 @@ function syncRichToolbarEnhancements(toolbar) {
     lastFileMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -6303,7 +11438,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.richEditor?.classList.add("is-hidden");
     refs.fileMemoEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "image");
+    const item = sceneRegistry.getItemById(state.editingId, "image");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
@@ -6331,7 +11466,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function beginImageMemoEdit(itemId) {
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "image");
+    const item = sceneRegistry.getItemById(itemId, "image");
     if (!item || !(refs.imageMemoEditor instanceof HTMLTextAreaElement)) {
       return false;
     }
@@ -6347,7 +11482,7 @@ function syncRichToolbarEnhancements(toolbar) {
     refs.imageMemoEditor.value = String(item.memo || "");
     lastImageMemoItemId = item.id;
     syncImageMemoLayout();
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     requestAnimationFrame(() => {
       refs.imageMemoEditor?.focus();
       refs.imageMemoEditor?.select();
@@ -6359,7 +11494,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.editingId || state.editingType !== "image-memo") {
       return false;
     }
-    const item = state.board.items.find((entry) => entry.id === state.editingId && entry.type === "image");
+    const item = sceneRegistry.getItemById(state.editingId, "image");
     if (!item || !(refs.imageMemoEditor instanceof HTMLTextAreaElement)) {
       state.editingId = null;
       state.editingType = null;
@@ -6377,7 +11512,7 @@ function syncRichToolbarEnhancements(toolbar) {
     lastImageMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    const changed = commitHistory(before, "更新图片备注");
+    const changed = commitItemPatchHistory(before, item.id, item, "更新图片备注", "image-memo-edit");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -6397,7 +11532,7 @@ function syncRichToolbarEnhancements(toolbar) {
     lastImageMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -6588,7 +11723,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function getImageItemById(itemId) {
-    return state.board.items.find((entry) => entry.id === itemId && entry.type === "image");
+    return sceneRegistry.getItemById(itemId, "image");
   }
 
   function beginImageEdit(itemId) {
@@ -6608,7 +11743,7 @@ function syncRichToolbarEnhancements(toolbar) {
     state.editingType = "image";
     state.board.selectedIds = [item.id];
     lightImageEditor.beginEdit(item.id);
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -6619,7 +11754,7 @@ function syncRichToolbarEnhancements(toolbar) {
     state.editingId = null;
     state.editingType = null;
     lightImageEditor.finishEdit();
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -6754,8 +11889,8 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!edge || edge.type !== "flowEdge") {
       return null;
     }
-    const fromNode = state.board.items.find((entry) => entry.id === edge.fromId && entry.type === "flowNode");
-    const toNode = state.board.items.find((entry) => entry.id === edge.toId && entry.type === "flowNode");
+    const fromNode = sceneRegistry.getItemById(edge.fromId, "flowNode");
+    const toNode = sceneRegistry.getItemById(edge.toId, "flowNode");
     if (!fromNode || !toNode) {
       return null;
     }
@@ -6884,13 +12019,16 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!bounds || !Array.isArray(items) || !items.length) {
       return [];
     }
-    const matches = items.filter((item) => {
-      if (!item) {
-        return false;
-      }
-      const itemBounds = item.type === "flowEdge" ? getFlowEdgeBounds(item) : getElementBounds(item);
-      return doBoundsIntersect(itemBounds, bounds);
-    });
+    const matches =
+      items === state.board.items
+        ? querySceneIndex(getSceneIndexRuntime(), bounds).map((record) => record.item)
+        : items.filter((item) => {
+            if (!item) {
+              return false;
+            }
+            const itemBounds = item.type === "flowEdge" ? getFlowEdgeBounds(item) : getElementBounds(item);
+            return doBoundsIntersect(itemBounds, bounds);
+          });
     return collectCardLinkedItems(matches);
   }
 
@@ -7033,28 +12171,47 @@ function syncRichToolbarEnhancements(toolbar) {
     });
   }
 
+  function buildExportHistoryEntry({
+    result = null,
+    kind = "",
+    scope = "",
+    title = "",
+    defaultFileName = "",
+  } = {}) {
+    if (!result?.ok) {
+      return null;
+    }
+    const filePath = String(result.filePath || result.path || "").trim();
+    const fileName = String(result.fileName || (filePath ? getFileName(filePath) : defaultFileName || "")).trim();
+    return {
+      exportedAt: Date.now(),
+      kind: String(kind || "").trim().toLowerCase(),
+      scope: String(scope || "").trim().toLowerCase(),
+      title: String(title || "").trim() || fileName || "导出记录",
+      filePath,
+      fileName,
+      jumpTarget: filePath || "",
+    };
+  }
+
   async function exportBoardAsPdf(options = {}) {
     try {
       setStatus("正在生成 PDF...");
       await waitForUiPaint();
-      const { exportBoardAsPdf: runPdfExport } = await import("./export/exportBoardAsPdf.js");
-      const result = await runPdfExport(
-        (renderOptions) =>
-          renderBoardToCanvas({
-            ...renderOptions,
-            backgroundPattern: resolveExportBackgroundPattern(options),
-            exportLabel: "PDF 导出",
-            onProgress: async (message) => {
-              setStatus(message);
-              await waitForUiPaint();
-            },
-          }),
-        options,
-        {
-          defaultFileName: getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
-        }
-      );
+      const result = await structuredExportRuntime.exportBoardAsPdf(state.board, {
+        ...options,
+        backgroundPattern: resolveExportBackgroundPattern(options),
+      });
       if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "pdf",
+            scope: "board",
+            title: "画布导出 PDF",
+            defaultFileName: "freeflow-board.pdf",
+          })
+        );
         setStatus(result.message || "PDF 已导出");
         return result;
       }
@@ -7086,81 +12243,47 @@ function syncRichToolbarEnhancements(toolbar) {
     try {
       setStatus("正在生成 PNG...");
       await waitForUiPaint();
-      const renderResult = await renderBoardToCanvas({
-        scale: options.scale,
-        backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
-        backgroundGrid: options.includeGrid,
+      const result = await structuredExportRuntime.exportBoardAsPng(state.board, {
+        ...options,
         backgroundPattern: resolveExportBackgroundPattern(options),
-        exportLabel: "PNG 导出",
-        onProgress: async (message) => {
-          setStatus(message);
-          await waitForUiPaint();
+        onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
+          if (typeof window === "undefined" || typeof window.confirm !== "function") {
+            return false;
+          }
+          return window.confirm(
+            [
+              "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
+              "",
+              `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
+                1,
+                Math.round(Number(requestedCanvasHeight || 0) || 1)
+              )}`,
+              `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
+              "",
+              "是否仍然继续导出？",
+            ].join("\n")
+          );
         },
       });
-      if (renderResult?.canceled) {
+      if (result?.canceled) {
         setStatus("PNG 导出已取消", "warning");
-        return {
-          ok: false,
-          canceled: true,
-          code: renderResult.code || "PNG_EXPORT_CANCELED",
-          message: "",
-          fileName: "",
-          filePath: "",
-          bytes: 0,
-        };
+        return result;
       }
-      if (renderResult?.errorCode) {
-        const message = renderResult.errorMessage || "PNG 导出失败";
-        setStatus(message, "warning");
-        return {
-          ok: false,
-          canceled: false,
-          code: renderResult.errorCode,
-          message,
-          fileName: "",
-          filePath: "",
-          bytes: 0,
-        };
+      if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "png",
+            scope: "board",
+            title: "画布导出 PNG",
+            defaultFileName: "freeflow-board.png",
+          })
+        );
+        setStatus(result.message || "PNG 已导出");
+        return result;
       }
-      const dataUrl = renderResult?.canvas?.toDataURL?.("image/png") || "";
-      const saveResult = await saveDataUrlAsImage(dataUrl, {
-        defaultName: getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
-      });
-      if (saveResult?.ok) {
-        setStatus(saveResult.message || "PNG 已导出");
-        return {
-          ok: true,
-          canceled: false,
-          code: "PNG_EXPORT_OK",
-          message: saveResult.message || "PNG 已导出",
-          fileName: `${getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board")}.png`,
-          filePath: String(saveResult.path || "").trim(),
-          bytes: Number(saveResult.size) || 0,
-        };
-      }
-      if (saveResult?.canceled) {
-        setStatus("PNG 导出已取消", "warning");
-        return {
-          ok: false,
-          canceled: true,
-          code: "PNG_EXPORT_CANCELED",
-          message: "",
-          fileName: "",
-          filePath: "",
-          bytes: 0,
-        };
-      }
-      const message = saveResult?.error || "PNG 导出失败";
-      setStatus(message, "warning");
-      return {
-        ok: false,
-        canceled: false,
-        code: "PNG_EXPORT_WRITE_FAILED",
-        message,
-        fileName: "",
-        filePath: "",
-        bytes: 0,
-      };
+      setStatus(result?.message || "PNG 导出失败", "warning");
+      return result;
     } catch (error) {
       const message = error?.message || "PNG 导出失败";
       setStatus(message, "warning");
@@ -7468,80 +12591,45 @@ function syncRichToolbarEnhancements(toolbar) {
 
   async function exportItemsAsImage(items = [], options = {}) {
     try {
-      if (!items.length) {
-        return false;
-      }
-      const exportItems = collectCardLinkedItems(items);
-      const exportBounds = getExportBounds(exportItems);
-      if (!exportBounds) {
-        setStatus("导出失败：无法确定导出范围");
-        return false;
-      }
-      const hydratedItems = await hydrateImageItems(exportItems);
-      const preparedItems = buildExportReadyBoardItems(hydratedItems);
-      await preloadImagesForItems(preparedItems);
-      const baseRenderOptions = {
-        renderer,
-        getElementBounds,
-        getFlowEdgeBounds,
-        allowLocalFileAccess: getAllowLocalFileAccess(),
-        backgroundFill: options.forceWhiteBackground ? "#ffffff" : "transparent",
-        backgroundGrid: false,
-        renderTextInCanvas: true,
-        scale: options.scale ?? 1,
-        devicePixelRatio: 1,
-        exportBounds,
-      };
-      let renderResult = renderExportBoardToCanvas(preparedItems, baseRenderOptions);
-      const isOversizedExport =
-        renderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
-        renderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
-      if (isOversizedExport) {
-        const requestedWidth = Math.max(1, Math.round(Number(renderResult?.requestedCanvasWidth || 0) || 1));
-        const requestedHeight = Math.max(1, Math.round(Number(renderResult?.requestedCanvasHeight || 0) || 1));
-        const requestedPixels = Math.max(1, Math.round(Number(renderResult?.requestedTotalPixels || 0) || 1));
-        const continueExport =
-          typeof window !== "undefined" && typeof window.confirm === "function"
-            ? window.confirm(
-                [
-                  "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
-                  "",
-                  `目标画布像素：${requestedWidth} × ${requestedHeight}`,
-                  `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
-                  "",
-                  "是否仍然继续导出？",
-                ].join("\n")
-              )
-            : false;
-        if (!continueExport) {
-          setStatus("图片导出已取消", "warning");
-          return false;
-        }
-        renderResult = renderExportBoardToCanvas(preparedItems, {
-          ...baseRenderOptions,
-          allowUnsafeSize: true,
-        });
-      }
-      if (!renderResult?.canvas) {
-        setStatus("导出失败：无法生成图像");
-        return false;
-      }
-      const dataUrl = safeCanvasToDataUrl(renderResult.canvas);
-      if (!dataUrl) {
-        setStatus("导出失败：存在无法捕获的图片内容");
-        return false;
-      }
-      const result = await saveDataUrlAsImage(dataUrl, {
-        defaultName: options.defaultName || "freeflow-export",
+      const result = await structuredExportRuntime.exportItemsAsImage(state.board, items, {
+        ...options,
+        onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
+          if (typeof window === "undefined" || typeof window.confirm !== "function") {
+            return false;
+          }
+          return window.confirm(
+            [
+              "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
+              "",
+              `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
+                1,
+                Math.round(Number(requestedCanvasHeight || 0) || 1)
+              )}`,
+              `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
+              "",
+              "是否仍然继续导出？",
+            ].join("\n")
+          );
+        },
       });
       if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "png",
+            scope: "selection",
+            title: "选区导出图片",
+            defaultFileName: "freeflow-selection.png",
+          })
+        );
         setStatus(result.message || "图片已导出");
         return true;
       }
       if (result?.canceled) {
+        setStatus("图片导出已取消", "warning");
         return false;
       }
-      setStatus(result?.error || "导出失败");
+      setStatus(result?.message || "导出失败");
       return false;
     } catch (error) {
       setStatus(error?.message || "导出失败");
@@ -7549,25 +12637,307 @@ function syncRichToolbarEnhancements(toolbar) {
     }
   }
 
-  async function exportTextItem(item) {
-    if (!item) {
+  function notifyExportToast(message, fallback = "") {
+    const text = String(message || fallback || "").trim();
+    if (!text) {
+      return;
+    }
+    setSaveToast(text);
+  }
+
+  async function exportRichTextItem(item, format = "word") {
+    try {
+      const meta = getExportOperationMeta(item?.type, format, item);
+      if (!item || !meta) {
+        setStatus("仅富文本元素支持此导出");
+        notifyExportToast("仅富文本元素支持此导出");
+        return false;
+      }
+      let result = null;
+      if (meta.loadingMessage) {
+        setStatus(meta.loadingMessage);
+        await waitForUiPaint();
+      }
+      if (meta.format === "word") {
+        result = await structuredExportRuntime.exportRichTextItemAsWordFile(item, {
+          defaultName: meta.defaultName,
+        });
+      } else if (meta.format === "pdf") {
+        result = await structuredExportRuntime.exportRichTextItemAsPdf(state.board, item, {
+          defaultName: meta.defaultName,
+          background: "white",
+          includeGrid: false,
+        });
+      } else if (meta.format === "png") {
+        result = await structuredExportRuntime.exportRichTextItemAsPng(state.board, item, {
+          defaultName: meta.defaultName,
+          forceWhiteBackground: true,
+          onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
+            if (typeof window === "undefined" || typeof window.confirm !== "function") {
+              return false;
+            }
+            return window.confirm(
+              [
+                "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
+                "",
+                `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
+                  1,
+                  Math.round(Number(requestedCanvasHeight || 0) || 1)
+                )}`,
+                `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
+                "",
+                "是否仍然继续导出？",
+              ].join("\n")
+            );
+          },
+        });
+      } else if (meta.format === "txt") {
+        result = await structuredExportRuntime.exportTextItem(item, { defaultName: meta.defaultName });
+      }
+      if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: meta.historyKind,
+            scope: meta.scope,
+            title: meta.historyTitle,
+            defaultFileName: meta.defaultFileName,
+          })
+        );
+        const successMessage = result.message || meta.successMessage;
+        setStatus(successMessage, "success");
+        notifyExportToast(successMessage, meta.successMessage);
+        return true;
+      }
+      if (result?.canceled) {
+        const cancelMessage = meta.cancelMessage || "导出已取消";
+        setStatus(cancelMessage, "warning");
+        notifyExportToast(cancelMessage);
+        return false;
+      }
+      const failureMessage = result?.message || meta.failureMessage;
+      setStatus(failureMessage, "warning");
+      notifyExportToast(failureMessage, meta.failureMessage);
+      return false;
+    } catch (error) {
+      const message = String(error?.message || "导出失败").trim() || "导出失败";
+      setStatus(message, "warning");
+      notifyExportToast(message);
       return false;
     }
-    const plain = sanitizeText(item.plainText || item.text || htmlToPlainText(item.html || ""));
-    if (!plain) {
-      setStatus("文本为空");
+  }
+
+  async function exportTableItem(item, format = "xlsx") {
+    const meta = getExportOperationMeta(item?.type, format, item);
+    if (!item || !meta) {
+      setStatus("仅表格元素支持此导出");
       return false;
     }
-    const result = await saveTextAsFile(plain, { defaultName: item.name || "文本" });
+    const result = await structuredExportRuntime.exportTableItem(item, meta.format, {
+      defaultName: meta.defaultName,
+    });
     if (result?.ok) {
-      setStatus("已导出 TXT");
+      recordExportHistory(
+        buildExportHistoryEntry({
+          result,
+          kind: meta.historyKind,
+          scope: meta.scope,
+          title: meta.historyTitle,
+          defaultFileName: meta.defaultFileName,
+        })
+      );
+      setStatus(result.message || meta.successMessage);
       return true;
     }
     if (result?.canceled) {
+      setStatus(meta.cancelMessage || "表格导出已取消", "warning");
       return false;
     }
-    setStatus(result?.error || "导出失败");
+    setStatus(result?.message || meta.failureMessage, "warning");
     return false;
+  }
+
+  async function exportCodeBlockItem(item, format = "source") {
+    const meta = getExportOperationMeta(item?.type, format, item);
+    if (!item || !meta) {
+      setStatus("仅代码块元素支持此导出");
+      return false;
+    }
+    const result = await structuredExportRuntime.exportCodeBlockItem(item, meta.format, {
+      defaultName: meta.defaultName,
+    });
+    if (result?.ok) {
+      recordExportHistory(
+        buildExportHistoryEntry({
+          result,
+          kind: meta.historyKind,
+          scope: meta.scope,
+          title: meta.historyTitle,
+          defaultFileName: meta.defaultFileName,
+        })
+      );
+      setStatus(result.message || meta.successMessage);
+      return true;
+    }
+    if (result?.canceled) {
+      setStatus(meta.cancelMessage || "代码块导出已取消", "warning");
+      return false;
+    }
+    setStatus(result?.message || meta.failureMessage, "warning");
+    return false;
+  }
+
+  function buildRichTextClipboardContent(item) {
+    if (!item || (item.type !== "text" && item.type !== "flowNode")) {
+      return null;
+    }
+    const content = ensureRichTextDocumentFields(item, {
+      html: item.html || "",
+      plainText: item.plainText || item.text || "",
+      fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+    });
+    const richTextDocument = content.richTextDocument || null;
+    const html = sanitizeHtml(
+      normalizeRichHtmlInlineFontSizes(
+        serializeRichTextDocumentToHtml(richTextDocument, content.html || item.html || ""),
+        item.fontSize || DEFAULT_TEXT_FONT_SIZE
+      )
+    ).trim();
+    const plainText = sanitizeText(
+      serializeRichTextDocumentToPlainText(
+        richTextDocument,
+        content.plainText || item.plainText || item.text || htmlToPlainText(html)
+      )
+    ).trim();
+    const markdown = sanitizeText(
+      serializeRichTextDocumentToMarkdown(richTextDocument, {
+        html,
+        plainText,
+        text: plainText,
+        fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+      })
+    ).trim();
+    const objectLink = buildCanvasInternalLinkUrl(item.id);
+    return {
+      html,
+      plainText,
+      markdown,
+      objectLink,
+    };
+  }
+
+  async function writeClipboardTextAndHtml({ text = "", html = "" } = {}) {
+    const plainText = sanitizeText(String(text || ""));
+    const richHtml = String(html || "").trim();
+    if (!plainText && !richHtml) {
+      return false;
+    }
+    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            ...(richHtml ? { "text/html": new Blob([richHtml], { type: "text/html" }) } : {}),
+            "text/plain": new Blob([plainText || htmlToPlainText(richHtml)], { type: "text/plain" }),
+          }),
+        ]);
+        return true;
+      } catch {
+        // fallback below
+      }
+    }
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(plainText || htmlToPlainText(richHtml));
+        return true;
+      } catch {
+        // fallback below
+      }
+    }
+    if (typeof document?.execCommand === "function") {
+      const textarea = document.createElement("textarea");
+      textarea.value = plainText || htmlToPlainText(richHtml);
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      textarea.remove();
+      return copied;
+    }
+    return false;
+  }
+
+  async function copyRichTextContent(item, format = "plain") {
+    const meta = getCopyOperationMeta(item?.type, format);
+    const payload = buildRichTextClipboardContent(item);
+    if (!payload || !meta) {
+      setStatus("仅富文本元素支持此操作");
+      return false;
+    }
+    let copied = false;
+    if (meta.format === "html") {
+      copied = await writeClipboardTextAndHtml({
+        text: payload.plainText || htmlToPlainText(payload.html || ""),
+        html: payload.html,
+      });
+    } else if (meta.format === "markdown") {
+      copied = await writeClipboardTextAndHtml({ text: payload.markdown });
+    } else if (meta.format === "object-link") {
+      copied = await writeClipboardTextAndHtml({ text: payload.objectLink });
+    } else {
+      copied = await writeClipboardTextAndHtml({ text: payload.plainText });
+    }
+    if (!copied) {
+      setStatus("复制失败");
+      return false;
+    }
+    setStatus(`已复制${meta.label}`);
+    return true;
+  }
+
+  function buildTableClipboardContent(item) {
+    if (!item || item.type !== "table") {
+      return null;
+    }
+    const matrix = flattenTableStructureToMatrix(item.table || {});
+    if (!Array.isArray(matrix) || !matrix.length) {
+      return null;
+    }
+    return {
+      plain: serializeTableMatrixToPlainText(matrix, { hasHeader: item.table?.hasHeader !== false }),
+      markdown: serializeTableMatrixToMarkdown(matrix),
+      tsv: serializeTableMatrixToTsv(matrix),
+    };
+  }
+
+  async function copyTableTextContent(item, format = "plain") {
+    const meta = getCopyOperationMeta(item?.type, format);
+    const payload = buildTableClipboardContent(item);
+    if (!payload || !meta) {
+      setStatus("仅表格元素支持此操作");
+      return false;
+    }
+    const text =
+      meta.format === "markdown"
+        ? payload.markdown
+        : meta.format === "tsv"
+          ? payload.tsv
+          : payload.plain;
+    const copied = await writeClipboardTextAndHtml({ text });
+    if (!copied) {
+      setStatus("复制失败");
+      return false;
+    }
+    setStatus(`已复制${meta.label}`);
+    return true;
   }
 
   async function startCanvasCapture() {
@@ -7631,6 +13001,15 @@ function syncRichToolbarEnhancements(toolbar) {
       setStatus("正在生成截图...");
       const result = await saveDataUrlAsImage(dataUrl, { defaultName: "画布截图" });
       if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "png",
+            scope: "capture",
+            title: "画布截图导出",
+            defaultFileName: "画布截图.png",
+          })
+        );
         const inserted = await insertImageFromDataUrl(dataUrl, {
           name: "画布截图",
           anchorPoint,
@@ -7662,7 +13041,19 @@ function syncRichToolbarEnhancements(toolbar) {
     } else {
       state.board.preferences.allowLocalFileAccess = next;
     }
-    syncBoard({ persist: true, emit: true });
+    const affectedItemIds = state.board.items
+      .filter((item) => item?.type === "fileCard" || item?.type === "image")
+      .map((item) => String(item?.id || "").trim())
+      .filter(Boolean);
+    syncBoard({
+      persist: true,
+      emit: true,
+      sceneChange: true,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "set-local-file-access",
+      itemIds: affectedItemIds,
+    });
   }
 
   function toggleLocalFileAccess() {
@@ -7679,7 +13070,15 @@ function syncRichToolbarEnhancements(toolbar) {
     } else {
       state.board.preferences.backgroundPattern = next;
     }
-    syncBoard({ persist: true, emit: true });
+    syncBoard({
+      persist: true,
+      emit: true,
+      sceneChange: false,
+      backgroundChange: true,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "set-background-pattern",
+    });
     setStatus(`画布背景已切换为${next === "none" ? "无背景" : next === "dots" ? "点阵" : next === "grid" ? "方格" : next === "lines" ? "横线" : "工程网格"}`);
   }
 
@@ -7697,7 +13096,7 @@ function syncRichToolbarEnhancements(toolbar) {
       setTool("select");
       return true;
     }
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
     return true;
   }
 
@@ -7710,6 +13109,123 @@ function syncRichToolbarEnhancements(toolbar) {
     state.hoverConnector = null;
     flowDraft = null;
     clearAlignmentSnap("clear-transient");
+  }
+
+  function clearBlockedCanvasPointerDown() {
+    blockedCanvasPointerDown = null;
+  }
+
+  function matchesBlockedCanvasPointerDown(event) {
+    if (!blockedCanvasPointerDown) {
+      return false;
+    }
+    const pointerId = Number(event?.pointerId);
+    const blockedPointerId = Number(blockedCanvasPointerDown.pointerId);
+    if (Number.isFinite(pointerId) && Number.isFinite(blockedPointerId) && pointerId === blockedPointerId) {
+      return true;
+    }
+    const timestamp = Number(event?.timeStamp || 0);
+    return Number.isFinite(timestamp) && timestamp <= Number(blockedCanvasPointerDown.expiresAt || 0);
+  }
+
+  function hideEditingUiForDeferredBlankExit(editingType = "") {
+    if (editingType === "text" || editingType === "flow-node") {
+      refs.editor?.classList.add("is-hidden");
+      refs.richEditor?.classList.add("is-hidden");
+      refs.richToolbar?.classList.add("is-hidden");
+      refs.richSelectionToolbar?.classList.add("is-hidden");
+      return;
+    }
+    if (editingType === "code-block") {
+      refs.codeBlockEditor?.classList.add("is-hidden");
+      refs.codeBlockToolbar?.classList.add("is-hidden");
+      return;
+    }
+    if (editingType === "table") {
+      refs.tableEditor?.classList.add("is-hidden");
+      refs.tableToolbar?.classList.add("is-hidden");
+      return;
+    }
+    if (editingType === "file-memo") {
+      refs.fileMemoEditor?.classList.add("is-hidden");
+      return;
+    }
+    if (editingType === "image-memo") {
+      refs.imageMemoEditor?.classList.add("is-hidden");
+      return;
+    }
+  }
+
+  function flushDeferredBlankEditExit() {
+    const pending = deferredBlankEditExit;
+    deferredBlankEditExit = null;
+    deferredBlankEditExitFrame = 0;
+    clearBlockedCanvasPointerDown();
+    if (!pending) {
+      return false;
+    }
+    let committed = false;
+    if (pending.editingType === "text" || pending.editingType === "flow-node") {
+      committed = commitRichEdit();
+    } else if (pending.editingType === "code-block") {
+      committed = commitCodeBlockEdit();
+    } else if (pending.editingType === "table") {
+      committed = commitTableEdit();
+    } else if (pending.editingType === "file-memo") {
+      committed = commitFileMemoEdit();
+    } else if (pending.editingType === "image-memo") {
+      committed = commitImageMemoEdit();
+    }
+    if (!pending.clearSelectionAfterCommit) {
+      return committed;
+    }
+    if (state.board.selectedIds.length) {
+      state.board.selectedIds = [];
+      state.lastSelectionSource = null;
+      state.selectionRect = null;
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    }
+    return committed;
+  }
+
+  function scheduleDeferredBlankEditExit(editingType, event) {
+    if (!editingType || deferredBlankEditExit) {
+      return false;
+    }
+    const pointerId = Number(event?.pointerId);
+    const timeStamp = Number(event?.timeStamp || 0);
+    deferredBlankEditExit = {
+      editingType,
+      clearSelectionAfterCommit: !(event?.shiftKey || event?.metaKey || event?.ctrlKey),
+    };
+    blockedCanvasPointerDown = {
+      pointerId: Number.isFinite(pointerId) ? pointerId : null,
+      expiresAt: (Number.isFinite(timeStamp) ? timeStamp : 0) + 64,
+    };
+    hideEditingUiForDeferredBlankExit(editingType);
+    deferredBlankEditExitFrame = requestAnimationFrame(() => {
+      deferredBlankEditExitFrame = 0;
+      flushDeferredBlankEditExit();
+    });
+    return true;
+  }
+
+  function shouldDeferBlankPointerExit(event) {
+    if (pendingCanvasLinkBinding) {
+      return "";
+    }
+    if (!state.editingType || !(event?.target instanceof Element) || event.button !== 0) {
+      return "";
+    }
+    if (!refs.canvas || event.target !== refs.canvas) {
+      return "";
+    }
+    const scenePoint = toScenePoint(event.clientX, event.clientY);
+    const target = resolveSelectionTarget(state.board.items, scenePoint, state.board.view.scale);
+    if (target) {
+      return "";
+    }
+    return String(state.editingType || "");
   }
 
   function getAggregateBounds(items = []) {
@@ -7748,7 +13264,7 @@ function syncRichToolbarEnhancements(toolbar) {
       cancelImageMemoEdit();
       finishImageEdit();
     }
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
   function setMode(nextMode = "canvas2d") {
@@ -7762,7 +13278,7 @@ function syncRichToolbarEnhancements(toolbar) {
       cancelImageMemoEdit();
       finishImageEdit();
     }
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
   function removeSelected() {
@@ -7787,7 +13303,7 @@ function syncRichToolbarEnhancements(toolbar) {
       removedCount += 1;
     });
     if (!removedCount) {
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       if (lockedCount) {
         setStatus("存在锁定文本，未删除");
       }
@@ -7798,7 +13314,10 @@ function syncRichToolbarEnhancements(toolbar) {
       const item = nextItems.find((entry) => entry.id === id);
       return Boolean(item);
     });
-    commitHistory(before, "删除元素");
+    commitItemsPatchHistory(before, Array.from(remove), "删除元素", "item-delete-batch", {
+      beforeOrderIds: Array.isArray(before.items) ? before.items.map((item) => item.id) : [],
+      afterOrderIds: nextItems.map((item) => item.id),
+    });
     setStatus(`已删除 ${removedCount} 个元素`);
     if (lockedCount) {
       setStatus(`已删除 ${removedCount} 个元素（${lockedCount} 个锁定未删除）`);
@@ -7820,7 +13339,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   async function copySelection() {
-    const items = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+    const items = sceneRegistry.getSelectedItems();
     if (!items.length) {
       return null;
     }
@@ -7831,35 +13350,42 @@ function syncRichToolbarEnhancements(toolbar) {
     if (fileBacked.length) {
       const changed = await resolveFileCardSourcesForItems(fileBacked);
       if (changed) {
-        syncBoard({ persist: true, emit: true });
+        syncBoard({
+          persist: true,
+          emit: true,
+          sceneChange: true,
+          fullOverlayRescan: false,
+          reason: "copy-selection-resolve-sources",
+          itemIds: fileBacked.map((item) => String(item?.id || "").trim()).filter(Boolean),
+        });
       }
     }
-    const copied = await clipboardBroker.copyItemsToClipboard(items);
-    if (items.length >= 24) {
-      await yieldToNextFrame();
-    }
+    const baseClipboardPayload = clipboardBroker.buildPayloadFromItems(items);
     const flowback = shouldBuildStructuredFlowback(items)
       ? structuredImportRuntime.buildFlowbackPayload(items)
       : null;
     const externalOutput = flowback?.externalOutput || {};
-    const nextClipboard = copied
+    const nextClipboard = baseClipboardPayload
       ? {
-          ...copied,
-          text: String(externalOutput.text || copied.text || ""),
-          html: String(externalOutput.html || copied.html || ""),
+          ...baseClipboardPayload,
+          text: String(externalOutput.text || baseClipboardPayload.text || ""),
+          html: String(externalOutput.html || baseClipboardPayload.html || ""),
           filePaths:
             Array.isArray(externalOutput.filePaths) && externalOutput.filePaths.length
               ? externalOutput.filePaths.slice()
-              : Array.isArray(copied.filePaths)
-                ? copied.filePaths.slice()
+              : Array.isArray(baseClipboardPayload.filePaths)
+                ? baseClipboardPayload.filePaths.slice()
                 : [],
           structuredFlowback: flowback,
         }
-      : copied;
-    if (nextClipboard) {
-      clipboardBroker.setPayload(nextClipboard);
+      : null;
+    const copied = nextClipboard
+      ? await clipboardBroker.copyPayloadToClipboard(nextClipboard)
+      : null;
+    if (items.length >= 24) {
+      await yieldToNextFrame();
     }
-    state.clipboard = nextClipboard ? { ...nextClipboard, pasteCount: 0 } : nextClipboard;
+    state.clipboard = copied ? { ...copied, pasteCount: 0 } : copied;
     if (fileBacked.length && fileBacked.length === items.length) {
       const hasPaths = (state.clipboard?.filePaths || []).length > 0;
       if (!hasPaths) {
@@ -7925,6 +13451,25 @@ function syncRichToolbarEnhancements(toolbar) {
     return buildExportReadyBoardItems(duplicatedItems);
   }
 
+  async function duplicateElementsWithDeltaAsync(items = [], deltaX = 0, deltaY = 0, options = {}) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return [];
+    }
+    if (list.length < PASTE_BATCH_YIELD_ITEM_THRESHOLD) {
+      return duplicateElementsWithDelta(list, deltaX, deltaY, options);
+    }
+    const duplicatedItems = [];
+    const chunkSize = Math.max(1, Number(options?.chunkSize) || PASTE_BATCH_YIELD_CHUNK_SIZE);
+    for (let index = 0; index < list.length; index += chunkSize) {
+      duplicatedItems.push(...duplicateElementsWithDelta(list.slice(index, index + chunkSize), deltaX, deltaY, options));
+      if (index + chunkSize < list.length) {
+        await yieldToNextFrame();
+      }
+    }
+    return duplicatedItems;
+  }
+
   function pasteInternalClipboard(anchorPoint = getCenterScenePoint(), options = {}) {
     const payload = state.clipboard;
     if (!payload?.items?.length) {
@@ -7933,7 +13478,8 @@ function syncRichToolbarEnhancements(toolbar) {
     const stagger = options?.stagger !== false;
     const historyReason = String(options?.historyReason || "粘贴元素");
     const statusPrefix = String(options?.statusPrefix || "已粘贴");
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
+    const beforeOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
     const bounds = getBoardBounds(payload.items);
     const pasteCount = Math.max(0, Number(payload.pasteCount) || 0);
     const groupOffset = stagger ? 28 + pasteCount * 20 : 0;
@@ -7941,20 +13487,54 @@ function syncRichToolbarEnhancements(toolbar) {
     const anchorY = Number(anchorPoint?.y || 0) + groupOffset;
     const deltaX = anchorX - Number(bounds?.left || 0);
     const deltaY = anchorY - Number(bounds?.top || 0);
-    const pasted = duplicateElementsWithDelta(payload.items, deltaX, deltaY, {
+    const pasted = normalizeImportedPasteFrameItems(duplicateElementsWithDelta(payload.items, deltaX, deltaY, {
       forceWrapText: options?.forceWrapText === true,
-    });
+    }));
     payload.pasteCount = stagger ? pasteCount + 1 : pasteCount;
     state.board.items.push(...pasted);
     state.board.selectedIds = pasted.map((item) => item.id);
     void hydrateFileCardIds(pasted);
-    commitHistory(before, historyReason);
+    commitItemsPatchHistory(before, pasted.map((item) => item.id), historyReason, "item-insert-batch", {
+      beforeOrderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
+    });
+    setStatus(`${statusPrefix} ${pasted.length} 个元素`);
+    return true;
+  }
+
+  async function pasteInternalClipboardAsync(anchorPoint = getCenterScenePoint(), options = {}) {
+    const payload = state.clipboard;
+    if (!payload?.items?.length) {
+      return false;
+    }
+    const stagger = options?.stagger !== false;
+    const historyReason = String(options?.historyReason || "粘贴元素");
+    const statusPrefix = String(options?.statusPrefix || "已粘贴");
+    const before = takeHistoryMetadataSnapshot(state);
+    const bounds = getBoardBounds(payload.items);
+    const pasteCount = Math.max(0, Number(payload.pasteCount) || 0);
+    const groupOffset = stagger ? 28 + pasteCount * 20 : 0;
+    const anchorX = Number(anchorPoint?.x || 0) + groupOffset;
+    const anchorY = Number(anchorPoint?.y || 0) + groupOffset;
+    const deltaX = anchorX - Number(bounds?.left || 0);
+    const deltaY = anchorY - Number(bounds?.top || 0);
+    const pasted = normalizeImportedPasteFrameItems(await duplicateElementsWithDeltaAsync(payload.items, deltaX, deltaY, {
+      forceWrapText: options?.forceWrapText === true,
+    }));
+    payload.pasteCount = stagger ? pasteCount + 1 : pasteCount;
+    state.board.items.push(...pasted);
+    state.board.selectedIds = pasted.map((item) => item.id);
+    void hydrateFileCardIds(pasted);
+    commitInsertedItemsPatchHistory(before, pasted, historyReason, "item-insert-batch", {
+      fullOverlayRescan: true,
+    });
     setStatus(`${statusPrefix} ${pasted.length} 个元素`);
     return true;
   }
 
   function clearInternalClipboard() {
     state.clipboard = null;
+    clipboardBroker.clearPayload?.();
   }
 
   function normalizeClipboardPathValue(value = "") {
@@ -7993,10 +13573,62 @@ function syncRichToolbarEnhancements(toolbar) {
     }
   }
 
+  async function readSystemClipboardInternalMarker() {
+    const clipboardItems = await clipboardBroker.readSystemClipboardItems();
+    for (const clipboardItem of clipboardItems) {
+      const types = Array.isArray(clipboardItem?.types) ? clipboardItem.types : [];
+      if (types.includes(CANVAS_CLIPBOARD_MIME) && typeof clipboardItem.getType === "function") {
+        try {
+          const blob = await clipboardItem.getType(CANVAS_CLIPBOARD_MIME);
+          const marker = parseInternalClipboardMarker(await blob.text());
+          if (marker) {
+            return marker;
+          }
+        } catch {
+          // Ignore unreadable custom clipboard payloads and continue fallback probes.
+        }
+      }
+      if (types.includes("text/html") && typeof clipboardItem.getType === "function") {
+        try {
+          const blob = await clipboardItem.getType("text/html");
+          const marker = parseInternalClipboardMarkerFromHtml(await blob.text());
+          if (marker) {
+            return marker;
+          }
+        } catch {
+          // Ignore unreadable HTML clipboard payloads and continue scanning.
+        }
+      }
+    }
+    return null;
+  }
+
+  function hasStructuredClipboardItems(payload = null) {
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return items.some((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (
+        item.type === "codeBlock" ||
+        item.type === "table" ||
+        item.type === "mathBlock" ||
+        item.type === "mathInline" ||
+        item.type === "flowNode" ||
+        (item.structuredImport && typeof item.structuredImport === "object")
+      );
+    });
+  }
+
   async function shouldUseInternalClipboard() {
     const payload = state.clipboard;
     if (!payload?.items?.length) {
       return false;
+    }
+
+    const marker = await readSystemClipboardInternalMarker();
+    if (marker && Number(marker?.copiedAt) === Number(payload?.copiedAt)) {
+      return true;
     }
 
     const payloadPaths = Array.isArray(payload.filePaths)
@@ -8021,6 +13653,12 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!payloadText) {
       clearInternalClipboard();
       return false;
+    }
+    if (hasStructuredClipboardItems(payload) && clipboardText && clipboardText === payloadText) {
+      return true;
+    }
+    if (hasStructuredClipboardItems(payload) && !clipboardText) {
+      return true;
     }
     if (clipboardText !== payloadText) {
       clearInternalClipboard();
@@ -8069,7 +13707,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     const task = (async () => {
       await yieldToIdleWindow(120);
-      const item = state.board.items.find((entry) => entry.id === targetItemId && entry.type === "text");
+      const item = sceneRegistry.getItemById(targetItemId, "text");
       if (!item || isLockedText(item)) {
         return;
       }
@@ -8094,6 +13732,7 @@ function syncRichToolbarEnhancements(toolbar) {
         ? refreshTextLinkSemantics(
             {
               ...item,
+              html: canonicalHtml,
               richTextDocument: content.richTextDocument,
             },
             plainText
@@ -8162,7 +13801,14 @@ function syncRichToolbarEnhancements(toolbar) {
       });
       Object.assign(item, normalizedItem);
       scheduleUrlMetaHydrationForItem(item);
-      syncBoard({ persist: true, emit: true });
+      syncBoard({
+        persist: true,
+        emit: true,
+        sceneChange: true,
+        fullOverlayRescan: false,
+        reason: "deferred-text-semantic-upgrade",
+        itemIds: [targetItemId],
+      });
     })()
       .catch(() => {})
       .finally(() => {
@@ -8194,6 +13840,92 @@ function syncRichToolbarEnhancements(toolbar) {
     return pushed;
   }
 
+  function finalizeInsertedTextItems(items = []) {
+    return items.map((entry) => {
+      if (!entry || entry.type !== "text") {
+        return entry;
+      }
+      const plainText = sanitizeText(entry.plainText || entry.text || htmlToPlainText(entry.html || ""));
+      syncTextLinkSemanticFields(entry, plainText, entry.richTextDocument || null, {
+        semanticEnabled: linkSemanticEnabled,
+      });
+      scheduleUrlMetaHydrationForItem(entry);
+      return entry;
+    });
+  }
+
+  function shouldPreferStructuredClipboardTextImport(text = "") {
+    const source = sanitizeText(String(text || ""));
+    if (!source.trim()) {
+      return false;
+    }
+    if (hasMarkdownMathSyntax(source)) {
+      return true;
+    }
+    const detected = detectTextContentType(source);
+    return (
+      detected?.type === DETECTED_TEXT_TYPES.CODE ||
+      detected?.type === DETECTED_TEXT_TYPES.MATH ||
+      MARKDOWN_SEMANTIC_TEXT_TYPES.has(detected?.type)
+    );
+  }
+
+  async function tryStructuredClipboardTextImport(anchorPoint, text, options = {}) {
+    const sourceText = sanitizeText(text || "");
+    if (!shouldPreferStructuredClipboardTextImport(sourceText)) {
+      return false;
+    }
+    const descriptor = structuredImportRuntime.pasteGateway.fromSystemClipboardSnapshot(
+      {
+        text: sourceText,
+      },
+      buildStructuredImportContext(anchorPoint, {
+        origin: String(options?.origin || "clipboard-text-fallback"),
+      })
+    );
+    return tryStructuredImportDescriptor(descriptor, anchorPoint, {
+      reason: String(options?.reason || "粘贴内容"),
+      statusText: String(options?.statusText || "已粘贴内容"),
+      context: {
+        origin: String(options?.origin || "clipboard-text-fallback"),
+      },
+    });
+  }
+
+  function insertHtmlTextAt(anchorPoint, html, options = {}) {
+    const statusText = String(options?.statusText || "已粘贴内容");
+    const items = finalizeInsertedTextItems(dragBroker.createElementsFromHtml(html, anchorPoint));
+    return pushItems(items, { reason: "粘贴内容", statusText });
+  }
+
+  async function insertClipboardTextAt(anchorPoint, text, options = {}) {
+    const sourceText = sanitizeText(text || "");
+    if (!sourceText.trim()) {
+      return false;
+    }
+    const statusText = String(options?.statusText || "已粘贴内容");
+    const structuredImported = await tryStructuredClipboardTextImport(anchorPoint, sourceText, {
+      origin: String(options?.origin || "clipboard-text-insert"),
+      reason: String(options?.reason || "粘贴内容"),
+      statusText,
+    });
+    if (structuredImported) {
+      return true;
+    }
+    const semanticHtml = await convertPlainClipboardTextToSemanticHtmlAsync(
+      sourceText,
+      options?.baseFontSize || DEFAULT_TEXT_FONT_SIZE
+    );
+    if (String(semanticHtml || "").trim()) {
+      return insertHtmlTextAt(anchorPoint, semanticHtml, { statusText });
+    }
+    const deferSemanticUpgrade = options?.deferSemanticUpgrade === true;
+    return insertTextAt(anchorPoint, sourceText, {
+      deferSemanticUpgrade,
+      statusText,
+    });
+  }
+
   function buildStructuredImportContext(anchorPoint, extra = {}) {
     const pointer =
       anchorPoint && Number.isFinite(anchorPoint.x) && Number.isFinite(anchorPoint.y)
@@ -8215,17 +13947,17 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!commitResult?.ok || !Array.isArray(commitResult.items) || !commitResult.items.length) {
       return false;
     }
-    try {
-      await persistImportedImages(commitResult.items);
-    } catch {
-      // ignore import persistence failures
-    }
-    const before = takeHistorySnapshot(state);
-    state.board = normalizeBoard(
-      repairMisclassifiedCodeBlocksOnBoard(commitResult.board || state.board, DEFAULT_TEXT_FONT_SIZE)
-    );
-    void hydrateFileCardIds(commitResult.items);
-    commitHistory(before, reason || "结构化导入");
+    const committedItems = normalizeImportedPasteFrameItems(Array.isArray(commitResult.items) ? commitResult.items : []);
+    const before = takeHistoryMetadataSnapshot(state);
+    state.board.items.push(...committedItems);
+    state.board.selectedIds = committedItems.map((item) => item.id);
+    void hydrateFileCardIds(committedItems);
+    commitInsertedItemsPatchHistory(before, committedItems, reason || "结构化导入", "structured-import-batch", {
+      fullOverlayRescan: true,
+    });
+    scheduleDeferredImportedAssetPersistence(committedItems, {
+      reason: "structured-import-asset-persist",
+    });
     if (statusText) {
       setStatus(statusText);
     }
@@ -8237,11 +13969,15 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     try {
+      const shouldYieldDuringCommit = shouldYieldDuringStructuredImportDescriptor(descriptor);
       const result = await structuredImportRuntime.runDescriptor({
         descriptor,
         board: state.board,
         anchorPoint,
-        context: buildStructuredImportContext(anchorPoint, context),
+        context: buildStructuredImportContext(anchorPoint, {
+          ...context,
+          yieldControl: shouldYieldDuringCommit ? () => yieldToNextFrame() : null,
+        }),
       });
       if (result?.pipeline === "structured" && result?.commitResult?.ok) {
         return applyStructuredCommitResult(result.commitResult, { reason, statusText });
@@ -8383,7 +14119,7 @@ function syncRichToolbarEnhancements(toolbar) {
       setStatus("无法拖拽：当前环境不支持导出拖拽");
       return false;
     }
-    const selectedItems = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+    const selectedItems = sceneRegistry.getSelectedItems();
     const exportables = selectedItems.filter((item) => isExportableItem(item));
     if (!exportables.length) {
       setStatus("无法拖拽：未选中可导出的内容");
@@ -8435,8 +14171,7 @@ function syncRichToolbarEnhancements(toolbar) {
     let nextHoverConnector = null;
     let hit = null;
     if (isInteractiveMode()) {
-      const selectedId = state.tool === "select" && state.board.selectedIds.length === 1 ? state.board.selectedIds[0] : "";
-      const selectedItem = selectedId ? state.board.items.find((item) => item.id === selectedId) : null;
+      const selectedItem = state.tool === "select" ? sceneRegistry.getSingleSelectedItem() : null;
       if (selectedItem && selectedItem.type === "image" && hitTestImageRotateHandle(selectedItem, scenePoint, state.board.view)) {
         nextHoverHandle = "rotate-image";
       } else if (selectedItem && selectedItem.type === "shape" && hitTestShapeRotateHandle(selectedItem, scenePoint, state.board.view)) {
@@ -8452,7 +14187,7 @@ function syncRichToolbarEnhancements(toolbar) {
       } else {
         nextHoverHandle = selectedItem ? hitTestHandle(selectedItem, scenePoint, state.board.view.scale) : null;
       }
-      hit = hitTestElement(state.board.items, scenePoint, state.board.view.scale);
+      hit = hitTestCanvasElement(scenePoint, state.board.view.scale);
       if (hit?.type === "flowNode" && !nextHoverConnector) {
         const side = flowModule.getConnectorHit(hit, scenePoint, state.board.view);
         if (side) {
@@ -8479,6 +14214,11 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!isInteractiveMode() || (event.button !== 0 && event.button !== 1 && event.button !== 2)) {
       return;
     }
+    if (matchesBlockedCanvasPointerDown(event)) {
+      event.preventDefault();
+      clearBlockedCanvasPointerDown();
+      return;
+    }
     if (event.button === 0) {
       suppressNativeDrag = true;
     }
@@ -8486,6 +14226,22 @@ function syncRichToolbarEnhancements(toolbar) {
     const scenePoint = toScenePoint(event.clientX, event.clientY);
     updateLastPointerPoint(scenePoint);
     clearAlignmentSnap("pointer-down");
+
+    if (pendingCanvasLinkBinding && event.button === 0) {
+      const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      if (target && target.id) {
+        event.preventDefault();
+        pendingCanvasLinkBinding = false;
+        syncCanvasLinkBindingUi();
+        bindCanvasLinkToSelection(target.id);
+        richTextSession.focus();
+        return;
+      }
+      pendingCanvasLinkBinding = false;
+      syncCanvasLinkBindingUi();
+      setStatus("已取消画布链接绑定");
+      return;
+    }
 
     if (captureMode === "canvas" && event.button === 0) {
       event.preventDefault();
@@ -8503,7 +14259,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (state.editingType === "file-memo") {
-      const memoItem = state.board.items.find((item) => item.id === state.editingId && item.type === "fileCard");
+      const memoItem = sceneRegistry.getItemById(state.editingId, "fileCard");
       if (memoItem) {
         const memoBounds = getFileCardMemoBounds(memoItem);
         const insideMemo =
@@ -8519,7 +14275,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
     }
     if (state.editingType === "image-memo") {
-      const memoItem = state.board.items.find((item) => item.id === state.editingId && item.type === "image");
+      const memoItem = sceneRegistry.getItemById(state.editingId, "image");
       if (memoItem) {
         const memoBounds = getImageMemoBounds(memoItem);
         const insideMemo =
@@ -8556,7 +14312,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (event.button === 0) {
-      const flowTarget = hitTestElement(state.board.items, scenePoint, state.board.view.scale);
+      const flowTarget = hitTestCanvasElement(scenePoint, state.board.view.scale);
       if (flowTarget?.type === "flowNode") {
         const side = flowModule.getConnectorHit(flowTarget, scenePoint, state.board.view);
         if (side) {
@@ -8585,8 +14341,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-    const singleSelectedId = state.tool === "select" && state.board.selectedIds.length === 1 ? state.board.selectedIds[0] : "";
-    const singleSelectedItem = singleSelectedId ? state.board.items.find((item) => item.id === singleSelectedId) : null;
+    const singleSelectedItem = state.tool === "select" ? sceneRegistry.getSingleSelectedItem() : null;
     const rotateHandleHit =
       event.button === 0 &&
       singleSelectedItem?.type === "image" &&
@@ -8691,7 +14446,7 @@ function syncRichToolbarEnhancements(toolbar) {
         lastClientY: Number(event.clientY) || 0,
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       syncCanvasCursor();
       return;
     }
@@ -8743,15 +14498,15 @@ function syncRichToolbarEnhancements(toolbar) {
         state.board.selectedIds = additive ? Array.from(new Set([...state.board.selectedIds, target.id])) : [target.id];
       }
       if (event.button === 2) {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
         return;
       }
       const selectedIds = state.board.selectedIds.slice();
-      const selectedItems = state.board.items.filter((item) => selectedIds.includes(item.id));
+      const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
       const allText = selectedItems.length && selectedItems.every((item) => item.type === "text");
       const rightButtonPressed = event.button === 2 && (event.buttons & 2) === 2;
       if (rightButtonPressed && allText) {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
         return;
       }
 
@@ -8764,7 +14519,7 @@ function syncRichToolbarEnhancements(toolbar) {
         baseItems,
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
 
@@ -8784,7 +14539,7 @@ function syncRichToolbarEnhancements(toolbar) {
     };
     state.lastSelectionSource = "marquee";
     refs.canvas?.setPointerCapture?.(event.pointerId);
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
   function onPointerMove(event) {
@@ -8815,7 +14570,7 @@ function syncRichToolbarEnhancements(toolbar) {
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
       state.board.view = panView(state.board.view, deltaX, deltaY);
-      scheduleRender();
+      scheduleRender({ reason: "pointer-pan-move", viewDirty: true, interactionDirty: false });
       return;
     }
 
@@ -8831,7 +14586,7 @@ function syncRichToolbarEnhancements(toolbar) {
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
       state.board.view = panView(state.board.view, deltaX, deltaY);
-      scheduleRender();
+      scheduleRender({ reason: "pointer-pan-start", viewDirty: true, interactionDirty: false });
       return;
     }
 
@@ -8966,7 +14721,22 @@ function syncRichToolbarEnhancements(toolbar) {
         nextItems = nextItems.map((item) => (item.id === pairId ? moveElement(pairBase, deltaX, deltaY) : item));
       });
       state.board.items = nextItems;
-      scheduleRender();
+      const movedCodeBlockIds = Array.from(movedIds).filter((itemId) => {
+        const movedItem = nextItems.find((item) => item.id === itemId);
+        return movedItem?.type === "codeBlock";
+      });
+      if (movedCodeBlockIds.length) {
+        markCodeBlockOverlayDirty(movedCodeBlockIds);
+        markSceneGraphDirty({ hitTest: false });
+        scheduleRender({
+          reason: "move-selection-code-block",
+          sceneDirty: true,
+          interactionDirty: true,
+          itemIds: movedCodeBlockIds,
+        });
+      } else {
+        scheduleRender();
+      }
       return;
     }
 
@@ -9020,7 +14790,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (pointer.type === "rotate-shape") {
-      const item = state.board.items.find((entry) => entry.id === pointer.itemId && entry.type === "shape");
+      const item = sceneRegistry.getItemById(pointer.itemId, "shape");
       if (!item || isLockedItem(item)) {
         scheduleRender();
         return;
@@ -9105,12 +14875,12 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (pointer.type === "pan") {
-      syncBoard({ persist: true, emit: true });
+      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "pointer-pan-commit" });
       return;
     }
 
     if (pointer.type === "blank-pan-intent") {
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
 
@@ -9120,7 +14890,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (pointer.type === "flow-connect") {
-      const target = hitTestElement(state.board.items, state.lastPointerScenePoint || scenePoint, state.board.view.scale);
+      const target = hitTestCanvasElement(state.lastPointerScenePoint || scenePoint, state.board.view.scale);
       const toNode = target?.type === "flowNode" ? target : null;
       const toSide = toNode
         ? flowModule.getConnectorHit(toNode, state.lastPointerScenePoint || scenePoint, state.board.view)
@@ -9135,33 +14905,35 @@ function syncRichToolbarEnhancements(toolbar) {
         state.board.items.unshift(edge);
         commitHistory(before, "创建连线");
       } else {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       flowDraft = null;
       return;
     }
 
     if (pointer.type === "rotate-image") {
-      commitHistory(pointer.before, "旋转图片");
+      commitItemPatchHistory(pointer.before, pointer.itemId, getImageItemById(pointer.itemId), "旋转图片", "image-rotate");
       return;
     }
 
     if (pointer.type === "rotate-shape") {
-      commitHistory(pointer.before, "旋转图形");
+      const rotated = getItemByIdFast(pointer.itemId) || null;
+      commitItemPatchHistory(pointer.before, pointer.itemId, rotated, "旋转图形", "shape-rotate");
       return;
     }
 
     if (pointer.type === "round-rect") {
-      commitHistory(pointer.before, "调整圆角");
+      const rounded = getItemByIdFast(pointer.itemId) || null;
+      commitItemPatchHistory(pointer.before, pointer.itemId, rounded, "调整圆角", "shape-radius");
       return;
     }
 
     if (pointer.type === "move-selection") {
       const moved = hasDragExceededThreshold(pointer.startScene, state.lastPointerScenePoint, 3 / Math.max(0.1, state.board.view.scale));
       if (moved) {
-        commitHistory(pointer.before, "移动元素");
+        commitItemsPatchHistory(pointer.before, Array.from(pointer.baseItems.keys()), "移动元素", "item-transform-batch");
       } else {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       return;
     }
@@ -9169,7 +14941,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (pointer.type === "native-export-drag") {
       suppressNativeDrag = false;
       hideDragIndicator();
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
 
@@ -9181,20 +14953,23 @@ function syncRichToolbarEnhancements(toolbar) {
         const pasted = duplicateElementsWithDelta(Array.from(pointer.baseItems.values()), deltaX, deltaY);
         state.board.items.push(...pasted);
         state.board.selectedIds = pasted.map((item) => item.id);
-        commitHistory(pointer.before, "复制元素");
+        commitItemsPatchHistory(pointer.before, pasted.map((item) => item.id), "复制元素", "item-insert-batch", {
+          beforeOrderIds: Array.isArray(pointer.before?.items) ? pointer.before.items.map((item) => item.id) : [],
+          afterOrderIds: state.board.items.map((item) => item.id),
+        });
       } else {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       suppressNativeDrag = false;
       return;
     }
 
     if (pointer.type === "resize-selection") {
-      const resized = state.board.items.find((item) => item.id === pointer.itemId);
+      const resized = getItemByIdFast(pointer.itemId);
       if (resized) {
-        commitHistory(pointer.before, "调整元素尺寸");
+        commitItemPatchHistory(pointer.before, pointer.itemId, resized, "调整元素尺寸", "item-resize");
       } else {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       return;
     }
@@ -9206,7 +14981,7 @@ function syncRichToolbarEnhancements(toolbar) {
       } else {
         state.lastSelectionSource = null;
       }
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
 
@@ -9218,7 +14993,7 @@ function syncRichToolbarEnhancements(toolbar) {
         state.board.selectedIds = [draft.id];
         commitHistory(pointer.before, "创建图形");
       } else {
-        syncBoard({ persist: false, emit: true });
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
     }
   }
@@ -9233,7 +15008,7 @@ function syncRichToolbarEnhancements(toolbar) {
       lightImageEditor.clearTransientState();
     }
     clearTransientState();
-    syncBoard({ persist: false, emit: true });
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
   function onPointerEnter() {
@@ -9257,8 +15032,9 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!isInteractiveMode()) {
       return;
     }
-    const scenePoint = toScenePoint(event.clientX, event.clientY);
-    const target = hitTestElement(state.board.items, scenePoint, state.board.view.scale);
+    const sceneEventContext = nonEditingSceneEventBridge.resolveEventContext(event);
+    const scenePoint = sceneEventContext?.scenePoint || toScenePoint(event.clientX, event.clientY);
+    const target = sceneEventContext?.target || null;
     if (target?.type === "fileCard" && target.memoVisible) {
       const memoBounds = getFileCardMemoBounds(target);
       if (
@@ -9313,11 +15089,11 @@ function syncRichToolbarEnhancements(toolbar) {
       const focusPoint = toScenePoint(event.clientX, event.clientY);
       const zoomFactor = Math.exp(-event.deltaY * 0.0015);
       state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * zoomFactor, focusPoint);
-      syncBoard({ persist: true, emit: true });
+      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "wheel-zoom" });
       return;
     }
     state.board.view = panView(state.board.view, -event.deltaX, -event.deltaY);
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "wheel-pan" });
   }
 
   function onDragOver(event) {
@@ -9341,14 +15117,34 @@ function syncRichToolbarEnhancements(toolbar) {
     drawToolModule.handleDragLeave();
   }
 
+  const CONTEXT_SUBMENU_CLOSE_DELAY_MS = 180;
+  let contextSubmenuCloseTimer = 0;
+
+  function cancelContextSubmenuClose() {
+    if (contextSubmenuCloseTimer) {
+      window.clearTimeout(contextSubmenuCloseTimer);
+      contextSubmenuCloseTimer = 0;
+    }
+  }
+
+  function scheduleContextSubmenuClose() {
+    cancelContextSubmenuClose();
+    contextSubmenuCloseTimer = window.setTimeout(() => {
+      contextSubmenuCloseTimer = 0;
+      closeContextSubmenus();
+    }, CONTEXT_SUBMENU_CLOSE_DELAY_MS);
+  }
+
   function hideContextMenu() {
     if (refs.contextMenu) {
+      cancelContextSubmenuClose();
       closeContextSubmenus();
       refs.contextMenu.classList.add("is-hidden");
       refs.contextMenu.classList.remove("is-webgl-menu");
       refs.contextMenu.style.left = "-9999px";
       refs.contextMenu.style.top = "-9999px";
     }
+    lastContextMenuSource = "canvas";
   }
 
   function getContextSubmenuElements() {
@@ -9359,6 +15155,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function closeContextSubmenus({ exceptSubmenu = null } = {}) {
+    cancelContextSubmenuClose();
     for (const submenu of getContextSubmenuElements()) {
       if (!(submenu instanceof HTMLElement)) continue;
       const isActive = exceptSubmenu instanceof HTMLElement && submenu === exceptSubmenu;
@@ -9385,6 +15182,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!(submenu instanceof HTMLElement) || !(refs.contextMenu instanceof HTMLElement) || !(refs.surface instanceof HTMLElement)) {
       return;
     }
+    cancelContextSubmenuClose();
     const trigger = submenu.querySelector(".canvas2d-context-submenu-trigger");
     const panel = submenu.querySelector(".canvas2d-context-submenu-panel");
     if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
@@ -9431,6 +15229,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     event.preventDefault();
+    lastContextMenuSource = "canvas";
     if (isWebglRenderMode()) {
       refs.contextMenu.classList.add("is-webgl-menu");
       refs.contextMenu.innerHTML = `
@@ -9483,18 +15282,43 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     refs.contextMenu.classList.remove("is-webgl-menu");
-    const scenePoint = toScenePoint(event.clientX, event.clientY);
-    const hitTarget = hitTestElement(state.board.items, scenePoint, state.board.view.scale);
-    lastContextMenuTargetId = hitTarget?.id || null;
-    if (!hitTarget && state.board.selectedIds.length) {
+    const sceneEventContext = nonEditingSceneEventBridge.resolveEventContext(event);
+    const scenePoint = sceneEventContext?.scenePoint || toScenePoint(event.clientX, event.clientY);
+    const hitTarget = sceneEventContext?.target || null;
+    const selectedIdsBeforeContext = state.board.selectedIds.map((id) => String(id || "").trim()).filter(Boolean);
+    const hitTargetId = String(hitTarget?.id || "").trim();
+    const hitSelectedTarget = Boolean(hitTargetId && selectedIdsBeforeContext.includes(hitTargetId));
+    const selectedBounds = selectedIdsBeforeContext.length >= 2 ? getSelectedItemsBounds() : null;
+    const blankInsideMultiSelection =
+      !hitTarget &&
+      selectedIdsBeforeContext.length >= 2 &&
+      isScenePointInsideBounds(scenePoint, selectedBounds, 8 / Math.max(0.1, Number(state.board.view.scale || 1)));
+    const contextTargetElement = event.target instanceof Element ? event.target : null;
+    const isOverlayContextMenu =
+      Boolean(contextTargetElement) &&
+      (
+        refs.richDisplayHost?.contains(contextTargetElement) ||
+        refs.codeBlockDisplayHost?.contains(contextTargetElement)
+      );
+    const overlayContextTargetId =
+      !hitTarget &&
+      isOverlayContextMenu &&
+      selectedIdsBeforeContext.length === 1
+        ? selectedIdsBeforeContext[0]
+        : "";
+    lastContextMenuTargetId = hitTarget?.id || overlayContextTargetId || null;
+    if (!hitTarget && state.board.selectedIds.length && !blankInsideMultiSelection && !overlayContextTargetId) {
       state.board.selectedIds = [];
       state.lastSelectionSource = null;
     }
     const selectionCount = state.board.selectedIds.length;
-    const multiSelectActive = selectionCount >= 2 && state.lastSelectionSource === "marquee";
+    const multiSelectActive =
+      selectionCount >= 2 &&
+      (!hitTarget || hitSelectedTarget || blankInsideMultiSelection);
 
     if (multiSelectActive) {
-      const selectedItems = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+      state.lastSelectionSource = state.lastSelectionSource || "marquee";
+      const selectedItems = getSelectedItemsFast();
       const hasGrouped = selectedItems.some((item) => item.groupId);
       const groupLabel = hasGrouped ? "取消组合" : "组合";
       refs.contextMenu.innerHTML = `
@@ -9530,11 +15354,14 @@ function syncRichToolbarEnhancements(toolbar) {
         <button type="button" class="canvas2d-context-menu-item" data-action="delete-selected">删除所选</button>
       `;
     } else if (selectionCount === 1 || hitTarget) {
-        if (hitTarget && selectionCount !== 1) {
-          state.board.selectedIds = [hitTarget.id];
+        if (hitTarget) {
+          const currentSelectedId = selectionCount === 1 ? String(state.board.selectedIds[0] || "").trim() : "";
+          if (currentSelectedId !== String(hitTarget.id || "").trim()) {
+            state.board.selectedIds = [hitTarget.id];
+            state.lastSelectionSource = "context-menu";
+          }
         }
-        const selectedId = state.board.selectedIds[0];
-        const selectedItem = state.board.items.find((item) => item.id === selectedId) || hitTarget;
+        const selectedItem = getSingleSelectedItemFast() || hitTarget;
         lastContextMenuTargetId = selectedItem?.id || lastContextMenuTargetId;
         const lockLabel = selectedItem?.locked ? "解锁" : "锁定";
         if (selectedItem?.type === "fileCard") {
@@ -9543,6 +15370,8 @@ function syncRichToolbarEnhancements(toolbar) {
           refs.contextMenu.innerHTML = imageModule.buildContextMenuHtml(selectedItem);
         } else if (selectedItem?.type === "flowEdge") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
@@ -9572,6 +15401,7 @@ function syncRichToolbarEnhancements(toolbar) {
           `;
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "rect") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
@@ -9594,6 +15424,7 @@ function syncRichToolbarEnhancements(toolbar) {
           `;
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "ellipse") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
@@ -9616,6 +15447,8 @@ function syncRichToolbarEnhancements(toolbar) {
           `;
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "arrow") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="arrow-reverse">反转方向</button>
             <div class="canvas2d-context-swatch-row" role="menu" aria-label="线条颜色">
@@ -9637,6 +15470,8 @@ function syncRichToolbarEnhancements(toolbar) {
           `;
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "line") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
@@ -9663,6 +15498,7 @@ function syncRichToolbarEnhancements(toolbar) {
           `;
         } else if (selectedItem?.type === "mindNode") {
           refs.contextMenu.innerHTML = `
+            <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <div class="canvas2d-context-submenu">
@@ -9678,50 +15514,30 @@ function syncRichToolbarEnhancements(toolbar) {
             <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
           `;
         } else if (selectedItem?.type === "table") {
-          refs.contextMenu.innerHTML = `
-            <button type="button" class="canvas2d-context-menu-item" data-action="table-edit">编辑表格</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="table-add-row">新增一行</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="table-add-column">新增一列</button>
-            <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
-              <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
-                <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
-                <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
-                <button type="button" class="canvas2d-context-menu-item" data-action="layer-up">上移一层</button>
-                <button type="button" class="canvas2d-context-menu-item" data-action="layer-down">下移一层</button>
-              </div>
-            </div>
-            <button type="button" class="canvas2d-context-menu-item" data-action="toggle-lock">${lockLabel}</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
-          `;
+          const isEditingTable = state.editingType === "table" && state.editingId === selectedItem.id;
+          if (isEditingTable) {
+            syncTableSelectionMode(buildTableMatrixFromEditor());
+          } else {
+            setTableSelectionFromAnchorCell(getTableCellSelectionFromScenePoint(selectedItem, scenePoint));
+          }
+          refs.contextMenu.innerHTML =
+            buildTableContextMenuHtml({ editing: isEditingTable, selectionMode: tableEditSelectionMode }) +
+            buildLockDeleteTailHtml(lockLabel);
+        } else if (selectedItem?.type === "codeBlock") {
+          refs.contextMenu.innerHTML = buildCodeBlockContextMenuHtml() + buildLockDeleteTailHtml(lockLabel);
+        } else if (selectedItem?.type === "mathBlock" || selectedItem?.type === "mathInline") {
+          refs.contextMenu.innerHTML = buildMathContextMenuHtml() + buildLockDeleteTailHtml(lockLabel);
         } else if (selectedItem?.type === "text" || selectedItem?.type === "flowNode") {
           const isNode = selectedItem?.type === "flowNode";
-        const nodeLabel = isNode ? "转为普通文本" : "转为节点文本";
+          refs.contextMenu.innerHTML =
+            buildRichTextItemContextMenuHtml({ isNode }) + buildLockDeleteTailHtml(lockLabel);
+      } else if (selectedItem) {
         refs.contextMenu.innerHTML = `
           <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="text-node-toggle">${nodeLabel}</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
           <div class="canvas2d-context-submenu">
-            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">文本样式</button>
-            <div class="canvas2d-context-submenu-panel" role="menu" aria-label="文本样式">
-              <button type="button" class="canvas2d-context-menu-item" data-action="style-body">正文</button>
-              <button type="button" class="canvas2d-context-menu-item" data-action="style-subtitle">副标题</button>
-              <button type="button" class="canvas2d-context-menu-item" data-action="style-title">标题</button>
-            </div>
-          </div>
-            <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">文本标记</button>
-              <div class="canvas2d-context-submenu-panel" role="menu" aria-label="文本标记">
-                <button type="button" class="canvas2d-context-menu-item" data-action="mark-highlight">高亮</button>
-                <button type="button" class="canvas2d-context-menu-item" data-action="mark-underline">下划线</button>
-                <button type="button" class="canvas2d-context-menu-item" data-action="mark-strike">删除线</button>
-              </div>
-            </div>
-            <button type="button" class="canvas2d-context-menu-item" data-action="export-text">导出 TXT</button>
-            <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
               <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -9732,12 +15548,6 @@ function syncRichToolbarEnhancements(toolbar) {
           <button type="button" class="canvas2d-context-menu-item" data-action="toggle-lock">${lockLabel}</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
         `;
-      } else if (selectedItem) {
-        refs.contextMenu.innerHTML = `
-          <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="delete">删除</button>
-        `;
       } else {
         refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
@@ -9746,7 +15556,6 @@ function syncRichToolbarEnhancements(toolbar) {
             <button type="button" class="canvas2d-context-menu-item" data-action="add-image">添加图片</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
@@ -9768,7 +15577,6 @@ function syncRichToolbarEnhancements(toolbar) {
           <button type="button" class="canvas2d-context-menu-item" data-action="add-image">添加图片</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="toggle-link-semantic">${linkSemanticEnabled ? "关闭链接语义化（纯文本模式）" : "开启链接语义化"}</button>
           <div class="canvas2d-context-submenu">
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
@@ -9803,12 +15611,54 @@ function syncRichToolbarEnhancements(toolbar) {
     return toScenePoint(point.x, point.y);
   }
 
+  function getContextMenuTargetItem(expectedTypes = []) {
+    const typeList = Array.isArray(expectedTypes)
+      ? expectedTypes.map((entry) => String(entry || "").trim()).filter(Boolean)
+      : [];
+    const targetId = String(lastContextMenuTargetId || "").trim();
+    if (targetId) {
+      const item = sceneRegistry.getItemById(targetId);
+      if (item && (!typeList.length || typeList.includes(String(item.type || "")))) {
+        return item;
+      }
+    }
+    const selected = getSingleSelectedItemFast();
+    if (selected && (!typeList.length || typeList.includes(String(selected.type || "")))) {
+      return selected;
+    }
+    return null;
+  }
+
+  function alignSelectionWithContextMenuTarget(expectedTypes = []) {
+    const target = getContextMenuTargetItem(expectedTypes);
+    if (!target) {
+      return null;
+    }
+    const targetId = String(target.id || "").trim();
+    const selectedIds = state.board.selectedIds.map((id) => String(id || "").trim()).filter(Boolean);
+    if (targetId && selectedIds.includes(targetId)) {
+      return target;
+    }
+    state.board.selectedIds = targetId ? [targetId] : [];
+    state.lastSelectionSource = null;
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    return target;
+  }
+
   function onContextMenuClick(event) {
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
     if (!target) {
       return;
     }
     const action = target.getAttribute("data-action");
+    if (lastContextMenuSource === "rich-editor") {
+      Promise.resolve(handleRichEditorContextMenuAction(action)).then((handled) => {
+        if (handled) {
+          hideContextMenu();
+        }
+      });
+      return;
+    }
     if (action === "webgl-copy" || action === "webgl-import") {
       hideContextMenu();
       return;
@@ -9870,11 +15720,12 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "toggle-lock") {
+      alignSelectionWithContextMenuTarget();
       toggleLockOnSelection();
       hideContextMenu();
     }
     if (action === "group-toggle") {
-      const selectedItems = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+      const selectedItems = getSelectedItemsFast();
       const hasGrouped = selectedItems.some((item) => item.groupId);
       if (hasGrouped) {
         ungroupSelection();
@@ -9892,7 +15743,7 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "export-selection-image") {
-      const selectedItems = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+      const selectedItems = getSelectedItemsFast();
       void exportItemsAsImage(selectedItems, {
         forceWhiteBackground: true,
         defaultName: "freeflow-selection",
@@ -9900,11 +15751,24 @@ function syncRichToolbarEnhancements(toolbar) {
       });
       hideContextMenu();
     }
-    if (action === "export-text") {
-      const selectedItem = state.board.items.find(
-        (item) => state.board.selectedIds.includes(item.id) && (item.type === "text" || item.type === "flowNode")
-      );
-      void exportTextItem(selectedItem);
+    const copyExportAction = resolveCopyExportAction(action);
+    if (copyExportAction) {
+      const selectedItem = getContextMenuTargetItem(copyExportAction.targetTypes);
+      if (copyExportAction.operation === "copy") {
+        if (copyExportAction.type === "text") {
+          void copyRichTextContent(selectedItem, copyExportAction.format);
+        } else if (copyExportAction.type === "table") {
+          void copyTableTextContent(selectedItem, copyExportAction.format);
+        } else if (copyExportAction.type === "codeBlock") {
+          void copyCodeBlockTextContent(selectedItem, copyExportAction.format);
+        }
+      } else if (copyExportAction.type === "text") {
+        void exportRichTextItem(selectedItem, copyExportAction.format);
+      } else if (copyExportAction.type === "table") {
+        void exportTableItem(selectedItem, copyExportAction.format);
+      } else if (copyExportAction.type === "codeBlock") {
+        void exportCodeBlockItem(selectedItem, copyExportAction.format);
+      }
       hideContextMenu();
     }
     if (action === "align-left") {
@@ -9928,10 +15792,12 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "copy") {
+      alignSelectionWithContextMenuTarget();
       void copySelection();
       hideContextMenu();
     }
     if (action === "cut") {
+      alignSelectionWithContextMenuTarget();
       void cutSelection();
       hideContextMenu();
     }
@@ -9940,22 +15806,27 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "delete") {
+      alignSelectionWithContextMenuTarget();
       removeSelected();
       hideContextMenu();
     }
     if (action === "layer-front") {
+      alignSelectionWithContextMenuTarget();
       moveSelectionToFront();
       hideContextMenu();
     }
     if (action === "layer-back") {
+      alignSelectionWithContextMenuTarget();
       moveSelectionToBack();
       hideContextMenu();
     }
     if (action === "layer-up") {
+      alignSelectionWithContextMenuTarget();
       moveSelectionByStep("up");
       hideContextMenu();
     }
     if (action === "layer-down") {
+      alignSelectionWithContextMenuTarget();
       moveSelectionByStep("down");
       hideContextMenu();
     }
@@ -10001,74 +15872,190 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "table-edit") {
+      alignSelectionWithContextMenuTarget(["table"]);
       if (state.board.selectedIds.length === 1) {
         beginTableEdit(state.board.selectedIds[0], tableEditSelection);
       }
       hideContextMenu();
     }
+    if (action === "table-copy-selection") {
+      void copyTableSelectionToClipboard({ cut: false });
+      hideContextMenu();
+    }
+    if (action === "table-cut-selection") {
+      void copyTableSelectionToClipboard({ cut: true });
+      hideContextMenu();
+    }
+    if (action === "table-clear-selection") {
+      mutateTableEditor((matrix) =>
+        clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
+      );
+      hideContextMenu();
+    }
     if (action === "table-add-row") {
-      if (state.editingType !== "table" && state.board.selectedIds.length === 1) {
-        beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+      if (!ensureTableEditorReadyForAction({ anchorCell: getTableActionAnchorCellFromTarget(target) })) {
+        hideContextMenu();
+        return;
       }
       mutateTableEditor((matrix) => {
-        const columnCount = Math.max(1, matrix[0]?.length || 1);
-        const insertIndex = Math.max(0, Number(tableEditSelection.rowIndex) || 0) + 1;
-        matrix.splice(
-          Math.min(insertIndex, matrix.length),
-          0,
-          Array.from({ length: columnCount }, (_, columnIndex) => ({
-            plainText: "",
-            header: false,
-            columnIndex,
-          }))
-        );
-        tableEditSelection.rowIndex = Math.min(insertIndex, matrix.length - 1);
-        return matrix;
+        const { endRow } = getTableRowOperationBounds(matrix);
+        return insertTableRows(matrix, endRow + 1, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        });
       });
+      hideContextMenu();
+    }
+    if (action === "table-add-row-above") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) =>
+        insertTableRows(matrix, getTableRowOperationBounds(matrix).startRow, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        })
+      );
+      hideContextMenu();
+    }
+    if (action === "table-add-row-below") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) =>
+        insertTableRows(matrix, getTableRowOperationBounds(matrix).endRow + 1, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        })
+      );
       hideContextMenu();
     }
     if (action === "table-add-column") {
-      if (state.editingType !== "table" && state.board.selectedIds.length === 1) {
-        beginTableEdit(state.board.selectedIds[0], tableEditSelection);
+      if (!ensureTableEditorReadyForAction({ anchorCell: getTableActionAnchorCellFromTarget(target) })) {
+        hideContextMenu();
+        return;
       }
       mutateTableEditor((matrix) => {
-        const insertIndex = Math.max(0, Number(tableEditSelection.columnIndex) || 0) + 1;
-        matrix.forEach((row, rowIndex) => {
-          row.splice(
-            Math.min(insertIndex, row.length),
-            0,
-            {
-              plainText: rowIndex === 0 && getTableEditItem()?.table?.hasHeader !== false ? `列 ${insertIndex + 1}` : "",
-              header: rowIndex === 0 && getTableEditItem()?.table?.hasHeader !== false,
-            }
-          );
+        const { endColumn } = getTableColumnOperationBounds(matrix);
+        return insertTableColumns(matrix, endColumn + 1, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
         });
-        tableEditSelection.columnIndex = Math.min(insertIndex, Math.max(0, matrix[0]?.length - 1));
-        return matrix;
       });
       hideContextMenu();
     }
+    if (action === "table-add-column-left") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) =>
+        insertTableColumns(matrix, getTableColumnOperationBounds(matrix).startColumn, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        })
+      );
+      hideContextMenu();
+    }
+    if (action === "table-add-column-right") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) =>
+        insertTableColumns(matrix, getTableColumnOperationBounds(matrix).endColumn + 1, 1, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        })
+      );
+      hideContextMenu();
+    }
     if (action === "table-delete-row") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
       mutateTableEditor((matrix) => {
-        if (matrix.length <= 1) {
-          return matrix;
-        }
-        const removeIndex = Math.max(0, Math.min(matrix.length - 1, Number(tableEditSelection.rowIndex) || 0));
-        matrix.splice(removeIndex, 1);
-        tableEditSelection.rowIndex = Math.max(0, Math.min(removeIndex - 1, matrix.length - 1));
-        return matrix;
+        focusTableRowOperationRange(matrix);
+        return deleteSelectedTableRows(matrix, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        });
       });
       hideContextMenu();
     }
     if (action === "table-delete-column") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
       mutateTableEditor((matrix) => {
-        if (!matrix.length || (matrix[0] || []).length <= 1) {
+        focusTableColumnOperationRange(matrix);
+        return deleteSelectedTableColumns(matrix, {
+          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
+        });
+      });
+      hideContextMenu();
+    }
+    if (action === "table-move-row-up") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) => {
+        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+        const { startRow } = getTableRowOperationBounds(matrix);
+        const minRow = hasHeader ? 1 : 0;
+        if (startRow <= minRow) {
+          setStatus("当前行已经在顶部");
           return matrix;
         }
-        const removeIndex = Math.max(0, Math.min((matrix[0] || []).length - 1, Number(tableEditSelection.columnIndex) || 0));
-        matrix.forEach((row) => row.splice(removeIndex, 1));
-        tableEditSelection.columnIndex = Math.max(0, Math.min(removeIndex - 1, (matrix[0] || []).length - 1));
-        return matrix;
+        focusTableRowOperationRange(matrix);
+        return moveSelectedTableRows(matrix, "up", { hasHeader });
+      });
+      hideContextMenu();
+    }
+    if (action === "table-move-row-down") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) => {
+        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+        const { endRow } = getTableRowOperationBounds(matrix);
+        if (endRow >= matrix.length - 1) {
+          setStatus("当前行已经在底部");
+          return matrix;
+        }
+        focusTableRowOperationRange(matrix);
+        return moveSelectedTableRows(matrix, "down", { hasHeader });
+      });
+      hideContextMenu();
+    }
+    if (action === "table-move-column-left") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) => {
+        const { startColumn } = getTableColumnOperationBounds(matrix);
+        if (startColumn <= 0) {
+          setStatus("当前列已经在最左侧");
+          return matrix;
+        }
+        focusTableColumnOperationRange(matrix);
+        return moveSelectedTableColumns(matrix, "left", { hasHeader: getTableEditItem()?.table?.hasHeader !== false });
+      });
+      hideContextMenu();
+    }
+    if (action === "table-move-column-right") {
+      if (!ensureTableEditorReadyForAction()) {
+        hideContextMenu();
+        return;
+      }
+      mutateTableEditor((matrix) => {
+        const { endColumn } = getTableColumnOperationBounds(matrix);
+        if (endColumn >= (matrix[0] || []).length - 1) {
+          setStatus("当前列已经在最右侧");
+          return matrix;
+        }
+        focusTableColumnOperationRange(matrix);
+        return moveSelectedTableColumns(matrix, "right", { hasHeader: getTableEditItem()?.table?.hasHeader !== false });
       });
       hideContextMenu();
     }
@@ -10089,41 +16076,13 @@ function syncRichToolbarEnhancements(toolbar) {
       commitTableEdit();
       hideContextMenu();
     }
-    if (action === "toggle-link-semantic") {
-      setLinkSemanticEnabled(!linkSemanticEnabled);
-      hideContextMenu();
-    }
-    if (action === "mark-highlight") {
-      applyHighlightToSelection();
-      hideContextMenu();
-    }
-    if (action === "mark-underline") {
-      applyUnderlineToSelection();
-      hideContextMenu();
-    }
-    if (action === "mark-strike") {
-      applyStrikeToSelection();
-      hideContextMenu();
-    }
-    if (action === "style-body") {
-      applyTextPresetToSelection("body");
-      hideContextMenu();
-    }
-    if (action === "style-subtitle") {
-      applyTextPresetToSelection("subtitle");
-      hideContextMenu();
-    }
-    if (action === "style-title") {
-      applyTextPresetToSelection("title");
-      hideContextMenu();
-    }
     if (action === "image-copy") {
       void copySelection();
       hideContextMenu();
     }
     if (action === "image-reveal") {
       if (state.board.selectedIds.length === 1) {
-        const selected = state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "image");
+        const selected = getSingleSelectedItemFast("image");
         const path = String(selected?.sourcePath || "").trim();
         if (!path) {
           setStatus("图片路径为空");
@@ -10137,7 +16096,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (action === "image-memo") {
       if (state.board.selectedIds.length === 1) {
-        const selected = state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "image");
+        const selected = getSingleSelectedItemFast("image");
         if (selected) {
           if (selected.memoVisible) {
             const memoText = String(selected.memo || "").trim();
@@ -10190,7 +16149,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (action === "file-memo") {
       if (state.board.selectedIds.length === 1) {
-        const selected = state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "fileCard");
+        const selected = getSingleSelectedItemFast("fileCard");
         if (selected) {
           if (selected.memoVisible) {
             const memoText = String(selected.memo || "").trim();
@@ -10216,7 +16175,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (action === "file-reveal") {
       if (state.board.selectedIds.length === 1) {
-        const selected = state.board.items.find((entry) => entry.id === state.board.selectedIds[0] && entry.type === "fileCard");
+        const selected = getSingleSelectedItemFast("fileCard");
         const path = String(selected?.sourcePath || "").trim();
         if (!path) {
           setStatus("文件路径为空");
@@ -10231,67 +16190,97 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function applyRichTextCommand(action, color) {
-    if (!state.board.selectedIds.length) {
+    const activeContext = getActiveRichSessionContext();
+    const activeSession = activeContext?.session || null;
+    const item = activeContext?.item || resolveRichCommandTarget();
+    if (!item || !activeSession) {
       return;
-    }
-    const selectedId = state.board.selectedIds[0];
-    const item = state.board.items.find(
-      (entry) => entry.id === selectedId && (entry.type === "text" || entry.type === "flowNode")
-    );
-    if (!item) {
-      return;
-    }
-    if (state.editingId !== item.id) {
-      if (item.type === "flowNode") {
-        beginFlowNodeEdit(item.id);
-      } else {
-        beginTextEdit(item.id);
-      }
     }
     if (action === "link") {
-      const url = window.prompt("输入链接");
+      if (state.editingType === "table" && tableCellEditState.active) {
+        const url = window.prompt("输入链接地址", "");
+        if (url) {
+          activeSession.command("createLink", url);
+          activeSession.focus();
+          activeSession.captureSelection();
+          syncActiveRichEditingItemState();
+        }
+      } else {
+        runRichLinkCommand();
+      }
+      return;
+    }
+    if (action === "link-canvas") {
+      runRichCanvasLinkCommand();
+      return;
+    }
+    if (action === "link-remove") {
       requestAnimationFrame(() => {
-        if (!richTextSession.isActive()) {
+        if (!activeSession.isActive()) {
           return;
         }
-        if (url) {
-          richTextSession.command("createLink", url);
-        } else {
-          richTextSession.command("unlink");
+        activeSession.command("unlink");
+        activeSession.focus();
+        activeSession.captureSelection();
+        if (activeContext?.editorElement) {
+          applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
         }
-        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
         syncActiveRichEditingItemState();
+        setStatus("已移除链接");
       });
       return;
     }
-    if (action === "insert-math-inline" || action === "insert-math-block") {
-      const isBlockMath = action === "insert-math-block";
-      const formula = window.prompt(isBlockMath ? "输入独行公式 LaTeX" : "输入行内公式 LaTeX");
-      if (formula === null) {
-        return;
-      }
+    if (action === "insert-math" || action === "insert-math-inline" || action === "insert-math-block") {
       requestAnimationFrame(() => {
-        if (!richTextSession.isActive()) {
+        if (!activeSession.isActive()) {
           return;
         }
-        const source = String(formula || "").trim();
-        if (!source) {
+        const formatState = activeSession.getFormatState() || {};
+        const selectionSnapshot = activeSession.getSelectionSnapshot?.() || null;
+        const selectionText = String(selectionSnapshot?.text || "").trim();
+        const hasExpandedSelection = Boolean(selectionSnapshot?.inside && !selectionSnapshot?.collapsed && selectionText);
+        const isBlockInsert = action === "insert-math-block";
+        if (formatState.canEditMath) {
+          richTextSession.focus();
+          richTextSession.captureSelection();
+          applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+          syncActiveRichEditingItemState();
+          setStatus("当前处于公式内，直接编辑公式内容");
           return;
         }
-        richTextSession.command(isBlockMath ? "insertMathBlock" : "insertMathInline", source);
-        richTextSession.focus();
-        richTextSession.captureSelection();
-        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+        if (isBlockInsert) {
+          if (hasExpandedSelection) {
+            activeSession.command("insertMathBlock", selectionText);
+          } else {
+            activeSession.command("insertMathBlockTemplate");
+          }
+        } else {
+          if (hasExpandedSelection) {
+            activeSession.command("insertMathInline", selectionText);
+          } else {
+            activeSession.command("insertMathInlineTemplate");
+          }
+        }
+        activeSession.focus();
+        activeSession.captureSelection();
+        if (activeContext?.editorElement) {
+          applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
+        }
         syncActiveRichEditingItemState();
+        if (isBlockInsert) {
+          setStatus(hasExpandedSelection ? "已将选中文本转为独立公式" : "已插入独立公式，退出编辑后将拆分为独立元素");
+        } else {
+          setStatus(hasExpandedSelection ? "已将选中文本转为行内公式" : "已插入行内公式，直接在 $ 中输入 LaTeX");
+        }
       });
       return;
     }
     if (action === "edit-math-source") {
       requestAnimationFrame(() => {
-        if (!richTextSession.isActive()) {
+        if (!activeSession.isActive()) {
           return;
         }
-        const formatState = richTextSession.getFormatState() || {};
+        const formatState = activeSession.getFormatState() || {};
         if (!formatState.canEditMath) {
           setStatus("请先将光标放到公式内");
           return;
@@ -10305,61 +16294,65 @@ function syncRichToolbarEnhancements(toolbar) {
         if (!nextSource) {
           return;
         }
-        richTextSession.command("updateCurrentMath", nextSource);
-        richTextSession.focus();
-        richTextSession.captureSelection();
-        applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+        activeSession.command("updateCurrentMath", nextSource);
+        activeSession.focus();
+        activeSession.captureSelection();
+        if (activeContext?.editorElement) {
+          applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
+        }
         syncActiveRichEditingItemState();
       });
       return;
     }
     requestAnimationFrame(() => {
-      if (!richTextSession.isActive()) {
+      if (!activeSession.isActive()) {
         return;
       }
       if (action === "bold") {
-        richTextSession.command("bold");
+        activeSession.command("bold");
       } else if (action === "italic") {
-        richTextSession.command("italic");
+        activeSession.command("italic");
       } else if (action === "inline-code") {
-        richTextSession.command("toggleInlineCode");
+        activeSession.command("toggleInlineCode");
       } else if (action === "underline") {
-        richTextSession.command("underline");
+        activeSession.command("underline");
       } else if (action === "strike") {
-        richTextSession.command("strikeThrough");
+        activeSession.command("strikeThrough");
       } else if (action === "blockquote") {
-        richTextSession.command("setBlockType", "blockquote");
+        activeSession.command("setBlockType", "blockquote");
       } else if (action === "blockquote-indent") {
-        const formatState = richTextSession.getFormatState() || {};
+        const formatState = activeSession.getFormatState() || {};
         if (formatState.blockType !== "blockquote") {
-          richTextSession.command("setBlockType", "blockquote");
+          activeSession.command("setBlockType", "blockquote");
         } else {
-          richTextSession.command("indent");
+          activeSession.command("indent");
         }
       } else if (action === "blockquote-outdent") {
-        richTextSession.command("outdent");
+        activeSession.command("outdent");
       } else if (action === "unordered-list") {
-        richTextSession.command("insertUnorderedList");
+        activeSession.command("insertUnorderedList");
       } else if (action === "ordered-list") {
-        richTextSession.command("insertOrderedList");
+        activeSession.command("insertOrderedList");
       } else if (action === "task-list") {
-        richTextSession.command("toggleTaskList");
+        activeSession.command("toggleTaskList");
       } else if (action === "horizontal-rule") {
-        richTextSession.command("insertHorizontalRule");
+        activeSession.command("insertHorizontalRule");
       } else if (action === "color") {
         if (color) {
-          richTextSession.command("foreColor", color);
+          activeSession.command("foreColor", color);
         }
       } else if (action === "highlight") {
-        richTextSession.command("highlight", "#fff4a3");
+        activeSession.command("highlight", "#fff4a3");
       } else if (action === "fontSize") {
         if (color) {
-          richTextSession.command("fontSize", color);
+          activeSession.command("fontSize", color);
         }
       }
-      richTextSession.focus();
-      richTextSession.captureSelection();
-      applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+      activeSession.focus();
+      activeSession.captureSelection();
+      if (activeContext?.editorElement) {
+        applyInlineFontSizingToContainer(activeContext.editorElement, state.board.view.scale);
+      }
       syncActiveRichEditingItemState();
     });
   }
@@ -10367,9 +16360,31 @@ function syncRichToolbarEnhancements(toolbar) {
   function onGlobalPointerDown(event) {
     hideLinkMetaTooltip();
     if (
+      pendingCanvasLinkBinding &&
+      event.target instanceof Element &&
+      !refs.canvas?.contains?.(event.target) &&
+      !refs.richToolbar?.contains?.(event.target) &&
+      !refs.richSelectionToolbar?.contains?.(event.target)
+    ) {
+      pendingCanvasLinkBinding = false;
+      syncCanvasLinkBindingUi();
+      setStatus("已取消画布链接绑定");
+    }
+    const deferredEditingType = shouldDeferBlankPointerExit(event);
+    if (deferredEditingType) {
+      scheduleDeferredBlankEditExit(deferredEditingType, event);
+      return;
+    }
+    if (
       state.editingType === "table" &&
       event.target instanceof Element &&
-      !(refs.tableEditor?.contains(event.target) || refs.tableToolbar?.contains(event.target))
+      !(
+        refs.tableEditor?.contains(event.target) ||
+        refs.tableToolbar?.contains(event.target) ||
+        refs.richToolbar?.contains(event.target) ||
+        refs.richSelectionToolbar?.contains(event.target) ||
+        refs.richExternalLinkPanel?.contains(event.target)
+      )
     ) {
       commitTableEdit();
     }
@@ -10392,6 +16407,15 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (refs.richSelectionToolbar && event.target instanceof Element && !refs.richSelectionToolbar.contains(event.target)) {
       closeRichSelectionFontSizePanel();
+    }
+    if (
+      pendingRichExternalLinkEdit &&
+      event.target instanceof Element &&
+      !refs.richExternalLinkPanel?.contains(event.target) &&
+      !refs.richToolbar?.contains(event.target) &&
+      !refs.richSelectionToolbar?.contains(event.target)
+    ) {
+      closeRichExternalLinkEditor();
     }
     if (
       event.target instanceof Element &&
@@ -10417,12 +16441,12 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (!target?.closest?.(".canvas2d-context-submenu-panel")) {
-      closeContextSubmenus();
+      scheduleContextSubmenuClose();
     }
   }
 
   function onContextMenuPointerLeave() {
-    closeContextSubmenus();
+    scheduleContextSubmenuClose();
   }
 
   function onContextMenuFocusIn(event) {
@@ -10438,7 +16462,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (nextTarget && refs.contextMenu?.contains(nextTarget)) {
       return;
     }
-    closeContextSubmenus();
+    scheduleContextSubmenuClose();
   }
 
   function onRichToolbarClick(event) {
@@ -10453,12 +16477,24 @@ function syncRichToolbarEnhancements(toolbar) {
     if (target instanceof HTMLSelectElement) {
       return;
     }
+    if (target instanceof HTMLInputElement && action === "color-picker") {
+      return;
+    }
     event.preventDefault();
-    if (action !== "toggle-blockquote-menu" && action !== "toggle-math-menu") {
+    if (
+      action !== "toggle-blockquote-menu" &&
+      action !== "toggle-math-menu" &&
+      action !== "toggle-link-menu" &&
+      action !== "toggle-color-panel"
+    ) {
       closeRichToolbarSubmenus();
     }
-    if (action === "toggle-blockquote-menu" || action === "toggle-math-menu") {
+    if (action === "toggle-blockquote-menu" || action === "toggle-math-menu" || action === "toggle-link-menu") {
       toggleRichToolbarSubmenu(target.closest(".canvas2d-rich-submenu"));
+      return;
+    }
+    if (action === "toggle-color-panel") {
+      toggleRichToolbarColorPanel(target.closest('[data-role="rich-color-control"]'));
       return;
     }
     if (action === "toggle-font-size-panel") {
@@ -10486,6 +16522,24 @@ function syncRichToolbarEnhancements(toolbar) {
       applyRichTextCommand(action, color);
       return;
     }
+    if (action === "color-preset") {
+      const color = target.getAttribute("data-color");
+      setRichToolbarCustomColor(color, { apply: true, closePanel: true });
+      return;
+    }
+    if (action === "color-add-preset") {
+      const control = target.closest('[data-role="rich-color-control"]');
+      const colorInput = control?.querySelector?.('[data-action="color-picker"]');
+      const color = colorInput instanceof HTMLInputElement ? colorInput.value : richToolbarColorSlots[2];
+      const added = addRichToolbarPresetColor(color);
+      setStatus(added ? "已保存到常用预设" : "该颜色已在常用预设中");
+      return;
+    }
+    if (action === "color-reset-default") {
+      resetRichToolbarDefaultColors({ apply: false });
+      setStatus("已恢复默认颜色");
+      return;
+    }
     applyRichTextCommand(action);
   }
 
@@ -10508,16 +16562,67 @@ function syncRichToolbarEnhancements(toolbar) {
     if (target instanceof HTMLButtonElement) {
       event.preventDefault();
     }
-    richTextSession.captureSelection();
+    getActiveRichSession()?.captureSelection?.();
+  }
+
+  function onRichExternalLinkPanelPointerDown(event) {
+    if (event.target instanceof HTMLButtonElement) {
+      event.preventDefault();
+    }
+    getActiveRichSession()?.captureSelection?.();
+  }
+
+  function onRichExternalLinkPanelInput(event) {
+    if (!pendingRichExternalLinkEdit) {
+      return;
+    }
+    const input = event.target instanceof HTMLInputElement ? event.target : null;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    pendingRichExternalLinkEdit.rawValue = String(input.value || "");
+  }
+
+  function onRichExternalLinkPanelKeyDown(event) {
+    if (!(event.target instanceof HTMLInputElement)) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      applyRichExternalLinkEditor();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRichExternalLinkEditor({ restoreFocus: true });
+    }
+  }
+
+  function onRichExternalLinkPanelClick(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    const action = String(target?.getAttribute?.("data-action") || "").trim();
+    if (!action) {
+      return;
+    }
+    event.preventDefault();
+    if (action === "rich-link-apply") {
+      applyRichExternalLinkEditor();
+      return;
+    }
+    if (action === "rich-link-remove") {
+      applyRichExternalLinkEditor({ remove: true });
+      return;
+    }
+    if (action === "rich-link-close") {
+      closeRichExternalLinkEditor({ restoreFocus: true });
+    }
   }
 
   function setRichFontSize(nextSize) {
     const value = normalizeRichEditorFontSize(nextSize, richFontSize);
     richFontSize = value;
     if (state.editingId) {
-      const item = state.board.items.find(
-        (entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode")
-      );
+      const item = getActiveRichEditingItem();
       if (item && !isLockedItem(item)) {
         item.fontSize = value;
         const scale = Math.max(0.1, Number(state.board.view.scale || 1));
@@ -10621,7 +16726,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, `${label}文本`);
+    commitItemsPatchHistory(before, Array.from(selectedIds), `${label}文本`, "text-style-batch");
     setStatus(`已切换${label}`);
     return true;
   }
@@ -10723,9 +16828,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     if (state.editingId && (state.editingType === "text" || state.editingType === "flow-node")) {
-      const editingItem = state.board.items.find(
-        (entry) => entry.id === state.editingId && (entry.type === "text" || entry.type === "flowNode")
-      );
+      const editingItem = getActiveRichEditingItem();
       if (editingItem && richTextSession.isActive()) {
         richFontSize = preset.fontSize;
         richTextSession.syncContent({
@@ -10740,7 +16843,7 @@ function syncRichToolbarEnhancements(toolbar) {
         syncEditingRichEditorFrame(refs.richEditor, editingItem, state.board.view);
       }
     }
-    commitHistory(before, `设置${preset.label}`);
+    commitItemsPatchHistory(before, Array.from(selectedIds), `设置${preset.label}`, "text-style-batch");
     setStatus(`已应用${preset.label}样式`);
     return true;
   }
@@ -10750,8 +16853,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.board.selectedIds.length !== 1) {
       return false;
     }
-    const selectedId = state.board.selectedIds[0];
-    const textItem = state.board.items.find((item) => item.id === selectedId);
+    const textItem = getSingleSelectedItemFast();
     if (!textItem) {
       return false;
     }
@@ -10792,7 +16894,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return { ...node };
     });
     state.board.selectedIds = [node.id];
-    commitHistory(before, "节点文本");
+    commitItemPatchHistory(before, node.id, node, "节点文本", "item-convert");
     setStatus("已转换为节点文本");
     return true;
   }
@@ -10801,8 +16903,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.board.selectedIds.length !== 1) {
       return false;
     }
-    const selectedId = state.board.selectedIds[0];
-    const nodeItem = state.board.items.find((item) => item.id === selectedId);
+    const nodeItem = getSingleSelectedItemFast();
     if (!nodeItem) {
       return false;
     }
@@ -10845,7 +16946,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     state.board.items = state.board.items.map((item) => (item.id === nodeItem.id ? next : item));
     state.board.selectedIds = [next.id];
-    commitHistory(before, "恢复普通文本");
+    commitItemPatchHistory(before, next.id, next, "恢复普通文本", "item-convert");
     setStatus("已恢复为普通文本");
     return true;
   }
@@ -10854,8 +16955,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.board.selectedIds.length !== 1) {
       return false;
     }
-    const selectedId = state.board.selectedIds[0];
-    const item = state.board.items.find((entry) => entry.id === selectedId);
+    const item = getSingleSelectedItemFast();
     if (!item) {
       return false;
     }
@@ -10891,7 +16991,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "更新连线");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "更新连线", "flow-edge-edit");
     setStatus("已更新连线样式");
     return true;
   }
@@ -10908,7 +17008,10 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     state.board.items = nextItems;
     state.board.selectedIds = state.board.selectedIds.filter((id) => !selectedIds.has(id));
-    commitHistory(before, "删除连线");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "删除连线", "item-delete-batch", {
+      beforeOrderIds: Array.isArray(before.items) ? before.items.map((item) => item.id) : [],
+      afterOrderIds: state.board.items.map((item) => item.id),
+    });
     setStatus("已删除连线");
     return true;
   }
@@ -10934,6 +17037,17 @@ function syncRichToolbarEnhancements(toolbar) {
         return;
       }
       applyRichSelectionFontSizeFromInput(target);
+      return;
+    }
+    if (action === "color-picker" && target instanceof HTMLInputElement) {
+      if (event.type !== "input" && event.type !== "change") {
+        return;
+      }
+      if (event.type === "input") {
+        previewRichToolbarCustomColor(target.value || "");
+      } else {
+        setRichToolbarCustomColor(target.value || "", { apply: true, closePanel: false });
+      }
     }
   }
 
@@ -10984,35 +17098,18 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function onRichEditorContextMenu(event) {
-    const { hasExpandedSelection } = getRichTextSelectionState();
-    if (!hasExpandedSelection) {
-      return;
-    }
     event.preventDefault();
+    event.stopPropagation();
     hideContextMenu();
     richTextSession.captureSelection();
-    syncRichTextToolbar({
-      point: {
-        clientX: Number(event.clientX || 0),
-        clientY: Number(event.clientY || 0),
-      },
-    });
+    openRichEditorContextMenuAt(Number(event.clientX || 0), Number(event.clientY || 0));
   }
 
   function onRichEditorPointerDown(event) {
     if (Number(event.button) === 2) {
       richTextSession.captureSelection();
-      const { hasExpandedSelection } = getRichTextSelectionState();
-      if (hasExpandedSelection) {
-        event.preventDefault();
-        hideContextMenu();
-        syncRichTextToolbar({
-          point: {
-            clientX: Number(event.clientX || 0),
-            clientY: Number(event.clientY || 0),
-          },
-        });
-      }
+      closeRichToolbarSubmenus();
+      hideContextMenu();
     }
   }
 
@@ -11091,6 +17188,12 @@ function syncRichToolbarEnhancements(toolbar) {
       html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(html), baseFontSize)).trim();
     }
     text = sanitizeText(text || "") || sanitizeText(htmlToPlainText(html));
+    if (text && hasMarkdownMathSyntax(text) && !htmlContainsRenderableMath(html)) {
+      const semanticMathHtml = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
+      if (semanticMathHtml) {
+        html = semanticMathHtml;
+      }
+    }
     if (!html && text) {
       html = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
     }
@@ -11163,6 +17266,192 @@ function syncRichToolbarEnhancements(toolbar) {
     return inserted;
   }
 
+  async function copyActiveRichSelectionToClipboard({ cut = false } = {}) {
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return false;
+    }
+    const payload = getRichEditorSelectionClipboardPayload(item);
+    if (!payload) {
+      return false;
+    }
+    const marker = buildInternalClipboardMarker({
+      copiedAt: Date.now(),
+      itemCount: 1,
+      source: CLIPBOARD_SOURCE_RICH_EDITOR,
+      kind: CLIPBOARD_KIND_RICH_TEXT,
+    });
+    clearInternalClipboard();
+    let copied = false;
+    let usedNativeCut = false;
+    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            [CANVAS_CLIPBOARD_MIME]: new Blob([marker], { type: CANVAS_CLIPBOARD_MIME }),
+            [RICH_TEXT_CLIPBOARD_MIME]: new Blob([stringifyRichTextClipboardPayload(payload.richTextPayload)], {
+              type: RICH_TEXT_CLIPBOARD_MIME,
+            }),
+            "text/html": new Blob([payload.html], { type: "text/html" }),
+            "text/plain": new Blob([payload.text], { type: "text/plain" }),
+          }),
+        ]);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    if (!copied && navigator.clipboard?.writeText && payload.text) {
+      try {
+        await navigator.clipboard.writeText(payload.text);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    if (!copied && typeof document?.execCommand === "function") {
+      refs.richEditor?.focus();
+      richTextSession.captureSelection();
+      copied = document.execCommand(cut ? "cut" : "copy");
+      usedNativeCut = cut && copied;
+    }
+    if (cut) {
+      if (!usedNativeCut) {
+        richTextSession.deleteSelection();
+      }
+      syncActiveRichEditingItemState();
+    }
+    if (copied) {
+      setStatus(cut ? "已剪切选中文本" : "已复制选中文本");
+    }
+    return copied;
+  }
+
+  async function readSystemClipboardRichPayload(item) {
+    const baseFontSize = item?.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE;
+    let html = "";
+    let text = "";
+    if (navigator.clipboard?.read) {
+      try {
+        const entries = await navigator.clipboard.read();
+        for (const entry of entries) {
+          if (!html && entry.types.includes("text/html")) {
+            const blob = await entry.getType("text/html");
+            html = await blob.text();
+          }
+          if (!text && entry.types.includes("text/plain")) {
+            const blob = await entry.getType("text/plain");
+            text = await blob.text();
+          }
+          if (html || text) {
+            break;
+          }
+        }
+      } catch {
+        html = "";
+        text = "";
+      }
+    }
+    if (!text) {
+      text = await clipboardBroker.readSystemClipboardText();
+    }
+    if (html) {
+      html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(html), baseFontSize)).trim();
+    }
+    text = sanitizeText(text || "") || sanitizeText(htmlToPlainText(html));
+    if (text && hasMarkdownMathSyntax(text) && !htmlContainsRenderableMath(html)) {
+      const semanticMathHtml = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
+      if (semanticMathHtml) {
+        html = semanticMathHtml;
+      }
+    }
+    if (!html && text) {
+      html = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
+    }
+    if (!html && !text) {
+      return null;
+    }
+    return { html, text };
+  }
+
+  async function pasteIntoActiveRichEditorFromClipboard() {
+    const item = getActiveRichEditingItem();
+    if (!item) {
+      return false;
+    }
+    const payload = await readSystemClipboardRichPayload(item);
+    if (!payload) {
+      return false;
+    }
+    const formatState = richTextSession.getFormatState?.() || {};
+    if (formatState.canEditMath) {
+      const insertedIntoMath = richTextSession.command(
+        "insertIntoCurrentMath",
+        payload.text || htmlToPlainText(payload.html || "")
+      );
+      if (insertedIntoMath) {
+        syncActiveRichEditingItemState();
+        syncRichTextToolbar();
+        setStatus("已粘贴到公式");
+        return true;
+      }
+    }
+    const inserted = insertRichEditorClipboardPayload(payload);
+    if (inserted) {
+      setStatus("已粘贴到文本");
+    }
+    return inserted;
+  }
+
+  async function handleRichEditorContextMenuAction(action) {
+    if (action === "rich-copy") {
+      return copyActiveRichSelectionToClipboard({ cut: false });
+    }
+    if (action === "rich-cut") {
+      return copyActiveRichSelectionToClipboard({ cut: true });
+    }
+    if (action === "rich-paste") {
+      return pasteIntoActiveRichEditorFromClipboard();
+    }
+    if (action === "rich-select-all") {
+      richTextSession.focus();
+      richTextSession.selectAll();
+      richTextSession.captureSelection();
+      syncRichTextToolbar();
+      return true;
+    }
+    if (action === "rich-finish-edit") {
+      commitRichEdit();
+      return true;
+    }
+    if (
+      [
+        "bold",
+        "italic",
+        "underline",
+        "strike",
+        "highlight",
+        "inline-code",
+        "blockquote",
+        "blockquote-indent",
+        "blockquote-outdent",
+        "unordered-list",
+        "ordered-list",
+        "task-list",
+        "horizontal-rule",
+        "link",
+        "link-canvas",
+        "link-remove",
+        "insert-math-inline",
+        "insert-math-block",
+      ].includes(action)
+    ) {
+      applyRichTextCommand(action);
+      return true;
+    }
+    return false;
+  }
+
   function onRichEditorCopy(event) {
     if (!event.clipboardData) {
       return;
@@ -11207,8 +17496,7 @@ function syncRichToolbarEnhancements(toolbar) {
     event.preventDefault();
     event.stopPropagation();
     const currentHref = String(linkEl.getAttribute("href") || linkEl.href || "").trim();
-    const nextHref = window.prompt("编辑链接 URL（留空移除链接）", currentHref);
-    if (nextHref == null) {
+    if (isCanvasInternalLinkUrl(currentHref)) {
       return;
     }
     if (!richTextSession.isActive()) {
@@ -11219,23 +17507,27 @@ function syncRichToolbarEnhancements(toolbar) {
     selection?.removeAllRanges();
     selection?.addRange(range);
     richTextSession.captureSelection();
-    if (String(nextHref || "").trim()) {
-      richTextSession.command("createLink", String(nextHref || "").trim());
-    } else {
-      richTextSession.command("unlink");
-    }
-    syncActiveRichEditingItemState();
-    syncRichTextToolbar();
+    openRichExternalLinkEditor({
+      prefill: currentHref,
+      selectionText: String(linkEl.textContent || "").trim(),
+      editingExistingLink: true,
+      anchorRect: range.getBoundingClientRect?.() || null,
+    });
   }
 
   function onRichDisplayClick(event) {
     const descriptor = resolveLinkDescriptorFromAnchor(event.target);
     if (!descriptor?.linkEl) {
+      richDisplayEventBridge.handleClick(event);
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
+    if (descriptor.linkType === CANVAS_INTERNAL_LINK_TYPE) {
+      scheduleFocusCanvasLinkTarget(descriptor.canvasTargetId);
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey)) {
       setStatus("按 Ctrl/Cmd+点击链接可打开网页");
       return;
@@ -11259,26 +17551,64 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function onRichDisplayPointerDown(event) {
-    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+    if (!(event.target instanceof Element)) {
       return;
     }
-    event.preventDefault();
-    onPointerDown(event);
+    const linkTarget = event.target.closest("a[href], a[data-link-token='1']");
+    if (linkTarget) {
+      const pointerId = Number(event.pointerId);
+      const timeStamp = Number(event.timeStamp || 0);
+      blockedCanvasPointerDown = {
+        pointerId: Number.isFinite(pointerId) ? pointerId : null,
+        expiresAt: (Number.isFinite(timeStamp) ? timeStamp : 0) + 180,
+      };
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    richDisplayEventBridge.handlePointerDown(event);
   }
 
   function onRichDisplayPointerUp(event) {
-    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+    if (!(event.target instanceof Element)) {
       return;
     }
-    onPointerUp(event);
-  }
-
-  function onRichDisplayDoubleClick(event) {
-    if (!(event.target instanceof Element) || !event.target.closest("a[href], a[data-link-token='1']")) {
+    const linkTarget = event.target.closest("a[href], a[data-link-token='1']");
+    if (linkTarget) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
+    const richItemNode = event.target.closest(".canvas2d-rich-item[data-id]");
+    if (!(richItemNode instanceof HTMLElement)) {
       return;
     }
     event.preventDefault();
-    onDoubleClick(event);
+    onPointerUp(event);
+  }
+
+  function onRichDisplayContextMenu(event) {
+    richDisplayEventBridge.handleContextMenu(event);
+  }
+
+  function onRichDisplayDoubleClick(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const linkTarget = event.target.closest("a[href], a[data-link-token='1']");
+    if (linkTarget instanceof Element) {
+      event.preventDefault();
+      const descriptor = resolveLinkDescriptorFromAnchor(linkTarget);
+      if (descriptor?.linkType === CANVAS_INTERNAL_LINK_TYPE) {
+        scheduleFocusCanvasLinkTarget(descriptor.canvasTargetId);
+        return;
+      }
+      onDoubleClick(event);
+      return;
+    }
+    richDisplayEventBridge.handleDoubleClick(event);
   }
 
   function onCodeBlockDisplayPointerMove(event) {
@@ -11294,15 +17624,32 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function onCodeBlockDisplayPointerDown(event) {
-    const target = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
-    if (!(target instanceof HTMLElement)) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (actionTarget instanceof HTMLElement) {
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       return;
     }
-    event.preventDefault();
-    onPointerDown(event);
+    codeBlockDisplayEventBridge.handlePointerDown(event);
   }
 
   function onCodeBlockDisplayPointerUp(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (actionTarget instanceof HTMLElement) {
+      const action = String(actionTarget.getAttribute("data-action") || "").trim().toLowerCase();
+      if (action === "copy-code") {
+        const itemNode = actionTarget.closest(".canvas2d-code-block-item");
+        const itemId = itemNode instanceof HTMLElement ? String(itemNode.dataset.id || "") : "";
+        const item = itemId ? sceneRegistry.getItemById(itemId, "codeBlock") : null;
+        if (item) {
+          actionTarget.dataset.pointerHandledAt = String(Date.now());
+          void copyCodeBlockContent(item);
+        }
+      }
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     const target = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
     if (!(target instanceof HTMLElement)) {
       return;
@@ -11312,37 +17659,41 @@ function syncRichToolbarEnhancements(toolbar) {
 
   function onCodeBlockDisplayClick(event) {
     const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
-    const itemNode = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
-    if (!(itemNode instanceof HTMLElement)) {
-      return;
-    }
-    const itemId = String(itemNode.dataset.id || "");
-    const item = state.board.items.find((entry) => entry.id === itemId && entry.type === "codeBlock");
-    if (!item) {
-      return;
-    }
     if (actionTarget instanceof HTMLElement) {
+      const bridgeContext = codeBlockDisplayEventBridge.resolveTarget(event.target, { includeAction: true });
+      const item = bridgeContext?.item || null;
+      if (!item) {
+        return;
+      }
       const action = String(actionTarget.getAttribute("data-action") || "").trim().toLowerCase();
       if (action === "copy-code") {
+        const handledAt = Number(actionTarget.dataset.pointerHandledAt || 0);
+        if (handledAt && Date.now() - handledAt < 450) {
+          actionTarget.dataset.pointerHandledAt = "";
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
-        copyCodeBlockContent(item);
+        void copyCodeBlockContent(item);
       }
       return;
     }
-    state.board.selectedIds = [item.id];
-    markCodeBlockOverlayDirty(item.id);
-    syncBoard({ persist: false, emit: true });
+    codeBlockDisplayEventBridge.handleClick(event);
+  }
+
+  function onCodeBlockDisplayContextMenu(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const actionTarget = event.target.closest("[data-action]");
+    if (actionTarget instanceof HTMLElement) {
+      return;
+    }
+    codeBlockDisplayEventBridge.handleContextMenu(event);
   }
 
   function onCodeBlockDisplayDoubleClick(event) {
-    const itemNode = event.target instanceof Element ? event.target.closest(".canvas2d-code-block-item") : null;
-    if (!(itemNode instanceof HTMLElement)) {
-      return;
-    }
-    event.preventDefault();
-    const itemId = String(itemNode.dataset.id || "");
-    beginCodeBlockEdit(itemId);
+    codeBlockDisplayEventBridge.handleDoubleClick(event);
   }
 
   function onRichEditorCut(event) {
@@ -11383,22 +17734,40 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!item) {
       return;
     }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
     const payload = await getRichEditorPasteClipboardPayload(event.clipboardData, item);
     if (!payload) {
       return;
+    }
+    const formatState = richTextSession.getFormatState?.() || {};
+    if (formatState.canEditMath) {
+      const insertedIntoMath = richTextSession.command(
+        "insertIntoCurrentMath",
+        payload.text || htmlToPlainText(payload.html || "")
+      );
+      if (insertedIntoMath) {
+        syncActiveRichEditingItemState();
+        syncRichTextToolbar();
+        return;
+      }
     }
     const inserted = insertRichEditorClipboardPayload(payload);
     if (!inserted) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
   }
 
   function onRichEditorBlur(event) {
+    if (
+      pendingCanvasLinkBinding ||
+      (deferredBlankEditExit && (state.editingType === "text" || state.editingType === "flow-node"))
+    ) {
+      return;
+    }
     richTextSession.handleBlur(event, {
-      ignoreTargets: [refs.richToolbar, refs.richSelectionToolbar],
+      ignoreTargets: [refs.richToolbar, refs.richSelectionToolbar, refs.richExternalLinkPanel],
       onCommit: () => commitRichEdit(),
     });
   }
@@ -11417,7 +17786,17 @@ function syncRichToolbarEnhancements(toolbar) {
     });
   }
 
+  function onRichEditorBeforeInput(event) {
+    const inputType = String(event?.inputType || "").toLowerCase();
+    if (inputType === "insertfrompaste" || inputType === "insertfromdrop") {
+      event.preventDefault();
+    }
+  }
+
   function onFileMemoBlur() {
+    if (deferredBlankEditExit && state.editingType === "file-memo") {
+      return;
+    }
     commitFileMemoEdit();
   }
 
@@ -11440,6 +17819,9 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function onImageMemoBlur() {
+    if (deferredBlankEditExit && state.editingType === "image-memo") {
+      return;
+    }
     commitImageMemoEdit();
   }
 
@@ -11463,19 +17845,205 @@ function syncRichToolbarEnhancements(toolbar) {
 
   function onTableEditorPointerDown(event) {
     event.stopPropagation();
-    const cell = event.target instanceof Element ? event.target.closest("[data-row-index][data-column-index]") : null;
+    setTableInteractionPointerState("editor", true);
+    if (handleTableActionPress(event)) {
+      return;
+    }
+    if (tableCellEditState.active && !(refs.tableCellRichEditor?.contains?.(event.target))) {
+      commitActiveTableCellRichEdit({ keepFocus: false });
+    }
+    const axisHandle = event.target instanceof Element ? event.target.closest("[data-table-handle-kind]") : null;
+    if (axisHandle instanceof HTMLElement) {
+      event.preventDefault();
+      const kind = String(axisHandle.getAttribute("data-table-handle-kind") || "").trim().toLowerCase();
+      const matrix = buildTableMatrixFromEditor();
+      if (kind === "all") {
+        selectEntireTable(matrix);
+        return;
+      }
+      if (kind === "row") {
+        beginTableStructureDrag("row", Number(axisHandle.getAttribute("data-row-index") || 0), event, matrix);
+        return;
+      }
+      if (kind === "column") {
+        beginTableStructureDrag("column", Number(axisHandle.getAttribute("data-column-index") || 0), event, matrix);
+        return;
+      }
+    }
+    const cell = getTableEditorCellFromEventTarget(event.target);
     if (!(cell instanceof HTMLElement)) {
       return;
     }
-    tableEditSelection = {
-      rowIndex: Math.max(0, Number(cell.getAttribute("data-row-index")) || 0),
-      columnIndex: Math.max(0, Number(cell.getAttribute("data-column-index")) || 0),
-    };
-    syncTableEditorSelectionUI();
+    const rowIndex = Number(cell.getAttribute("data-row-index"));
+    const columnIndex = Number(cell.getAttribute("data-column-index"));
+    if (isTableCellEditing(rowIndex, columnIndex) && Number(event.button) !== 2) {
+      tablePointerSelectionState.pointerId = null;
+      tablePointerSelectionState.anchor = null;
+      tablePointerSelectionState.pendingCell = null;
+      tablePointerSelectionState.multiSelectActive = false;
+      tablePointerSelectionState.nativeTextSelection = true;
+      tablePointerSelectionState.draggingRange = false;
+      return;
+    }
+    if (tableCellEditState.active) {
+      commitActiveTableCellRichEdit({ keepFocus: false });
+    }
+    selectTableEditorCell(rowIndex, columnIndex, { extend: Boolean(event.shiftKey), keepEditing: false });
+    beginTableCellPointerSelection(event, rowIndex, columnIndex);
+  }
+
+  function onTableEditorMouseDown(event) {
+    setTableInteractionPointerState("editor", true);
+    handleTableActionPress(event);
+  }
+
+  function onTableEditorClick(event) {
+    const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (target?.getAttribute("data-pointer-action-handled") === "1") {
+      target.removeAttribute("data-pointer-action-handled");
+      event.preventDefault();
+      return;
+    }
+    if (!target) {
+      const axisHandle = event.target instanceof Element ? event.target.closest("[data-table-handle-kind]") : null;
+      if (axisHandle instanceof HTMLElement) {
+        const kind = String(axisHandle.getAttribute("data-table-handle-kind") || "").trim().toLowerCase();
+        const matrix = buildTableMatrixFromEditor();
+        if (kind === "all") {
+          selectEntireTable(matrix);
+        } else if (kind === "row") {
+          selectTableRow(Number(axisHandle.getAttribute("data-row-index") || 0), matrix);
+        } else if (kind === "column") {
+          selectTableColumn(Number(axisHandle.getAttribute("data-column-index") || 0), matrix);
+        }
+        return;
+      }
+      const cell = getTableEditorCellFromEventTarget(event.target);
+      if (cell instanceof HTMLElement) {
+        const rowIndex = Number(cell.getAttribute("data-row-index"));
+        const columnIndex = Number(cell.getAttribute("data-column-index"));
+        if (isTableCellEditing(rowIndex, columnIndex)) {
+          return;
+        }
+        selectTableEditorCell(rowIndex, columnIndex, { extend: Boolean(event.shiftKey), keepEditing: false });
+        cell.focus();
+      }
+      return;
+    }
+    event.preventDefault();
+    onContextMenuClick(event);
+  }
+
+  function onTableEditorDoubleClick(event) {
+    const cell = getTableEditorCellFromEventTarget(event.target);
+    if (!(cell instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    tablePointerSelectionState.multiSelectActive = false;
+    tablePointerSelectionState.nativeTextSelection = false;
+    tablePointerSelectionState.draggingRange = false;
+    activateTableCellEditing(
+      Number(cell.getAttribute("data-row-index")),
+      Number(cell.getAttribute("data-column-index")),
+      { placeAtEnd: true, reason: "dblclick" }
+    );
+  }
+
+  function onTableEditorContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    setTableInteractionPointerState("editor", true);
+    const axisHandle = event.target instanceof Element ? event.target.closest("[data-table-handle-kind]") : null;
+    if (axisHandle instanceof HTMLElement) {
+      const kind = String(axisHandle.getAttribute("data-table-handle-kind") || "").trim().toLowerCase();
+      const matrix = buildTableMatrixFromEditor();
+      if (kind === "all") {
+        selectEntireTable(matrix);
+      } else if (kind === "row") {
+        selectTableRow(Number(axisHandle.getAttribute("data-row-index") || 0), matrix);
+      } else if (kind === "column") {
+        selectTableColumn(Number(axisHandle.getAttribute("data-column-index") || 0), matrix);
+      }
+    }
+    const cell = getTableEditorCellFromEventTarget(event.target);
+    if (cell instanceof HTMLElement) {
+      selectTableEditorCell(Number(cell.getAttribute("data-row-index")), Number(cell.getAttribute("data-column-index")), {
+        extend: Boolean(event.shiftKey),
+        keepEditing: false,
+      });
+    }
+    openTableEditorContextMenuAt(event.clientX, event.clientY);
   }
 
   function onTableEditorInput() {
-    syncActiveDraftEditingState({ markDirty: true });
+    if (tableCellEditState.active) {
+      syncActiveDraftEditingState({ markDirty: true });
+    }
+  }
+
+  function onTableEditorScroll() {
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableEditorPointerMove(event) {
+    setTableInteractionPointerState("editor", true);
+    if (tableStructureDragState.kind) {
+      updateTableStructureDrag(event);
+    }
+    const hoveredCell = getTableEditorCellFromEventTarget(event.target);
+    if (hoveredCell instanceof HTMLElement) {
+      setTableHoveredCell(
+        Number(hoveredCell.getAttribute("data-row-index")),
+        Number(hoveredCell.getAttribute("data-column-index"))
+      );
+      if (!tablePointerSelectionState.multiSelectActive) {
+        syncTableEditorSelectionUI();
+      }
+    }
+    if (tableCellEditState.active || !tablePointerSelectionState.anchor || Number(event.buttons || 0) !== 1) {
+      return;
+    }
+    const cell = hoveredCell;
+    if (!(cell instanceof HTMLElement)) {
+      return;
+    }
+    const focus = {
+      rowIndex: Number(cell.getAttribute("data-row-index")),
+      columnIndex: Number(cell.getAttribute("data-column-index")),
+    };
+    tablePointerSelectionState.multiSelectActive = true;
+    tablePointerSelectionState.draggingRange = true;
+    tableEditSelection = normalizeTableCellCoordinate(focus.rowIndex, focus.columnIndex);
+    tableEditRange = createTableSelectionRange(tablePointerSelectionState.anchor, focus);
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableEditorPointerUp(event) {
+    if (tablePointerSelectionState.nativeTextSelection) {
+      resetTablePointerSelectionState();
+      finishTableStructureDrag();
+      return;
+    }
+    resetTablePointerSelectionState();
+    finishTableStructureDrag();
+  }
+
+  function onTableEditorPointerEnter(event) {
+    setTableInteractionPointerState("editor", true);
+    const cell = getTableEditorCellFromEventTarget(event.target);
+    if (cell instanceof HTMLElement) {
+      setTableHoveredCell(Number(cell.getAttribute("data-row-index")), Number(cell.getAttribute("data-column-index")));
+    }
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableEditorPointerLeave() {
+    setTableInteractionPointerState("editor", false);
+    if (!tableStructureDragState.kind) {
+      resetTableStructureDragState();
+    }
     syncTableEditorSelectionUI();
   }
 
@@ -11497,8 +18065,31 @@ function syncRichToolbarEnhancements(toolbar) {
       commitTableEdit();
       return;
     }
+    if ((key === "enter" || key === "f2") && !tableCellEditState.active) {
+      event.preventDefault();
+      activateTableCellEditing(rowIndex, columnIndex, { placeAtEnd: true, reason: "keyboard" });
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && key === "a") {
+      if (tableCellEditState.active) {
+        return;
+      }
+      event.preventDefault();
+      const matrix = buildTableMatrixFromEditor();
+      if (!matrix.length) {
+        return;
+      }
+      setTableEditSelection(0, 0);
+      tableEditRange = createTableSelectionRange(
+        { rowIndex: 0, columnIndex: 0 },
+        { rowIndex: Math.max(0, matrix.length - 1), columnIndex: Math.max(0, (matrix[0] || []).length - 1) }
+      );
+      syncTableEditorSelectionUI();
+      return;
+    }
     if (key === "tab") {
       event.preventDefault();
+      deactivateTableCellEditing({ keepFocus: false });
       const matrix = buildTableMatrixFromEditor();
       const rowCount = Math.max(1, matrix.length);
       const columnCount = Math.max(1, matrix[0]?.length || 1);
@@ -11510,11 +18101,104 @@ function syncRichToolbarEnhancements(toolbar) {
         ? (rawColumn < 0 ? columnCount - 1 : rawColumn)
         : (rawColumn >= columnCount ? 0 : rawColumn);
       focusTableEditorCell(nextRow, nextColumn, { placeAtEnd: true });
+      return;
     }
+    if (event.shiftKey && ["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
+      event.preventDefault();
+      deactivateTableCellEditing({ keepFocus: false });
+      const matrix = buildTableMatrixFromEditor();
+      const rowCount = Math.max(1, matrix.length);
+      const columnCount = Math.max(1, matrix[0]?.length || 1);
+      const nextRow =
+        key === "arrowup" ? Math.max(0, rowIndex - 1) : key === "arrowdown" ? Math.min(rowCount - 1, rowIndex + 1) : rowIndex;
+      const nextColumn =
+        key === "arrowleft"
+          ? Math.max(0, columnIndex - 1)
+          : key === "arrowright"
+            ? Math.min(columnCount - 1, columnIndex + 1)
+            : columnIndex;
+      focusTableEditorCell(nextRow, nextColumn, { placeAtEnd: true, extend: true });
+      return;
+    }
+    if (!tableCellEditState.active && ["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
+      event.preventDefault();
+      const matrix = buildTableMatrixFromEditor();
+      const rowCount = Math.max(1, matrix.length);
+      const columnCount = Math.max(1, matrix[0]?.length || 1);
+      const nextRow =
+        key === "arrowup" ? Math.max(0, rowIndex - 1) : key === "arrowdown" ? Math.min(rowCount - 1, rowIndex + 1) : rowIndex;
+      const nextColumn =
+        key === "arrowleft"
+          ? Math.max(0, columnIndex - 1)
+          : key === "arrowright"
+            ? Math.min(columnCount - 1, columnIndex + 1)
+            : columnIndex;
+      focusTableEditorCell(nextRow, nextColumn, { placeAtEnd: false, extend: false });
+    }
+  }
+
+  function onTableEditorCopy(event) {
+    if (tableCellEditState.active && refs.tableCellRichEditor?.contains?.(event.target)) {
+      return;
+    }
+    const selectionText = window.getSelection?.()?.toString?.() || "";
+    if (!isTableSelectionMultiCell(buildTableMatrixFromEditor()) && selectionText.trim()) {
+      return;
+    }
+    event.preventDefault();
+    const text = serializeTableMatrixToTsv(getTableSelectionMatrix(buildTableMatrixFromEditor()));
+    if (!text.trim()) {
+      return;
+    }
+    event.clipboardData?.setData?.("text/plain", text);
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    setStatus("已复制表格选区");
+  }
+
+  function onTableEditorCut(event) {
+    if (tableCellEditState.active && refs.tableCellRichEditor?.contains?.(event.target)) {
+      return;
+    }
+    const selectionText = window.getSelection?.()?.toString?.() || "";
+    if (!isTableSelectionMultiCell(buildTableMatrixFromEditor()) && selectionText.trim()) {
+      return;
+    }
+    event.preventDefault();
+    const text = serializeTableMatrixToTsv(getTableSelectionMatrix(buildTableMatrixFromEditor()));
+    if (text.trim()) {
+      event.clipboardData?.setData?.("text/plain", text);
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+    }
+    mutateTableEditor((matrix) =>
+      clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
+    );
+    setStatus("已剪切表格选区");
+  }
+
+  function onTableEditorPaste(event) {
+    if (tableCellEditState.active && refs.tableCellRichEditor?.contains?.(event.target)) {
+      return;
+    }
+    const clipboardText = event.clipboardData?.getData?.("text/plain") || "";
+    const parsedMatrix = parseTableDelimitedText(clipboardText);
+    const shouldIntercept = Boolean(isTableSelectionMultiCell(buildTableMatrixFromEditor()) || clipboardText.includes("\t") || clipboardText.includes("\n"));
+    if (!shouldIntercept || !parsedMatrix.length) {
+      return;
+    }
+    event.preventDefault();
+    mutateTableEditor((matrix) =>
+      applyTableClipboardMatrix(matrix, parsedMatrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
+    );
+    setStatus("已粘贴表格矩阵");
   }
 
   function onTableToolbarPointerDown(event) {
     event.stopPropagation();
+    setTableInteractionPointerState("toolbar", true);
   }
 
   function onTableToolbarClick(event) {
@@ -11523,7 +18207,22 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     event.preventDefault();
+    if (target.getAttribute("data-action") === "table-more") {
+      const rect = target.getBoundingClientRect();
+      openTableEditorContextMenuAt(rect.left + rect.width / 2, rect.bottom + 6);
+      return;
+    }
     onContextMenuClick(event);
+  }
+
+  function onTableToolbarPointerEnter() {
+    setTableInteractionPointerState("toolbar", true);
+    syncTableEditorSelectionUI();
+  }
+
+  function onTableToolbarPointerLeave() {
+    setTableInteractionPointerState("toolbar", false);
+    syncTableEditorSelectionUI();
   }
 
   function onCodeBlockEditorPointerDown(event) {
@@ -11559,27 +18258,30 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (action === "code-copy") {
-      copyCodeBlockContent(item);
+      void copyCodeBlockContent(item);
       return;
     }
     if (action === "code-wrap") {
+      const before = takeHistorySnapshot(state);
       Object.assign(item, updateCodeBlockElement(item, { wrap: item.wrap !== true }, { remeasure: true }));
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
-      syncBoard({ persist: true, emit: true });
+      commitCodeBlockPatchHistory(before, item.id, item, "切换代码自动换行");
       return;
     }
     if (action === "code-line-numbers") {
+      const before = takeHistorySnapshot(state);
       Object.assign(
         item,
         updateCodeBlockElement(item, { showLineNumbers: item.showLineNumbers === false }, { remeasure: true })
       );
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
-      syncBoard({ persist: true, emit: true });
+      commitCodeBlockPatchHistory(before, item.id, item, "切换代码行号");
       return;
     }
     if (action === "code-preview-toggle") {
+      const before = takeHistorySnapshot(state);
       Object.assign(
         item,
         updateCodeBlockElement(
@@ -11590,7 +18292,7 @@ function syncRichToolbarEnhancements(toolbar) {
       );
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
-      syncBoard({ persist: true, emit: true });
+      commitCodeBlockPatchHistory(before, item.id, item, "切换代码预览");
       return;
     }
     if (action === "code-done") {
@@ -11611,7 +18313,8 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (action === "code-language" && target instanceof HTMLSelectElement) {
-      const language = String(target.value || "").trim().toLowerCase();
+      const before = takeHistorySnapshot(state);
+      const language = normalizeCodeBlockLanguageTag(target.value || "");
       Object.assign(
         item,
         updateCodeBlockElement(
@@ -11631,14 +18334,15 @@ function syncRichToolbarEnhancements(toolbar) {
         scheduleCodeBlockEditorLayoutSync("precise");
       }
       markCodeBlockOverlayDirty(item.id);
-      syncBoard({ persist: true, emit: true });
+      commitCodeBlockPatchHistory(before, item.id, item, "切换代码语言");
       return;
     }
     if (action === "code-font-size" && target instanceof HTMLSelectElement) {
+      const before = takeHistorySnapshot(state);
       Object.assign(item, updateCodeBlockElement(item, { fontSize: Number(target.value) || 16 }, { remeasure: true }));
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
-      syncBoard({ persist: true, emit: true });
+      commitCodeBlockPatchHistory(before, item.id, item, "调整代码字号");
     }
   }
 
@@ -11650,8 +18354,8 @@ function syncRichToolbarEnhancements(toolbar) {
       event.preventDefault();
       return;
     }
-    const selected = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
-    const hoverItem = state.hoverId ? state.board.items.find((item) => item.id === state.hoverId) : null;
+    const selected = sceneRegistry.getSelectedItems();
+    const hoverItem = state.hoverId ? sceneRegistry.getItemById(state.hoverId) : null;
     const textItems = selected.filter((item) => item.type === "text");
     const fallbackItems = !textItems.length && hoverItem?.type === "text" ? [hoverItem] : [];
     if (!textItems.length) {
@@ -11791,90 +18495,159 @@ function syncRichToolbarEnhancements(toolbar) {
     await cutSelection();
   }
 
+  function createClipboardDataTransferSnapshot(dataTransfer) {
+    const snapshot = {
+      text: String(dataTransfer?.getData?.("text/plain") || dataTransfer?.getData?.("text") || ""),
+      html: String(dataTransfer?.getData?.("text/html") || ""),
+      uriList: String(dataTransfer?.getData?.("text/uri-list") || ""),
+      types: Array.from(dataTransfer?.types || []).map((type) => String(type || "")).filter(Boolean),
+      files: Array.from(dataTransfer?.files || []),
+    };
+    return snapshot;
+  }
+
+  function createClipboardDataTransferFacade(snapshot = {}) {
+    const typeValueMap = new Map();
+    const text = String(snapshot?.text || "");
+    const html = String(snapshot?.html || "");
+    const uriList = String(snapshot?.uriList || "");
+    const types = Array.isArray(snapshot?.types) ? snapshot.types.slice() : [];
+    if (text) {
+      typeValueMap.set("text/plain", text);
+      typeValueMap.set("text", text);
+    }
+    if (html) {
+      typeValueMap.set("text/html", html);
+    }
+    if (uriList) {
+      typeValueMap.set("text/uri-list", uriList);
+    }
+    return {
+      files: Array.isArray(snapshot?.files) ? snapshot.files.slice() : [],
+      types,
+      getData(type) {
+        return typeValueMap.get(String(type || "").trim()) || "";
+      },
+    };
+  }
+
+  function shouldPreferNonBlockingClipboardImport(snapshot = {}) {
+    const fileCount = Array.isArray(snapshot?.files) ? snapshot.files.length : 0;
+    if (fileCount > 0) {
+      return true;
+    }
+    const textLength = String(snapshot?.text || "").length;
+    const htmlLength = String(snapshot?.html || "").length;
+    const uriLength = String(snapshot?.uriList || "").length;
+    return (
+      textLength >= PASTE_NON_BLOCKING_TEXT_THRESHOLD ||
+      htmlLength >= PASTE_NON_BLOCKING_HTML_THRESHOLD ||
+      uriLength >= PASTE_NON_BLOCKING_TEXT_THRESHOLD
+    );
+  }
+
+  function shouldYieldDuringStructuredImportDescriptor(descriptor = {}) {
+    const entries = Array.isArray(descriptor?.entries) ? descriptor.entries : [];
+    if (entries.length >= PASTE_BATCH_YIELD_ITEM_THRESHOLD) {
+      return true;
+    }
+    let aggregateTextLength = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      aggregateTextLength += String(entry?.raw?.text || entry?.raw?.html || entry?.raw?.markdown || "").length;
+      if (aggregateTextLength >= PASTE_NON_BLOCKING_HTML_THRESHOLD) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function onPaste(event) {
     if (!isInteractiveMode() || state.editingId) {
       return;
     }
-    await runClipboardOperationWithStatus("粘贴处理中…", async () => {
+    const markerMatched = matchesInternalClipboardByMarker(event.clipboardData);
+    const clipboardSnapshot = markerMatched ? null : createClipboardDataTransferSnapshot(event.clipboardData);
+    const clipboardFacade = clipboardSnapshot ? createClipboardDataTransferFacade(clipboardSnapshot) : null;
+    const preferNonBlockingImport = shouldPreferNonBlockingClipboardImport(clipboardSnapshot || {});
+    event.preventDefault();
+    void runClipboardOperationWithStatus("粘贴处理中…", async () => {
       const anchor = state.lastPointerScenePoint || getCenterScenePoint();
-      if (matchesInternalClipboardByMarker(event.clipboardData) || (await shouldUseInternalClipboard())) {
-        event.preventDefault();
-        pasteInternalClipboard(anchor);
+      if (markerMatched || (await shouldUseInternalClipboard())) {
+        await pasteInternalClipboardAsync(anchor);
         return true;
+      }
+      if (preferNonBlockingImport) {
+        await yieldToNextFrame();
       }
       for (const handler of pasteHandlers) {
         const result = await handler?.({
           event,
-          dataTransfer: event.clipboardData,
+          dataTransfer: clipboardFacade || event.clipboardData,
+          clipboardSnapshot,
           anchor,
           state,
         });
         if (result?.handled) {
-          event.preventDefault();
           if (Array.isArray(result.items) && result.items.length) {
-            try {
-              await persistImportedImages(result.items);
-            } catch {
-              // ignore import persistence failures
-            }
             pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+            scheduleDeferredImportedAssetPersistence(result.items, {
+              reason: "paste-handler-asset-persist",
+            });
           }
           return true;
         }
       }
-      const clipboardTextHint = sanitizeText(String(event.clipboardData?.getData("text/plain") || ""));
-      await yieldForHeavyClipboardText(clipboardTextHint);
-      const structuredHandled = await tryStructuredImportDescriptor(
-        structuredImportRuntime.pasteGateway.fromClipboardEvent(event, {
-          origin: "engine-paste",
-          anchor,
-        }),
-        anchor,
-        {
+      const result = await dragBroker.importFromDataTransfer(clipboardFacade || event.clipboardData, anchor);
+      if (result?.handled && result.items?.length) {
+        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+        scheduleDeferredImportedAssetPersistence(result.items, {
+          reason: "paste-drag-broker-asset-persist",
+        });
+        return true;
+      }
+      const structuredDescriptor =
+        !markerMatched && (clipboardFacade || event.clipboardData)
+          ? structuredImportRuntime.pasteGateway.fromClipboardData(clipboardFacade || event.clipboardData, {
+              origin: "engine-paste",
+              anchor,
+            })
+          : null;
+      if (structuredDescriptor) {
+        if (preferNonBlockingImport) {
+          await yieldToNextFrame();
+        }
+        const structuredHandled = await tryStructuredImportDescriptor(structuredDescriptor, anchor, {
           reason: "粘贴内容",
           statusText: "已通过新导入链路粘贴内容",
           context: {
             origin: "engine-paste",
           },
+        });
+        if (structuredHandled) {
+          return true;
         }
-      );
-      if (structuredHandled) {
-        event.preventDefault();
-        return true;
-      }
-      await yieldToNextFrame();
-      const result = await dragBroker.importFromDataTransfer(event.clipboardData, anchor);
-      if (result?.handled && result.items?.length) {
-        event.preventDefault();
-        try {
-          await persistImportedImages(result.items);
-        } catch {
-          // ignore import persistence failures
-        }
-        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
-        return true;
       }
       const filePaths = await clipboardBroker.readSystemClipboardFiles();
       if (filePaths.length) {
-        event.preventDefault();
         const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
-        try {
-          await persistImportedImages(items);
-        } catch {
-          // ignore import persistence failures
-        }
         pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+        scheduleDeferredImportedAssetPersistence(items, {
+          reason: "paste-file-path-asset-persist",
+        });
         return true;
       }
 
       const text = await clipboardBroker.readSystemClipboardText();
       if (text.trim()) {
-        event.preventDefault();
-        await yieldForHeavyClipboardText(text);
         const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
-        insertTextAt(anchor, text, {
+        await insertClipboardTextAt(anchor, text, {
           deferSemanticUpgrade,
-          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已插入文本",
+          origin: "engine-paste-system-text-fallback",
+          reason: "粘贴内容",
+          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已粘贴内容",
         });
       }
       return true;
@@ -11884,10 +18657,9 @@ function syncRichToolbarEnhancements(toolbar) {
   async function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
     return runClipboardOperationWithStatus("粘贴处理中…", async () => {
       if (await shouldUseInternalClipboard()) {
-        return pasteInternalClipboard(anchorPoint);
+        return pasteInternalClipboardAsync(anchorPoint);
       }
       const textHint = await clipboardBroker.readSystemClipboardText();
-      await yieldForHeavyClipboardText(textHint);
       const structuredHandled = await tryStructuredImportDescriptor(
         await structuredImportRuntime.contextMenuPasteAdapter.createDescriptor({
           origin: "engine-context-menu-paste",
@@ -11907,15 +18679,20 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       const { items } = await pasteFileCardsFromClipboard({ clipboardBroker, dragBroker, anchor: anchorPoint });
       if (items.length) {
-        return pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+        const pushed = pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
+        scheduleDeferredImportedAssetPersistence(items, {
+          reason: "context-menu-paste-file-asset-persist",
+        });
+        return pushed;
       }
       const text = textHint;
       if (text.trim()) {
-        await yieldForHeavyClipboardText(text);
         const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
-        return insertTextAt(anchorPoint, text, {
+        return insertClipboardTextAt(anchorPoint, text, {
           deferSemanticUpgrade,
-          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已插入文本",
+          origin: "engine-context-menu-paste-text-fallback",
+          reason: "粘贴内容",
+          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已粘贴内容",
         });
       }
       return false;
@@ -11927,6 +18704,11 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     const key = String(event.key || "").toLowerCase();
+    if (key === "escape" && pendingRichExternalLinkEdit) {
+      event.preventDefault();
+      closeRichExternalLinkEditor({ restoreFocus: true });
+      return;
+    }
     const isSaveShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && key === "s";
     const target = event.target instanceof Element ? event.target : null;
     const withinCanvas =
@@ -11982,7 +18764,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if ((event.ctrlKey || event.metaKey) && key === "c") {
       event.preventDefault();
       if (!state.board.selectedIds.length && state.hoverId) {
-        const hoverItem = state.board.items.find((item) => item.id === state.hoverId && item.type === "text");
+        const hoverItem = getHoverItemFast("text");
         if (hoverItem) {
           state.board.selectedIds = [hoverItem.id];
         }
@@ -12000,13 +18782,13 @@ function syncRichToolbarEnhancements(toolbar) {
         return;
       }
       event.preventDefault();
-      const hoverItem = state.hoverId ? state.board.items.find((item) => item.id === state.hoverId) : null;
+      const hoverItem = getHoverItemFast();
       const anchor = hoverItem ? { x: hoverItem.x + hoverItem.width + 24, y: hoverItem.y + 24 } : (state.lastPointerScenePoint || getCenterScenePoint());
       void pasteFromSystemClipboard(anchor);
       return;
     }
     if (key === "enter" && state.board.selectedIds.length === 1 && !state.editingId && state.tool === "select") {
-      const selected = state.board.items.find((item) => item.id === state.board.selectedIds[0]);
+      const selected = getSingleSelectedItemFast();
       if (selected?.type === "text") {
         event.preventDefault();
         beginTextEdit(selected.id);
@@ -12061,7 +18843,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (key === "delete" || key === "backspace") {
       event.preventDefault();
       if (!state.board.selectedIds.length && state.hoverId) {
-        const hoverItem = state.board.items.find((item) => item.id === state.hoverId);
+        const hoverItem = getHoverItemFast();
         if (hoverItem?.type === "fileCard") {
           removeFileCardById(hoverItem.id);
           return;
@@ -12086,6 +18868,12 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (key === "escape") {
       event.preventDefault();
+      if (pendingCanvasLinkBinding) {
+        pendingCanvasLinkBinding = false;
+        syncCanvasLinkBindingUi();
+        setStatus("已取消画布链接绑定");
+        return;
+      }
       hideContextMenu();
       clearTransientState();
       cancelTextEdit();
@@ -12133,6 +18921,7 @@ function syncRichToolbarEnhancements(toolbar) {
     bind(refs.canvas, "cut", onCut);
     bind(refs.canvas, "paste", onPaste);
     bind(refs.richEditor, "blur", onRichEditorBlur);
+    bind(refs.richEditor, "beforeinput", onRichEditorBeforeInput);
     bind(refs.richEditor, "input", onRichEditorInput);
     bind(refs.richEditor, "pointerdown", onRichEditorPointerDown, true);
     bind(refs.richEditor, "copy", onRichEditorCopy);
@@ -12150,9 +18939,23 @@ function syncRichToolbarEnhancements(toolbar) {
     bind(refs.imageMemoEditor, "input", onImageMemoInput);
     bind(refs.imageMemoEditor, "keydown", onImageMemoKeyDown);
     bind(refs.tableEditor, "pointerdown", onTableEditorPointerDown, true);
+    bind(refs.tableEditor, "mousedown", onTableEditorMouseDown, true);
+    bind(refs.tableEditor, "pointerenter", onTableEditorPointerEnter);
+    bind(refs.tableEditor, "pointermove", onTableEditorPointerMove);
+    bind(refs.tableEditor, "pointerup", onTableEditorPointerUp, true);
+    bind(refs.tableEditor, "pointerleave", onTableEditorPointerLeave);
+    bind(refs.tableEditor, "click", onTableEditorClick);
+    bind(refs.tableEditor, "dblclick", onTableEditorDoubleClick);
+    bind(refs.tableEditor, "contextmenu", onTableEditorContextMenu);
     bind(refs.tableEditor, "input", onTableEditorInput);
     bind(refs.tableEditor, "keydown", onTableEditorKeyDown);
+    bind(refs.tableEditor, "copy", onTableEditorCopy);
+    bind(refs.tableEditor, "cut", onTableEditorCut);
+    bind(refs.tableEditor, "paste", onTableEditorPaste);
+    bind(refs.tableEditor, "scroll", onTableEditorScroll);
     bind(refs.tableToolbar, "pointerdown", onTableToolbarPointerDown, true);
+    bind(refs.tableToolbar, "pointerenter", onTableToolbarPointerEnter);
+    bind(refs.tableToolbar, "pointerleave", onTableToolbarPointerLeave);
     bind(refs.tableToolbar, "click", onTableToolbarClick);
     bind(refs.codeBlockEditor, "pointerdown", onCodeBlockEditorPointerDown, true);
     bind(refs.codeBlockEditor, "keydown", onCodeBlockEditorKeyDown);
@@ -12184,11 +18987,16 @@ function syncRichToolbarEnhancements(toolbar) {
     bind(refs.richSelectionToolbar, "wheel", onRichSelectionToolbarWheel, { passive: false, capture: true });
     bind(refs.richSelectionToolbar, "keydown", onRichSelectionToolbarKeyDown);
     bind(refs.richSelectionToolbar, "focusout", onRichSelectionToolbarFocusOut);
+    bind(refs.richExternalLinkPanel, "pointerdown", onRichExternalLinkPanelPointerDown, true);
+    bind(refs.richExternalLinkPanel, "click", onRichExternalLinkPanelClick);
+    bind(refs.richExternalLinkPanel, "input", onRichExternalLinkPanelInput);
+    bind(refs.richExternalLinkPanel, "keydown", onRichExternalLinkPanelKeyDown);
     bind(refs.imageToolbar, "click", onImageToolbarClick);
     bind(refs.richDisplayHost, "pointermove", onRichDisplayPointerMove);
     bind(refs.richDisplayHost, "pointerleave", onRichDisplayPointerLeave);
     bind(refs.richDisplayHost, "pointerdown", onRichDisplayPointerDown, true);
     bind(refs.richDisplayHost, "pointerup", onRichDisplayPointerUp, true);
+    bind(refs.richDisplayHost, "contextmenu", onRichDisplayContextMenu);
     bind(refs.richDisplayHost, "dblclick", onRichDisplayDoubleClick);
     bind(refs.richDisplayHost, "click", onRichDisplayClick);
     bind(refs.codeBlockDisplayHost, "pointermove", onCodeBlockDisplayPointerMove);
@@ -12197,6 +19005,7 @@ function syncRichToolbarEnhancements(toolbar) {
     bind(refs.codeBlockDisplayHost, "pointerup", onCodeBlockDisplayPointerUp, true);
     bind(refs.codeBlockDisplayHost, "dblclick", onCodeBlockDisplayDoubleClick);
     bind(refs.codeBlockDisplayHost, "click", onCodeBlockDisplayClick);
+    bind(refs.codeBlockDisplayHost, "contextmenu", onCodeBlockDisplayContextMenu);
   }
 
   function mount(hostElement) {
@@ -12221,7 +19030,7 @@ function syncRichToolbarEnhancements(toolbar) {
     markHistoryBaseline(state.history, takeHistorySnapshot(state));
     resize();
     store.emit();
-    scheduleRender();
+    scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: true, fullOverlayRescan: true });
     void initBoardFileState();
     void resolveFileCardSources();
     window.dispatchEvent(new CustomEvent("canvas2d-engine-ready"));
@@ -12229,6 +19038,20 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function unmount() {
+    if (typeof cancelPendingHydrationSync === "function") {
+      cancelPendingHydrationSync();
+      cancelPendingHydrationSync = null;
+    }
+    pendingHydrationSyncItemIds.clear();
+    pendingHydrationSyncSceneChange = false;
+    pendingHydrationSyncReason = "";
+    if (typeof cancelDeferredStoreEmit === "function") {
+      cancelDeferredStoreEmit();
+    }
+    cancelDeferredStoreEmit = null;
+    deferredStoreEmitHandle = 0;
+    deferredStoreEmitPending = false;
+    store.flushPersist?.();
     cleanupFns.splice(0).forEach((cleanup) => {
       try {
         cleanup();
@@ -12236,6 +19059,12 @@ function syncRichToolbarEnhancements(toolbar) {
         // Ignore teardown failures.
       }
     });
+    if (deferredBlankEditExitFrame) {
+      cancelAnimationFrame(deferredBlankEditExitFrame);
+      deferredBlankEditExitFrame = 0;
+    }
+    deferredBlankEditExit = null;
+    clearBlockedCanvasPointerDown();
     richTextSession.destroy();
     codeBlockEditor.clear();
     cancelTextEdit();
@@ -12246,50 +19075,64 @@ function syncRichToolbarEnhancements(toolbar) {
     finishImageEdit();
     clearAlignmentSnap("unmount");
     stopAutosaveTimer();
+    renderScheduler?.dispose?.();
+    renderScheduler = null;
+    fileCardIdHydrationQueue.clear();
+    fileCardSourceHydrationQueue.clear();
+    urlMetaHydrationQueue.clear();
+    store.dispose?.();
     mounted = false;
     refs.ctx = null;
     return api;
   }
 
   function undo() {
-    const snapshot = undoHistory(state.history, takeHistorySnapshot(state));
-    if (!snapshot) {
+    const entry = undoHistory(state.history, takeHistorySnapshot(state));
+    if (!entry) {
       return false;
     }
-    applyHistorySnapshot(snapshot);
+    if (entry.kind === "patch") {
+      applyHistoryPatchEntry(entry.entry, "before");
+    } else {
+      applyHistorySnapshot(entry.snapshot);
+    }
     setStatus("已撤销");
     return true;
   }
 
   function redo() {
-    const snapshot = redoHistory(state.history, takeHistorySnapshot(state));
-    if (!snapshot) {
+    const entry = redoHistory(state.history, takeHistorySnapshot(state));
+    if (!entry) {
       return false;
     }
-    applyHistorySnapshot(snapshot);
+    if (entry.kind === "patch") {
+      applyHistoryPatchEntry(entry.entry, "after");
+    } else {
+      applyHistorySnapshot(entry.snapshot);
+    }
     setStatus("已重做");
     return true;
   }
 
   function zoomIn() {
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * 1.12, getCenterScenePoint());
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-in" });
   }
 
   function zoomOut() {
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale / 1.12, getCenterScenePoint());
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-out" });
   }
 
   function zoomToFit() {
     state.board.view = getZoomToFitView(state.board.items, getCanvasRect());
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-to-fit" });
     setStatus("已回到内容");
   }
 
   function resetView() {
     state.board.view = createView(DEFAULT_VIEW);
-    syncBoard({ persist: true, emit: true });
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "reset-view" });
     setStatus("已重置视图");
   }
 
@@ -12318,12 +19161,12 @@ function syncRichToolbarEnhancements(toolbar) {
         offsetY: startView.offsetY + (targetView.offsetY - startView.offsetY) * ease,
       });
       state.board.view = view;
-      syncBoard({ persist: false, emit: true });
+      syncBoard({ persist: false, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-animate" });
       if (progress < 1) {
         focusAnimationFrame = requestAnimationFrame(step);
       } else {
         focusAnimationFrame = null;
-        syncBoard({ persist: true, emit: true });
+        syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-animate-end" });
       }
     };
 
@@ -12368,7 +19211,7 @@ function syncRichToolbarEnhancements(toolbar) {
       animateViewTo(nextView, options);
     } else {
       state.board.view = nextView;
-      syncBoard({ persist: true, emit: true });
+      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-on-bounds" });
     }
     return true;
   }
@@ -12400,7 +19243,7 @@ function syncRichToolbarEnhancements(toolbar) {
         locked: !item.locked,
       };
     });
-    commitHistory(before, "切换锁定");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "切换锁定", "item-lock-batch");
     setStatus("已切换锁定状态");
     return true;
   }
@@ -12415,7 +19258,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     state.board.items = result.items;
-    commitHistory(before, "标记文件卡");
+    commitItemsPatchHistory(before, state.board.selectedIds.slice(), "标记文件卡", "file-card-mark-batch");
     setStatus("已标记文件卡");
     return true;
   }
@@ -12435,7 +19278,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       return moveElement(item, dx, dy);
     });
-    commitHistory(before, "微移元素");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "微移元素", "item-transform-batch");
     return true;
   }
 
@@ -12444,7 +19287,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (selectedIds.length < 2) {
       return false;
     }
-    const selectedItems = state.board.items.filter((item) => selectedIds.includes(item.id));
+    const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
     const boundsList = selectedItems.map((item) => ({ item, bounds: getElementBounds(item) }));
     if (!boundsList.length) {
       return false;
@@ -12486,7 +19329,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       return moveElement(item, dx, dy);
     });
-    commitHistory(before, "对齐元素");
+    commitItemsPatchHistory(before, selectedIds, "对齐元素", "item-transform-batch");
     setStatus("已对齐选中元素");
     return true;
   }
@@ -12496,7 +19339,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (selectedIds.length < 3) {
       return false;
     }
-    const selectedItems = state.board.items.filter((item) => selectedIds.includes(item.id));
+    const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
     const boundsList = selectedItems
       .map((item) => ({ item, bounds: getElementBounds(item) }))
       .filter((entry) => !isLockedItem(entry.item));
@@ -12534,7 +19377,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       return moveElement(item, dx, dy);
     });
-    commitHistory(before, "均匀分布");
+    commitItemsPatchHistory(before, selectedIds, "均匀分布", "item-transform-batch");
     setStatus("已均匀分布选中元素");
     return true;
   }
@@ -12552,7 +19395,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       return { ...item, groupId };
     });
-    commitHistory(before, "组合元素");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "组合元素", "item-group-batch");
     setStatus("已组合选中元素");
     return true;
   }
@@ -12576,7 +19419,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "取消组合");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "取消组合", "item-group-batch");
     setStatus("已取消组合");
     return true;
   }
@@ -12597,7 +19440,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
     });
     state.board.items = back.concat(front);
-    commitHistory(before, "置顶元素");
+    commitOrderPatchHistory(before, Array.from(selected), "置顶元素", "item-reorder");
     setStatus("已置顶选中元素");
     return true;
   }
@@ -12618,7 +19461,7 @@ function syncRichToolbarEnhancements(toolbar) {
       }
     });
     state.board.items = back.concat(front);
-    commitHistory(before, "置底元素");
+    commitOrderPatchHistory(before, Array.from(selected), "置底元素", "item-reorder");
     setStatus("已置底选中元素");
     return true;
   }
@@ -12654,7 +19497,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     state.board.items = items;
-    commitHistory(before, direction === "down" ? "下移一层" : "上移一层");
+    commitOrderPatchHistory(before, Array.from(selected), direction === "down" ? "下移一层" : "上移一层", "item-reorder");
     setStatus(direction === "down" ? "已下移一层" : "已上移一层");
     return true;
   }
@@ -12687,7 +19530,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "反向箭头");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "反向箭头", "shape-edit-batch");
     setStatus("已反向箭头");
     return true;
   }
@@ -12714,7 +19557,7 @@ function syncRichToolbarEnhancements(toolbar) {
         lineDash: nextDash,
       };
     });
-    commitHistory(before, "切换虚线");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "切换虚线", "shape-style-batch");
     setStatus(nextDash ? "已切换为虚线" : "已切换为实线");
     return true;
   }
@@ -12742,7 +19585,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "设置线条颜色");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "设置线条颜色", "shape-style-batch");
     setStatus("已更新线条颜色");
     return true;
   }
@@ -12772,7 +19615,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "设置边框颜色");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "设置边框颜色", "shape-style-batch");
     setStatus("已更新边框颜色");
     return true;
   }
@@ -12799,7 +19642,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!changed) {
       return false;
     }
-    commitHistory(before, "切换填充");
+    commitItemsPatchHistory(before, Array.from(selectedIds), "切换填充", "shape-style-batch");
     setStatus("已切换填充");
     return true;
   }
@@ -12808,7 +19651,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!state.board.selectedIds.length) {
       return false;
     }
-    const selected = state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+    const selected = sceneRegistry.getSelectedItems();
     if (!selected.length) {
       return false;
     }
@@ -12909,6 +19752,7 @@ function syncRichToolbarEnhancements(toolbar) {
     saveBoardAs,
     renameBoard,
     revealBoardInFolder,
+    openExternalUrl,
     pickCanvasBoardSavePath,
     revealCanvasImageSavePath,
     pickCanvasImageSavePath,
@@ -12936,7 +19780,10 @@ function syncRichToolbarEnhancements(toolbar) {
       return structuredImportRuntime.buildSearchResults(state.board.items, query, limit);
     },
     buildStructuredExportSnapshot(options = {}) {
-      return structuredImportRuntime.buildExportSnapshot(state.board, options);
+      return structuredExportRuntime.buildSnapshot(state.board, options);
+    },
+    getStructuredExportRuntime() {
+      return structuredExportRuntime;
     },
     serializeStructuredBoard() {
       return structuredImportRuntime.serializeBoard(state.board, {
@@ -12970,9 +19817,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return structuredImportRuntime.killSwitch.updateConfig(patch);
     },
     buildStructuredFlowbackPayload(items = null) {
-      const targets = Array.isArray(items)
-        ? items
-        : state.board.items.filter((item) => state.board.selectedIds.includes(item.id));
+      const targets = Array.isArray(items) ? items : getSelectedItemsFast();
       return structuredImportRuntime.buildFlowbackPayload(targets);
     },
   };

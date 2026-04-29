@@ -1,11 +1,13 @@
-import { normalizeBoard } from "../../elements/index.js";
-import { applyRenderLayoutWriteback } from "./renderLayoutWriteback.js";
+import { normalizeBoard, normalizeElement } from "../../elements/index.js";
+import { buildExportReadyBoardItems } from "../../export/buildExportReadyBoardItems.js";
+import { applyRenderLayoutWriteback, applyRenderLayoutWritebackAsync } from "./renderLayoutWriteback.js";
 
 export function createRenderPlanCommitLayer(options = {}) {
   const applyLayout = typeof options.applyLayout === "function" ? options.applyLayout : applyRenderLayoutWriteback;
+  const applyLayoutAsync =
+    typeof options.applyLayoutAsync === "function" ? options.applyLayoutAsync : applyRenderLayoutWritebackAsync;
 
   function commit({ board, renderResult, bridgeResult, anchorPoint } = {}) {
-    const normalizedBoard = normalizeBoard(board || {});
     const plan = extractPlan(renderResult, bridgeResult);
     if (!plan) {
       return {
@@ -14,37 +16,76 @@ export function createRenderPlanCommitLayer(options = {}) {
           code: "missing-render-plan",
           message: "Render plan commit layer requires a render result or bridge result.",
         },
-        board: normalizedBoard,
+        board: normalizeBoard(board || {}),
       };
     }
 
     const diagnostics = collectStructuredOperationDiagnostics(plan);
     const layoutResult = applyLayout(plan, { anchorPoint });
-    const nextBoard = normalizeBoard({
-      ...normalizedBoard,
-      items: normalizedBoard.items.concat(layoutResult.items),
-      selectedIds: layoutResult.items.map((item) => item.id),
-    });
+    return buildCommitResult(board, plan, diagnostics, layoutResult);
+  }
 
-    return {
-      ok: true,
-      kind: "commit-result",
-      planId: String(plan.planId || ""),
-      board: nextBoard,
-      items: layoutResult.items,
-      commits: layoutResult.commits,
-      diagnostics,
-      stats: {
-        committedCount: layoutResult.items.length,
-        selectedCount: nextBoard.selectedIds.length,
-        structuredWarningCount: diagnostics.warnings.length,
-      },
-    };
+  async function commitAsync({ board, renderResult, bridgeResult, anchorPoint, yieldControl } = {}) {
+    const plan = extractPlan(renderResult, bridgeResult);
+    if (!plan) {
+      return {
+        ok: false,
+        error: {
+          code: "missing-render-plan",
+          message: "Render plan commit layer requires a render result or bridge result.",
+        },
+        board: normalizeBoard(board || {}),
+      };
+    }
+
+    const diagnostics = collectStructuredOperationDiagnostics(plan);
+    const layoutResult = await applyLayoutAsync(plan, {
+      anchorPoint,
+      yieldControl,
+    });
+    return buildCommitResult(board, plan, diagnostics, layoutResult);
   }
 
   return {
     commit,
+    commitAsync,
   };
+}
+
+function buildCommitResult(board, plan, diagnostics, layoutResult) {
+  const normalizedBoard = normalizeBoard({
+    ...(board && typeof board === "object" ? board : {}),
+    items: [],
+  });
+  const existingItems = Array.isArray(board?.items) ? board.items : [];
+  const committedItems = normalizeCommittedItems(layoutResult?.items || []);
+  const nextBoard = {
+    ...normalizedBoard,
+    items: existingItems.concat(committedItems),
+    selectedIds: committedItems.map((item) => item.id),
+  };
+
+  return {
+    ok: true,
+    kind: "commit-result",
+    planId: String(plan.planId || ""),
+    board: nextBoard,
+    items: committedItems,
+    commits: layoutResult?.commits || [],
+    diagnostics,
+    stats: {
+      committedCount: committedItems.length,
+      selectedCount: nextBoard.selectedIds.length,
+      structuredWarningCount: diagnostics.warnings.length,
+    },
+  };
+}
+
+function normalizeCommittedItems(items = []) {
+  if (!Array.isArray(items) || !items.length) {
+    return [];
+  }
+  return buildExportReadyBoardItems(items.map((item) => normalizeElement(item)));
 }
 
 function collectStructuredOperationDiagnostics(plan = {}) {

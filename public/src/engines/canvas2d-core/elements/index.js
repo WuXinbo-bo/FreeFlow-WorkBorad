@@ -13,7 +13,7 @@ import {
 } from "./text.js";
 import { normalizeCodeBlockElement, CODE_BLOCK_MIN_HEIGHT, CODE_BLOCK_MIN_WIDTH } from "./codeBlock.js";
 import { normalizeTableElement, TABLE_MIN_HEIGHT, TABLE_MIN_WIDTH } from "./table.js";
-import { normalizeMathElement, MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
+import { MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
 import { buildTextElementFromMathElement } from "./mathText.js";
 
 function normalizeBoardBackgroundPattern(value = "") {

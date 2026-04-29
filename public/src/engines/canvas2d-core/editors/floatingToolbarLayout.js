@@ -2,18 +2,6 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function readOverlayScale(surface) {
-  if (!(surface instanceof HTMLElement)) {
-    return 1;
-  }
-  const uiRoot = surface.querySelector(".canvas2d-engine-ui");
-  if (!(uiRoot instanceof HTMLElement)) {
-    return 1;
-  }
-  const raw = Number.parseFloat(window.getComputedStyle(uiRoot).getPropertyValue("--canvas2d-overlay-scale"));
-  return Number.isFinite(raw) && raw > 0 ? raw : 1;
-}
-
 function getZoomDockMetrics(surface, surfaceRect) {
   if (!(surface instanceof HTMLElement)) {
     return null;
@@ -42,67 +30,73 @@ export function syncFloatingToolbarLayout(toolbar, surface, options = {}) {
   const {
     margin = 8,
     gap = 12,
-    minScale = 0.72,
-    hardMinScale = 0.56,
-    maxScale = 1,
     preferAboveZoom = true,
+    anchor = "center",
   } = options;
 
   const surfaceRect = surface.getBoundingClientRect();
   const surfaceWidth = surfaceRect.width || surface.clientWidth || 0;
   const surfaceHeight = surfaceRect.height || surface.clientHeight || 0;
-  const baseWidth = toolbar.offsetWidth || toolbar.scrollWidth || 0;
-  const baseHeight = toolbar.offsetHeight || toolbar.scrollHeight || 0;
-
-  if (!surfaceWidth || !surfaceHeight || !baseWidth || !baseHeight) {
+  if (!surfaceWidth || !surfaceHeight) {
     return null;
   }
 
-  const overlayScale = clamp(readOverlayScale(surface), minScale, maxScale);
   const zoomDock = getZoomDockMetrics(surface, surfaceRect);
   const availableWidthLeftOfZoom = zoomDock ? Math.max(0, zoomDock.left - margin - gap) : surfaceWidth - margin * 2;
-  let scale = overlayScale;
+  const maxToolbarWidth =
+    anchor === "bottom-left"
+      ? clamp(availableWidthLeftOfZoom || surfaceWidth - margin * 2, 260, Math.max(260, surfaceWidth - margin * 2))
+      : surfaceWidth - margin * 2;
 
-  if (availableWidthLeftOfZoom > 0) {
-    scale = Math.min(scale, availableWidthLeftOfZoom / baseWidth);
+  toolbar.style.transformOrigin = "top left";
+  toolbar.style.transform = "none";
+  toolbar.style.maxWidth = `${Math.round(maxToolbarWidth)}px`;
+  toolbar.style.setProperty("--canvas2d-floating-toolbar-max-width", `${Math.round(maxToolbarWidth)}px`);
+  toolbar.style.setProperty("--canvas2d-floating-toolbar-scale", "1");
+  toolbar.classList.remove("is-wrapped");
+  const shouldWrap = toolbar.scrollWidth > maxToolbarWidth + 1;
+  toolbar.classList.toggle("is-wrapped", shouldWrap);
+
+  const baseWidth = toolbar.offsetWidth || toolbar.scrollWidth || 0;
+  const baseHeight = toolbar.offsetHeight || toolbar.scrollHeight || 0;
+
+  if (!baseWidth || !baseHeight) {
+    return null;
   }
 
-  scale = clamp(scale, hardMinScale, maxScale);
-
-  let scaledWidth = baseWidth * scale;
-  let scaledHeight = baseHeight * scale;
-
-  let left = clamp((surfaceWidth - scaledWidth) / 2, margin, Math.max(margin, surfaceWidth - scaledWidth - margin));
-  let top = Math.max(margin, Math.round(surfaceHeight - scaledHeight - margin));
+  let left =
+    anchor === "bottom-left"
+      ? margin
+      : clamp((surfaceWidth - baseWidth) / 2, margin, Math.max(margin, surfaceWidth - baseWidth - margin));
+  let top = Math.max(margin, Math.round(surfaceHeight - baseHeight - margin));
 
   if (zoomDock) {
     const safeRight = zoomDock.left - gap;
-    const canFitLeftOfZoom = scaledWidth <= Math.max(0, safeRight - margin);
-    if (canFitLeftOfZoom) {
-      left = clamp(left, margin, Math.max(margin, safeRight - scaledWidth));
+    const canFitLeftOfZoom = baseWidth <= Math.max(0, safeRight - margin);
+    if (anchor !== "bottom-left" && canFitLeftOfZoom) {
+      left = clamp(left, margin, Math.max(margin, safeRight - baseWidth));
     }
     if (preferAboveZoom) {
-      const aboveTop = zoomDock.top - scaledHeight - gap;
+      const aboveTop = zoomDock.top - baseHeight - gap;
       if (aboveTop >= margin) {
         top = Math.min(top, Math.round(aboveTop));
       }
     }
-    if (left + scaledWidth > safeRight) {
-      left = clamp(safeRight - scaledWidth, margin, Math.max(margin, surfaceWidth - scaledWidth - margin));
+    if (left + baseWidth > safeRight) {
+      left = anchor === "bottom-left"
+        ? margin
+        : clamp(safeRight - baseWidth, margin, Math.max(margin, surfaceWidth - baseWidth - margin));
     }
   }
 
-  toolbar.style.transformOrigin = "top left";
-  toolbar.style.transform = `scale(${scale})`;
   toolbar.style.left = `${Math.round(left)}px`;
   toolbar.style.top = `${Math.round(top)}px`;
-  toolbar.style.setProperty("--canvas2d-floating-toolbar-scale", String(scale));
 
   return {
-    scale,
+    scale: 1,
     left,
     top,
-    width: scaledWidth,
-    height: scaledHeight,
+    width: baseWidth,
+    height: baseHeight,
   };
 }

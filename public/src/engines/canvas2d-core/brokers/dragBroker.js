@@ -1,6 +1,10 @@
 import { getFileName, normalizeRichHtmlInlineFontSizes } from "../utils.js";
 import { normalizeTextElement } from "../elements/text.js";
 
+const PASTED_TEXT_INITIAL_WIDTH = 760;
+const PASTED_TEXT_MIN_WIDTH = 520;
+const PASTED_TEXT_MAX_WIDTH = 860;
+
 function isImagePath(path = "") {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || "").trim());
 }
@@ -24,6 +28,9 @@ export function createDragBroker({
   isImageFile,
   getFilePath,
   getFileId,
+  hasMarkdownMathText,
+  htmlContainsRenderableMath,
+  convertPlainTextToSemanticHtml,
 } = {}) {
   async function createElementsFromFiles(files = [], anchorPoint) {
     const list = Array.from(files || []);
@@ -67,16 +74,13 @@ export function createDragBroker({
     }
     const point = normalizeAnchorPoint(anchorPoint);
     const item = createTextElement(point, clean);
-    const isLongText = clean.length >= 48 || clean.includes("\n");
     return [
-      isLongText
-        ? normalizeTextElement({
-            ...item,
-            textBoxLayoutMode: "auto-height",
-            textResizeMode: "wrap",
-            width: Math.max(240, Math.min(520, 320)),
-          })
-        : item,
+      normalizeTextElement({
+        ...item,
+        textBoxLayoutMode: "auto-height",
+        textResizeMode: "wrap",
+        width: Math.max(PASTED_TEXT_MIN_WIDTH, Math.min(PASTED_TEXT_MAX_WIDTH, PASTED_TEXT_INITIAL_WIDTH)),
+      }),
     ];
   }
 
@@ -91,16 +95,13 @@ export function createDragBroker({
     }
     const point = normalizeAnchorPoint(anchorPoint);
     const item = createTextElement(point, plainText, cleanHtml);
-    const isLongText = plainText.length >= 48 || plainText.includes("\n");
     return [
-      isLongText
-        ? normalizeTextElement({
-            ...item,
-            textBoxLayoutMode: "auto-height",
-            textResizeMode: "wrap",
-            width: Math.max(240, Math.min(520, 320)),
-          })
-        : item,
+      normalizeTextElement({
+        ...item,
+        textBoxLayoutMode: "auto-height",
+        textResizeMode: "wrap",
+        width: Math.max(PASTED_TEXT_MIN_WIDTH, Math.min(PASTED_TEXT_MAX_WIDTH, PASTED_TEXT_INITIAL_WIDTH)),
+      }),
     ];
   }
 
@@ -157,6 +158,29 @@ export function createDragBroker({
     }
 
     const html = dataTransfer?.getData?.("text/html") || "";
+    const text =
+      dataTransfer?.getData?.("text/plain") ||
+      dataTransfer?.getData?.("text") ||
+      dataTransfer?.getData?.("text/uri-list") ||
+      "";
+    const shouldPreferSemanticPlainText =
+      Boolean(html && text) &&
+      typeof hasMarkdownMathText === "function" &&
+      hasMarkdownMathText(text) &&
+      !(typeof htmlContainsRenderableMath === "function" && htmlContainsRenderableMath(html));
+    if (shouldPreferSemanticPlainText && typeof convertPlainTextToSemanticHtml === "function") {
+      const semanticHtml = await convertPlainTextToSemanticHtml(text);
+      if (semanticHtml && String(semanticHtml).trim()) {
+        const items = createElementsFromHtml(semanticHtml, anchorPoint);
+        if (items.length) {
+          return {
+            handled: true,
+            items,
+          };
+        }
+      }
+    }
+
     if (html && html.trim()) {
       const items = createElementsFromHtml(html, anchorPoint);
       if (items.length) {
@@ -167,12 +191,19 @@ export function createDragBroker({
       }
     }
 
-    const text =
-      dataTransfer?.getData?.("text/plain") ||
-      dataTransfer?.getData?.("text") ||
-      dataTransfer?.getData?.("text/uri-list") ||
-      "";
     if (text && text.trim()) {
+      if (typeof convertPlainTextToSemanticHtml === "function") {
+        const semanticHtml = await convertPlainTextToSemanticHtml(text);
+        if (semanticHtml && String(semanticHtml).trim()) {
+          const items = createElementsFromHtml(semanticHtml, anchorPoint);
+          if (items.length) {
+            return {
+              handled: true,
+              items,
+            };
+          }
+        }
+      }
       return {
         handled: true,
         items: createElementsFromText(text, anchorPoint),

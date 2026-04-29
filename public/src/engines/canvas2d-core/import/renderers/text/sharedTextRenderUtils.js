@@ -13,6 +13,9 @@ const IMPORTED_TEXT_WIDTH_SCALE = 2;
 const BODY_LINE_HEIGHT_RATIO = 1.5;
 const PARAGRAPH_SPACING_EM = 0.6;
 const IMPORTED_TEXT_VERTICAL_PADDING_PX = 10;
+export const IMPORTED_TEXT_WRAP_TARGET_WIDTH = 760;
+export const IMPORTED_TEXT_WRAP_MIN_WIDTH = 560;
+export const IMPORTED_TEXT_WRAP_MAX_WIDTH = 860;
 
 export function inferHeadingFontSize(level) {
   return HEADING_FONT_SIZE_MAP[Number(level) || 1] || 18;
@@ -67,7 +70,10 @@ export function resolveImportedTextBoxLayout(text, fontSize, options = {}) {
     };
   }
 
-  const width = Math.max(480, Math.min(1040, Math.round(fontSize * 16 * IMPORTED_TEXT_WIDTH_SCALE)));
+  const width = Math.max(
+    IMPORTED_TEXT_WRAP_MIN_WIDTH,
+    Math.min(IMPORTED_TEXT_WRAP_MAX_WIDTH, Math.round(IMPORTED_TEXT_WRAP_TARGET_WIDTH))
+  );
   const estimatedLineCount = Math.max(
     lines.length,
     Math.ceil(longestLine / Math.max(10, Math.floor(width / Math.max(fontSize * 0.62, 1))))

@@ -40,6 +40,113 @@ function escapeHtml(value = "") {
     .replace(/"/g, "&quot;");
 }
 
+function normalizeMathElementType(type = "") {
+  const normalized = String(type || "").trim().toLowerCase();
+  return normalized === "block" ? "block" : "inline";
+}
+
+function stripMathEditingDelimiters(value = "", type = "inline") {
+  const source = String(value || "").replace(/\u00a0/g, " ").trim();
+  if (!source) {
+    return "";
+  }
+  if (normalizeMathElementType(type) === "block") {
+    const fenced = source.match(/^\$\$\s*[\r\n]?([\s\S]*?)[\r\n]?\s*\$\$$/);
+    if (fenced) {
+      return String(fenced[1] || "").trim();
+    }
+    return source.replace(/^\$\$+/, "").replace(/\$\$+$/, "").trim();
+  }
+  const inlineWrapped = source.match(/^\$(?!\$)([\s\S]*?)(?<!\$)\$$/);
+  if (inlineWrapped) {
+    return String(inlineWrapped[1] || "").trim();
+  }
+  return source.replace(/^\$/, "").replace(/\$$/, "").trim();
+}
+
+function formatMathForEditing(value = "", type = "inline") {
+  const source = stripMathEditingDelimiters(value, type);
+  if (!source) {
+    return "";
+  }
+  if (normalizeMathElementType(type) === "block") {
+    return `$$\n${source}\n$$`;
+  }
+  return `$${source}$`;
+}
+
+function getMathEditingAffixLengths(value = "", type = "inline") {
+  const raw = String(value || "");
+  if (normalizeMathElementType(type) === "block") {
+    if (raw.startsWith("$$\n") && raw.endsWith("\n$$")) {
+      return { prefix: 3, suffix: 3 };
+    }
+    if (raw.startsWith("$$") && raw.endsWith("$$")) {
+      return { prefix: 2, suffix: 2 };
+    }
+    return { prefix: 0, suffix: 0 };
+  }
+  if (raw.startsWith("$") && raw.endsWith("$") && raw.length >= 2) {
+    return { prefix: 1, suffix: 1 };
+  }
+  return { prefix: 0, suffix: 0 };
+}
+
+function normalizeLinkInput(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (/^freeflow:\/\/canvas\/item\//i.test(raw)) {
+    return raw;
+  }
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      return new URL(raw).toString();
+    } catch (_fileError) {
+      return "";
+    }
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+    const normalizedPath = raw.replace(/\\/g, "/");
+    return encodeURI(`file:///${normalizedPath}`);
+  }
+  if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
+    const normalizedPath = raw.replace(/\\/g, "/");
+    return encodeURI(`file:${normalizedPath}`);
+  }
+  if (/^\/[^/]/.test(raw)) {
+    return encodeURI(`file://${raw}`);
+  }
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:", "mailto:", "tel:", "file:", "freeflow:"].includes(parsed.protocol)) {
+      return "";
+    }
+    return parsed.toString();
+  } catch (_error) {
+    if (/^www\./i.test(raw)) {
+      try {
+        return new URL(`https://${raw}`).toString();
+      } catch (_fallbackError) {
+        return "";
+      }
+    }
+    if (/^[^\s]+\.[^\s]+/.test(raw) && !raw.includes("://")) {
+      try {
+        return new URL(`https://${raw}`).toString();
+      } catch (_fallbackError) {
+        return "";
+      }
+    }
+    return "";
+  }
+}
+
+function isCanvasInternalLinkHref(value = "") {
+  return /^freeflow:\/\/canvas\/item\//i.test(String(value || "").trim());
+}
+
 function serializeCodeBlockPlainTextToHtml(text = "") {
   return escapeHtml(String(text || "")).replace(/\n/g, "<br>");
 }
@@ -52,6 +159,7 @@ export function createRichTextAdapter(
     onInput,
     onBlur,
     onSelectionChange: onSelectionChangeExternal,
+    onRequestExternalLink,
   } = {}
 ) {
   const element = ensureEditableHost(host);
@@ -172,6 +280,10 @@ export function createRichTextAdapter(
     return node.tagName === "STRONG" || node.tagName === "B";
   }
 
+  function isHeadingElement(node) {
+    return node instanceof HTMLElement && /^H[1-6]$/.test(node.tagName);
+  }
+
   function isItalicElement(node) {
     if (!(node instanceof HTMLElement)) {
       return false;
@@ -208,6 +320,81 @@ export function createRichTextAdapter(
     return node.tagName === "CODE" && node.parentElement?.tagName !== "PRE";
   }
 
+  function isLinkElement(node) {
+    return node instanceof HTMLAnchorElement && node.tagName === "A";
+  }
+
+  function applyAnchorAttrs(anchor, href = "") {
+    if (!(anchor instanceof HTMLAnchorElement)) {
+      return false;
+    }
+    const normalizedHref = normalizeLinkInput(href);
+    if (!normalizedHref) {
+      return false;
+    }
+    anchor.setAttribute("href", normalizedHref);
+    if (isCanvasInternalLinkHref(normalizedHref)) {
+      const targetId = decodeURIComponent(String(normalizedHref).replace(/^freeflow:\/\/canvas\/item\//i, ""));
+      anchor.removeAttribute("target");
+      anchor.removeAttribute("rel");
+      anchor.setAttribute("data-link-kind", "canvas-link");
+      anchor.setAttribute("data-link-type", "canvas-item");
+      if (targetId) {
+        anchor.setAttribute("data-link-target-id", targetId);
+      } else {
+        anchor.removeAttribute("data-link-target-id");
+      }
+      return true;
+    }
+    anchor.removeAttribute("data-link-kind");
+    anchor.setAttribute("data-link-type", "external");
+    anchor.removeAttribute("data-link-target-id");
+    anchor.setAttribute("target", "_blank");
+    anchor.setAttribute("rel", "noopener noreferrer");
+    return true;
+  }
+
+  function getLinkNodesWithinRange(range) {
+    if (!(range instanceof Range)) {
+      return [];
+    }
+    const links = new Set();
+    const startLink = findAncestor(range.startContainer, isLinkElement);
+    const endLink = findAncestor(range.endContainer, isLinkElement);
+    if (startLink instanceof HTMLAnchorElement) {
+      links.add(startLink);
+    }
+    if (endLink instanceof HTMLAnchorElement) {
+      links.add(endLink);
+    }
+    const textNodes = getSelectedTextNodes(range);
+    textNodes.forEach((node) => {
+      const linkNode = findAncestor(node, isLinkElement);
+      if (linkNode instanceof HTMLAnchorElement) {
+        links.add(linkNode);
+      }
+    });
+    return Array.from(links);
+  }
+
+  function unlinkSelection() {
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return false;
+    }
+    const links = getLinkNodesWithinRange(range);
+    if (!links.length) {
+      return false;
+    }
+    links.sort((left, right) => (left.contains(right) ? -1 : right.contains(left) ? 1 : 0));
+    links.forEach((linkNode) => unwrapNode(linkNode));
+    const refreshedRange = getSelectionRange({ includeStored: false });
+    if (refreshedRange) {
+      setSelectionRange(refreshedRange);
+    }
+    return true;
+  }
+
   function isCodeBlockElement(node) {
     if (!(node instanceof HTMLElement)) {
       return false;
@@ -238,6 +425,86 @@ export function createRichTextAdapter(
     return "";
   }
 
+  function getMathElementSource(node) {
+    if (!(node instanceof HTMLElement)) {
+      return "";
+    }
+    return stripMathEditingDelimiters(getNodeText(node), getMathElementType(node));
+  }
+
+  function setMathElementSource(node, value = "") {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    const type = getMathElementType(node);
+    const source = stripMathEditingDelimiters(value, type);
+    if (!source) {
+      return false;
+    }
+    node.textContent = formatMathForEditing(source, type);
+    return true;
+  }
+
+  function getMathSelectionOffsets(node, range) {
+    if (!(node instanceof HTMLElement) || !(range instanceof Range)) {
+      return null;
+    }
+    const nodeRange = document.createRange();
+    nodeRange.selectNodeContents(node);
+    const startRange = nodeRange.cloneRange();
+    startRange.setEnd(range.startContainer, range.startOffset);
+    const endRange = nodeRange.cloneRange();
+    endRange.setEnd(range.endContainer, range.endOffset);
+    return {
+      start: Math.max(0, startRange.toString().length),
+      end: Math.max(0, endRange.toString().length),
+    };
+  }
+
+  function collapseInsideMathElementAtSourceOffset(node, sourceOffset = 0) {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    const textNode = node.firstChild instanceof Text ? node.firstChild : null;
+    if (!(textNode instanceof Text)) {
+      return collapseInsideMathElement(node);
+    }
+    const raw = textNode.data || "";
+    const affixes = getMathEditingAffixLengths(raw, getMathElementType(node));
+    const maxSourceLength = Math.max(0, raw.length - affixes.prefix - affixes.suffix);
+    const safeSourceOffset = Math.max(0, Math.min(maxSourceLength, Number(sourceOffset) || 0));
+    return setCollapsedSelection(textNode, Math.max(0, Math.min(raw.length, affixes.prefix + safeSourceOffset)));
+  }
+
+  function insertIntoCurrentMathElement(value = "") {
+    const currentMathElement = getCurrentMathElement();
+    const range = getSelectionRange();
+    if (!(currentMathElement instanceof HTMLElement) || !(range instanceof Range)) {
+      return false;
+    }
+    const type = getMathElementType(currentMathElement);
+    const insertion = stripMathEditingDelimiters(value, type);
+    if (!insertion) {
+      return false;
+    }
+    const source = getMathElementSource(currentMathElement);
+    const raw = getNodeText(currentMathElement);
+    const affixes = getMathEditingAffixLengths(raw, type);
+    const rawOffsets = getMathSelectionOffsets(currentMathElement, range);
+    if (!rawOffsets) {
+      return false;
+    }
+    const maxSourceLength = Math.max(0, source.length);
+    const start = Math.max(0, Math.min(maxSourceLength, rawOffsets.start - affixes.prefix));
+    const end = Math.max(start, Math.min(maxSourceLength, rawOffsets.end - affixes.prefix));
+    const nextSource = `${source.slice(0, start)}${insertion}${source.slice(end)}`;
+    if (!setMathElementSource(currentMathElement, nextSource)) {
+      return false;
+    }
+    collapseInsideMathElementAtSourceOffset(currentMathElement, start + insertion.length);
+    return true;
+  }
+
   function isRootCodeBlockMode() {
     return element.getAttribute("data-ff-code-block-root") === "true";
   }
@@ -263,7 +530,15 @@ export function createRichTextAdapter(
   }
 
   function isTaskListElement(node) {
-    return node instanceof HTMLElement && node.tagName === "UL" && node.getAttribute("data-ff-task-list") === "true";
+    return (
+      node instanceof HTMLElement &&
+      (node.tagName === "UL" || node.tagName === "OL") &&
+      node.getAttribute("data-ff-task-list") === "true"
+    );
+  }
+
+  function isTaskListItemElement(node) {
+    return node instanceof HTMLElement && node.tagName === "LI" && node.getAttribute("data-ff-task-item") === "true";
   }
 
   function isBlockquoteElement(node) {
@@ -325,6 +600,30 @@ export function createRichTextAdapter(
       return "";
     }
     return String(range.toString?.() || "");
+  }
+
+  function isFullySelectedHeadingText(range) {
+    if (!(range instanceof Range) || range.collapsed) {
+      return false;
+    }
+    const heading = getUniformAncestor(range, isHeadingElement) || getClosestWithinSelection("h1, h2, h3, h4, h5, h6");
+    if (!(heading instanceof HTMLElement)) {
+      return false;
+    }
+    const selectedText = getSelectionRangeText(range).trim();
+    const headingText = getNodeText(heading).trim();
+    if (!selectedText || !headingText || selectedText !== headingText) {
+      return false;
+    }
+    try {
+      const headingRange = document.createRange();
+      headingRange.selectNodeContents(heading);
+      const startsInside = headingRange.compareBoundaryPoints(Range.START_TO_START, range) <= 0;
+      const endsInside = headingRange.compareBoundaryPoints(Range.END_TO_END, range) >= 0;
+      return startsInside && endsInside;
+    } catch {
+      return true;
+    }
   }
 
   function setSelectionRange(range) {
@@ -419,6 +718,22 @@ export function createRichTextAdapter(
     return nodes;
   }
 
+  function isSelectionFullyMatched(range, predicate) {
+    if (!(range instanceof Range) || typeof predicate !== "function") {
+      return false;
+    }
+    if (range.collapsed) {
+      return Boolean(getUniformAncestor(range, predicate));
+    }
+    const textNodes = getSelectedTextNodes(range);
+    if (textNodes.length) {
+      return textNodes.every((node) => Boolean(findAncestor(node, predicate)));
+    }
+    const startMatch = findAncestor(range.startContainer, predicate);
+    const endMatch = findAncestor(range.endContainer, predicate);
+    return Boolean(startMatch && endMatch);
+  }
+
   function getComputedFontSize(node) {
     const elementNode = resolveElement(node);
     if (!(elementNode instanceof HTMLElement) || typeof window?.getComputedStyle !== "function") {
@@ -456,6 +771,58 @@ export function createRichTextAdapter(
       }
     }
     return getComputedFontSize(range.startContainer) || getComputedFontSize(range.commonAncestorContainer);
+  }
+
+  function normalizeColorForCompare(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "");
+  }
+
+  function getComputedTextColor(node) {
+    const elementNode = resolveElement(node);
+    if (!(elementNode instanceof HTMLElement) || typeof window?.getComputedStyle !== "function") {
+      return "";
+    }
+    return String(window.getComputedStyle(elementNode).color || "").trim();
+  }
+
+  function getRangeColor(range) {
+    const fallbackColor = getComputedTextColor(element);
+    if (!(range instanceof Range)) {
+      return fallbackColor;
+    }
+    if (range.collapsed) {
+      return getComputedTextColor(range.startContainer) || fallbackColor;
+    }
+    const textNodes = getSelectedTextNodes(range);
+    if (textNodes.length) {
+      let resolvedColor = "";
+      let resolvedColorKey = "";
+      for (const node of textNodes) {
+        const nextColor = getComputedTextColor(node) || fallbackColor;
+        const nextColorKey = normalizeColorForCompare(nextColor);
+        if (!resolvedColorKey) {
+          resolvedColor = nextColor;
+          resolvedColorKey = nextColorKey;
+          continue;
+        }
+        if (nextColorKey !== resolvedColorKey) {
+          return "";
+        }
+      }
+      return resolvedColor || fallbackColor;
+    }
+    const startColor = getComputedTextColor(range.startContainer) || fallbackColor;
+    const endColor = getComputedTextColor(range.endContainer) || fallbackColor;
+    if (!normalizeColorForCompare(startColor)) {
+      return endColor;
+    }
+    if (!normalizeColorForCompare(endColor)) {
+      return startColor;
+    }
+    return normalizeColorForCompare(startColor) === normalizeColorForCompare(endColor) ? startColor : "";
   }
 
   function stripHighlightMarkup(root) {
@@ -558,20 +925,27 @@ export function createRichTextAdapter(
     setSelectionRange(range);
   }
 
-  function ensureSelection({ selectAllWhenCollapsed = true } = {}) {
+  function ensureSelection({ selectAllWhenCollapsed = true, selectAllWhenMissing = true, restoreStoredRange = true } = {}) {
     const selection = document.getSelection?.();
-    if (!selection || selection.rangeCount === 0) {
-      selectAll();
-      return;
+    let range = null;
+    if (selection && selection.rangeCount > 0 && selectionInside()) {
+      range = selection.getRangeAt(0);
+    } else if (restoreStoredRange && lastRange) {
+      range = lastRange.cloneRange();
+      setSelectionRange(range.cloneRange());
     }
-    if (!selectionInside()) {
-      selectAll();
-      return;
+    if (!(range instanceof Range)) {
+      if (selectAllWhenMissing) {
+        selectAll();
+        return true;
+      }
+      return false;
     }
-    const range = selection.getRangeAt(0);
     if (range.collapsed && selectAllWhenCollapsed) {
       selectAll();
+      return true;
     }
+    return true;
   }
 
   function restoreSelection() {
@@ -688,6 +1062,19 @@ export function createRichTextAdapter(
     return getClosestWithinSelection("li, div, p, section, article, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th") || element;
   }
 
+  function getSelectionEdgeBlock({ preferEnd = true } = {}) {
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return getCurrentBlock();
+    }
+    const edgeNode = preferEnd ? range.endContainer : range.startContainer;
+    const edgeElement = resolveElement(edgeNode);
+    return (
+      edgeElement?.closest?.("li, div, p, section, article, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th") ||
+      getCurrentBlock()
+    );
+  }
+
   function createParagraphBlockFromText(text = "") {
     const block = document.createElement("div");
     block.textContent = text;
@@ -789,12 +1176,20 @@ export function createRichTextAdapter(
     if (!(mathElement instanceof HTMLElement)) {
       return false;
     }
+    const type = getMathElementType(mathElement);
+    const source = getMathElementSource(mathElement);
     const walker = document.createTreeWalker(mathElement, NodeFilter.SHOW_TEXT);
     let lastTextNode = null;
     while (walker.nextNode()) {
       lastTextNode = walker.currentNode;
     }
     if (lastTextNode instanceof Text) {
+      const editingText = formatMathForEditing(source, type);
+      if (editingText && lastTextNode.data === editingText) {
+        const caretOffset =
+          normalizeMathElementType(type) === "block" ? Math.max(0, 3 + source.length) : Math.max(0, 1 + source.length);
+        return setCollapsedSelection(lastTextNode, Math.min(caretOffset, lastTextNode.data.length));
+      }
       return setCollapsedSelection(lastTextNode, lastTextNode.data.length);
     }
     collapseToEnd(mathElement);
@@ -949,6 +1344,75 @@ export function createRichTextAdapter(
     });
   }
 
+  function normalizeEditableMathNodes(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    normalizeFragmentedMathNodes(root);
+    root.querySelectorAll('[data-role="math-inline"], [data-role="math-block"]').forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      const source = getMathElementSource(node);
+      if (!source) {
+        return;
+      }
+      node.textContent = formatMathForEditing(source, getMathElementType(node));
+    });
+  }
+
+  function normalizeFragmentedMathNodes(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const mathNodes = Array.from(root.querySelectorAll('[data-role="math-inline"]'));
+    mathNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement) || node.parentElement == null) {
+        return;
+      }
+      const leftText = getNodeText(node);
+      if (!leftText.startsWith("$") || leftText.endsWith("$")) {
+        return;
+      }
+      const fragments = [node];
+      let middleText = "";
+      let cursor = node.nextSibling;
+      while (cursor) {
+        if (cursor instanceof Text) {
+          middleText += cursor.data || "";
+          fragments.push(cursor);
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        if (cursor instanceof HTMLElement) {
+          const role = String(cursor.getAttribute("data-role") || "").trim().toLowerCase();
+          if (role === "math-inline") {
+            const rightText = getNodeText(cursor);
+            if (!rightText.endsWith("$")) {
+              return;
+            }
+            const mergedRaw = `${leftText}${middleText}${rightText}`;
+            const mergedSource = stripMathEditingDelimiters(mergedRaw, "inline");
+            if (!mergedSource) {
+              return;
+            }
+            node.textContent = formatMathForEditing(mergedSource, "inline");
+            fragments.slice(1).forEach((fragment) => fragment.remove?.());
+            return;
+          }
+          if (role === "math-block" || /^(div|p|br|blockquote|ul|ol|li|pre|table)$/i.test(cursor.tagName)) {
+            return;
+          }
+          middleText += getNodeText(cursor);
+          fragments.push(cursor);
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        return;
+      }
+    });
+  }
+
   function serializeEditableCodeBlocks(root) {
     if (!(root instanceof HTMLElement)) {
       return "";
@@ -971,6 +1435,71 @@ export function createRichTextAdapter(
       block.replaceWith(pre);
     });
     return clone.innerHTML || "";
+  }
+
+  function serializeEditableMathNodes(root) {
+    if (!(root instanceof HTMLElement)) {
+      return "";
+    }
+    const clone = root.cloneNode(true);
+    if (!(clone instanceof HTMLElement)) {
+      return root.innerHTML || "";
+    }
+    clone.querySelectorAll('[data-role="math-inline"], [data-role="math-block"]').forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      const source = getMathElementSource(node);
+      node.textContent = source;
+    });
+    collapseSerializedMathDuplicates(clone);
+    return clone.innerHTML || "";
+  }
+
+  function collapseSerializedMathDuplicates(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const mathNodes = Array.from(root.querySelectorAll('[data-role="math-inline"]'));
+    mathNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement) || node.parentNode == null) {
+        return;
+      }
+      const source = getNodeText(node);
+      if (!source) {
+        return;
+      }
+      let cursor = node.nextSibling;
+      const duplicateFragments = [];
+      let duplicateText = "";
+      while (cursor) {
+        if (cursor instanceof Text) {
+          duplicateText += cursor.data || "";
+          duplicateFragments.push(cursor);
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        if (cursor instanceof HTMLElement) {
+          const role = String(cursor.getAttribute("data-role") || "").trim().toLowerCase();
+          if (role === "math-inline") {
+            const trailingSource = getNodeText(cursor);
+            if (duplicateText === source && !trailingSource) {
+              duplicateFragments.forEach((fragment) => fragment.remove?.());
+              cursor.remove();
+            }
+            return;
+          }
+          if (/^(div|p|br|blockquote|ul|ol|li|pre|table)$/i.test(cursor.tagName)) {
+            return;
+          }
+          duplicateText += getNodeText(cursor);
+          duplicateFragments.push(cursor);
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        return;
+      }
+    });
   }
 
   function replaceCurrentBlockText(text = "") {
@@ -1021,6 +1550,42 @@ export function createRichTextAdapter(
     } else {
       currentBlock.replaceWith(list);
     }
+    selectNodeContents(item);
+    collapseToEnd(item);
+    return true;
+  }
+
+  function convertCurrentBlockToTaskListItem() {
+    const currentBlock = getSelectionEdgeBlock({ preferEnd: true });
+    if (!(currentBlock instanceof HTMLElement)) {
+      return false;
+    }
+    const list = document.createElement("ul");
+    list.setAttribute("data-ff-task-list", "true");
+    const item = document.createElement("li");
+    item.setAttribute("data-ff-task-item", "true");
+    item.setAttribute("data-ff-task-state", "todo");
+    if (currentBlock === element) {
+      while (element.firstChild) {
+        item.appendChild(element.firstChild);
+      }
+      if (!item.firstChild) {
+        item.appendChild(document.createElement("br"));
+      }
+      list.appendChild(item);
+      element.appendChild(list);
+      selectNodeContents(item);
+      collapseToEnd(item);
+      return true;
+    }
+    while (currentBlock.firstChild) {
+      item.appendChild(currentBlock.firstChild);
+    }
+    if (!item.firstChild) {
+      item.appendChild(document.createElement("br"));
+    }
+    list.appendChild(item);
+    currentBlock.replaceWith(list);
     selectNodeContents(item);
     collapseToEnd(item);
     return true;
@@ -1080,20 +1645,74 @@ export function createRichTextAdapter(
   }
 
   function toggleTaskList() {
-    const currentTaskList = getClosestWithinSelection("ul[data-ff-task-list='true']");
-    if (currentTaskList instanceof HTMLElement) {
-      clearTaskListAttributes(currentTaskList);
-      return true;
-    }
-    if (!exec("insertUnorderedList")) {
+    focus();
+    restoreSelection();
+    const currentBlock = getSelectionEdgeBlock({ preferEnd: true });
+    if (!(currentBlock instanceof HTMLElement)) {
       return false;
     }
-    const list = findCurrentUnorderedList();
-    return markListAsTaskList(list);
+    const currentItem = currentBlock.closest("li");
+    if (currentItem instanceof HTMLElement) {
+      const parentList = currentItem.parentElement;
+      if (parentList instanceof HTMLUListElement || parentList instanceof HTMLOListElement) {
+        const itemIsTask = currentItem.getAttribute("data-ff-task-item") === "true";
+        if (itemIsTask) {
+          currentItem.removeAttribute("data-ff-task-item");
+          currentItem.removeAttribute("data-ff-task-state");
+          if (!parentList.querySelector("li[data-ff-task-item='true']")) {
+            parentList.removeAttribute("data-ff-task-list");
+          }
+          collapseToEnd(currentItem);
+          return true;
+        }
+        parentList.setAttribute("data-ff-task-list", "true");
+        currentItem.setAttribute("data-ff-task-item", "true");
+        if (!currentItem.getAttribute("data-ff-task-state")) {
+          currentItem.setAttribute("data-ff-task-state", "todo");
+        }
+        collapseToEnd(currentItem);
+        return true;
+      }
+    }
+    return convertCurrentBlockToTaskListItem();
   }
 
   function insertHorizontalRule() {
-    return insertHtml('<hr data-ff-divider="true"><div><br></div>');
+    focus();
+    restoreSelection();
+    const currentBlock = getSelectionEdgeBlock({ preferEnd: true });
+    if (!(currentBlock instanceof HTMLElement)) {
+      return false;
+    }
+    const hr = document.createElement("hr");
+    hr.setAttribute("data-ff-divider", "true");
+    const nextBlock = document.createElement("div");
+    nextBlock.innerHTML = "<br>";
+    if (currentBlock === element) {
+      element.appendChild(hr);
+      element.appendChild(nextBlock);
+      selectNodeContents(nextBlock);
+      collapseToEnd(nextBlock);
+      return true;
+    }
+    const anchor =
+      currentBlock.tagName === "LI" && currentBlock.parentElement instanceof HTMLElement
+        ? currentBlock.parentElement
+        : currentBlock;
+    const parent = anchor.parentNode;
+    if (!(parent instanceof Node)) {
+      return false;
+    }
+    if (anchor.nextSibling) {
+      parent.insertBefore(hr, anchor.nextSibling);
+      parent.insertBefore(nextBlock, hr.nextSibling);
+    } else {
+      parent.appendChild(hr);
+      parent.appendChild(nextBlock);
+    }
+    selectNodeContents(nextBlock);
+    collapseToEnd(nextBlock);
+    return true;
   }
 
   function insertTable({ rows = 3, columns = 3 } = {}) {
@@ -1238,6 +1857,7 @@ export function createRichTextAdapter(
     if (safeHtml.trim()) {
       element.innerHTML = safeHtml;
       normalizeEditableCodeBlocks(element);
+      normalizeEditableMathNodes(element);
     } else {
       element.textContent = String(textFallback || "");
     }
@@ -1247,7 +1867,10 @@ export function createRichTextAdapter(
     if (isRootCodeBlockMode()) {
       return `<pre data-ff-code-block="true"><code>${serializeCodeBlockPlainTextToHtml(getText())}</code></pre>`;
     }
-    return serializeEditableCodeBlocks(element);
+    const htmlWithSerializedCodeBlocks = serializeEditableCodeBlocks(element);
+    const container = document.createElement("div");
+    container.innerHTML = htmlWithSerializedCodeBlocks;
+    return serializeEditableMathNodes(container);
   }
 
   function getText() {
@@ -1316,15 +1939,31 @@ export function createRichTextAdapter(
   }
 
   function insertMathInline(formula = "") {
-    const source = String(formula || "").trim();
+    const source = stripMathEditingDelimiters(formula, "inline");
     if (!source) {
       return false;
     }
-    return insertHtml(`<span data-role="math-inline">${escapeHtml(source)}</span>`);
+    return insertHtml(`<span data-role="math-inline">${escapeHtml(formatMathForEditing(source, "inline"))}</span>`);
+  }
+
+  function insertMathInlineTemplate() {
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
+      return false;
+    }
+    const content = '<span data-role="math-inline">$ $</span>';
+    const fragment = range.createContextualFragment(content);
+    const mathNode = fragment.firstChild;
+    range.deleteContents();
+    range.insertNode(fragment);
+    if (mathNode instanceof HTMLElement && mathNode.firstChild instanceof Text) {
+      return setCollapsedSelection(mathNode.firstChild, 1);
+    }
+    return mathNode instanceof HTMLElement ? collapseInsideMathElement(mathNode) : true;
   }
 
   function insertMathBlock(formula = "") {
-    const source = String(formula || "").trim();
+    const source = stripMathEditingDelimiters(formula, "block");
     if (!source) {
       return false;
     }
@@ -1336,7 +1975,7 @@ export function createRichTextAdapter(
     const fragment = document.createDocumentFragment();
     const block = document.createElement("div");
     block.setAttribute("data-role", "math-block");
-    block.textContent = source;
+    block.textContent = formatMathForEditing(source, "block");
     fragment.appendChild(block);
     const trailingParagraph = document.createElement("div");
     trailingParagraph.appendChild(document.createElement("br"));
@@ -1346,16 +1985,42 @@ export function createRichTextAdapter(
     return true;
   }
 
-  function updateCurrentMath(formula = "") {
-    const source = String(formula || "").trim();
-    if (!source) {
+  function insertMathBlockTemplate() {
+    const range = getSelectionRange();
+    if (!(range instanceof Range)) {
       return false;
     }
+    range.deleteContents();
+    const fragment = document.createDocumentFragment();
+    const block = document.createElement("div");
+    block.setAttribute("data-role", "math-block");
+    block.textContent = "$$\n\n$$";
+    fragment.appendChild(block);
+    const trailingParagraph = document.createElement("div");
+    trailingParagraph.appendChild(document.createElement("br"));
+    fragment.appendChild(trailingParagraph);
+    range.insertNode(fragment);
+    const textNode = block.firstChild;
+    if (textNode instanceof Text) {
+      setCollapsedSelection(textNode, Math.min(3, textNode.data.length));
+      return true;
+    }
+    collapseInsideMathElement(block);
+    return true;
+  }
+
+  function updateCurrentMath(formula = "") {
     const currentMathElement = getCurrentMathElement();
     if (!(currentMathElement instanceof HTMLElement)) {
       return false;
     }
-    currentMathElement.textContent = source;
+    const source = stripMathEditingDelimiters(formula, getMathElementType(currentMathElement));
+    if (!source) {
+      return false;
+    }
+    if (!setMathElementSource(currentMathElement, source)) {
+      return false;
+    }
     collapseInsideMathElement(currentMathElement);
     return true;
   }
@@ -1381,7 +2046,9 @@ export function createRichTextAdapter(
   function deleteSelection() {
     focus();
     restoreSelection();
-    ensureSelection({ selectAllWhenCollapsed: false });
+    if (!ensureSelection({ selectAllWhenCollapsed: false, selectAllWhenMissing: false })) {
+      return false;
+    }
     if (exec("delete")) {
       return true;
     }
@@ -1397,52 +2064,57 @@ export function createRichTextAdapter(
   function command(name, value) {
     focus();
     restoreSelection();
-    ensureSelection({ selectAllWhenCollapsed: false });
+    ensureSelection({ selectAllWhenCollapsed: false, selectAllWhenMissing: false });
+    if (name === "unlink") {
+      if (unlinkSelection()) {
+        return true;
+      }
+      return exec("unlink");
+    }
     if (name === "insertMathInline") {
-      insertMathInline(value);
-      return;
+      return insertMathInline(value);
+    }
+    if (name === "insertMathInlineTemplate") {
+      return insertMathInlineTemplate();
     }
     if (name === "insertMathBlock") {
-      insertMathBlock(value);
-      return;
+      return insertMathBlock(value);
+    }
+    if (name === "insertMathBlockTemplate") {
+      return insertMathBlockTemplate();
     }
     if (name === "updateCurrentMath") {
-      updateCurrentMath(value);
-      return;
+      return updateCurrentMath(value);
+    }
+    if (name === "insertIntoCurrentMath") {
+      return insertIntoCurrentMathElement(value);
     }
     if (name === "setBlockType") {
-      setBlockType(value);
-      return;
+      return setBlockType(value);
     }
     if (name === "toggleInlineCode") {
-      toggleInlineCode();
-      return;
+      return toggleInlineCode();
     }
     if (name === "toggleTaskList") {
-      toggleTaskList();
-      return;
+      return toggleTaskList();
     }
     if (name === "insertHorizontalRule") {
-      insertHorizontalRule();
-      return;
+      return insertHorizontalRule();
     }
     if (name === "insertTable") {
-      insertTable(typeof value === "object" && value ? value : {});
-      return;
+      return insertTable(typeof value === "object" && value ? value : {});
     }
     if (name === "align") {
-      applyAlignment(value);
-      return;
+      return applyAlignment(value);
     }
     if (name === "formatBlock") {
-      applyFormatBlock(value);
-      return;
+      return applyFormatBlock(value);
     }
     if (name === "highlight") {
       const color = value || "#fff4a3";
       const range = getSelectionRange();
       if (!range || range.collapsed) {
-        return;
+        return false;
       }
       const currentHighlight = getHighlightStateFromRange(range);
       if (currentHighlight.highlight) {
@@ -1474,7 +2146,7 @@ export function createRichTextAdapter(
         if (refreshedRange) {
           setSelectionRange(refreshedRange);
         }
-        return;
+        return true;
       }
       const ok = wrapSelection("span", {
         "data-ff-highlight": "true",
@@ -1482,9 +2154,51 @@ export function createRichTextAdapter(
         style: `background-color: ${color};`,
       });
       if (ok) {
-        return;
+        return true;
       }
-      return;
+      return false;
+    }
+    if (name === "createLink") {
+      const normalizedUrl = normalizeLinkInput(value);
+      if (!normalizedUrl) {
+        return false;
+      }
+      const range = getSelectionRange();
+      if (!(range instanceof Range)) {
+        return false;
+      }
+      const uniformLink = getUniformAncestor(range, isLinkElement);
+      if (uniformLink instanceof HTMLAnchorElement) {
+        applyAnchorAttrs(uniformLink, normalizedUrl);
+        return true;
+      }
+      if (!range.collapsed) {
+        const wrapped = wrapSelection("a", {
+          href: normalizedUrl,
+        });
+        if (wrapped) {
+          const nextLink = getUniformAncestor(getSelectionRange({ includeStored: false }) || range, isLinkElement);
+          if (nextLink instanceof HTMLAnchorElement) {
+            applyAnchorAttrs(nextLink, normalizedUrl);
+          }
+          return true;
+        }
+      }
+      if (range?.collapsed) {
+        const link = document.createElement("a");
+        if (!applyAnchorAttrs(link, normalizedUrl)) {
+          return false;
+        }
+        link.textContent = normalizedUrl;
+        range.deleteContents();
+        range.insertNode(link);
+        const nextRange = document.createRange();
+        nextRange.setStartAfter(link);
+        nextRange.collapse(true);
+        setSelectionRange(nextRange);
+        return true;
+      }
+      return false;
     }
     if (name === "fontSize" && value) {
       if (typeof value === "object" && value !== null) {
@@ -1494,38 +2208,33 @@ export function createRichTextAdapter(
           "data-ff-font-size": String(logicalSize),
           style: `font-size: ${renderedSize}px;`,
         });
-        return;
+        return true;
       }
       const rawValue = String(value || "").trim().toLowerCase();
       if (rawValue.endsWith("em")) {
         wrapSelection("span", { style: `font-size: ${rawValue};` });
-        return;
+        return true;
       }
       const size = normalizeRichFontSize(value, 16);
       wrapSelection("span", { "data-ff-font-size": String(size), style: `font-size: ${size}px;` });
-      return;
+      return true;
     }
     const ok = exec(name, value);
     if (ok) {
-      return;
+      return true;
     }
     if (name === "bold") {
-      wrapSelection("strong");
+      return wrapSelection("strong");
     } else if (name === "italic") {
-      wrapSelection("em");
+      return wrapSelection("em");
     } else if (name === "underline") {
-      wrapSelection("u");
+      return wrapSelection("u");
     } else if (name === "strikeThrough") {
-      wrapSelection("s");
-    } else if (name === "createLink" && value) {
-      wrapSelection("a", {
-        href: value,
-        target: "_blank",
-        rel: "noopener noreferrer",
-      });
+      return wrapSelection("s");
     } else if (name === "foreColor" && value) {
-      wrapSelection("span", { style: `color: ${value};` });
+      return wrapSelection("span", { style: `color: ${value};` });
     }
+    return false;
   }
 
   function clearInlineFontSizes() {
@@ -1649,10 +2358,18 @@ export function createRichTextAdapter(
         command("underline");
       } else if (key === "k") {
         event.preventDefault();
+        if (typeof onRequestExternalLink === "function" && onRequestExternalLink() !== false) {
+          return;
+        }
         const url = window.prompt("输入链接");
-        if (url) {
-          command("createLink", url);
-        } else {
+        if (url === null) {
+          return;
+        }
+        const raw = String(url || "").trim();
+        const normalizedUrl = normalizeLinkInput(raw);
+        if (normalizedUrl) {
+          command("createLink", normalizedUrl);
+        } else if (!raw) {
           exec("unlink");
         }
       }
@@ -1681,12 +2398,82 @@ export function createRichTextAdapter(
       insertCodeBlockText(text || htmlToPlainText(html || ""));
       return;
     }
+    if (getCurrentMathElement()) {
+      event.preventDefault();
+      insertIntoCurrentMathElement(text || htmlToPlainText(html || ""));
+      return;
+    }
     event.preventDefault();
     if (html) {
       insertHtml(normalizeRichHtmlInlineFontSizes(html, normalizeRichFontSize(element.style.fontSize, 16)));
       return;
     }
     exec("insertText", text);
+  }
+
+  function getTaskItemFromEventTarget(target) {
+    if (!(target instanceof Element)) {
+      return null;
+    }
+    const item = target.closest("li[data-ff-task-item='true']");
+    if (!(item instanceof HTMLElement)) {
+      return null;
+    }
+    return item;
+  }
+
+  function isTaskMarkerHotspot(event, item) {
+    if (!(event instanceof MouseEvent) || !(item instanceof HTMLElement)) {
+      return false;
+    }
+    const rect = item.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return false;
+    }
+    const style = window.getComputedStyle(item);
+    const paddingStart = Number.parseFloat(style.paddingInlineStart || style.paddingLeft || "");
+    const markerWidth = Number.isFinite(paddingStart) && paddingStart > 0 ? paddingStart : 22;
+    const localX = event.clientX - rect.left;
+    return localX >= -2 && localX <= Math.min(34, markerWidth + 8);
+  }
+
+  function toggleTaskItemState(item) {
+    if (!(item instanceof HTMLElement)) {
+      return false;
+    }
+    const current = String(item.getAttribute("data-ff-task-state") || "todo").trim().toLowerCase();
+    item.setAttribute("data-ff-task-state", current === "done" ? "todo" : "done");
+    return true;
+  }
+
+  function onMouseDown(event) {
+    const item = getTaskItemFromEventTarget(event.target);
+    if (!(item instanceof HTMLElement) || !isTaskMarkerHotspot(event, item)) {
+      return;
+    }
+    event.preventDefault();
+    focus();
+    const range = document.createRange();
+    range.selectNodeContents(item);
+    range.collapse(true);
+    setSelectionRange(range);
+  }
+
+  function onClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest?.("a")) {
+      return;
+    }
+    const item = getTaskItemFromEventTarget(target);
+    if (!(item instanceof HTMLElement) || !isTaskMarkerHotspot(event, item)) {
+      return;
+    }
+    event.preventDefault();
+    if (toggleTaskItemState(item)) {
+      storeSelection();
+      onSelectionChangeExternal?.();
+      onInput?.(event);
+    }
   }
 
   function onInputEvent(event) {
@@ -1707,6 +2494,8 @@ export function createRichTextAdapter(
   }
 
   element.addEventListener("keydown", onKeyDown);
+  element.addEventListener("mousedown", onMouseDown);
+  element.addEventListener("click", onClick);
   element.addEventListener("paste", onPaste);
   element.addEventListener("input", onInputEvent);
   element.addEventListener("blur", onBlurEvent);
@@ -1724,6 +2513,11 @@ export function createRichTextAdapter(
     command,
     deleteSelection,
     selectAll,
+    moveCaretToEnd() {
+      focus();
+      collapseToEnd(element);
+      storeSelection();
+    },
     captureSelection() {
       storeSelection();
     },
@@ -1737,25 +2531,20 @@ export function createRichTextAdapter(
     getFormatState() {
       const range = getSelectionRange();
       const highlightState = range ? getHighlightStateFromRange(range) : { highlight: false, highlightColor: "" };
-      const bold = Boolean(range && getUniformAncestor(range, isBoldElement));
-      const italic = Boolean(range && getUniformAncestor(range, isItalicElement));
-      const underline = Boolean(range && getUniformAncestor(range, isUnderlineElement));
-      const strike = Boolean(range && getUniformAncestor(range, isStrikeElement));
-      const inlineCode = Boolean(range && getUniformAncestor(range, isInlineCodeElement));
-      const unorderedList = Boolean(range && getUniformAncestor(range, (node) => isListContainer(node, "ul")));
-      const orderedList = Boolean(range && getUniformAncestor(range, (node) => isListContainer(node, "ol")));
-      const taskList = Boolean(range && getUniformAncestor(range, isTaskListElement));
+      const bold = Boolean(range && (isSelectionFullyMatched(range, isBoldElement) || isFullySelectedHeadingText(range)));
+      const italic = Boolean(range && isSelectionFullyMatched(range, isItalicElement));
+      const underline = Boolean(range && isSelectionFullyMatched(range, isUnderlineElement));
+      const strike = Boolean(range && isSelectionFullyMatched(range, isStrikeElement));
+      const inlineCode = Boolean(range && isSelectionFullyMatched(range, isInlineCodeElement));
+      const linkElement = range ? getUniformAncestor(range, isLinkElement) : null;
+      const currentLinkHref = String(linkElement?.getAttribute?.("href") || linkElement?.href || "").trim();
+      const link = Boolean(linkElement && currentLinkHref);
+      const unorderedList = Boolean(range && isSelectionFullyMatched(range, (node) => isListContainer(node, "ul")));
+      const orderedList = Boolean(range && isSelectionFullyMatched(range, (node) => isListContainer(node, "ol")));
+      const taskList = Boolean(range && isSelectionFullyMatched(range, isTaskListItemElement));
       const codeBlock = Boolean(range && getUniformAncestor(range, isCodeBlockElement));
-      const blockquote = Boolean(range && getUniformAncestor(range, isBlockquoteElement));
-      let color = "";
-      const colorTarget = range
-        ? getUniformAncestor(range, (node) => node instanceof HTMLElement && Boolean(node.style?.color))
-        : null;
-      if (colorTarget instanceof HTMLElement) {
-        color = String(colorTarget.style.color || "");
-      } else if (typeof document?.queryCommandValue === "function") {
-        color = String(document.queryCommandValue("foreColor") || "");
-      }
+      const blockquote = Boolean(range && isSelectionFullyMatched(range, isBlockquoteElement));
+      const color = getRangeColor(range);
       let fontSize = getRangeFontSize(range);
       if (!fontSize && typeof window?.getComputedStyle === "function") {
         const parsed = Number.parseFloat(window.getComputedStyle(element).fontSize || "");
@@ -1792,6 +2581,8 @@ export function createRichTextAdapter(
         italic,
         underline,
         strike,
+        link,
+        currentLinkHref,
         inlineCode,
         color,
         fontSize,
@@ -1807,12 +2598,14 @@ export function createRichTextAdapter(
         highlightColor: highlightState.highlightColor,
         canEditMath: Boolean(currentMathType),
         currentMathType,
-        currentMathSource: currentMathElement ? getNodeText(currentMathElement) : "",
+        currentMathSource: currentMathElement ? getMathElementSource(currentMathElement) : "",
       };
     },
     getSelectionSnapshot,
     destroy() {
       element.removeEventListener("keydown", onKeyDown);
+      element.removeEventListener("mousedown", onMouseDown);
+      element.removeEventListener("click", onClick);
       element.removeEventListener("paste", onPaste);
       element.removeEventListener("input", onInputEvent);
       element.removeEventListener("blur", onBlurEvent);

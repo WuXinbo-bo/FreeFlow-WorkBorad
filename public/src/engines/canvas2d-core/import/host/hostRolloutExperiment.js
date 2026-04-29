@@ -45,12 +45,21 @@ export async function runHostRolloutExperiment({
     ? await legacyAdapterRegistry.adapt(renderInput, context)
     : null;
 
-  const commitResult = commitLayer.commit({
-    board,
-    renderResult,
-    bridgeResult,
-    anchorPoint,
-  });
+  const commitResult =
+    typeof commitLayer?.commitAsync === "function"
+      ? await commitLayer.commitAsync({
+          board,
+          renderResult,
+          bridgeResult,
+          anchorPoint,
+          yieldControl: context?.yieldControl,
+        })
+      : commitLayer.commit({
+          board,
+          renderResult,
+          bridgeResult,
+          anchorPoint,
+        });
 
   return {
     ok: Boolean(commitResult?.ok),

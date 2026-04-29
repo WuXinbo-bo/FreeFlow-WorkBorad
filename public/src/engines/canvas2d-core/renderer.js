@@ -4,12 +4,23 @@ import { isLinearShape } from "./elements/shapes.js";
 import { drawTextElement } from "./rendererText.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
+import { drawLodHeaderStrip, drawLodTextBars, drawTableStyleLodShell } from "./rendererLod.js";
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
 import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
+import { createTileSceneCache } from "./render/tileSceneCache.js";
 
 const HINT_LOGO_SRC = "/assets/brand/FreeFlow_logo.svg";
 let hintLogo = null;
 let hintLogoLoaded = false;
+const CANVAS_LOD_TEXT_MIN_SCALE = 0.15;
+const CANVAS_LOD_FILE_CARD_MIN_SCALE = 0.15;
+const CANVAS_LOD_MIND_NODE_MIN_SCALE = 0.15;
+const CANVAS_LOD_IMAGE_MIN_SCALE = 0.15;
+const CANVAS_LOD_TABLE_MIN_SCALE = 0.15;
+const CANVAS_LOD_CODE_BLOCK_MIN_SCALE = 0.15;
+const CANVAS_LOD_MATH_MIN_SCALE = 0.15;
+const CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX = 72;
+const CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX = 28;
 
 function getHintLogo() {
   if (typeof Image === "undefined") {
@@ -40,6 +51,51 @@ function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
   ctx.arcTo(x, y + height, x, y, nextRadius);
   ctx.arcTo(x, y, x + width, y, nextRadius);
   ctx.closePath();
+}
+
+function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const raw = String(text || "");
+  const lines = raw.split("\n");
+  let row = 0;
+  const addEllipsis = (value) => {
+    const ellipsis = "…";
+    let trimmed = value;
+    while (trimmed && ctx.measureText(`${trimmed}${ellipsis}`).width > maxWidth) {
+      trimmed = trimmed.slice(0, -1);
+    }
+    return `${trimmed}${ellipsis}`;
+  };
+
+  for (const part of lines) {
+    if (row >= maxLines) break;
+    const words = part.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      row += 1;
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const nextLine = line ? `${line} ${word}` : word;
+      if (ctx.measureText(nextLine).width > maxWidth && line) {
+        if (row === maxLines - 1) {
+          ctx.fillText(addEllipsis(line), x, y + row * lineHeight);
+          return;
+        }
+        ctx.fillText(line, x, y + row * lineHeight);
+        line = word;
+        row += 1;
+        if (row >= maxLines) return;
+      } else {
+        line = nextLine;
+      }
+    }
+    if (row === maxLines - 1) {
+      ctx.fillText(addEllipsis(line), x, y + row * lineHeight);
+      return;
+    }
+    ctx.fillText(line, x, y + row * lineHeight);
+    row += 1;
+  }
 }
 
 
@@ -251,6 +307,133 @@ function drawMindNode(ctx, element, view, selected, hover) {
   ctx.restore();
 }
 
+function drawMindNodeLod(ctx, element, view, selected, hover) {
+  const bounds = getElementScreenBounds(view, element);
+  const x = bounds.left;
+  const y = bounds.top;
+  const width = bounds.width;
+  const height = bounds.height;
+
+  ctx.save();
+  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
+  drawLodTextBars(ctx, rect, {
+    lineCount: 3,
+    fill: "rgba(100, 116, 139, 0.12)",
+    verticalAlign: "start",
+    widths: [0.78, 0.64, 0.56],
+  });
+  drawSelectionFrame(ctx, x, y, width, height, selected, hover);
+  if (selected) {
+    drawHandles(ctx, element, view);
+  }
+  ctx.restore();
+}
+
+function drawTextElementLod(ctx, element, view, selected, hover) {
+  const bounds = getElementScreenBounds(view, element);
+  const x = bounds.left;
+  const y = bounds.top;
+  const width = bounds.width;
+  const height = bounds.height;
+  ctx.save();
+  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
+  drawLodTextBars(ctx, rect, {
+    lineCount: 3,
+    fill: "rgba(100, 116, 139, 0.12)",
+    verticalAlign: "start",
+    widths: [0.82, 0.7, 0.58],
+  });
+  drawSelectionFrame(ctx, x, y, width, height, selected, hover);
+  if (selected) {
+    drawHandles(ctx, element, view);
+  }
+  ctx.restore();
+}
+
+function drawFileCardLod(ctx, element, view, selected, hover, { drawSelectionFrame, drawHandles } = {}) {
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const x = Number(element.x || 0) * scale + Number(view?.offsetX || 0);
+  const y = Number(element.y || 0) * scale + Number(view?.offsetY || 0);
+  const width = Math.max(1, Number(element.width) || 1) * scale;
+  const height = Math.max(1, Number(element.height) || 1) * scale;
+  ctx.save();
+  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
+  const headerHeight = drawLodHeaderStrip(ctx, rect, {
+    height: Math.max(8, rect.panelHeight * 0.22),
+  });
+  drawLodTextBars(ctx, rect, {
+    lineCount: 2,
+    fill: "rgba(100, 116, 139, 0.12)",
+    verticalAlign: "start",
+    padTop: headerHeight + Math.max(6, rect.panelHeight * 0.14),
+    widths: [0.76, 0.52],
+  });
+
+  if (element.marked) {
+    ctx.save();
+    drawRoundedRect(ctx, x + 4, y + 4, Math.max(1, width - 8), Math.max(1, height - 8), 14);
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.82)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
+  if (selected) {
+    drawHandles?.(ctx, element, view);
+  }
+  ctx.restore();
+}
+
+function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  if (!item || typeof item !== "object") {
+    return "full";
+  }
+  const screenWidth = Math.max(1, Number(item.width || 1) || 1) * scale;
+  const screenHeight = Math.max(1, Number(item.height || 1) || 1) * scale;
+  if (
+    item.type === "fileCard" &&
+    (
+      scale <= CANVAS_LOD_FILE_CARD_MIN_SCALE ||
+      screenWidth <= CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX ||
+      screenHeight <= CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX
+    )
+  ) {
+    return "summary";
+  }
+  if (item.type === "mindNode" && scale < CANVAS_LOD_MIND_NODE_MIN_SCALE) {
+    return "summary";
+  }
+  if (item.type === "image" && scale < CANVAS_LOD_IMAGE_MIN_SCALE) {
+    return "summary";
+  }
+  if (item.type === "table" && scale < CANVAS_LOD_TABLE_MIN_SCALE) {
+    return "summary";
+  }
+  if (item.type === "codeBlock" && scale <= CANVAS_LOD_CODE_BLOCK_MIN_SCALE) {
+    return "summary";
+  }
+  if ((item.type === "mathBlock" || item.type === "mathInline") && scale <= CANVAS_LOD_MATH_MIN_SCALE) {
+    return "summary";
+  }
+  if ((item.type === "text" || item.type === "flowNode") && scale <= CANVAS_LOD_TEXT_MIN_SCALE) {
+    return "summary";
+  }
+  return "full";
+}
+
+function shouldBypassStaticTileCache(item, dynamicIdSet) {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+  const itemId = String(item.id || "");
+  if (itemId && dynamicIdSet?.has(itemId)) {
+    return true;
+  }
+  return item.type === "image" || item.type === "table";
+}
+
 
 function drawSelectionRect(ctx, view, selectionRect) {
   if (!selectionRect?.start || !selectionRect?.current) {
@@ -320,121 +503,620 @@ function drawHint(ctx, width, height) {
   ctx.restore();
 }
 
+function drawVisibleItemsToContext({
+  ctx,
+  items = [],
+  view,
+  selectedIds,
+  hoverId,
+  editingId,
+  imageEditState,
+  flowDraft,
+  allowLocalFileAccess,
+  renderTextInCanvas,
+  renderers = [],
+}) {
+  const selected = new Set(selectedIds || []);
+  let customRendererHandledCount = 0;
+  let lodSimplifiedCount = 0;
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const isSelected = selected.has(item.id);
+    const isHover = hoverId === item.id && !isSelected;
+    const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
+    for (const renderElement of renderers) {
+      const handled = renderElement?.({
+        ctx,
+        item,
+        view,
+        selected: isSelected,
+        hover: isHover,
+        editing: editingId === item.id,
+        lodMode,
+        helpers: {
+          drawSelectionFrame,
+          drawHandles,
+          imageEditState,
+          flowDraft,
+          allowLocalFileAccess,
+          renderTextInCanvas,
+          editingId,
+        },
+      });
+      if (handled) {
+        customRendererHandledCount += 1;
+        if (handled !== true && handled?.lodSimplified) {
+          lodSimplifiedCount += 1;
+        }
+        drawLockBadge(ctx, item, view);
+        return;
+      }
+    }
+    if (item.type === "fileCard") {
+      if (lodMode !== "full") {
+        lodSimplifiedCount += 1;
+        drawFileCardLod(ctx, item, view, isSelected, isHover, {
+          drawSelectionFrame,
+          drawHandles,
+        });
+        drawLockBadge(ctx, item, view);
+        return;
+      }
+      drawFileCard(ctx, item, view, isSelected, isHover, {
+        drawSelectionFrame,
+        drawHandles,
+      });
+      drawLockBadge(ctx, item, view);
+      return;
+    }
+    if (item.type === "mindNode") {
+      if (lodMode !== "full") {
+        lodSimplifiedCount += 1;
+        drawMindNodeLod(ctx, item, view, isSelected, isHover);
+        drawLockBadge(ctx, item, view);
+        return;
+      }
+      drawMindNode(ctx, item, view, isSelected, isHover);
+      drawLockBadge(ctx, item, view);
+      return;
+    }
+    if ((item.type === "text" || item.type === "flowNode") && lodMode !== "full") {
+      lodSimplifiedCount += 1;
+      drawTextElementLod(ctx, item, view, isSelected, isHover);
+      drawLockBadge(ctx, item, view);
+      return;
+    }
+    drawTextElement(ctx, item, view, isSelected, isHover, editingId === item.id, drawSelectionFrame, drawHandles, {
+      renderText: Boolean(renderTextInCanvas),
+    });
+    drawLockBadge(ctx, item, view);
+  });
+  return {
+    customRendererHandledCount,
+    lodSimplifiedCount,
+  };
+}
+
+function createRenderSurface(width, height) {
+  if (typeof OffscreenCanvas !== "undefined") {
+    return new OffscreenCanvas(width, height);
+  }
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const nextCanvas = document.createElement("canvas");
+    nextCanvas.width = width;
+    nextCanvas.height = height;
+    return nextCanvas;
+  }
+  return null;
+}
+
+function createCanvasLayerStore() {
+  const layers = new Map();
+  let metrics = { pixelWidth: 0, pixelHeight: 0, width: 0, height: 0, dpr: 1 };
+
+  function ensureLayer(name, width, height, dpr) {
+    const pixelWidth = Math.max(1, Math.round(width * dpr));
+    const pixelHeight = Math.max(1, Math.round(height * dpr));
+    let entry = layers.get(name) || null;
+    if (!entry || entry.canvas.width !== pixelWidth || entry.canvas.height !== pixelHeight) {
+      const canvas = createRenderSurface(pixelWidth, pixelHeight);
+      const ctx = canvas?.getContext?.("2d") || null;
+      if (!canvas || !ctx) {
+        return null;
+      }
+      entry = { canvas, ctx };
+      layers.set(name, entry);
+    }
+    entry.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return entry;
+  }
+
+  return {
+    ensure(name, width, height, dpr) {
+      metrics = {
+        pixelWidth: Math.max(1, Math.round(width * dpr)),
+        pixelHeight: Math.max(1, Math.round(height * dpr)),
+        width,
+        height,
+        dpr,
+      };
+      return ensureLayer(name, width, height, dpr);
+    },
+    get(name) {
+      return layers.get(name) || null;
+    },
+    getMetrics() {
+      return { ...metrics };
+    },
+    clear() {
+      layers.clear();
+      metrics = { pixelWidth: 0, pixelHeight: 0, width: 0, height: 0, dpr: 1 };
+    },
+  };
+}
+
+function clearLayerContext(layerEntry, width, height) {
+  const layerCtx = layerEntry?.ctx || null;
+  if (!layerCtx) {
+    return;
+  }
+  layerCtx.clearRect(0, 0, width, height);
+}
+
+function drawDraftElement(ctx, draftElement, view) {
+  if (!draftElement) {
+    return;
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.84;
+  if (draftElement.type === "shape") {
+    drawShapeElement(ctx, draftElement, view, false, false, {
+      drawSelectionFrame,
+      drawHandles,
+    });
+  }
+  ctx.restore();
+}
+
+function drawInteractionLayer(ctx, {
+  view,
+  width,
+  height,
+  selectionRect,
+  alignmentSnap,
+  alignmentSnapConfig,
+  items,
+  draftElement,
+  hoveredItem,
+} = {}) {
+  if (hoveredItem) {
+    const bounds = getElementBounds(hoveredItem);
+    const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
+    const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
+    drawSelectionFrame(
+      ctx,
+      Math.min(topLeft.x, bottomRight.x),
+      Math.min(topLeft.y, bottomRight.y),
+      Math.max(1, Math.abs(bottomRight.x - topLeft.x)),
+      Math.max(1, Math.abs(bottomRight.y - topLeft.y)),
+      false,
+      true
+    );
+  }
+  drawSelectionRect(ctx, view, selectionRect);
+  drawAlignmentSnapGuides(ctx, alignmentSnap, alignmentSnapConfig, width, height);
+  if (!(Array.isArray(items) && items.length) && !draftElement) {
+    drawHint(ctx, width, height);
+  }
+}
+
+function getRectSignature(rect = null) {
+  if (!rect?.start && !rect?.current) {
+    return "";
+  }
+  const start = rect?.start || rect?.current || {};
+  const current = rect?.current || rect?.start || {};
+  return [
+    Math.round(Number(start.x || 0) * 10) / 10,
+    Math.round(Number(start.y || 0) * 10) / 10,
+    Math.round(Number(current.x || 0) * 10) / 10,
+    Math.round(Number(current.y || 0) * 10) / 10,
+  ].join(":");
+}
+
+function getDynamicVisualSignature({
+  dynamicItems = [],
+  draftElement = null,
+  flowDraft = null,
+  imageEditState = null,
+} = {}) {
+  const dynamicIds = (Array.isArray(dynamicItems) ? dynamicItems : [])
+    .map((item) => String(item?.id || "").trim())
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  const draftSignature = draftElement
+    ? [
+        String(draftElement.type || ""),
+        String(draftElement.shapeType || ""),
+        Math.round(Number(draftElement.x || draftElement.startX || 0)),
+        Math.round(Number(draftElement.y || draftElement.startY || 0)),
+        Math.round(Number(draftElement.width || draftElement.endX || 0)),
+        Math.round(Number(draftElement.height || draftElement.endY || 0)),
+      ].join(":")
+    : "";
+  const flowDraftSignature = flowDraft
+    ? [
+        String(flowDraft.fromId || ""),
+        String(flowDraft.fromSide || ""),
+        Math.round(Number(flowDraft.toPoint?.x || 0)),
+        Math.round(Number(flowDraft.toPoint?.y || 0)),
+        String(flowDraft.style || ""),
+      ].join(":")
+    : "";
+  const imageEditSignature =
+    imageEditState && typeof imageEditState === "object"
+      ? [
+          String(imageEditState.id || ""),
+          String(imageEditState.mode || ""),
+          imageEditState.cropPreview ? 1 : 0,
+        ].join(":")
+      : "";
+  return [dynamicIds, draftSignature, flowDraftSignature, imageEditSignature].join("||");
+}
+
+function getInteractionVisualSignature({
+  selectionRect = null,
+  alignmentSnap = null,
+  items = [],
+  draftElement = null,
+  hoveredItem = null,
+} = {}) {
+  const guides = Array.isArray(alignmentSnap?.guides) ? alignmentSnap.guides : [];
+  const guideSignature = guides
+    .map((guide) =>
+      [
+        String(guide?.axis || ""),
+        Math.round(Number(guide?.x ?? guide?.position ?? 0)),
+        Math.round(Number(guide?.y ?? guide?.position ?? 0)),
+      ].join(":")
+    )
+    .join("|");
+  const hintVisible = !(Array.isArray(items) && items.length) && !draftElement ? "hint" : "";
+  return [
+    getRectSignature(selectionRect),
+    String(hoveredItem?.id || ""),
+    alignmentSnap?.active ? "active" : "",
+    guideSignature,
+    hintVisible,
+  ].join("||");
+}
+
+function getViewVisualSignature(view = null) {
+  return [
+    Math.round((Number(view?.scale || 1) || 1) * 10000) / 10000,
+    Math.round(Number(view?.offsetX || 0) || 0),
+    Math.round(Number(view?.offsetY || 0) || 0),
+  ].join(":");
+}
+
 export function createRenderer({ customRenderers = [] } = {}) {
   const renderers = Array.isArray(customRenderers) ? customRenderers : [];
   const viewportCuller = createViewportCuller();
   const backgroundPatternCache = createBackgroundPatternCache();
+  const staticTileLayer = createTileSceneCache();
+  const layerStore = createCanvasLayerStore();
+  let lastStaticExclusionSignature = "";
+  let lastTileStats = {
+    tileCount: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    invalidatedTiles: 0,
+    reusedVisibleTiles: 0,
+    rerasterizedDirtyTiles: 0,
+    coldRenderedTiles: 0,
+    dirtyVisibleTiles: 0,
+    cacheSize: 0,
+  };
+  let lastDynamicStats = { customRendererHandledCount: 0, lodSimplifiedCount: 0 };
+  let lastDynamicVisualSignature = "";
+  let lastInteractionVisualSignature = "";
+  let lastViewVisualSignature = "";
 
   return {
-      render({
-        ctx,
-        canvas,
-        view,
-        items,
-        selectedIds,
-        hoverId,
-        selectionRect,
-        draftElement,
-        editingId,
-        imageEditState,
-        flowDraft,
-        alignmentSnap,
-        alignmentSnapConfig,
-        allowLocalFileAccess,
-        backgroundStyle,
-        renderTextInCanvas,
-        pixelRatio,
-      }) {
-        const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
-        const width = canvas.width / dpr;
-        const height = canvas.height / dpr;
-        const frameStart = typeof performance !== "undefined" ? performance.now() : Date.now();
-        ctx.save();
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, width, height);
-        drawBackground(ctx, width, height, view, backgroundStyle, backgroundPatternCache);
+    render({
+      ctx,
+      canvas,
+      view,
+      items,
+      selectedIds,
+      hoverId,
+      selectionRect,
+      draftElement,
+      editingId,
+      imageEditState,
+      flowDraft,
+      alignmentSnap,
+      alignmentSnapConfig,
+      allowLocalFileAccess,
+      backgroundStyle,
+      renderTextInCanvas,
+      pixelRatio,
+      visibleItems = null,
+      sceneIndex = null,
+      sceneKey = "",
+      dirtyState = null,
+      layerState = null,
+    }) {
+      const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
+      const width = canvas.width / dpr;
+      const height = canvas.height / dpr;
+      const frameStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const layerDirty = layerState?.dirty || {
+        background: true,
+        staticScene: true,
+        dynamicScene: true,
+        interaction: true,
+      };
 
-      const cullResult = viewportCuller(items, view, width, height, {
-        selectedIds,
-        hoverId,
-        editingId,
-      });
-      const visibleItems = cullResult.items;
+      const backgroundLayer = layerStore.ensure("background", width, height, dpr);
+      const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
+      const dynamicLayer = layerStore.ensure("dynamicScene", width, height, dpr);
+      const interactionLayer = layerStore.ensure("interaction", width, height, dpr);
+      if (!backgroundLayer || !staticLayer || !dynamicLayer || !interactionLayer) {
+        return null;
+      }
 
-      const selected = new Set(selectedIds || []);
-      let customRendererHandledCount = 0;
-      visibleItems.forEach((item) => {
-        const isSelected = selected.has(item.id);
-        const isHover = hoverId === item.id && !isSelected;
-        for (const renderElement of renderers) {
-            const handled = renderElement?.({
-              ctx,
-              item,
-              view,
-              selected: isSelected,
-              hover: isHover,
-              editing: editingId === item.id,
-              helpers: {
-                drawSelectionFrame,
-                drawHandles,
-                imageEditState,
-                flowDraft,
-                allowLocalFileAccess,
-                renderTextInCanvas,
-                editingId,
+      const cullResult =
+        Array.isArray(visibleItems)
+          ? {
+              items: visibleItems,
+              stats: {
+                totalCount: Array.isArray(items) ? items.length : 0,
+                renderedCount: visibleItems.length,
+                culledCount: Math.max(0, (Array.isArray(items) ? items.length : 0) - visibleItems.length),
+                forceRenderedCount: 0,
               },
+            }
+          : viewportCuller(items, view, width, height, {
+              selectedIds,
+              hoverId,
+              editingId,
             });
-          if (handled) {
-            customRendererHandledCount += 1;
-            drawLockBadge(ctx, item, view);
-            return;
-          }
-        }
-        if (item.type === "fileCard") {
-          drawFileCard(ctx, item, view, isSelected, isHover, {
-            drawSelectionFrame,
-            drawHandles,
-          });
-          drawLockBadge(ctx, item, view);
-          return;
-        }
-        if (item.type === "mindNode") {
-          drawMindNode(ctx, item, view, isSelected, isHover);
-          drawLockBadge(ctx, item, view);
-          return;
-        }
-          drawTextElement(ctx, item, view, isSelected, isHover, editingId === item.id, drawSelectionFrame, drawHandles, {
-            renderText: Boolean(renderTextInCanvas),
-          });
-        drawLockBadge(ctx, item, view);
+      const frameVisibleItems = cullResult.items;
+      const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
+      const requiresDynamicHover = hoveredItem?.type === "flowNode";
+      const dynamicIdSet = new Set(
+        [
+          editingId,
+          ...(requiresDynamicHover ? [hoverId] : []),
+          ...(Array.isArray(selectedIds) ? selectedIds : []),
+        ]
+          .map((value) => String(value || ""))
+          .filter(Boolean)
+      );
+      const staticItems = frameVisibleItems.filter((item) => !shouldBypassStaticTileCache(item, dynamicIdSet));
+      const dynamicItems = frameVisibleItems.filter((item) => shouldBypassStaticTileCache(item, dynamicIdSet));
+      const dynamicRenderIdSet = new Set(
+        dynamicItems
+          .map((item) => String(item?.id || "").trim())
+          .filter(Boolean)
+      );
+      const staticExclusionSignature = dynamicItems
+        .map((item) => String(item?.id || "").trim())
+        .filter(Boolean)
+        .sort()
+        .join("|");
+      const dynamicVisualSignature = getDynamicVisualSignature({
+        dynamicItems,
+        draftElement,
+        flowDraft,
+        imageEditState,
       });
+      const interactionVisualSignature = getInteractionVisualSignature({
+        selectionRect,
+        alignmentSnap,
+        items,
+        draftElement,
+        hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+      });
+      const viewVisualSignature = getViewVisualSignature(view);
+      const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
+      const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
+      const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
+      const forceViewRedraw = viewVisualSignature !== lastViewVisualSignature;
+      lastStaticExclusionSignature = staticExclusionSignature;
+      lastDynamicVisualSignature = dynamicVisualSignature;
+      lastInteractionVisualSignature = interactionVisualSignature;
+      lastViewVisualSignature = viewVisualSignature;
 
-      if (draftElement) {
-        ctx.save();
-        ctx.globalAlpha = 0.84;
-        if (draftElement.type === "shape") {
-          drawShapeElement(ctx, draftElement, view, false, false, {
-            drawSelectionFrame,
-            drawHandles,
-          });
-        }
-        ctx.restore();
+      let tileStats = {
+        tileCount: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        invalidatedTiles: 0,
+        reusedVisibleTiles: 0,
+        rerasterizedDirtyTiles: 0,
+        coldRenderedTiles: 0,
+        dirtyVisibleTiles: 0,
+      };
+      let customRendererHandledCount = 0;
+      let lodSimplifiedCount = 0;
+      const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
+      const effectiveStaticSceneDirty = Boolean(layerDirty.staticScene || forceStaticSceneRedraw || forceViewRedraw);
+      const effectiveDynamicSceneDirty = Boolean(
+        forceViewRedraw ||
+        forceDynamicSceneRedraw ||
+        (
+          layerDirty.dynamicScene &&
+          (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+        )
+      );
+      const effectiveInteractionDirty = Boolean(
+        forceViewRedraw ||
+        forceInteractionRedraw ||
+        (
+          layerDirty.interaction &&
+          (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+        )
+      );
+
+      if (effectiveBackgroundDirty) {
+        clearLayerContext(backgroundLayer, width, height);
+        drawBackground(backgroundLayer.ctx, width, height, view, backgroundStyle, backgroundPatternCache);
       }
 
-      drawSelectionRect(ctx, view, selectionRect);
-      drawAlignmentSnapGuides(ctx, alignmentSnap, alignmentSnapConfig, width, height);
-      if (!items.length && !draftElement) {
-        drawHint(ctx, width, height);
+      if (effectiveStaticSceneDirty) {
+        clearLayerContext(staticLayer, width, height);
+        tileStats =
+          staticItems.length && sceneIndex && sceneKey
+            ? staticTileLayer.draw({
+                ctx: staticLayer.ctx,
+                sceneIndex,
+                sceneKey,
+                view,
+                viewportWidth: width,
+                viewportHeight: height,
+                excludeIds: Array.from(dynamicRenderIdSet),
+                sceneChanged: Boolean(dirtyState?.sceneDirty),
+                dirtyItemIds: Array.isArray(dirtyState?.itemIds) ? dirtyState.itemIds : [],
+                drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
+                  drawVisibleItemsToContext({
+                    ctx: tileCtx,
+                    items: tileItems,
+                    view: tileView,
+                    selectedIds: [],
+                    hoverId: null,
+                    editingId: null,
+                    imageEditState: null,
+                    flowDraft: null,
+                    allowLocalFileAccess,
+                    renderTextInCanvas,
+                    renderers,
+                  }),
+              })
+            : staticItems.length
+              ? drawVisibleItemsToContext({
+                  ctx: staticLayer.ctx,
+                  items: staticItems,
+                  view,
+                  selectedIds: [],
+                  hoverId: null,
+                  editingId: null,
+                  imageEditState: null,
+                  flowDraft: null,
+                  allowLocalFileAccess,
+                  renderTextInCanvas,
+                  renderers,
+                })
+              : {
+                  tileCount: 0,
+                  cacheHits: 0,
+                  cacheMisses: 0,
+                  invalidatedTiles: 0,
+                  reusedVisibleTiles: 0,
+                  rerasterizedDirtyTiles: 0,
+                  coldRenderedTiles: 0,
+                  dirtyVisibleTiles: 0,
+                };
+        lastTileStats = {
+          ...tileStats,
+          cacheSize: staticTileLayer.getSize(),
+        };
+      } else {
+        tileStats = {
+          ...lastTileStats,
+          cacheHits: 0,
+          cacheMisses: 0,
+          invalidatedTiles: 0,
+          reusedVisibleTiles: Math.max(0, Number(lastTileStats.tileCount || 0) || 0),
+          rerasterizedDirtyTiles: 0,
+          coldRenderedTiles: 0,
+          dirtyVisibleTiles: 0,
+        };
       }
+
+      if (effectiveDynamicSceneDirty) {
+        clearLayerContext(dynamicLayer, width, height);
+        const dynamicStats = drawVisibleItemsToContext({
+          ctx: dynamicLayer.ctx,
+          items: dynamicItems,
+          view,
+          selectedIds,
+          hoverId,
+          editingId,
+          imageEditState,
+          flowDraft,
+          allowLocalFileAccess,
+          renderTextInCanvas,
+          renderers,
+        });
+        customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
+        lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
+        lastDynamicStats = {
+          customRendererHandledCount,
+          lodSimplifiedCount,
+        };
+        drawDraftElement(dynamicLayer.ctx, draftElement, view);
+      } else {
+        customRendererHandledCount = Number(lastDynamicStats.customRendererHandledCount || 0) || 0;
+        lodSimplifiedCount = Number(lastDynamicStats.lodSimplifiedCount || 0) || 0;
+      }
+
+      if (effectiveInteractionDirty) {
+        clearLayerContext(interactionLayer, width, height);
+        drawInteractionLayer(interactionLayer.ctx, {
+          view,
+          width,
+          height,
+          selectionRect,
+          alignmentSnap,
+          alignmentSnapConfig,
+          items,
+          draftElement,
+          hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+        });
+      }
+
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(backgroundLayer.canvas, 0, 0, width, height);
+      ctx.drawImage(staticLayer.canvas, 0, 0, width, height);
+      ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
+      ctx.drawImage(interactionLayer.canvas, 0, 0, width, height);
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
       const backgroundStats = backgroundPatternCache.getStats();
       canvas.__ffRenderStats = {
         frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
         viewport: { width, height },
         culling: cullResult.stats,
-        renderedItems: visibleItems.length,
-        customRendererHandledCount,
+        renderedItems: frameVisibleItems.length,
+        staticRenderedItems: staticItems.length,
+        dynamicRenderedItems: dynamicItems.length,
+        customRendererHandledCount:
+          customRendererHandledCount + Math.max(0, Number(tileStats?.customRendererHandledCount || 0) || 0),
+        lodSimplifiedCount:
+          lodSimplifiedCount + Math.max(0, Number(tileStats?.lodSimplifiedCount || 0) || 0),
         background: backgroundStats,
+        layerReuse: {
+          backgroundReused: !effectiveBackgroundDirty,
+          staticSceneReused: !effectiveStaticSceneDirty,
+          dynamicSceneReused: !effectiveDynamicSceneDirty,
+          interactionReused: !effectiveInteractionDirty,
+        },
+        renderReason: String(layerState?.renderReason || dirtyState?.reason || "render"),
+        renderReasons: Array.isArray(layerState?.reasons) ? layerState.reasons.slice() : [],
+        layerState: layerState
+          ? {
+              revisions: { ...(layerState.revisions || {}) },
+              dirty: { ...(layerState.dirty || {}) },
+            }
+          : null,
+        tileCache: {
+          ...tileStats,
+          cacheSize: Number(tileStats?.cacheSize || staticTileLayer.getSize()) || 0,
+          reused: !effectiveStaticSceneDirty,
+        },
       };
       ctx.restore();
     },

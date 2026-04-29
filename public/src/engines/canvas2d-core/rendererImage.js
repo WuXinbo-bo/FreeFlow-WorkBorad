@@ -1,6 +1,9 @@
 import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
+import { drawLodTextBars, drawRoundedRectPath, drawTableStyleLodShell } from "./rendererLod.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
+
+const IMAGE_LOD_RADIUS_PX = 16;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -366,10 +369,57 @@ function drawRotateHandle(ctx, x, y, width, height) {
   ctx.restore();
 }
 
+function drawImageLodPlaceholder(ctx, width, height) {
+  const rect = drawTableStyleLodShell(ctx, 0, 0, width, height, {
+    radius: IMAGE_LOD_RADIUS_PX,
+  });
+  const innerX = rect.panelX;
+  const innerY = rect.panelY;
+  const innerWidth = rect.panelWidth;
+  const innerHeight = rect.panelHeight;
+  const iconBoxSize = Math.max(14, Math.min(innerWidth, innerHeight) * 0.28);
+
+  ctx.save();
+  drawRoundedRectPath(ctx, innerX, innerY, innerWidth, innerHeight, rect.panelRadius);
+  ctx.clip();
+  ctx.fillStyle = "rgba(191, 219, 254, 0.26)";
+  ctx.beginPath();
+  ctx.moveTo(innerX + innerWidth * 0.12, innerY + innerHeight * 0.76);
+  ctx.lineTo(innerX + innerWidth * 0.38, innerY + innerHeight * 0.46);
+  ctx.lineTo(innerX + innerWidth * 0.55, innerY + innerHeight * 0.62);
+  ctx.lineTo(innerX + innerWidth * 0.78, innerY + innerHeight * 0.34);
+  ctx.lineTo(innerX + innerWidth * 0.96, innerY + innerHeight * 0.72);
+  ctx.lineTo(innerX + innerWidth * 0.96, innerY + innerHeight * 0.96);
+  ctx.lineTo(innerX + innerWidth * 0.12, innerY + innerHeight * 0.96);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(96, 165, 250, 0.32)";
+  ctx.beginPath();
+  ctx.arc(
+    innerX + innerWidth * 0.24,
+    innerY + innerHeight * 0.24,
+    Math.max(4, iconBoxSize * 0.18),
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+
+  drawLodTextBars(ctx, rect, {
+    lineCount: 2,
+    fill: "rgba(100, 116, 139, 0.12)",
+    padTop: innerHeight * 0.62,
+    widths: [0.72, 0.5],
+    lineHeight: Math.max(4, innerHeight * 0.08),
+    lineGap: Math.max(4, innerHeight * 0.07),
+  });
+}
+
 export function createImageRenderer() {
   const imageCache = new Map();
 
-  return function renderImageElement({ ctx, item, view, selected, hover, helpers }) {
+  return function renderImageElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
     if (item?.type !== "image") {
       return false;
     }
@@ -382,6 +432,16 @@ export function createImageRenderer() {
 
     ctx.save();
     ctx.translate(x, y);
+    if (lodMode !== "full") {
+      drawImageLodPlaceholder(ctx, width, height);
+      ctx.restore();
+      helpers?.drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
+      if (selected) {
+        helpers?.drawHandles?.(ctx, item, view);
+        drawRotateHandle(ctx, x, y, width, height);
+      }
+      return { handled: true, lodSimplified: true };
+    }
     const source = resolveImageSource(item.dataUrl, item.sourcePath, {
       allowLocalFileAccess: helpers?.allowLocalFileAccess,
     });
@@ -427,6 +487,6 @@ export function createImageRenderer() {
       helpers?.drawHandles?.(ctx, item, view);
       drawRotateHandle(ctx, x, y, width, height);
     }
-    return true;
+    return { handled: true, lodSimplified: false };
   };
 }

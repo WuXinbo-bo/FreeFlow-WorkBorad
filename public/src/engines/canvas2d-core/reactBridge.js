@@ -63,6 +63,9 @@ export function createCanvas2DReactBridge(engine) {
     revealBoardInFolder() {
       return engine?.revealBoardInFolder?.();
     },
+    openExternalUrl(url) {
+      return engine?.openExternalUrl?.(url);
+    },
     pickCanvasBoardSavePath() {
       return engine?.pickCanvasBoardSavePath?.();
     },

@@ -6,6 +6,8 @@ if (typeof electron === "string") {
 const { app, BrowserWindow, ipcMain, shell, globalShortcut, clipboard, desktopCapturer, session, screen, dialog, nativeImage } = electron;
 const { execFile } = require("child_process");
 const fs = require("fs");
+const HTMLtoDOCX = require("html-to-docx");
+const { compileWordExportAstToDocxBuffer } = require("./wordDocxCompiler");
 const { ensureDoubaoWindow, chatWithDoubao, cancelDoubaoChat, prepareDoubaoPrompt } = require("./doubao-web");
 const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTargetManager");
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
@@ -1858,14 +1860,24 @@ ipcMain.handle("desktop-shell:pick-image-save-path", async (_event, payload) => 
 
 ipcMain.handle("desktop-shell:pick-text-save-path", async (_event, payload) => {
   const defaultName = String(payload?.defaultName || "").trim();
+  const title = String(payload?.title || "").trim() || "导出文本";
+  const buttonLabel = String(payload?.buttonLabel || "").trim() || "保存文本";
+  const filters = Array.isArray(payload?.filters) && payload.filters.length
+    ? payload.filters.map((entry) => ({
+        name: String(entry?.name || "").trim() || "文件",
+        extensions: Array.isArray(entry?.extensions) && entry.extensions.length
+          ? entry.extensions.map((value) => String(value || "").trim().replace(/^\./, "")).filter(Boolean)
+          : ["*"],
+      }))
+    : [
+        { name: "文本文件", extensions: ["txt"] },
+        { name: "所有文件", extensions: ["*"] },
+      ];
   const result = await dialog.showSaveDialog(mainWindow || undefined, {
-    title: "导出文本",
-    buttonLabel: "保存文本",
+    title,
+    buttonLabel,
     defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-text.txt"),
-    filters: [
-      { name: "文本文件", extensions: ["txt"] },
-      { name: "所有文件", extensions: ["*"] },
-    ],
+    filters,
     properties: ["showOverwriteConfirmation"],
   });
 
@@ -1892,6 +1904,108 @@ ipcMain.handle("desktop-shell:pick-pdf-save-path", async (_event, payload) => {
     canceled: result.canceled,
     filePath: result.filePath || "",
   };
+});
+
+ipcMain.handle("desktop-shell:export-rich-text-docx", async (_event, payload) => {
+  const html = String(payload?.html || "").trim();
+  const defaultName = String(payload?.defaultName || "").trim() || "freeflow-word.docx";
+  const title = String(payload?.title || "").trim() || "导出 Word";
+  const buttonLabel = String(payload?.buttonLabel || "").trim() || "保存 Word";
+  const documentOptions = payload?.documentOptions && typeof payload.documentOptions === "object"
+    ? payload.documentOptions
+    : {};
+  if (!html) {
+    return { ok: false, canceled: false, error: "导出内容为空" };
+  }
+  try {
+    const result = await dialog.showSaveDialog(mainWindow || undefined, {
+      title,
+      buttonLabel,
+      defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-word.docx"),
+      filters: [
+        { name: "Word 文档", extensions: ["docx"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+      properties: ["showOverwriteConfirmation"],
+    });
+    if (!result || result.canceled || !result.filePath) {
+      return { ok: false, canceled: true };
+    }
+    const generated = await HTMLtoDOCX(html, null, documentOptions);
+    const buffer = Buffer.isBuffer(generated)
+      ? generated
+      : generated instanceof Uint8Array
+        ? Buffer.from(generated)
+        : ArrayBuffer.isView(generated)
+          ? Buffer.from(generated.buffer, generated.byteOffset, generated.byteLength)
+          : generated instanceof ArrayBuffer
+            ? Buffer.from(generated)
+            : Buffer.alloc(0);
+    if (!buffer.byteLength) {
+      return { ok: false, canceled: false, error: "Word 文档生成失败" };
+    }
+    const resolvedPath = path.resolve(String(result.filePath || "").trim());
+    await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
+    await fs.promises.writeFile(resolvedPath, buffer);
+    return {
+      ok: true,
+      canceled: false,
+      path: resolvedPath,
+      size: buffer.byteLength,
+    };
+  } catch (error) {
+    console.error("[FreeFlow] export-rich-text-docx failed:", error);
+    return {
+      ok: false,
+      canceled: false,
+      error: `旧版 Word 导出失败：${error?.message || "Word 导出失败"}`,
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:export-word-docx", async (_event, payload) => {
+  const ast = payload?.ast && typeof payload.ast === "object" ? payload.ast : null;
+  const defaultName = String(payload?.defaultName || "").trim() || "freeflow-word.docx";
+  const title = String(payload?.title || "").trim() || "导出 Word";
+  const buttonLabel = String(payload?.buttonLabel || "").trim() || "保存 Word";
+  if (!ast) {
+    return { ok: false, canceled: false, error: "导出内容为空" };
+  }
+  try {
+    const result = await dialog.showSaveDialog(mainWindow || undefined, {
+      title,
+      buttonLabel,
+      defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-word.docx"),
+      filters: [
+        { name: "Word 文档", extensions: ["docx"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+      properties: ["showOverwriteConfirmation"],
+    });
+    if (!result || result.canceled || !result.filePath) {
+      return { ok: false, canceled: true };
+    }
+    const buffer = await compileWordExportAstToDocxBuffer(ast);
+    if (!buffer || !buffer.byteLength) {
+      return { ok: false, canceled: false, error: "Word 文档生成失败" };
+    }
+    const resolvedPath = path.resolve(String(result.filePath || "").trim());
+    await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
+    await fs.promises.writeFile(resolvedPath, buffer);
+    return {
+      ok: true,
+      canceled: false,
+      path: resolvedPath,
+      size: buffer.byteLength,
+    };
+  } catch (error) {
+    console.error("[FreeFlow] export-word-docx failed:", error);
+    return {
+      ok: false,
+      canceled: false,
+      error: `结构化 Word 导出失败：${error?.message || "Word 导出失败"}`,
+    };
+  }
 });
 
 ipcMain.handle("desktop-shell:read-file", async (_event, targetPath) => {

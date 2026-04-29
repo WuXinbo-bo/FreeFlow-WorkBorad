@@ -8,6 +8,9 @@ export const MATH_RENDER_STATES = Object.freeze({
   FALLBACK: "fallback",
   ERROR: "error",
 });
+const IMPORTED_MATH_BLOCK_TARGET_WIDTH = 760;
+const IMPORTED_MATH_BLOCK_MIN_WIDTH = 620;
+const IMPORTED_MATH_BLOCK_MAX_WIDTH = 980;
 
 export function normalizeStructuredMathMeta(value = {}) {
   if (!value || typeof value !== "object") {
@@ -122,7 +125,13 @@ export function estimateMathElementSize(formula = "", displayMode = true) {
     const lines = clean.split("\n");
     const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
     return {
-      width: Math.max(200, Math.min(920, Math.round(72 + longest * 10.5))),
+      width: Math.max(
+        IMPORTED_MATH_BLOCK_MIN_WIDTH,
+        Math.min(
+          IMPORTED_MATH_BLOCK_MAX_WIDTH,
+          Math.max(IMPORTED_MATH_BLOCK_TARGET_WIDTH, Math.round(72 + longest * 10.5))
+        )
+      ),
       height: Math.max(72, Math.round(30 + Math.max(1, lines.length) * 28)),
     };
   }

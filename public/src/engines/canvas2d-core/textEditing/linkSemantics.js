@@ -3,6 +3,7 @@ import { normalizeTextLinkTokens, normalizeTextUrlMetaCache } from "../textModel
 const URL_MATCH_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
 const ALLOWED_FETCH_STATES = new Set(["idle", "pending", "ready", "error", "stale"]);
 const DEFAULT_FETCH_STATE = "pending";
+const CANVAS_INTERNAL_LINK_SCHEME = "freeflow://canvas/item/";
 
 const TRAILING_TRIM_CHARS = new Set([
   ".",
@@ -46,11 +47,37 @@ function normalizeUrl(rawValue = "") {
   if (!source) {
     return "";
   }
+  if (/^freeflow:\/\/canvas\/item\//i.test(source)) {
+    return source;
+  }
+  if (/^file:\/\//i.test(source)) {
+    try {
+      return new URL(source).toString();
+    } catch {
+      return "";
+    }
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(source)) {
+    return encodeURI(`file:///${source.replace(/\\/g, "/")}`);
+  }
+  if (/^\\\\[^\\]+\\[^\\]+/.test(source)) {
+    return encodeURI(`file:${source.replace(/\\/g, "/")}`);
+  }
+  if (/^\/[^/]/.test(source)) {
+    return encodeURI(`file://${source}`);
+  }
   if (/^https?:\/\//i.test(source)) {
     return source;
   }
   if (/^www\./i.test(source)) {
     return `https://${source}`;
+  }
+  if (/^(mailto:|tel:)/i.test(source)) {
+    try {
+      return new URL(source).toString();
+    } catch {
+      return "";
+    }
   }
   return "";
 }
@@ -78,6 +105,20 @@ function resolveKindHint(domain = "") {
   }
   const matched = EMBED_CANDIDATE_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
   return matched ? "embed-candidate" : "preview-candidate";
+}
+
+function resolveKindHintFromUrl(urlValue = "", domain = "") {
+  const normalizedUrl = String(urlValue || "").trim();
+  if (!normalizedUrl) {
+    return "plain-link";
+  }
+  if (normalizedUrl.toLowerCase().startsWith(CANVAS_INTERNAL_LINK_SCHEME)) {
+    return "canvas-link";
+  }
+  if (/^(file:|mailto:|tel:)/i.test(normalizedUrl)) {
+    return "plain-link";
+  }
+  return resolveKindHint(domain);
 }
 
 function trimTrailingToken(rawText = "", startIndex = 0) {
@@ -134,6 +175,55 @@ export function createLinkTokensFromPlainText(value = "") {
   }));
 }
 
+export function createLinkTokensFromRichHtml(html = "", plainText = "") {
+  const rawHtml = String(html || "").trim();
+  const sourceText = String(plainText || "");
+  if (!rawHtml || !sourceText || typeof document === "undefined") {
+    return [];
+  }
+  const template = document.createElement("template");
+  template.innerHTML = rawHtml;
+  const anchors = Array.from(template.content.querySelectorAll("a[href]"));
+  if (!anchors.length) {
+    return [];
+  }
+  const tokens = [];
+  let searchCursor = 0;
+  anchors.forEach((anchor) => {
+    if (!(anchor instanceof HTMLAnchorElement)) {
+      return;
+    }
+    const normalizedUrl = normalizeUrl(anchor.getAttribute("href") || anchor.href || "");
+    const linkText = String(anchor.textContent || "");
+    if (!normalizedUrl || !linkText) {
+      return;
+    }
+    let rangeStart = sourceText.indexOf(linkText, Math.max(0, searchCursor));
+    if (rangeStart < 0) {
+      rangeStart = sourceText.indexOf(linkText);
+    }
+    if (rangeStart < 0) {
+      return;
+    }
+    const rangeEnd = rangeStart + linkText.length;
+    searchCursor = rangeEnd;
+    const domain = resolveDomain(normalizedUrl);
+    tokens.push({
+      url: normalizedUrl,
+      rangeStart,
+      rangeEnd,
+      domain,
+      kindHint: resolveKindHintFromUrl(normalizedUrl, domain),
+      fetchState: /^(https?:)/i.test(normalizedUrl) ? DEFAULT_FETCH_STATE : "idle",
+      label: linkText,
+    });
+  });
+  return normalizeTextLinkTokens(tokens).map((token) => ({
+    ...token,
+    fetchState: normalizeFetchState(token.fetchState),
+  }));
+}
+
 export function applyLinkTokensToTextItem(item, plainText = "") {
   if (!item || item.type !== "text") {
     return item;
@@ -169,7 +259,10 @@ function normalizeUrlMetaCache(cache = {}) {
 }
 
 export function refreshTextLinkSemantics(item, plainText = "") {
-  const tokens = createLinkTokensFromPlainText(plainText).map((token) => ({
+  const tokens = normalizeTextLinkTokens([
+    ...createLinkTokensFromPlainText(plainText),
+    ...createLinkTokensFromRichHtml(item?.html || "", plainText),
+  ]).map((token) => ({
     ...token,
     fetchState: normalizeFetchState(token.fetchState),
   }));
@@ -198,7 +291,7 @@ export function refreshTextLinkSemantics(item, plainText = "") {
       image: "",
       siteName: "",
       status: "",
-      fetchState: DEFAULT_FETCH_STATE,
+      fetchState: token?.fetchState || DEFAULT_FETCH_STATE,
       updatedAt: 0,
       embeddable: token?.kindHint === "embed-candidate",
     };
