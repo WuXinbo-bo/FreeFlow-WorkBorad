@@ -1,5 +1,6 @@
 import {
   ensureRichTextDocumentFields,
+  normalizeRichTextDocument,
   RICH_TEXT_BLOCK_TYPES,
   RICH_TEXT_INLINE_NODE_TYPES,
   RICH_TEXT_MARK_TYPES,
@@ -7,10 +8,14 @@ import {
 } from "../../textModel/richTextDocument.js";
 import { htmlToPlainText, sanitizeText } from "../../utils.js";
 import { TEXT_FONT_FAMILY } from "../../rendererText.js";
+import { flattenTableStructureToMatrix } from "../../elements/table.js";
+import { resolveCodeBlockContent } from "../../elements/codeBlock.js";
 
 const WORD_EXPORT_AST_KIND = "freeflow-word-export";
 const WORD_EXPORT_AST_VERSION = 1;
 const EXPORT_FONT_POLICY_MODE = "restricted";
+const SELECTION_SORT_STRATEGY_VERSION = 1;
+const SUPPORTED_SELECTION_ITEM_TYPES = new Set(["text", "flowNode", "table", "codeBlock", "mathBlock", "mathInline"]);
 
 const EXPORT_FONT_FAMILIES = Object.freeze({
   latinBody: "Arial",
@@ -85,6 +90,19 @@ function normalizeHexColor(value = "", fallback = "") {
     hex = `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
   }
   return hex;
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeSelectionType(type = "") {
+  const normalized = String(type || "").trim();
+  if (normalized === "flowNode") {
+    return "text";
+  }
+  return normalized;
 }
 
 function buildWordTheme(item = null, options = {}) {
@@ -185,7 +203,17 @@ function buildAstMeta(item = null, options = {}) {
 function createCompilerContext() {
   return {
     footnotes: new Map(),
+    footnoteNamespace: "",
   };
+}
+
+function resolveNamespacedFootnoteId(refId = "", context = {}) {
+  const normalizedRefId = String(refId || "").trim();
+  if (!normalizedRefId) {
+    return "";
+  }
+  const namespace = String(context?.footnoteNamespace || "").trim();
+  return namespace ? `${namespace}::${normalizedRefId}` : normalizedRefId;
 }
 
 function mapMark(mark = null) {
@@ -223,14 +251,14 @@ function mapMark(mark = null) {
   return null;
 }
 
-function mapInlineNodes(nodes = []) {
+function mapInlineNodes(nodes = [], context) {
   return (Array.isArray(nodes) ? nodes : [])
-    .map((node) => mapInlineNode(node))
+    .map((node) => mapInlineNode(node, context))
     .flat()
     .filter(Boolean);
 }
 
-function mapInlineNode(node = null) {
+function mapInlineNode(node = null, context) {
   if (!node || typeof node !== "object") {
     return [];
   }
@@ -255,7 +283,7 @@ function mapInlineNode(node = null) {
   }
   if (type === RICH_TEXT_INLINE_NODE_TYPES.LINK) {
     const href = String(node?.attrs?.href || "").trim();
-    const children = mapInlineNodes(node.content || []);
+    const children = mapInlineNodes(node.content || [], context);
     if (!href) {
       return children;
     }
@@ -271,7 +299,7 @@ function mapInlineNode(node = null) {
     return latex ? [{ type: "mathInline", latex }] : [];
   }
   if (type === RICH_TEXT_INLINE_NODE_TYPES.FOOTNOTE_REF) {
-    const refId = String(node?.attrs?.refId || "").trim();
+    const refId = resolveNamespacedFootnoteId(node?.attrs?.refId || "", context);
     return refId ? [{ type: "footnoteRef", refId }] : [];
   }
   if (type === RICH_TEXT_INLINE_NODE_TYPES.IMAGE) {
@@ -291,26 +319,26 @@ function mapAlign(align = "") {
   return ["left", "center", "right", "justify"].includes(value) ? value : "left";
 }
 
-function buildParagraphNode(block = {}) {
+function buildParagraphNode(block = {}, context) {
   return {
     type: "paragraph",
     align: mapAlign(block?.attrs?.align || "left"),
-    children: mapInlineNodes(block.content || []),
+    children: mapInlineNodes(block.content || [], context),
   };
 }
 
-function buildHeadingNode(block = {}) {
+function buildHeadingNode(block = {}, context) {
   return {
     type: "heading",
     level: clamp(Number(block?.attrs?.level || 1) || 1, 1, 6),
     align: mapAlign(block?.attrs?.align || "left"),
-    children: mapInlineNodes(block.content || []),
+    children: mapInlineNodes(block.content || [], context),
   };
 }
 
 function buildListItemNode(block = {}, context) {
   const children = [];
-  const inlineChildren = mapInlineNodes(block.content || []);
+  const inlineChildren = mapInlineNodes(block.content || [], context);
   if (inlineChildren.length) {
     children.push({
       type: "paragraph",
@@ -387,7 +415,7 @@ function buildTableNode(block = {}, context) {
         children: [{
           type: "paragraph",
           align: mapAlign(cell?.attrs?.align || "left"),
-          children: mapInlineNodes(cell.content || []),
+          children: mapInlineNodes(cell.content || [], context),
         }],
       })),
     })),
@@ -395,7 +423,7 @@ function buildTableNode(block = {}, context) {
 }
 
 function registerFootnoteDefinition(block = {}, context) {
-  const refId = String(block?.attrs?.id || block?.attrs?.identifier || "").trim();
+  const refId = resolveNamespacedFootnoteId(block?.attrs?.id || block?.attrs?.identifier || "", context);
   if (!refId) {
     return null;
   }
@@ -438,10 +466,10 @@ function mapBlockNode(block = null, context) {
   }
   const type = String(block.type || "").trim();
   if (type === RICH_TEXT_BLOCK_TYPES.PARAGRAPH) {
-    return buildParagraphNode(block);
+    return buildParagraphNode(block, context);
   }
   if (type === RICH_TEXT_BLOCK_TYPES.HEADING) {
-    return buildHeadingNode(block);
+    return buildHeadingNode(block, context);
   }
   if (type === RICH_TEXT_BLOCK_TYPES.BLOCKQUOTE) {
     return buildBlockquoteNode(block, context);
@@ -489,8 +517,29 @@ function buildFallbackParagraph(item = null) {
   }];
 }
 
+function resolveSourceRichTextDocument(source = {}, fallback = {}) {
+  if (source?.richTextDocument && typeof source.richTextDocument === "object") {
+    return normalizeRichTextDocument(source.richTextDocument, {
+      html: source?.html || fallback?.html || "",
+      plainText: source?.plainText || source?.text || fallback?.plainText || fallback?.text || "",
+      baseFontSize: Number(source?.fontSize || fallback?.fontSize || 18) || 18,
+    });
+  }
+  return null;
+}
+
 function appendItemChildren(targetChildren, item, options = {}) {
   const context = options.context || createCompilerContext();
+  const directDocument = resolveSourceRichTextDocument(item, {
+    html: item?.html || "",
+    plainText: item?.plainText || item?.text || "",
+    fontSize: item?.fontSize || 18,
+  });
+  if (directDocument) {
+    const children = buildAstChildrenFromDocument(directDocument, context);
+    targetChildren.push(...(children.length ? children : buildFallbackParagraph(item)));
+    return context;
+  }
   const content = ensureRichTextDocumentFields(item, {
     html: item?.html || "",
     plainText: item?.plainText || item?.text || "",
@@ -504,8 +553,271 @@ function appendItemChildren(targetChildren, item, options = {}) {
   return context;
 }
 
+function buildTableCellChildren(cell = {}, context) {
+  const directDocument = resolveSourceRichTextDocument(cell, {
+    html: cell?.html || "",
+    plainText: cell?.plainText || cell?.text || "",
+    fontSize: 16,
+  });
+  if (directDocument) {
+    const directChildren = buildAstChildrenFromDocument(directDocument, context);
+    if (directChildren.length) {
+      return directChildren;
+    }
+  }
+  const content = ensureRichTextDocumentFields(
+    {
+      html: cell?.html || "",
+      plainText: cell?.plainText || cell?.text || "",
+      richTextDocument: cell?.richTextDocument && typeof cell.richTextDocument === "object"
+        ? JSON.parse(JSON.stringify(cell.richTextDocument))
+        : null,
+    },
+    {
+      html: cell?.html || "",
+      plainText: cell?.plainText || cell?.text || "",
+      fontSize: 16,
+    }
+  );
+  const richTextDocument = content.richTextDocument || null;
+  const children = richTextDocument
+    ? buildAstChildrenFromDocument(richTextDocument, context)
+    : [];
+  if (children.length) {
+    return children;
+  }
+  const plainText = sanitizeText(String(content.plainText || cell?.plainText || "")).trim();
+  return [{
+    type: "paragraph",
+    align: mapAlign(cell?.align || "left"),
+    children: plainText ? [{ type: "text", text: plainText, marks: [] }] : [],
+  }];
+}
+
+function buildSelectionTableNode(item, context) {
+  const matrix = flattenTableStructureToMatrix(item?.table || {});
+  if (!Array.isArray(matrix) || !matrix.length) {
+    return null;
+  }
+  const rows = matrix.map((row, rowIndex) => ({
+    type: "tableRow",
+    header: rowIndex === 0 && item?.table?.hasHeader !== false,
+    cells: (Array.isArray(row) ? row : []).map((cell) => ({
+      type: "tableCell",
+      header: Boolean(cell?.header),
+      align: mapAlign(cell?.align || "left"),
+      colSpan: 1,
+      rowSpan: 1,
+      children: buildTableCellChildren(cell, context),
+    })),
+  }));
+  return rows.length ? { type: "table", rows } : null;
+}
+
+function buildSelectionCodeBlockNode(item) {
+  const text = sanitizeText(resolveCodeBlockContent(item)).trim();
+  if (!text) {
+    return null;
+  }
+  return {
+    type: "codeBlock",
+    language: String(item?.language || "").trim().toLowerCase(),
+    text,
+  };
+}
+
+function buildSelectionMathBlockNode(item) {
+  const latex = sanitizeText(String(item?.formula || item?.plainText || item?.text || "")).trim();
+  if (!latex) {
+    return null;
+  }
+  return {
+    type: "mathBlock",
+    latex,
+    align: item?.displayMode === false ? "left" : "center",
+  };
+}
+
+function buildSelectionTextChildren(item, context) {
+  const targetChildren = [];
+  appendItemChildren(targetChildren, item, { context });
+  return targetChildren;
+}
+
+function createSeparatorParagraph() {
+  return {
+    type: "paragraph",
+    align: "left",
+    children: [],
+  };
+}
+
+function getSelectionItemBounds(item = {}) {
+  const left = toFiniteNumber(item?.x, 0);
+  const top = toFiniteNumber(item?.y, 0);
+  const width = Math.max(1, toFiniteNumber(item?.width, 1));
+  const height = Math.max(1, toFiniteNumber(item?.height, 1));
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    centerY: top + height / 2,
+  };
+}
+
+function measureVerticalOverlapRatio(a, b) {
+  const overlap = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  const reference = Math.max(1, Math.min(a.height, b.height));
+  return overlap / reference;
+}
+
+function sortVisualSelectionEntries(entries = []) {
+  const prepared = (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => ({
+      ...entry,
+      sortIndex: index,
+      bounds: getSelectionItemBounds(entry.item),
+    }))
+    .sort((a, b) => (
+      a.bounds.top - b.bounds.top ||
+      a.bounds.left - b.bounds.left ||
+      a.sortIndex - b.sortIndex
+    ));
+  const rows = [];
+  prepared.forEach((entry) => {
+    const lastRow = rows[rows.length - 1];
+    if (!lastRow) {
+      rows.push({
+        entries: [entry],
+        top: entry.bounds.top,
+        bottom: entry.bounds.bottom,
+        centerY: entry.bounds.centerY,
+      });
+      return;
+    }
+    const centerDelta = Math.abs(entry.bounds.centerY - lastRow.centerY);
+    const minHeight = Math.max(1, Math.min(entry.bounds.height, lastRow.bottom - lastRow.top));
+    const overlapRatio = measureVerticalOverlapRatio(entry.bounds, {
+      top: lastRow.top,
+      bottom: lastRow.bottom,
+      height: Math.max(1, lastRow.bottom - lastRow.top),
+    });
+    const sameRow = centerDelta <= minHeight * 0.35 || overlapRatio >= 0.45;
+    if (!sameRow) {
+      rows.push({
+        entries: [entry],
+        top: entry.bounds.top,
+        bottom: entry.bounds.bottom,
+        centerY: entry.bounds.centerY,
+      });
+      return;
+    }
+    lastRow.entries.push(entry);
+    lastRow.top = Math.min(lastRow.top, entry.bounds.top);
+    lastRow.bottom = Math.max(lastRow.bottom, entry.bounds.bottom);
+    lastRow.centerY = (lastRow.top + lastRow.bottom) / 2;
+  });
+  rows.forEach((row) => {
+    row.entries.sort((a, b) => (
+      a.bounds.left - b.bounds.left ||
+      a.bounds.top - b.bounds.top ||
+      a.sortIndex - b.sortIndex
+    ));
+  });
+  rows.sort((a, b) => a.top - b.top || a.entries[0].sortIndex - b.entries[0].sortIndex);
+  return rows.flatMap((row) => row.entries);
+}
+
+function createSelectionPlanEntry(item, originalIndex) {
+  const type = normalizeSelectionType(item?.type || "");
+  return {
+    item,
+    id: String(item?.id || "").trim(),
+    type,
+    originalIndex,
+  };
+}
+
+function buildSelectionPlanMeta(orderedEntries, skippedEntries) {
+  return {
+    orderedItemIds: orderedEntries.map((entry) => entry.id).filter(Boolean),
+    skippedItems: skippedEntries.map((entry) => ({
+      id: entry.id,
+      type: entry.type || "unknown",
+      reason: entry.reason || "unsupported",
+    })),
+    sortStrategy: "visual-reading-order",
+    sortStrategyVersion: SELECTION_SORT_STRATEGY_VERSION,
+  };
+}
+
+export function buildSelectionWordExportPlan(items = [], options = {}) {
+  const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
+  const sortableEntries = [];
+  const skippedEntries = [];
+  normalizedItems.forEach((item, index) => {
+    const entry = createSelectionPlanEntry(item, index);
+    if (!entry.id) {
+      skippedEntries.push({ ...entry, reason: "missing-id" });
+      return;
+    }
+    if (!SUPPORTED_SELECTION_ITEM_TYPES.has(entry.type)) {
+      skippedEntries.push({ ...entry, reason: "unsupported-type" });
+      return;
+    }
+    sortableEntries.push(entry);
+  });
+  const orderedEntries = sortVisualSelectionEntries(sortableEntries);
+  return {
+    orderedEntries,
+    skippedEntries,
+    meta: buildSelectionPlanMeta(orderedEntries, skippedEntries),
+  };
+}
+
+function convertSelectionEntryToAstNodes(entry, context) {
+  const item = entry?.item || null;
+  const type = normalizeSelectionType(entry?.type || item?.type || "");
+  if (!item || !type) {
+    return [];
+  }
+  if (type === "text") {
+    return buildSelectionTextChildren(item, context);
+  }
+  if (type === "table") {
+    const tableNode = buildSelectionTableNode(item, context);
+    return tableNode ? [tableNode] : [];
+  }
+  if (type === "codeBlock") {
+    const codeBlockNode = buildSelectionCodeBlockNode(item);
+    return codeBlockNode ? [codeBlockNode] : [];
+  }
+  if (type === "mathBlock" || type === "mathInline") {
+    const mathNode = buildSelectionMathBlockNode(item);
+    return mathNode ? [mathNode] : [];
+  }
+  return [];
+}
+
+function buildCanvasSelectionMeta(plan, options = {}) {
+  return {
+    title: String(options.title || "画布导出").trim() || "画布导出",
+    creator: String(options.creator || "FreeFlow").trim() || "FreeFlow",
+    lastModifiedBy: String(options.lastModifiedBy || "FreeFlow").trim() || "FreeFlow",
+    source: "canvas-selection-mixed",
+    sourceItemIds: plan.orderedEntries.map((entry) => entry.id).filter(Boolean),
+    orderedItemIds: plan.meta.orderedItemIds,
+    skippedItems: plan.meta.skippedItems,
+    sortStrategyVersion: SELECTION_SORT_STRATEGY_VERSION,
+  };
+}
+
 export function buildWordExportAstFromRichTextItem(item, options = {}) {
   const context = createCompilerContext();
+  context.footnoteNamespace = item?.id ? String(item.id) : "";
   const children = [];
   appendItemChildren(children, item, { context });
   return {
@@ -523,32 +835,35 @@ export function buildWordExportAstFromRichTextItem(item, options = {}) {
   };
 }
 
-export function buildWordExportAstFromItems(items = [], options = {}) {
-  const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
-  const context = createCompilerContext();
-  const theme = buildWordTheme(normalizedItems[0] || null, options);
-  const meta = {
-    title: String(options.title || "画布导出").trim() || "画布导出",
-    creator: String(options.creator || "FreeFlow").trim() || "FreeFlow",
-    lastModifiedBy: String(options.lastModifiedBy || "FreeFlow").trim() || "FreeFlow",
-    source: "canvas-selection",
-    sourceItemIds: normalizedItems.map((item) => String(item.id || "")).filter(Boolean),
-  };
-  const children = [];
-  normalizedItems.forEach((item, index) => {
-    if (index > 0 && children.length) {
-      children.push({
-        type: "paragraph",
-        align: "left",
-        children: [],
-      });
-    }
-    appendItemChildren(children, item, { context });
+export function buildWordExportAstFromCanvasSelection(items = [], options = {}) {
+  const plan = buildSelectionWordExportPlan(items, options);
+  const theme = buildWordTheme(null, {
+    ...options,
+    defaultFont: options.defaultFont || TEXT_FONT_FAMILY,
   });
+  const context = createCompilerContext();
+  const children = [];
+  plan.orderedEntries.forEach((entry, index) => {
+    context.footnoteNamespace = entry.id;
+    const nextChildren = convertSelectionEntryToAstNodes(entry, context);
+    if (!nextChildren.length) {
+      plan.skippedEntries.push({ ...entry, reason: "empty-content" });
+      return;
+    }
+    if (children.length && index > 0) {
+      children.push(createSeparatorParagraph());
+    }
+    children.push(...nextChildren);
+  });
+  const finalPlanMeta = buildSelectionPlanMeta(plan.orderedEntries, plan.skippedEntries);
+  const footnotes = Array.from(context.footnotes.values());
   return {
     kind: WORD_EXPORT_AST_KIND,
     version: WORD_EXPORT_AST_VERSION,
-    meta,
+    meta: {
+      ...buildCanvasSelectionMeta(plan, options),
+      skippedItems: finalPlanMeta.skippedItems,
+    },
     theme,
     sections: [
       {
@@ -556,8 +871,21 @@ export function buildWordExportAstFromItems(items = [], options = {}) {
         children,
       },
     ],
-    footnotes: Array.from(context.footnotes.values()),
+    footnotes,
+    selectionPlan: {
+      orderedItemIds: finalPlanMeta.orderedItemIds,
+      skippedItems: finalPlanMeta.skippedItems,
+      sortStrategyVersion: SELECTION_SORT_STRATEGY_VERSION,
+    },
   };
+}
+
+export function buildWordExportAstFromItems(items = [], options = {}) {
+  const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
+  if (normalizedItems.length === 1 && normalizeSelectionType(normalizedItems[0]?.type || "") === "text") {
+    return buildWordExportAstFromRichTextItem(normalizedItems[0], options);
+  }
+  return buildWordExportAstFromCanvasSelection(normalizedItems, options);
 }
 
 export { WORD_EXPORT_AST_KIND, WORD_EXPORT_AST_VERSION };

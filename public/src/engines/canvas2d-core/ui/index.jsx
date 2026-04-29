@@ -196,13 +196,13 @@ function getExportScopeLabel(scope = "") {
   if (normalized === "board") return "画布";
   if (normalized === "selection") return "选区";
   if (normalized === "rich-text") return "富文本";
-  if (normalized === "capture") return "截图";
+  if (normalized === "capture") return "分享";
   return "导出";
 }
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.0.1-rc" },
+  { label: "版本号", value: "v1.0.8-rc" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },
@@ -918,7 +918,7 @@ function Canvas2DControls({ engine }) {
               }}
               aria-haspopup="menu"
               aria-expanded={captureMenuOpen}
-              title="截图"
+              title="分享"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
                 <ShareIcon />
@@ -948,7 +948,7 @@ function Canvas2DControls({ engine }) {
                     setCapturePngMenuOpen(false);
                   }}
                 >
-                  <span>画布截图</span>
+                  <span>分享当前画布</span>
                 </button>
                 <button
                   type="button"

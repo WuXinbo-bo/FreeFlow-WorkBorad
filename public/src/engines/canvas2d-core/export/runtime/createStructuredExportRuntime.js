@@ -11,7 +11,7 @@ import {
   serializeTableMatrixToMarkdown,
   serializeTableMatrixToPlainText,
 } from "../../elements/tableFormats.js";
-import { buildWordExportAstFromRichTextItem } from "../word/buildWordExportAst.js";
+import { buildWordExportAstFromCanvasSelection, buildWordExportAstFromRichTextItem } from "../word/buildWordExportAst.js";
 import * as XLSX from "../../../../../vendor/xlsx/xlsx.mjs";
 
 function normalizeWordExportFontName(fontFamily = "") {
@@ -463,6 +463,52 @@ export function createStructuredExportRuntime({
     };
   }
 
+  async function exportSelectionAsWordFile(items = [], options = {}) {
+    const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
+    if (!normalizedItems.length) {
+      return { ok: false, canceled: false, code: "WORD_EXPORT_EMPTY_SELECTION", message: "未选中可导出内容" };
+    }
+    const ast = buildWordExportAstFromCanvasSelection(normalizedItems, {
+      title: String(options.title || "画布导出").trim() || "画布导出",
+      creator: "FreeFlow",
+      lastModifiedBy: "FreeFlow",
+    });
+    const astHasContent = Array.isArray(ast?.sections) && ast.sections.some((section) => Array.isArray(section?.children) && section.children.length);
+    if (!astHasContent) {
+      return { ok: false, canceled: false, code: "WORD_EXPORT_EMPTY", message: "所选元素暂时无法导出为 Word" };
+    }
+    const saveResult = await fileAdapter?.saveWordAstAsDocxFile?.(ast, {
+      defaultName: options.defaultName || "freeflow-selection-word",
+      title: options.title || "导出 Word",
+      buttonLabel: options.buttonLabel || "保存 Word",
+    });
+    if (!saveResult?.ok) {
+      if (saveResult?.canceled) {
+        return { ok: false, canceled: true, code: "WORD_EXPORT_CANCELED", message: "" };
+      }
+      return {
+        ok: false,
+        canceled: false,
+        code: "WORD_EXPORT_WRITE_FAILED",
+        message: saveResult?.error || "导出失败",
+      };
+    }
+    const skippedItems = Array.isArray(ast?.selectionPlan?.skippedItems) ? ast.selectionPlan.skippedItems : [];
+    const skippedSummary = skippedItems.length
+      ? `，已跳过 ${skippedItems.length} 个暂不支持元素`
+      : "";
+    return {
+      ok: true,
+      canceled: false,
+      code: "WORD_EXPORT_OK",
+      message: `已导出 Word${skippedSummary}`,
+      filePath: String(saveResult.path || "").trim(),
+      bytes: Number(saveResult.size) || 0,
+      skippedItems,
+      ast,
+    };
+  }
+
   async function exportRichTextItemAsPdf(board, item, options = {}) {
     return exportBoardAsPdf(board, {
       ...options,
@@ -694,6 +740,7 @@ export function createStructuredExportRuntime({
     exportBoardAsPdf,
     exportItemsAsImage,
     exportRichTextItemAsWordFile,
+    exportSelectionAsWordFile,
     exportRichTextItemAsPdf,
     exportRichTextItemAsPng,
     exportTextItem,

@@ -49,7 +49,7 @@ export const CONFIG = {
   canvasTextBoxDefaultFontSize: 18,
   canvasTextBoxMinFontSize: 14,
   canvasTextBoxMaxFontSize: 72,
-  startupTutorialIntroVersion: "1.0.1-rc",
+  startupTutorialIntroVersion: "1.0.8-rc",
 };
 
 const browserWindow = typeof window === "undefined" ? null : window;

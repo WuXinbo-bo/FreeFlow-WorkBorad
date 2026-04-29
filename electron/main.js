@@ -39,7 +39,7 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.1-rc";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.8-rc";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });

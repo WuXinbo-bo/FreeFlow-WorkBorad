@@ -717,6 +717,10 @@ function normalizeExportHistoryBoardKey(value = "") {
   return String(value || "").trim().replace(/\\/g, "/").toLowerCase();
 }
 
+function normalizeJsonTextForParse(value = "") {
+  return String(value || "").replace(/^\uFEFF/, "");
+}
+
 function readExportHistoryStorage() {
   try {
     const raw = localStorage.getItem(EXPORT_HISTORY_STORAGE_KEY);
@@ -5399,7 +5403,7 @@ let tablePointerSelectionState = {
       }
       let parsed = null;
       try {
-        parsed = JSON.parse(readResult?.text || "");
+        parsed = JSON.parse(normalizeJsonTextForParse(readResult?.text || ""));
       } catch (error) {
         if (!silent) {
           setStatus("画布 JSON 解析失败", "warning");
@@ -12200,7 +12204,27 @@ function syncRichToolbarEnhancements(toolbar) {
       await waitForUiPaint();
       const result = await structuredExportRuntime.exportBoardAsPdf(state.board, {
         ...options,
+        background: "white",
+        includeGrid: false,
         backgroundPattern: resolveExportBackgroundPattern(options),
+        onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
+          if (typeof window === "undefined" || typeof window.confirm !== "function") {
+            return false;
+          }
+          return window.confirm(
+            [
+              "当前 PDF 导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
+              "",
+              `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
+                1,
+                Math.round(Number(requestedCanvasHeight || 0) || 1)
+              )}`,
+              `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
+              "",
+              "是否仍然继续导出？",
+            ].join("\n")
+          );
+        },
       });
       if (result?.ok) {
         recordExportHistory(
@@ -12245,6 +12269,8 @@ function syncRichToolbarEnhancements(toolbar) {
       await waitForUiPaint();
       const result = await structuredExportRuntime.exportBoardAsPng(state.board, {
         ...options,
+        background: "white",
+        includeGrid: false,
         backgroundPattern: resolveExportBackgroundPattern(options),
         onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
           if (typeof window === "undefined" || typeof window.confirm !== "function") {
@@ -12787,6 +12813,50 @@ function syncRichToolbarEnhancements(toolbar) {
     return false;
   }
 
+  async function exportSelectionAsWord(items = []) {
+    const selectedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
+    if (!selectedItems.length) {
+      setStatus("未选中可导出内容", "warning");
+      notifyExportToast("未选中可导出内容");
+      return false;
+    }
+    try {
+      const result = await structuredExportRuntime.exportSelectionAsWordFile(selectedItems, {
+        defaultName: "freeflow-selection-word",
+        title: "导出 Word",
+      });
+      if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "docx",
+            scope: "selection-word",
+            title: "多选元素导出 Word",
+            defaultFileName: "freeflow-selection-word.docx",
+          })
+        );
+        const message = String(result.message || "已导出 Word").trim() || "已导出 Word";
+        setStatus(message, "success");
+        notifyExportToast(message, "已导出 Word");
+        return true;
+      }
+      if (result?.canceled) {
+        setStatus("导出已取消", "warning");
+        notifyExportToast("导出已取消");
+        return false;
+      }
+      const message = String(result?.message || "导出失败").trim() || "导出失败";
+      setStatus(message, "warning");
+      notifyExportToast(message);
+      return false;
+    } catch (error) {
+      const message = String(error?.message || "导出失败").trim() || "导出失败";
+      setStatus(message, "warning");
+      notifyExportToast(message);
+      return false;
+    }
+  }
+
   function buildRichTextClipboardContent(item) {
     if (!item || (item.type !== "text" && item.type !== "flowNode")) {
       return null;
@@ -12946,7 +13016,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     captureMode = "canvas";
     state.selectionRect = null;
-    setStatus("拖动框选截图区域，单击直接截取当前画布");
+    setStatus("拖动框选分享区域，单击直接分享当前画布");
     scheduleRender();
   }
 
@@ -15324,7 +15394,13 @@ function syncRichToolbarEnhancements(toolbar) {
       refs.contextMenu.innerHTML = `
         <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制所选</button>
         <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
-        <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-image">导出为图片</button>
+        <div class="canvas2d-context-submenu">
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">导出</button>
+          <div class="canvas2d-context-submenu-panel" role="menu" aria-label="导出">
+            <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-word">导出为 Word</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-image">导出为图片</button>
+          </div>
+        </div>
         <button type="button" class="canvas2d-context-menu-item" data-action="group-toggle">${groupLabel}</button>
         <div class="canvas2d-context-submenu">
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">对齐</button>
@@ -15749,6 +15825,11 @@ function syncRichToolbarEnhancements(toolbar) {
         defaultName: "freeflow-selection",
         anchorPoint: getExportAnchor(selectedItems),
       });
+      hideContextMenu();
+    }
+    if (action === "export-selection-word") {
+      const selectedItems = getSelectedItemsFast();
+      void exportSelectionAsWord(selectedItems);
       hideContextMenu();
     }
     const copyExportAction = resolveCopyExportAction(action);

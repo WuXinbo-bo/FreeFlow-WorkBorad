@@ -49,7 +49,7 @@ export function migrateHostBoardPayload(raw) {
 function parseRawPayload(raw) {
   if (typeof raw === "string") {
     try {
-      return JSON.parse(raw);
+      return JSON.parse(raw.replace(/^\uFEFF/, ""));
     } catch {
       return {};
     }

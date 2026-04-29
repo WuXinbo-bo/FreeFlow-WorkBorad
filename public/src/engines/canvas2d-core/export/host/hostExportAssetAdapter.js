@@ -45,6 +45,66 @@ function preloadImageSource(source, timeoutMs = 2000) {
   });
 }
 
+function isDataUrlSource(source = "") {
+  return /^data:/i.test(String(source || "").trim());
+}
+
+async function blobToDataUrl(blob) {
+  if (!blob) {
+    return "";
+  }
+  if (typeof FileReader === "function") {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(blob);
+    });
+  }
+  if (typeof Buffer === "function") {
+    const bytes = Buffer.from(await blob.arrayBuffer());
+    const mime = String(blob.type || "application/octet-stream").trim() || "application/octet-stream";
+    return `data:${mime};base64,${bytes.toString("base64")}`;
+  }
+  return "";
+}
+
+async function readFilePathAsDataUrl(sourcePath, readCache, readFileBase64) {
+  if (!sourcePath || typeof readFileBase64 !== "function") {
+    return "";
+  }
+  try {
+    if (!readCache.has(sourcePath)) {
+      readCache.set(sourcePath, Promise.resolve(readFileBase64(sourcePath)).catch(() => null));
+    }
+    const result = await readCache.get(sourcePath);
+    if (!result?.ok || !result?.data) {
+      return "";
+    }
+    const mime = String(result.mime || "image/png");
+    return `data:${mime};base64,${result.data}`;
+  } catch {
+    return "";
+  }
+}
+
+async function fetchSourceAsDataUrl(source = "") {
+  const target = String(source || "").trim();
+  if (!target || typeof fetch !== "function") {
+    return "";
+  }
+  try {
+    const response = await fetch(target);
+    if (!response.ok) {
+      return "";
+    }
+    const blob = await response.blob();
+    return blobToDataUrl(blob);
+  } catch {
+    return "";
+  }
+}
+
 export function createHostExportAssetAdapter({
   allowLocalFileAccess = true,
   readFileBase64 = null,
@@ -57,30 +117,34 @@ export function createHostExportAssetAdapter({
     return mapWithConcurrency(
       list,
       async (item) => {
-        if (!item || item.type !== "image" || item.dataUrl) {
+        if (!item || item.type !== "image") {
           return item;
         }
+        const currentDataUrl = String(item.dataUrl || "").trim();
         const sourcePath = String(item.sourcePath || "").trim();
-        if (!sourcePath || typeof readFileBase64 !== "function") {
+        if (isDataUrlSource(currentDataUrl)) {
           return item;
         }
-        try {
-          if (!readCache.has(sourcePath)) {
-            readCache.set(sourcePath, Promise.resolve(readFileBase64(sourcePath)).catch(() => null));
-          }
-          const result = await readCache.get(sourcePath);
-          if (!result?.ok || !result?.data) {
-            return item;
-          }
-          const mime = String(result.mime || "image/png");
+        const resolvedSource = resolveImageSource(currentDataUrl, sourcePath, {
+          allowLocalFileAccess: Boolean(resolveAllowLocalFileAccess()),
+        });
+        const nextDataUrl =
+          (await readFilePathAsDataUrl(sourcePath, readCache, readFileBase64)) ||
+          (await fetchSourceAsDataUrl(resolvedSource));
+        if (!isDataUrlSource(nextDataUrl)) {
           return {
             ...item,
-            dataUrl: `data:${mime};base64,${result.data}`,
-            source: "blob",
+            dataUrl: "",
+            sourcePath: "",
+            source: "missing",
+            exportFallbackPlaceholder: true,
           };
-        } catch {
-          return item;
         }
+        return {
+          ...item,
+          dataUrl: nextDataUrl,
+          source: "blob",
+        };
       },
       4
     );

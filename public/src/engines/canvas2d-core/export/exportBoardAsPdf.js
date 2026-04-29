@@ -67,12 +67,48 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
     };
   }
 
-  const renderResult = await renderBoard({
+  let renderResult = await renderBoard({
     scale: options.scale,
     backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
     backgroundGrid: options.includeGrid,
     backgroundPattern: String(inputOptions?.backgroundPattern || "").trim().toLowerCase(),
+    allowUnsafeSize: false,
   });
+
+  const oversized =
+    renderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
+    renderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
+  if (oversized) {
+    const continueExport =
+      typeof inputOptions?.onOversizeConfirm === "function"
+        ? await inputOptions.onOversizeConfirm({
+            requestedCanvasWidth: renderResult?.requestedCanvasWidth,
+            requestedCanvasHeight: renderResult?.requestedCanvasHeight,
+            requestedTotalPixels: renderResult?.requestedTotalPixels,
+          })
+        : false;
+    if (!continueExport) {
+      return {
+        ok: false,
+        canceled: true,
+        code: "PDF_EXPORT_CANCELED",
+        message: "",
+        fileName: "",
+        filePath: "",
+        bytes: 0,
+        pageWidth: 0,
+        pageHeight: 0,
+        scaleApplied: 0,
+      };
+    }
+    renderResult = await renderBoard({
+      scale: options.scale,
+      backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+      backgroundGrid: options.includeGrid,
+      backgroundPattern: String(inputOptions?.backgroundPattern || "").trim().toLowerCase(),
+      allowUnsafeSize: true,
+    });
+  }
 
   if (renderResult?.canceled) {
     return {
