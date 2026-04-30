@@ -10,6 +10,42 @@ import { detectTextContentType, DETECTED_TEXT_TYPES } from "../../gateway/conten
 export const HTML_PARSER_ID = "html-parser";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input", "meta", "link"]);
+const SAFE_HTML_ATTRS = new Set([
+  "align",
+  "alt",
+  "checked",
+  "class",
+  "colspan",
+  "data-ff-code-block",
+  "data-ff-highlight",
+  "data-ff-rich-math",
+  "data-ff-task-item",
+  "data-ff-task-list",
+  "data-ff-task-state",
+  "data-language",
+  "data-role",
+  "height",
+  "href",
+  "src",
+  "start",
+  "style",
+  "target",
+  "title",
+  "type",
+  "width",
+]);
+const SAFE_STYLE_PROPERTIES = new Set([
+  "background-color",
+  "color",
+  "font-family",
+  "font-size",
+  "font-style",
+  "font-weight",
+  "line-height",
+  "text-align",
+  "text-decoration",
+  "text-decoration-line",
+]);
 const BLOCK_TAGS = new Set([
   "p",
   "div",
@@ -287,10 +323,73 @@ function parseAttributes(source) {
     if (!name) {
       continue;
     }
+    if (!isAllowedHtmlAttribute(name)) {
+      continue;
+    }
     const value = decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? "");
-    attrs[name] = value;
+    const safeValue = sanitizeHtmlAttributeValue(name, value);
+    if (safeValue !== null) {
+      attrs[name] = safeValue;
+    }
   }
   return attrs;
+}
+
+function isAllowedHtmlAttribute(name = "") {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized || normalized.startsWith("on")) {
+    return false;
+  }
+  if (normalized.startsWith("aria-")) {
+    return true;
+  }
+  return SAFE_HTML_ATTRS.has(normalized);
+}
+
+function sanitizeHtmlAttributeValue(name = "", value = "") {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  const rawValue = String(value || "");
+  if (normalizedName === "style") {
+    return sanitizeInlineStyle(rawValue);
+  }
+  if (normalizedName === "href" || normalizedName === "src") {
+    const safeUrl = sanitizeResourceUrl(rawValue);
+    return safeUrl || null;
+  }
+  if (normalizedName === "target") {
+    return ["_blank", "_self", "_parent", "_top"].includes(rawValue) ? rawValue : "";
+  }
+  return rawValue;
+}
+
+function sanitizeInlineStyle(value = "") {
+  const declarations = [];
+  String(value || "")
+    .split(";")
+    .forEach((declaration) => {
+      const separatorIndex = declaration.indexOf(":");
+      if (separatorIndex <= 0) {
+        return;
+      }
+      const rawProperty = declaration.slice(0, separatorIndex).trim().toLowerCase();
+      const rawValue = declaration.slice(separatorIndex + 1).trim();
+      if (!SAFE_STYLE_PROPERTIES.has(rawProperty) || !rawValue || /url\s*\(|expression\s*\(/i.test(rawValue)) {
+        return;
+      }
+      declarations.push(`${rawProperty}:${rawValue}`);
+    });
+  return declarations.join(";");
+}
+
+function sanitizeResourceUrl(value = "") {
+  const url = String(value || "").trim();
+  if (!url) {
+    return "";
+  }
+  if (/^(https?:|mailto:|tel:|data:image\/|file:|\/|\.\/|\.\.\/|#)/i.test(url)) {
+    return url;
+  }
+  return "";
 }
 
 function createRawElement(tagName, attrs) {
@@ -331,10 +430,11 @@ function convertChildrenToBlocks(children, context) {
   let inlineBuffer = [];
 
   const flushInlineBuffer = () => {
+    const inheritedMarks = Array.isArray(context?.inheritedMarks) ? context.inheritedMarks : [];
     const inlineContent = convertNodesToInline(inlineBuffer, {
       ...context,
       preserveWhitespace: false,
-    });
+    }, inheritedMarks);
     inlineBuffer = [];
     if (!hasMeaningfulInlineContent(inlineContent)) {
       return;
@@ -387,6 +487,14 @@ function convertBlockNode(node, context) {
     return [];
   }
   const tag = node.tagName;
+  if ((tag === "div" || tag === "section" || tag === "article") && containsDirectBlockNode(node)) {
+    const inheritedMarks = deriveMarksFromElement(node);
+    const childBlocks = convertChildrenToBlocks(node.children, {
+      ...context,
+      inheritedMarks,
+    });
+    return childBlocks.length ? childBlocks : [convertParagraphBlock(node, context, "html")];
+  }
   if (tag === "p" || tag === "div" || tag === "section" || tag === "article") {
     return [convertParagraphBlock(node, context, "html")];
   }
@@ -444,20 +552,25 @@ function convertBlockNode(node, context) {
 }
 
 function convertParagraphBlock(node, context, legacyType) {
+  const align = normalizeAlign(node.attrs?.align || readStyleMap(node.attrs?.style).textAlign);
+  const inheritedMarks = mergeMarks(context?.inheritedMarks || [], deriveMarksFromElement(node));
   return createCanonicalNode({
     type: "paragraph",
+    attrs: align ? { align } : {},
     meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, legacyType),
-    content: convertNodesToInline(node.children, context),
+    content: convertNodesToInline(node.children, context, inheritedMarks),
   });
 }
 
 function convertHeadingBlock(node, context) {
   const level = Number(String(node.tagName || "").slice(1)) || 1;
+  const align = normalizeAlign(node.attrs?.align || readStyleMap(node.attrs?.style).textAlign);
+  const inheritedMarks = mergeMarks(context?.inheritedMarks || [], deriveMarksFromElement(node));
   return createCanonicalNode({
     type: "heading",
-    attrs: { level },
+    attrs: { level, ...(align ? { align } : {}) },
     meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, node.tagName),
-    content: convertNodesToInline(node.children, context),
+    content: convertNodesToInline(node.children, context, inheritedMarks),
   });
 }
 
@@ -785,6 +898,18 @@ function deriveMarksFromElement(node) {
   if (styleMap.backgroundColor && tag !== "mark") {
     marks.push({ type: "backgroundColor", attrs: { color: styleMap.backgroundColor } });
   }
+  const fontSize = normalizeFontSizeValue(styleMap.fontSize);
+  if (fontSize) {
+    marks.push({ type: "fontSize", attrs: { value: fontSize } });
+  }
+  const fontFamily = normalizeFontFamilyValue(styleMap.fontFamily);
+  if (fontFamily) {
+    marks.push({ type: "fontFamily", attrs: { value: fontFamily } });
+  }
+  const lineHeight = normalizeLineHeightValue(styleMap.lineHeight);
+  if (lineHeight) {
+    marks.push({ type: "lineHeight", attrs: { value: lineHeight } });
+  }
   return marks;
 }
 
@@ -919,6 +1044,10 @@ function isBlockNode(node) {
   return node?.type === "element" && BLOCK_TAGS.has(String(node.tagName || "").toLowerCase()) && node.tagName !== "img";
 }
 
+function containsDirectBlockNode(node) {
+  return (Array.isArray(node?.children) ? node.children : []).some((child) => isBlockNode(child));
+}
+
 function isInlineImageNode(node) {
   return node?.type === "element" && node.tagName === "img";
 }
@@ -1049,6 +1178,49 @@ function isBoldStyle(styleMap) {
   }
   const numeric = Number(weight);
   return Number.isFinite(numeric) && numeric >= 600;
+}
+
+function normalizeFontSizeValue(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "";
+  }
+  if (/^\d+(?:\.\d+)?px$/.test(raw)) {
+    const numeric = Number.parseFloat(raw);
+    if (Number.isFinite(numeric) && numeric >= 8 && numeric <= 96) {
+      return `${Math.round(numeric * 100) / 100}px`;
+    }
+  }
+  if (/^\d+(?:\.\d+)?em$/.test(raw) || /^\d+(?:\.\d+)?rem$/.test(raw) || /^\d+(?:\.\d+)?%$/.test(raw)) {
+    return raw;
+  }
+  return "";
+}
+
+function normalizeFontFamilyValue(value = "") {
+  const families = String(value || "")
+    .split(",")
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ""))
+    .filter((part) => /^[\w\s\u4E00-\u9FFF\u3400-\u4DBF\u3040-\u30FF\uAC00-\uD7AF.-]{1,64}$/.test(part))
+    .slice(0, 4);
+  return families.length ? families.join(", ") : "";
+}
+
+function normalizeLineHeightValue(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "normal") {
+    return "";
+  }
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const numeric = Number.parseFloat(raw);
+    if (Number.isFinite(numeric) && numeric >= 0.8 && numeric <= 3) {
+      return String(Math.round(numeric * 100) / 100);
+    }
+  }
+  if (/^\d+(?:\.\d+)?px$/.test(raw) || /^\d+(?:\.\d+)?%$/.test(raw)) {
+    return raw;
+  }
+  return "";
 }
 
 function normalizeAlign(value) {

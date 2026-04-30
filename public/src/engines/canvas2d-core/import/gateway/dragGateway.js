@@ -41,7 +41,10 @@ export function createDragGateway(options = {}) {
       });
     }
 
-    const collected = collectDragEntries(dataTransfer, { internalClipboardMime });
+    const collected = collectDragEntries(dataTransfer, {
+      internalClipboardMime,
+      preferHtmlText: context.preferHtmlText !== false,
+    });
     const descriptor = createDescriptorFromCollection(collected, {
       descriptorId: createDescriptorId("drag"),
       channel: context.channel || INPUT_CHANNELS.DRAG_DROP,
@@ -70,7 +73,7 @@ export function createDragGateway(options = {}) {
   };
 }
 
-function collectDragEntries(dataTransfer, { internalClipboardMime }) {
+function collectDragEntries(dataTransfer, { internalClipboardMime, preferHtmlText = true }) {
   const entries = [];
   const mimeTypes = normalizeStringList(dataTransfer?.types);
   const files = Array.from(dataTransfer?.files || []);
@@ -80,7 +83,15 @@ function collectDragEntries(dataTransfer, { internalClipboardMime }) {
     entries.push(createFileEntry(file, `drag-file-${entryIndex++}`));
   }
 
-  for (const mimeType of mimeTypes) {
+  if (files.length) {
+    return {
+      entries,
+      mimeTypes,
+    };
+  }
+
+  const orderedMimeTypes = orderDragMimeTypes(mimeTypes, dataTransfer, { preferHtmlText });
+  for (const mimeType of orderedMimeTypes) {
     const rawValue = safeGetData(dataTransfer, mimeType);
     const maybeEntry = createEntryFromMimeType({
       mimeType,
@@ -97,4 +108,40 @@ function collectDragEntries(dataTransfer, { internalClipboardMime }) {
     entries,
     mimeTypes,
   };
+}
+
+function orderDragMimeTypes(mimeTypes = [], dataTransfer, { preferHtmlText = true } = {}) {
+  const normalized = normalizeStringList(mimeTypes);
+  if (!preferHtmlText || !normalized.includes("text/html")) {
+    return normalized;
+  }
+  const html = safeGetData(dataTransfer, "text/html");
+  if (!looksLikeRichDraggedHtml(html)) {
+    return normalized;
+  }
+  const priority = new Map([
+    ["text/html", 0],
+    [internalSafeMime("text/plain"), 1],
+    [internalSafeMime("text"), 2],
+  ]);
+  return normalized.slice().sort((left, right) => {
+    const leftRank = priority.has(left) ? priority.get(left) : 10;
+    const rightRank = priority.has(right) ? priority.get(right) : 10;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return 0;
+  });
+}
+
+function internalSafeMime(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function looksLikeRichDraggedHtml(value = "") {
+  const html = String(value || "").trim();
+  if (!html) {
+    return false;
+  }
+  return /<\/?[a-z][\s\S]*>/i.test(html) && /<(?:span|strong|b|em|i|u|s|a|p|div|section|article|ul|ol|li|h[1-6]|blockquote|pre|table|img)\b/i.test(html);
 }

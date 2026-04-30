@@ -165,6 +165,9 @@ function validateMark(mark, path, issues) {
   if ((type === "textColor" || type === "backgroundColor" || type === "highlight") && typeof attrs?.color !== "string") {
     issues.push(`${path}.attrs.color must be a string for mark "${type}"`);
   }
+  if ((type === "fontSize" || type === "fontFamily" || type === "lineHeight") && typeof attrs?.value !== "string") {
+    issues.push(`${path}.attrs.value must be a string for mark "${type}"`);
+  }
   if (type === "link" && typeof attrs?.href !== "string") {
     issues.push(`${path}.attrs.href must be a string for link mark`);
   }

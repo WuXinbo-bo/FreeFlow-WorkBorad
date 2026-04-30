@@ -7,6 +7,7 @@ import {
   inferHeadingFontSize,
   inlineNodesToHtml,
   inlineNodesToPlainText,
+  normalizeInlineContentForCanvasText,
   resolveImportedTextBoxLayout,
 } from "./sharedTextRenderUtils.js";
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
@@ -68,8 +69,9 @@ function collectRenderableTextBlocks(nodes = [], context = { quoteDepth: 0 }) {
       return;
     }
     if (node.type === "heading" || node.type === "paragraph") {
+      const inlineContent = normalizeInlineContentForCanvasText(node.content || []);
       const plainText = inlineNodesToPlainText(node.content || []);
-      const html = inlineNodesToHtml(node.content || []);
+      const html = inlineNodesToHtml(inlineContent);
       result.push({
         node,
         sourceNodeType: node.type,
@@ -97,6 +99,9 @@ function shouldAggregateBlocksAsSingleTextBox(renderInput, blocks = []) {
     return false;
   }
   if (String(renderInput?.parserId || "") !== "plain-text-parser") {
+    return false;
+  }
+  if (blocks.some((block) => String(block?.sourceNodeType || "") !== "paragraph" || String(block?.blockRole || "") !== "paragraph")) {
     return false;
   }
   return blocks.every((block) => String(block?.sourceNodeType || "") === "paragraph");

@@ -6,6 +6,7 @@ import {
   estimateTextWidth,
   inlineNodesToHtml,
   inlineNodesToPlainText,
+  normalizeInlineContentForCanvasText,
   resolveImportedTextBoxLayout,
 } from "../text/sharedTextRenderUtils.js";
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
@@ -107,7 +108,7 @@ function normalizeListItems(listNode, context = { level: 0, orderedStart: 1 }) {
       }
       if (child.type === "paragraph") {
         const plainText = inlineNodesToPlainText(child.content || []);
-        const html = inlineNodesToHtml(child.content || []);
+        const html = inlineNodesToHtml(normalizeInlineContentForCanvasText(child.content || []));
         if (plainText.trim() || html.trim()) {
           textSegments.push({
             plainText,

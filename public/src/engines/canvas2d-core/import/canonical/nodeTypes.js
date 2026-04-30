@@ -38,6 +38,9 @@ export const MARK_TYPES = Object.freeze([
   "highlight",
   "textColor",
   "backgroundColor",
+  "fontSize",
+  "fontFamily",
+  "lineHeight",
   "code",
   "link",
 ]);
@@ -50,6 +53,9 @@ export const MARK_ALLOWED_ATTRS = Object.freeze({
   highlight: ["color"],
   textColor: ["color"],
   backgroundColor: ["color"],
+  fontSize: ["value"],
+  fontFamily: ["value"],
+  lineHeight: ["value"],
   code: [],
   link: ["href", "title", "target"],
 });

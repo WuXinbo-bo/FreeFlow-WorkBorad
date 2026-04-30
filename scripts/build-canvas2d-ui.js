@@ -62,13 +62,17 @@ async function copyMermaidVendorAssets() {
     return;
   }
   await ensureDir(MERMAID_VENDOR_DIR);
+  const targetChunksRootDir = path.join(MERMAID_VENDOR_DIR, "chunks");
+  const targetChunksDir = path.join(targetChunksRootDir, "mermaid.esm.min");
+  await fs.rm(targetChunksRootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
+  await ensureDir(targetChunksRootDir);
   await fs.copyFile(
     path.join(MERMAID_DIST_DIR, "mermaid.esm.min.mjs"),
     path.join(MERMAID_VENDOR_DIR, "mermaid.esm.min.mjs")
   );
   await fs.cp(
     path.join(MERMAID_DIST_DIR, "chunks", "mermaid.esm.min"),
-    path.join(MERMAID_VENDOR_DIR, "chunks", "mermaid.esm.min"),
+    targetChunksDir,
     { recursive: true, force: true }
   );
 }

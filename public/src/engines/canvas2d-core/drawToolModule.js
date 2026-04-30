@@ -40,6 +40,9 @@ function buildPreviewLabel(dataTransfer) {
   if (types.includes("Files") || types.includes("text/uri-list")) {
     return "松开创建图片";
   }
+  if (types.includes("text/html")) {
+    return "松开导入网页富文本";
+  }
   if (types.includes("text/plain") || types.includes("text")) {
     return "松开创建文本";
   }
@@ -152,6 +155,7 @@ export function createDrawToolModule({
   return {
     handleDragOver,
     handleDragLeave,
+    hidePreview,
     handleDrop,
   };
 }

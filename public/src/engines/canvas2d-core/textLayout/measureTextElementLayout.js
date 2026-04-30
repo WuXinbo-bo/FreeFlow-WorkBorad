@@ -9,6 +9,7 @@ import {
 } from "../rendererText.js";
 import {
   getBlockSpacingEmForTag,
+  getHeadingFontSize,
   getLineHeightRatioForTag,
   normalizeTagName,
   TEXT_BLOCK_SPACING_EM,
@@ -106,7 +107,7 @@ function applyMeasurementNodeStyles(node, { fontFamily, fontSize, lineHeightRati
   }
 }
 
-function normalizeMeasurementMarkup(node) {
+function normalizeMeasurementMarkup(node, { baseFontSize = DEFAULT_FONT_SIZE } = {}) {
   node.querySelectorAll("div, section, article, thead, tbody, tr").forEach((element) => {
     if (!isHTMLElement(element)) {
       return;
@@ -152,9 +153,7 @@ function normalizeMeasurementMarkup(node) {
       return;
     }
     const tag = normalizeTagName(element.tagName);
-    const scaleMap = { h1: 2.2, h2: 1.8, h3: 1.55, h4: 1.35, h5: 1.18, h6: 1.05 };
-    const fontScale = scaleMap[tag] || 1;
-    element.style.fontSize = `${fontScale}em`;
+    element.style.fontSize = `${getHeadingFontSize(tag, baseFontSize)}px`;
     element.style.fontWeight = tag === "h1" || tag === "h2" ? "800" : "700";
     element.style.lineHeight = String(getLineHeightRatioForTag(tag));
     element.style.marginTop = "0";
@@ -240,7 +239,7 @@ function measureWithHost({
       widthHint,
     });
     node.innerHTML = html;
-    normalizeMeasurementMarkup(node);
+    normalizeMeasurementMarkup(node, { baseFontSize: fontSize });
     const rect = node.getBoundingClientRect();
     const contentWidth = Math.max(node.scrollWidth || 0, rect.width || 0);
     const contentHeight = Math.max(node.scrollHeight || 0, rect.height || 0);

@@ -52,6 +52,29 @@ async function copyPrismVendorAssets() {
   );
 }
 
+async function copyDirFiles(sourceDir, targetDir) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  await ensureDir(targetDir);
+  await Promise.all(
+    entries.map(async (entry) => {
+      const sourcePath = path.join(sourceDir, entry.name);
+      const targetPath = path.join(targetDir, entry.name);
+      if (entry.isDirectory()) {
+        await copyDirFiles(sourcePath, targetPath);
+        return;
+      }
+      if (entry.isFile()) {
+        await fs.copyFile(sourcePath, targetPath);
+      }
+    })
+  );
+}
+
 async function copyMermaidVendorAssets() {
   try {
     await fs.access(MERMAID_DIST_DIR);
@@ -63,10 +86,9 @@ async function copyMermaidVendorAssets() {
     path.join(MERMAID_DIST_DIR, "mermaid.esm.min.mjs"),
     path.join(MERMAID_VENDOR_DIR, "mermaid.esm.min.mjs")
   );
-  await fs.cp(
+  await copyDirFiles(
     path.join(MERMAID_DIST_DIR, "chunks", "mermaid.esm.min"),
-    path.join(MERMAID_VENDOR_DIR, "chunks", "mermaid.esm.min"),
-    { recursive: true, force: true }
+    path.join(MERMAID_VENDOR_DIR, "chunks", "mermaid.esm.min")
   );
 }
 

@@ -1,5 +1,6 @@
 import {
   getBlockSpacingEmForTag,
+  getHeadingFontSize,
   getLineHeightRatioForTag,
   normalizeTagName,
   TEXT_BODY_LINE_HEIGHT_RATIO,
@@ -18,6 +19,8 @@ const richLayoutCache = new Map();
 let measureCanvasContext = null;
 const LINK_TOKEN_DEFAULT_COLOR = "#2563eb";
 const LINK_TOKEN_ACTIVE_COLOR = "#1d4ed8";
+const INLINE_CODE_BACKGROUND = "rgba(148, 163, 184, 0.18)";
+const INLINE_CODE_COLOR = "#111827";
 export const FLOW_NODE_TEXT_LAYOUT = Object.freeze({
   lineHeightRatio: TEXT_BODY_LINE_HEIGHT_RATIO,
   fontWeight: "400",
@@ -81,6 +84,33 @@ function parseFontSize(value) {
   if (match) return Number(match[1]) || 0;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function parseLineHeightValue(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "normal") return 0;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+  }
+  if (raw.endsWith("%")) {
+    const numeric = Number.parseFloat(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric / 100 : 0;
+  }
+  return 0;
+}
+
+function sanitizeCanvasFontFamily(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return TEXT_FONT_FAMILY;
+  }
+  const families = raw
+    .split(",")
+    .map((part) => part.trim().replace(/[;\n\r]/g, ""))
+    .filter(Boolean)
+    .slice(0, 4);
+  return families.length ? families.join(", ") : TEXT_FONT_FAMILY;
 }
 
 function escapeHtmlText(value) {
@@ -562,6 +592,13 @@ function applyElementStyle(style, element) {
   if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
     next.bold = true;
     next.lineHeightRatio = getLineHeightRatioForTag(tag);
+    next.fontSize = getHeadingFontSize(tag, next.fontSize || style.fontSize || 20);
+  }
+  if (tag === "code") {
+    next.code = true;
+    next.fontFamily = '"Cascadia Code", Consolas, "SFMono-Regular", monospace';
+    if (!next.color) next.color = INLINE_CODE_COLOR;
+    if (!next.highlightColor) next.highlightColor = INLINE_CODE_BACKGROUND;
   }
   if (tag === "mark") {
     next.highlight = true;
@@ -601,8 +638,16 @@ function applyElementStyle(style, element) {
     const decoration = inline.textDecorationLine || inline.textDecoration || "";
     if (decoration.includes("underline")) next.underline = true;
     if (decoration.includes("line-through")) next.strike = true;
-    const size = parseFontSize(inline.fontSize);
+    const logicalInlineSize = parseFontSize(element.getAttribute?.("data-ff-font-size") || "");
+    const size = logicalInlineSize || parseFontSize(inline.fontSize);
     if (size) next.fontSize = size;
+    if (inline.fontFamily) {
+      next.fontFamily = inline.fontFamily;
+    }
+    const lineHeight = parseLineHeightValue(inline.lineHeight);
+    if (lineHeight) {
+      next.lineHeightRatio = lineHeight;
+    }
   }
   return next;
 }
@@ -655,6 +700,17 @@ function parseRichTextRuns(html = "") {
       return;
     }
     const nextStyle = applyElementStyle(style, element);
+    if (tag === "li") {
+      const marker = resolveListItemMarker(element);
+      if (marker) {
+        const markerStyle = {
+          ...nextStyle,
+          fontSize: nextStyle.fontSize || style.fontSize,
+          bold: false,
+        };
+        runs.push({ text: `${marker} `, style: markerStyle });
+      }
+    }
     const block = isBlockTag(tag);
     element.childNodes.forEach((child) => walk(child, nextStyle));
     if (block) {
@@ -676,6 +732,24 @@ function parseRichTextRuns(html = "") {
     runs.pop();
   }
   return runs;
+}
+
+function resolveListItemMarker(element) {
+  if (!(element instanceof HTMLElement)) {
+    return "";
+  }
+  const parent = element.parentElement;
+  const parentTag = normalizeTagName(parent?.tagName || "");
+  if (parentTag === "ol") {
+    const siblings = Array.from(parent.children || []).filter((child) => normalizeTagName(child?.tagName || "") === "li");
+    const start = Number(parent.getAttribute?.("start") || 1) || 1;
+    const index = Math.max(0, siblings.indexOf(element));
+    return `${start + index}.`;
+  }
+  if (parentTag === "ul") {
+    return "•";
+  }
+  return "";
 }
 
 function getCachedRichTextRuns(html = "") {
@@ -704,7 +778,8 @@ function fontForRun(runStyle, baseFontSize, scale = 1, options = {}) {
     ? String(options.boldWeight || TEXT_BOLD_WEIGHT)
     : String(options.fontWeight || TEXT_FONT_WEIGHT);
   const fontStyle = runStyle.italic ? "italic" : "normal";
-  return `${fontStyle} ${weight} ${Math.max(1, fontSize)}px ${TEXT_FONT_FAMILY}`;
+  const fontFamily = sanitizeCanvasFontFamily(runStyle.fontFamily || options.fontFamily || TEXT_FONT_FAMILY);
+  return `${fontStyle} ${weight} ${Math.max(1, fontSize)}px ${fontFamily}`;
 }
 
 function createLine(baseFontSize, scaleValue, lineHeightRatio) {
@@ -859,6 +934,7 @@ function getRichLayoutCacheKey({
   lineHeightRatio = TEXT_LINE_HEIGHT_RATIO,
   fontWeight = TEXT_FONT_WEIGHT,
   boldWeight = TEXT_BOLD_WEIGHT,
+  fontFamily = TEXT_FONT_FAMILY,
 } = {}) {
   return [
     String(html || ""),
@@ -868,6 +944,7 @@ function getRichLayoutCacheKey({
     `lh:${Math.round(Math.max(1, Number(lineHeightRatio) || TEXT_LINE_HEIGHT_RATIO) * 1000) / 1000}`,
     `fw:${String(fontWeight || TEXT_FONT_WEIGHT)}`,
     `bw:${String(boldWeight || TEXT_BOLD_WEIGHT)}`,
+    `ff:${sanitizeCanvasFontFamily(fontFamily)}`,
   ].join("|");
 }
 
@@ -894,6 +971,7 @@ function getCachedRichLayout({
   lineHeightRatio = TEXT_LINE_HEIGHT_RATIO,
   fontWeight = TEXT_FONT_WEIGHT,
   boldWeight = TEXT_BOLD_WEIGHT,
+  fontFamily = TEXT_FONT_FAMILY,
 } = {}) {
   if (!runs || !runs.length || !ctx) {
     return null;
@@ -906,6 +984,7 @@ function getCachedRichLayout({
     lineHeightRatio,
     fontWeight,
     boldWeight,
+    fontFamily,
   });
   const cached = richLayoutCache.get(cacheKey);
   if (cached) {
@@ -916,6 +995,7 @@ function getCachedRichLayout({
     lineHeightRatio,
     fontWeight,
     boldWeight,
+    fontFamily,
   });
   const entry = buildRichLayoutCacheEntry(lines);
   putLruCache(richLayoutCache, cacheKey, entry, RICH_LAYOUT_CACHE_LIMIT);
@@ -935,6 +1015,7 @@ export function drawRichTextInBox(ctx, {
   lineHeightRatio = TEXT_LINE_HEIGHT_RATIO,
   fontWeight = TEXT_FONT_WEIGHT,
   boldWeight = TEXT_BOLD_WEIGHT,
+  fontFamily = TEXT_FONT_FAMILY,
 } = {}) {
   const baseFontSize = Math.max(10, Number(fontSize || 18));
   const scaleValue = Math.max(0.1, Number(scale) || 1);
@@ -954,6 +1035,7 @@ export function drawRichTextInBox(ctx, {
     lineHeightRatio,
     fontWeight,
     boldWeight,
+    fontFamily,
   });
   const lines = layout?.lines || [];
   let cursorY = y;
@@ -964,16 +1046,17 @@ export function drawRichTextInBox(ctx, {
     let cursorX = x;
     for (const seg of line.segments) {
       const style = seg.style || {};
-      ctx.font = fontForRun(style, baseFontSize, scaleValue, { fontWeight, boldWeight });
+      ctx.font = fontForRun(style, baseFontSize, scaleValue, { fontWeight, boldWeight, fontFamily });
       const segmentText = seg.text;
       const segmentWidth = seg.width;
-      const highlight = style.highlight;
+      const highlight = style.highlight || style.code;
       const highlightColor = style.highlightColor || DEFAULT_HIGHLIGHT;
       if (highlight) {
         ctx.save();
         ctx.fillStyle = highlightColor;
         const boxHeight = Math.max(4, line.height - 4);
-        ctx.fillRect(cursorX, cursorY + 2, segmentWidth, boxHeight);
+        const horizontalPadding = style.code ? Math.max(2, baseFontSize * scaleValue * 0.18) : 0;
+        ctx.fillRect(cursorX - horizontalPadding, cursorY + 2, segmentWidth + horizontalPadding * 2, boxHeight);
         ctx.restore();
       }
       ctx.fillStyle = style.color || color || "#0f172a";
@@ -1015,6 +1098,7 @@ export function measureRichTextBox({
   lineHeightRatio = TEXT_LINE_HEIGHT_RATIO,
   fontWeight = TEXT_FONT_WEIGHT,
   boldWeight = TEXT_BOLD_WEIGHT,
+  fontFamily = TEXT_FONT_FAMILY,
 } = {}) {
   const runs = getCachedRichTextRuns(html);
   if (!runs || !runs.length) {
@@ -1036,6 +1120,7 @@ export function measureRichTextBox({
     lineHeightRatio,
     fontWeight,
     boldWeight,
+    fontFamily,
   });
   if (!layout?.lines?.length) {
     return null;

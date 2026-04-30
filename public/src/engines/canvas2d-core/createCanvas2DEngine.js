@@ -124,6 +124,13 @@ import { createSceneRegistry } from "./scene/sceneRegistry.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
+import {
+  computeMultiSelectionResizedBounds,
+  getHandleCursorKey,
+  getMultiSelectionBounds,
+  hitTestMultiSelectionHandle,
+  isScenePointInsideBounds as isPointInsideMultiSelectionBounds,
+} from "./multiSelectionTransform.js";
 import { createRenderScheduler } from "./render/renderScheduler.js";
 import { buildUnifiedPreviewSummaryMarkup } from "./previewSummaryMarkup.js";
 import {
@@ -1623,12 +1630,16 @@ function getRichOverlayScaleBucket(scale = 1) {
   return String(Math.round(normalized / step) * step);
 }
 
+function getCanvasLodScalePercent(scale = 1) {
+  return Math.round(Math.max(0.1, Number(scale) || 1) * 100);
+}
+
 function isDetailedOverlayScale(scale = 1, minScale = 0.5) {
-  return Math.max(0.1, Number(scale) || 1) >= Math.max(0.1, Number(minScale) || 0.5);
+  return getCanvasLodScalePercent(scale) > Math.round(Math.max(0.1, Number(minScale) || 0.5) * 100);
 }
 
 function isCanvasLodScale(scale = 1, minScale = 0.15) {
-  return Math.max(0.1, Number(scale) || 1) <= Math.max(0.1, Number(minScale) || 0.15);
+  return getCanvasLodScalePercent(scale) <= Math.round(Math.max(0.1, Number(minScale) || 0.15) * 100);
 }
 
 function hideOverlayHost(host, virtualizer, { onRemove = null } = {}) {
@@ -2597,17 +2608,24 @@ function isTinyShape(element) {
 }
 
 function getHandleCursor(handle) {
+  const normalizedHandle = getHandleCursorKey(handle);
   if (typeof handle === "string" && handle.startsWith("round-")) {
     return "grab";
   }
   if (handle === "rotate-shape") {
     return "grab";
   }
-  if (handle === "nw" || handle === "se") {
+  if (normalizedHandle === "nw" || normalizedHandle === "se") {
     return "nwse-resize";
   }
-  if (handle === "ne" || handle === "sw") {
+  if (normalizedHandle === "ne" || normalizedHandle === "sw") {
     return "nesw-resize";
+  }
+  if (normalizedHandle === "n" || normalizedHandle === "s") {
+    return "ns-resize";
+  }
+  if (normalizedHandle === "e" || normalizedHandle === "w") {
+    return "ew-resize";
   }
   if (handle === "rotate-image") {
     return "grab";
@@ -4095,30 +4113,146 @@ let tablePointerSelectionState = {
 
   function getSelectedItemsBounds() {
     const selectedItems = getSelectedItemsFast();
-    if (!selectedItems.length) {
-      return null;
+    return getMultiSelectionBounds(selectedItems);
+  }
+
+  function createMultiSelectionPointerBase(items = []) {
+    const selectedItems = Array.isArray(items) ? items : [];
+    const bounds = getMultiSelectionBounds(selectedItems);
+    return {
+      bounds,
+      items: new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)])),
+    };
+  }
+
+  function applyMultiSelectionResize(baseSelection, nextBounds) {
+    const baseBounds = baseSelection?.bounds || null;
+    const baseItemsMap = baseSelection?.items instanceof Map ? baseSelection.items : new Map();
+    if (!baseBounds || !nextBounds || !baseItemsMap.size) {
+      return false;
     }
-    return selectedItems.reduce((bounds, item) => {
-      const itemBounds = getElementBounds(item);
-      if (!itemBounds) {
-        return bounds;
+    const safeBaseWidth = Math.max(1, Number(baseBounds.width || (baseBounds.right - baseBounds.left) || 1));
+    const safeBaseHeight = Math.max(1, Number(baseBounds.height || (baseBounds.bottom - baseBounds.top) || 1));
+    const nextWidth = Math.max(1, Number(nextBounds.width || (nextBounds.right - nextBounds.left) || 1));
+    const nextHeight = Math.max(1, Number(nextBounds.height || (nextBounds.bottom - nextBounds.top) || 1));
+    const scaleX = nextWidth / safeBaseWidth;
+    const scaleY = nextHeight / safeBaseHeight;
+    const updatedItems = new Map();
+
+    for (const [itemId, baseItem] of baseItemsMap.entries()) {
+      if (!baseItem || baseItem.type === "flowEdge" || isLockedItem(baseItem)) {
+        continue;
       }
-      const next = {
-        left: Number(itemBounds.left || 0),
-        top: Number(itemBounds.top || 0),
-        right: Number(itemBounds.right ?? (Number(itemBounds.left || 0) + Number(itemBounds.width || 0))),
-        bottom: Number(itemBounds.bottom ?? (Number(itemBounds.top || 0) + Number(itemBounds.height || 0))),
-      };
-      if (!bounds) {
-        return next;
+      const itemBounds = getElementBounds(baseItem);
+      const relLeft = (itemBounds.left - baseBounds.left) / safeBaseWidth;
+      const relTop = (itemBounds.top - baseBounds.top) / safeBaseHeight;
+      const relRight = (itemBounds.right - baseBounds.left) / safeBaseWidth;
+      const relBottom = (itemBounds.bottom - baseBounds.top) / safeBaseHeight;
+      let left = nextBounds.left + relLeft * nextWidth;
+      let top = nextBounds.top + relTop * nextHeight;
+      let right = nextBounds.left + relRight * nextWidth;
+      let bottom = nextBounds.top + relBottom * nextHeight;
+      let width = Math.max(1, right - left);
+      let height = Math.max(1, bottom - top);
+
+      if (baseItem.type === "text") {
+        const minSize = getTextMinSize(
+          {
+            ...baseItem,
+            x: left,
+            y: top,
+            width,
+            height,
+            textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+            textResizeMode: TEXT_RESIZE_MODE_WRAP,
+          },
+          { widthHint: width }
+        );
+        width = Math.max(80, minSize.width, width);
+        height = Math.max(40, minSize.height);
+      } else if (baseItem.type === "flowNode") {
+        const minSize = getFlowNodeMinSize(
+          {
+            ...baseItem,
+            x: left,
+            y: top,
+            width,
+            height,
+          },
+          { widthHint: width }
+        );
+        width = Math.max(minSize.width, width);
+        height = Math.max(minSize.height, height);
+      } else if (baseItem.type === "codeBlock") {
+        width = Math.max(CODE_BLOCK_MIN_WIDTH, width);
+        height = Math.max(CODE_BLOCK_MIN_HEIGHT, height);
+      } else if (baseItem.type === "table") {
+        width = Math.max(TABLE_MIN_WIDTH, width);
+        height = Math.max(TABLE_MIN_HEIGHT, height);
+      } else if (baseItem.type === "mathBlock" || baseItem.type === "mathInline") {
+        width = Math.max(MATH_MIN_WIDTH, width);
+        height = Math.max(MATH_MIN_HEIGHT, height);
+      } else if (baseItem.type === "fileCard") {
+        width = Math.max(200, width);
+        height = Math.max(96, height);
+      } else if (baseItem.type === "mindNode") {
+        width = Math.max(160, width);
+        height = Math.max(72, height);
       }
-      return {
-        left: Math.min(bounds.left, next.left),
-        top: Math.min(bounds.top, next.top),
-        right: Math.max(bounds.right, next.right),
-        bottom: Math.max(bounds.bottom, next.bottom),
-      };
-    }, null);
+
+      if (baseItem.type === "shape" && isLinearShape(baseItem.shapeType)) {
+        const startRelX = (Number(baseItem.startX || 0) - baseBounds.left) / safeBaseWidth;
+        const startRelY = (Number(baseItem.startY || 0) - baseBounds.top) / safeBaseHeight;
+        const endRelX = (Number(baseItem.endX || 0) - baseBounds.left) / safeBaseWidth;
+        const endRelY = (Number(baseItem.endY || 0) - baseBounds.top) / safeBaseHeight;
+        const startX = nextBounds.left + startRelX * nextWidth;
+        const startY = nextBounds.top + startRelY * nextHeight;
+        const endX = nextBounds.left + endRelX * nextWidth;
+        const endY = nextBounds.top + endRelY * nextHeight;
+        updatedItems.set(itemId, {
+          ...baseItem,
+          startX,
+          startY,
+          endX,
+          endY,
+          x: Math.min(startX, endX),
+          y: Math.min(startY, endY),
+          width: Math.max(1, Math.abs(endX - startX)),
+          height: Math.max(1, Math.abs(endY - startY)),
+        });
+        continue;
+      }
+
+      if (baseItem.type === "shape") {
+        updatedItems.set(itemId, {
+          ...baseItem,
+          x: left,
+          y: top,
+          width,
+          height,
+          startX: left,
+          startY: top,
+          endX: left + width,
+          endY: top + height,
+        });
+        continue;
+      }
+
+      updatedItems.set(itemId, {
+        ...baseItem,
+        x: left,
+        y: top,
+        width,
+        height,
+      });
+    }
+
+    if (!updatedItems.size) {
+      return false;
+    }
+
+    state.board.items = state.board.items.map((item) => updatedItems.get(item.id) || item);
+    return true;
   }
 
   function isScenePointInsideBounds(point, bounds, padding = 0) {
@@ -6396,6 +6530,10 @@ let tablePointerSelectionState = {
       refs.canvas.style.cursor = getHandleCursor(state.pointer.handle);
       return;
     }
+    if (state.pointer?.type === "resize-multi-selection") {
+      refs.canvas.style.cursor = getHandleCursor(state.pointer.handle);
+      return;
+    }
     if (state.pointer?.type === "rotate-image") {
       refs.canvas.style.cursor = "grabbing";
       return;
@@ -6410,6 +6548,10 @@ let tablePointerSelectionState = {
     }
     if (state.pointer?.type === "pan") {
       refs.canvas.style.cursor = "grab";
+      return;
+    }
+    if (state.pointer?.type === "move-selection" || state.pointer?.type === "duplicate-multi-selection") {
+      refs.canvas.style.cursor = "grabbing";
       return;
     }
     if (state.editingType === "image" && lightImageEditor.getState()?.mode && state.editingId) {
@@ -14058,33 +14200,120 @@ function syncRichToolbarEnhancements(toolbar) {
     return false;
   }
 
+  function createFileDescriptorEntriesFromFiles(files, entryPrefix = "file") {
+    return Array.from(files || [])
+      .map((file, index) => {
+        const resolvedPath =
+          typeof file?.path === "string" && file.path
+            ? file.path
+            : typeof globalThis?.desktopShell?.getPathForFile === "function"
+              ? globalThis.desktopShell.getPathForFile(file)
+              : "";
+        const name = typeof file?.name === "string" ? file.name : getFileName(resolvedPath);
+        if (!resolvedPath && !name) {
+          return null;
+        }
+        const mimeType = typeof file?.type === "string" ? file.type : "";
+        return {
+          entryId: `${entryPrefix}-${index}`,
+          kind: mimeType.startsWith("image/") ? INPUT_ENTRY_KINDS.IMAGE : INPUT_ENTRY_KINDS.FILE,
+          status: "ready",
+          errorCode: "none",
+          mimeType,
+          name,
+          size: Number.isFinite(file?.size) ? Number(file.size) : null,
+          charset: "",
+          raw: {
+            filePath: resolvedPath,
+          },
+          meta: {
+            extension: getFileExtension(name),
+            displayName: name || getFileName(resolvedPath),
+            isFromClipboardFile: false,
+          },
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function buildDragFileDescriptor(files, anchorPoint) {
+    const entries = createFileDescriptorEntriesFromFiles(files, "drag-file");
+    if (!entries.length) {
+      return null;
+    }
+    return createInputDescriptor({
+      descriptorId: `drag-files-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channel: INPUT_CHANNELS.DRAG_DROP,
+      sourceKind: entries.some((entry) => entry.kind === INPUT_ENTRY_KINDS.IMAGE)
+        ? INPUT_SOURCE_KINDS.IMAGE_RESOURCE
+        : INPUT_SOURCE_KINDS.FILE_RESOURCE,
+      status: "ready",
+      errorCode: "none",
+      mimeTypes: Array.from(new Set(entries.map((entry) => entry.mimeType).filter(Boolean))),
+      tags: entries.some((entry) => entry.kind === INPUT_ENTRY_KINDS.IMAGE) ? ["drag-drop", "contains-image"] : ["drag-drop", "contains-file"],
+      context: buildStructuredImportContext(anchorPoint, {
+        origin: "engine-drop-files",
+      }),
+      entries,
+    });
+  }
+
+  function buildDragHtmlDescriptor(dataTransfer, anchorPoint) {
+    const html = String(dataTransfer?.getData?.("text/html") || "").trim();
+    if (!html || !/<\/?[a-z][\s\S]*>/i.test(html)) {
+      return null;
+    }
+    const text = String(dataTransfer?.getData?.("text/plain") || dataTransfer?.getData?.("text") || "");
+    const entries = [
+      {
+        entryId: "drag-html-0",
+        kind: INPUT_ENTRY_KINDS.HTML,
+        status: "ready",
+        errorCode: "none",
+        mimeType: "text/html",
+        name: "",
+        size: html.length,
+        charset: "utf-8",
+        raw: {
+          html,
+          text: html,
+        },
+        meta: {},
+      },
+    ];
+    if (text.trim()) {
+      entries.push({
+        entryId: "drag-html-text-1",
+        kind: INPUT_ENTRY_KINDS.TEXT,
+        status: "ready",
+        errorCode: "none",
+        mimeType: "text/plain",
+        name: "",
+        size: text.length,
+        charset: "utf-8",
+        raw: {
+          text,
+        },
+        meta: {},
+      });
+    }
+    return createInputDescriptor({
+      descriptorId: `drag-html-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channel: INPUT_CHANNELS.DRAG_DROP,
+      sourceKind: INPUT_SOURCE_KINDS.HTML,
+      status: "ready",
+      errorCode: "none",
+      mimeTypes: ["text/html", ...(text.trim() ? ["text/plain"] : [])],
+      tags: ["drag-drop", "contains-html", "rich-html"],
+      context: buildStructuredImportContext(anchorPoint, {
+        origin: "engine-drop-html",
+      }),
+      entries,
+    });
+  }
+
   function buildProgrammaticFileDescriptor(files, anchorPoint) {
-    const entries = Array.isArray(files)
-      ? files
-          .map((file, index) => {
-            const filePath = typeof file?.path === "string" ? file.path : "";
-            const name = typeof file?.name === "string" ? file.name : "";
-            if (!filePath && !name) {
-              return null;
-            }
-            const mimeType = typeof file?.type === "string" ? file.type : "";
-            return {
-              entryId: `programmatic-file-${index}`,
-              kind: mimeType.startsWith("image/") ? INPUT_ENTRY_KINDS.IMAGE : INPUT_ENTRY_KINDS.FILE,
-              status: "ready",
-              mimeType,
-              name,
-              size: Number.isFinite(file?.size) ? Number(file.size) : null,
-              raw: {
-                filePath,
-              },
-              meta: {
-                displayName: name,
-              },
-            };
-          })
-          .filter(Boolean)
-      : [];
+    const entries = createFileDescriptorEntriesFromFiles(files, "programmatic-file");
     if (!entries.length) {
       return null;
     }
@@ -14241,12 +14470,17 @@ function syncRichToolbarEnhancements(toolbar) {
     let nextHoverConnector = null;
     let hit = null;
     if (isInteractiveMode()) {
+      const multiSelectedItems = state.tool === "select" && state.board.selectedIds.length >= 2 ? getSelectedItemsFast() : [];
+      const multiSelectedBounds = multiSelectedItems.length >= 2 ? getSelectedItemsBounds() : null;
+      if (multiSelectedBounds) {
+        nextHoverHandle = hitTestMultiSelectionHandle(multiSelectedBounds, scenePoint, state.board.view.scale);
+      }
       const selectedItem = state.tool === "select" ? sceneRegistry.getSingleSelectedItem() : null;
-      if (selectedItem && selectedItem.type === "image" && hitTestImageRotateHandle(selectedItem, scenePoint, state.board.view)) {
+      if (!nextHoverHandle && selectedItem && selectedItem.type === "image" && hitTestImageRotateHandle(selectedItem, scenePoint, state.board.view)) {
         nextHoverHandle = "rotate-image";
-      } else if (selectedItem && selectedItem.type === "shape" && hitTestShapeRotateHandle(selectedItem, scenePoint, state.board.view)) {
+      } else if (!nextHoverHandle && selectedItem && selectedItem.type === "shape" && hitTestShapeRotateHandle(selectedItem, scenePoint, state.board.view)) {
         nextHoverHandle = "rotate-shape";
-      } else if (selectedItem && selectedItem.type === "flowNode") {
+      } else if (!nextHoverHandle && selectedItem && selectedItem.type === "flowNode") {
         const side = flowModule.getConnectorHit(selectedItem, scenePoint, state.board.view);
         if (side) {
           nextHoverHandle = "flow-connector";
@@ -14254,7 +14488,7 @@ function syncRichToolbarEnhancements(toolbar) {
         } else {
           nextHoverHandle = hitTestHandle(selectedItem, scenePoint, state.board.view.scale);
         }
-      } else {
+      } else if (!nextHoverHandle) {
         nextHoverHandle = selectedItem ? hitTestHandle(selectedItem, scenePoint, state.board.view.scale) : null;
       }
       hit = hitTestCanvasElement(scenePoint, state.board.view.scale);
@@ -14411,6 +14645,30 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const multiSelectedItems =
+      state.tool === "select" && state.board.selectedIds.length >= 2 ? getSelectedItemsFast() : [];
+    const multiSelectedBounds = multiSelectedItems.length >= 2 ? getSelectedItemsBounds() : null;
+    const multiSelectionHandle =
+      event.button === 0 && !additive && multiSelectedBounds
+        ? hitTestMultiSelectionHandle(multiSelectedBounds, scenePoint, state.board.view.scale)
+        : null;
+    if (multiSelectionHandle) {
+      const baseSelection = createMultiSelectionPointerBase(multiSelectedItems);
+      state.pointer = {
+        type: "resize-multi-selection",
+        pointerId: event.pointerId,
+        handle: multiSelectionHandle,
+        before: takeHistorySnapshot(state),
+        baseSelection,
+        preserveAspect: Boolean(event.shiftKey),
+        scaleFromCenter: Boolean(event.altKey),
+      };
+      refs.canvas?.setPointerCapture?.(event.pointerId);
+      state.hoverHandle = multiSelectionHandle;
+      syncCanvasCursor();
+      return;
+    }
+
     const singleSelectedItem = state.tool === "select" ? sceneRegistry.getSingleSelectedItem() : null;
     const rotateHandleHit =
       event.button === 0 &&
@@ -14582,7 +14840,7 @@ function syncRichToolbarEnhancements(toolbar) {
 
       const baseItems = new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)]));
       state.pointer = {
-        type: "move-selection",
+        type: event.button === 0 && event.altKey && selectedItems.length >= 2 ? "duplicate-multi-selection" : "move-selection",
         pointerId: event.pointerId,
         startScene: scenePoint,
         before: takeHistorySnapshot(state),
@@ -14832,6 +15090,17 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
 
+    if (pointer.type === "resize-multi-selection") {
+      const nextBounds = computeMultiSelectionResizedBounds(pointer.baseSelection?.bounds, pointer.handle, scenePoint, {
+        preserveAspect: Boolean(event.shiftKey),
+        scaleFromCenter: Boolean(event.altKey),
+      });
+      applyMultiSelectionResize(pointer.baseSelection, nextBounds);
+      state.hoverHandle = pointer.handle;
+      scheduleRender();
+      return;
+    }
+
     if (pointer.type === "resize-selection") {
       if (isLockedItem(pointer.baseItem)) {
         scheduleRender();
@@ -15008,6 +15277,24 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
 
+    if (pointer.type === "duplicate-multi-selection") {
+      const moved = hasDragExceededThreshold(pointer.startScene, state.lastPointerScenePoint, 3 / Math.max(0.1, state.board.view.scale));
+      if (moved) {
+        const deltaX = Number(state.lastPointerScenePoint.x || 0) - Number(pointer.startScene?.x || 0);
+        const deltaY = Number(state.lastPointerScenePoint.y || 0) - Number(pointer.startScene?.y || 0);
+        const pasted = duplicateElementsWithDelta(Array.from(pointer.baseItems.values()), deltaX, deltaY);
+        state.board.items.push(...pasted);
+        state.board.selectedIds = pasted.map((item) => item.id);
+        commitItemsPatchHistory(pointer.before, pasted.map((item) => item.id), "复制元素", "item-insert-batch", {
+          beforeOrderIds: Array.isArray(pointer.before?.items) ? pointer.before.items.map((item) => item.id) : [],
+          afterOrderIds: state.board.items.map((item) => item.id),
+        });
+      } else {
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      }
+      return;
+    }
+
     if (pointer.type === "native-export-drag") {
       suppressNativeDrag = false;
       hideDragIndicator();
@@ -15038,6 +15325,16 @@ function syncRichToolbarEnhancements(toolbar) {
       const resized = getItemByIdFast(pointer.itemId);
       if (resized) {
         commitItemPatchHistory(pointer.before, pointer.itemId, resized, "调整元素尺寸", "item-resize");
+      } else {
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      }
+      return;
+    }
+
+    if (pointer.type === "resize-multi-selection") {
+      const resizedIds = Array.from(pointer.baseSelection?.items?.keys?.() || []);
+      if (resizedIds.length) {
+        commitItemsPatchHistory(pointer.before, resizedIds, "调整多选尺寸", "item-transform-batch");
       } else {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
@@ -18482,6 +18779,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     event.preventDefault();
+    drawToolModule.hidePreview();
     const scenePoint = toScenePoint(event.clientX, event.clientY);
     if (matchesInternalClipboardByMarker(event.dataTransfer)) {
       pasteInternalClipboard(scenePoint, {
@@ -18490,6 +18788,58 @@ function syncRichToolbarEnhancements(toolbar) {
         historyReason: "拖拽复制",
         statusPrefix: "已拖拽复制",
       });
+      return;
+    }
+    const droppedFiles = Array.from(event.dataTransfer?.files || []);
+    if (droppedFiles.length) {
+      const structuredFileHandled = await tryStructuredImportDescriptor(
+        buildDragFileDescriptor(droppedFiles, scenePoint),
+        scenePoint,
+        {
+          reason: "拖拽导入",
+          statusText: `已导入 ${droppedFiles.length} 个文件`,
+          context: {
+            origin: "engine-drop-files",
+          },
+        }
+      );
+      if (structuredFileHandled) {
+        return;
+      }
+    }
+    const html = String(event.dataTransfer?.getData?.("text/html") || "");
+    const text = String(event.dataTransfer?.getData?.("text/plain") || event.dataTransfer?.getData?.("text") || "");
+    if (html.trim() && !(text && hasMarkdownMathSyntax(text) && !htmlContainsRenderableMath(html))) {
+      const structuredHtmlHandled = await tryStructuredImportDescriptor(
+        buildDragHtmlDescriptor(event.dataTransfer, scenePoint),
+        scenePoint,
+        {
+          reason: "拖拽导入",
+          statusText: "已导入网页富文本",
+          context: {
+            origin: "engine-drop-html",
+          },
+        }
+      );
+      if (structuredHtmlHandled) {
+        return;
+      }
+    }
+    const structuredHandled = await tryStructuredImportDescriptor(
+      structuredImportRuntime.dragGateway.fromDropEvent(event, {
+        origin: "engine-drop",
+        anchor: scenePoint,
+      }),
+      scenePoint,
+      {
+        reason: "拖拽导入",
+        statusText: "已通过新导入链路导入内容",
+        context: {
+          origin: "engine-drop",
+        },
+      }
+    );
+    if (structuredHandled) {
       return;
     }
     for (const handler of dragHandlers) {
@@ -18510,23 +18860,6 @@ function syncRichToolbarEnhancements(toolbar) {
         }
         return;
       }
-    }
-    const structuredHandled = await tryStructuredImportDescriptor(
-      structuredImportRuntime.dragGateway.fromDropEvent(event, {
-        origin: "engine-drop",
-        anchor: scenePoint,
-      }),
-      scenePoint,
-      {
-        reason: "拖拽导入",
-        statusText: "已通过新导入链路导入内容",
-        context: {
-          origin: "engine-drop",
-        },
-      }
-    );
-    if (structuredHandled) {
-      return;
     }
     const result = await dragBroker.importFromDataTransfer(event.dataTransfer, scenePoint);
     if (result?.handled && result.items?.length) {

@@ -3,6 +3,7 @@ import {
   normalizeRichHtml,
   normalizeRichHtmlInlineFontSizes,
   sanitizeText,
+  INLINE_FONT_SIZE_ATTR,
 } from "../utils.js";
 
 export const RICH_TEXT_DOCUMENT_VERSION = 2;
@@ -42,6 +43,9 @@ export const RICH_TEXT_MARK_TYPES = Object.freeze({
   HIGHLIGHT: "highlight",
   TEXT_COLOR: "textColor",
   BACKGROUND_COLOR: "backgroundColor",
+  FONT_SIZE: "fontSize",
+  FONT_FAMILY: "fontFamily",
+  LINE_HEIGHT: "lineHeight",
   CODE: "code",
   LINK: "link",
 });
@@ -128,6 +132,12 @@ const MARK_TYPE_ALIASES = Object.freeze({
   "text-color": RICH_TEXT_MARK_TYPES.TEXT_COLOR,
   backgroundcolor: RICH_TEXT_MARK_TYPES.BACKGROUND_COLOR,
   "background-color": RICH_TEXT_MARK_TYPES.BACKGROUND_COLOR,
+  fontsize: RICH_TEXT_MARK_TYPES.FONT_SIZE,
+  "font-size": RICH_TEXT_MARK_TYPES.FONT_SIZE,
+  fontfamily: RICH_TEXT_MARK_TYPES.FONT_FAMILY,
+  "font-family": RICH_TEXT_MARK_TYPES.FONT_FAMILY,
+  lineheight: RICH_TEXT_MARK_TYPES.LINE_HEIGHT,
+  "line-height": RICH_TEXT_MARK_TYPES.LINE_HEIGHT,
 });
 
 export const TEXT_LINK_KIND_HINTS = Object.freeze([
@@ -993,6 +1003,21 @@ function applyMarksToHtml(html, marks = []) {
     } else if (type === RICH_TEXT_MARK_TYPES.BACKGROUND_COLOR) {
       const color = escapeAttribute(String(mark?.attrs?.color || ""));
       output = `<span style="background-color:${color};">${output}</span>`;
+    } else if (type === RICH_TEXT_MARK_TYPES.FONT_SIZE) {
+      const value = normalizeFontSizeMarkValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span ${INLINE_FONT_SIZE_ATTR}="${escapeAttribute(value)}" style="font-size:${escapeStyleValue(formatCssFontSizeValue(value))};">${output}</span>`;
+      }
+    } else if (type === RICH_TEXT_MARK_TYPES.FONT_FAMILY) {
+      const value = escapeStyleValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span style="font-family:${value};">${output}</span>`;
+      }
+    } else if (type === RICH_TEXT_MARK_TYPES.LINE_HEIGHT) {
+      const value = escapeStyleValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span style="line-height:${value};">${output}</span>`;
+      }
     } else if (type === RICH_TEXT_MARK_TYPES.CODE) {
       output = `<code>${output}</code>`;
     } else if (type === RICH_TEXT_MARK_TYPES.LINK) {
@@ -1003,6 +1028,32 @@ function applyMarksToHtml(html, marks = []) {
     }
   });
   return output;
+}
+
+function formatCssFontSizeValue(value = "") {
+  const raw = String(value || "").trim();
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    return `${raw}px`;
+  }
+  return raw;
+}
+
+function escapeStyleValue(value = "") {
+  return String(value || "")
+    .replace(/[<>"'`;{}]/g, "")
+    .trim();
+}
+
+function normalizeFontSizeMarkValue(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "";
+  }
+  if (raw.endsWith("px")) {
+    const numeric = Number.parseFloat(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? String(Math.round(numeric * 100) / 100) : "";
+  }
+  return raw;
 }
 
 function clampHeadingLevel(level) {
@@ -1418,6 +1469,30 @@ function extractMarksFromElement(element) {
       meta: {},
     });
   }
+  const fontSize = readElementFontSize(element);
+  if (fontSize) {
+    marks.push({
+      type: RICH_TEXT_MARK_TYPES.FONT_SIZE,
+      attrs: { value: fontSize },
+      meta: {},
+    });
+  }
+  const fontFamily = readElementFontFamily(element);
+  if (fontFamily) {
+    marks.push({
+      type: RICH_TEXT_MARK_TYPES.FONT_FAMILY,
+      attrs: { value: fontFamily },
+      meta: {},
+    });
+  }
+  const lineHeight = readElementLineHeight(element);
+  if (lineHeight) {
+    marks.push({
+      type: RICH_TEXT_MARK_TYPES.LINE_HEIGHT,
+      attrs: { value: lineHeight },
+      meta: {},
+    });
+  }
   return dedupeMarks(marks);
 }
 
@@ -1449,6 +1524,39 @@ function readElementTextColor(element) {
 function readElementBackgroundColor(element) {
   const style = String(element.style?.backgroundColor || "").trim();
   return style || "";
+}
+
+function readElementFontSize(element) {
+  const style = String(element.style?.fontSize || "").trim();
+  return normalizeStyleSizeValue(style);
+}
+
+function readElementFontFamily(element) {
+  const families = String(element.style?.fontFamily || "")
+    .split(",")
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean)
+    .slice(0, 4);
+  return families.join(", ");
+}
+
+function readElementLineHeight(element) {
+  const style = String(element.style?.lineHeight || "").trim();
+  return normalizeStyleSizeValue(style, { allowUnitless: true });
+}
+
+function normalizeStyleSizeValue(value = "", options = {}) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "normal") {
+    return "";
+  }
+  if (options.allowUnitless && /^\d+(?:\.\d+)?$/.test(raw)) {
+    return raw;
+  }
+  if (/^\d+(?:\.\d+)?(?:px|em|rem|%)$/.test(raw)) {
+    return raw;
+  }
+  return "";
 }
 
 function readTaskListItemState(element) {

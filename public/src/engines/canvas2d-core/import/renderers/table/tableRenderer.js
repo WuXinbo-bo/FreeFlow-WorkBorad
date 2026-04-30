@@ -1,6 +1,10 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
-import { inlineNodesToHtml, inlineNodesToPlainText } from "../text/sharedTextRenderUtils.js";
+import {
+  inlineNodesToHtml,
+  inlineNodesToPlainText,
+  normalizeInlineContentForCanvasText,
+} from "../text/sharedTextRenderUtils.js";
 import { IMPORTED_TEXT_WRAP_TARGET_WIDTH } from "../text/sharedTextRenderUtils.js";
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
@@ -197,7 +201,7 @@ function collectTableCellTextSegments(nodes = []) {
     }
     if (node.type === "paragraph") {
       const plainText = inlineNodesToPlainText(node.content || []);
-      const html = inlineNodesToHtml(node.content || []);
+      const html = inlineNodesToHtml(normalizeInlineContentForCanvasText(node.content || []));
       if (plainText.trim() || html.trim()) {
         result.push({ plainText, html });
       }
@@ -277,7 +281,7 @@ function flattenListNode(listNode, level = 0, orderedStart = 1, includeHtml = fa
       if (child?.type === "paragraph") {
         paragraphs.push({
           plainText: inlineNodesToPlainText(child.content || []),
-          html: inlineNodesToHtml(child.content || []),
+          html: inlineNodesToHtml(normalizeInlineContentForCanvasText(child.content || [])),
         });
       } else if (child && typeof child === "object" && (child.type === "bulletList" || child.type === "orderedList" || child.type === "taskList")) {
         nested.push(...flattenListNode(child, level + 1, Number(child?.attrs?.start) || 1, includeHtml));

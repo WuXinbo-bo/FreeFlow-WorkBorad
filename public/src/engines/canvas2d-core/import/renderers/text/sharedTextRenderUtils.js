@@ -1,14 +1,8 @@
 import { sanitizeText } from "../../../utils.js";
+import { INLINE_FONT_SIZE_ATTR } from "../../../utils.js";
 import { ensureRichTextDocumentFields } from "../../../textModel/richTextDocument.js";
+import { getHeadingFontSizeByLevel } from "../../../textLayout/typographyTokens.js";
 
-const HEADING_FONT_SIZE_MAP = Object.freeze({
-  1: 36,
-  2: 30,
-  3: 26,
-  4: 22,
-  5: 20,
-  6: 18,
-});
 const IMPORTED_TEXT_WIDTH_SCALE = 2;
 const BODY_LINE_HEIGHT_RATIO = 1.5;
 const PARAGRAPH_SPACING_EM = 0.6;
@@ -18,7 +12,7 @@ export const IMPORTED_TEXT_WRAP_MIN_WIDTH = 560;
 export const IMPORTED_TEXT_WRAP_MAX_WIDTH = 860;
 
 export function inferHeadingFontSize(level) {
-  return HEADING_FONT_SIZE_MAP[Number(level) || 1] || 18;
+  return getHeadingFontSizeByLevel(level, 20);
 }
 
 export function estimateTextWidth(text, fontSize) {
@@ -157,6 +151,31 @@ export function inlineNodesToPlainText(nodes = []) {
   return sanitizeText(parts.join(""));
 }
 
+export function normalizeInlineContentForCanvasText(nodes = []) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => normalizeInlineNodeForCanvasText(node))
+    .filter(Boolean);
+}
+
+function normalizeInlineNodeForCanvasText(node) {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+  const next = {
+    ...node,
+  };
+  if (Array.isArray(node.marks)) {
+    next.marks = node.marks.filter((mark) => {
+      const type = String(mark?.type || "");
+      return type !== "fontSize" && type !== "lineHeight";
+    });
+  }
+  if (Array.isArray(node.content)) {
+    next.content = normalizeInlineContentForCanvasText(node.content);
+  }
+  return next;
+}
+
 export function inlineNodesToHtml(nodes = []) {
   const safeNodes = Array.isArray(nodes) ? nodes : [];
   return safeNodes.map((node) => renderInlineNodeToHtml(node)).join("");
@@ -225,6 +244,21 @@ function applyMarksToHtml(html, marks = []) {
     } else if (type === "backgroundColor") {
       const color = escapeAttribute(String(mark?.attrs?.color || ""));
       output = `<span style="background-color:${color};">${output}</span>`;
+    } else if (type === "fontSize") {
+      const value = normalizeFontSizeMarkValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span ${INLINE_FONT_SIZE_ATTR}="${escapeAttribute(value)}" style="font-size:${escapeStyleValue(formatCssFontSizeValue(value))};">${output}</span>`;
+      }
+    } else if (type === "fontFamily") {
+      const value = escapeStyleValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span style="font-family:${value};">${output}</span>`;
+      }
+    } else if (type === "lineHeight") {
+      const value = escapeStyleValue(String(mark?.attrs?.value || ""));
+      if (value) {
+        output = `<span style="line-height:${value};">${output}</span>`;
+      }
     } else if (type === "code") {
       output = `<code>${output}</code>`;
     } else if (type === "link") {
@@ -233,6 +267,32 @@ function applyMarksToHtml(html, marks = []) {
     }
   });
   return output;
+}
+
+function formatCssFontSizeValue(value = "") {
+  const raw = String(value || "").trim();
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    return `${raw}px`;
+  }
+  return raw;
+}
+
+function escapeStyleValue(value = "") {
+  return String(value || "")
+    .replace(/[<>"'`;{}]/g, "")
+    .trim();
+}
+
+function normalizeFontSizeMarkValue(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "";
+  }
+  if (raw.endsWith("px")) {
+    const numeric = Number.parseFloat(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? String(Math.round(numeric * 100) / 100) : "";
+  }
+  return raw;
 }
 
 function firstFiniteNumber(...values) {

@@ -310,7 +310,7 @@ function isMergeableTextOperation(operation) {
     return false;
   }
   const parserId = String(operation?.meta?.parserId || "");
-  return parserId === "plain-text-parser" || parserId === "markdown-parser" || parserId === "html-parser";
+  return parserId === "plain-text-parser" || parserId === "markdown-parser";
 }
 
 function mergeTextOperationGroup(group = []) {
