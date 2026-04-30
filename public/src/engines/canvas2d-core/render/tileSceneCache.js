@@ -14,7 +14,7 @@ function createRenderCanvas(width, height) {
 }
 
 function getScaleBucket(scale = 1) {
-  return Math.max(0.1, Math.round((Number(scale || 1) || 1) * 20) / 20);
+  return Math.max(0.1, Math.round((Number(scale || 1) || 1) * 1000) / 1000);
 }
 
 function getTileBounds(tileX, tileY, tileSize) {

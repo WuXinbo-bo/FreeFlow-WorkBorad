@@ -767,6 +767,42 @@ async function runSelectionDragRealtimeCheck(browser) {
   }
 }
 
+async function runMarqueeMultiSelectCheck(browser) {
+  const board = createBoard(
+    [
+      createTextItem("marquee-a", 180, 160, "Marquee A"),
+      createTextItem("marquee-b", 420, 210, "Marquee B"),
+      createRectShape("marquee-c", 700, 420, 140, 96),
+    ],
+    [],
+    { scale: 1, offsetX: 0, offsetY: 0 }
+  );
+  const session = await createPage(browser, { board });
+  try {
+    const canvasRect = await session.page.locator("canvas").boundingBox();
+    await session.page.mouse.move(canvasRect.x + 120, canvasRect.y + 120);
+    await session.page.mouse.down({ button: "left" });
+    await session.page.mouse.move(canvasRect.x + 660, canvasRect.y + 340, { steps: 8 });
+    await session.page.waitForTimeout(80);
+    await session.page.mouse.up({ button: "left" });
+    await session.page.waitForTimeout(120);
+    const after = await session.page.evaluate(() => {
+      const snapshot = window.__canvas2dEngine?.getSnapshot?.() || null;
+      return {
+        selectedIds: snapshot?.board?.selectedIds || [],
+      };
+    });
+    const result = { after };
+    assert(session.getErrors().length === 0, "marquee multi-select check produced page errors", session.getErrors());
+    assert(after.selectedIds.includes("marquee-a"), "marquee did not select first text item", result);
+    assert(after.selectedIds.includes("marquee-b"), "marquee did not select second text item", result);
+    assert(after.selectedIds.length >= 2, "marquee did not keep a multi-selection", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
 async function runLocalizedTileInvalidationCheck(browser) {
   const items = [
     createTextItem("align-a", 120, 120, "Alpha"),
@@ -1122,6 +1158,7 @@ async function main() {
     report.checks.tableEditor = await runTableEditorCheck(browser);
     report.checks.panRealtime = await runPanRealtimeCheck(browser);
     report.checks.selectionDragRealtime = await runSelectionDragRealtimeCheck(browser);
+    report.checks.marqueeMultiSelect = await runMarqueeMultiSelectCheck(browser);
     report.checks.localizedTileInvalidation = await runLocalizedTileInvalidationCheck(browser);
     report.checks.backgroundLayerReuse = await runBackgroundLayerReuseCheck(browser);
     report.checks.undoPatch = await runUndoPatchCheck(browser);

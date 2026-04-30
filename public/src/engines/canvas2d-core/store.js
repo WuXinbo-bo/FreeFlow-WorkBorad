@@ -174,6 +174,7 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
   }
 
   function emit() {
+    cachedBoardSnapshotRevision = -1;
     const snapshot = getSnapshot();
     if (typeof onStateChange === "function") {
       onStateChange(snapshot);

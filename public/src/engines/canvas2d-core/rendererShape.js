@@ -2,16 +2,10 @@ import { getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import { sceneToScreen } from "./camera.js";
 import { getElementScreenBounds, scaleSceneValue } from "./viewportMetrics.js";
+import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
-  const nextRadius = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + nextRadius, y);
-  ctx.arcTo(x + width, y, x + width, y + height, nextRadius);
-  ctx.arcTo(x + width, y + height, x, y + height, nextRadius);
-  ctx.arcTo(x, y + height, x, y, nextRadius);
-  ctx.arcTo(x, y, x + width, y, nextRadius);
-  ctx.closePath();
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius);
 }
 
 export function drawShapeElement(ctx, element, view, selected, hover, helpers) {

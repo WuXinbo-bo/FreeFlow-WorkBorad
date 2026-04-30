@@ -8,6 +8,13 @@ import { drawLodHeaderStrip, drawLodTextBars, drawTableStyleLodShell } from "./r
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
 import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
 import { createTileSceneCache } from "./render/tileSceneCache.js";
+import { drawStableRoundedRectPath, resolveScreenCornerRadius } from "./render/cornerRadius.js";
+import {
+  getMultiSelectionBounds,
+  getMultiSelectionHandleMap,
+  getMultiSelectionHandleRadiusPx,
+  shouldShowMultiSelectionEdgeHandles,
+} from "./multiSelectionTransform.js";
 
 const HINT_LOGO_SRC = "/assets/brand/FreeFlow_logo.svg";
 let hintLogo = null;
@@ -21,6 +28,10 @@ const CANVAS_LOD_CODE_BLOCK_MIN_SCALE = 0.15;
 const CANVAS_LOD_MATH_MIN_SCALE = 0.15;
 const CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX = 72;
 const CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX = 28;
+
+function getCanvasLodScalePercent(scale = 1) {
+  return Math.round(Math.max(0.1, Number(scale) || 1) * 100);
+}
 
 function getHintLogo() {
   if (typeof Image === "undefined") {
@@ -43,14 +54,7 @@ function getHintLogo() {
 }
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
-  const nextRadius = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + nextRadius, y);
-  ctx.arcTo(x + width, y, x + width, y + height, nextRadius);
-  ctx.arcTo(x + width, y + height, x, y + height, nextRadius);
-  ctx.arcTo(x, y + height, x, y, nextRadius);
-  ctx.arcTo(x, y, x + width, y, nextRadius);
-  ctx.closePath();
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius);
 }
 
 function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
@@ -98,16 +102,26 @@ function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 
   }
 }
 
+function getSelectionFrameRadius(width = 0, height = 0) {
+  return resolveScreenCornerRadius(width, height, 10, {
+    maxRadiusPx: 10,
+    maxCornerRatio: 0.18,
+    minRadiusPx: 4,
+  });
+}
+
 
 function drawSelectionFrame(ctx, x, y, width, height, selected = false, hover = false) {
   if (!selected && !hover) {
     return;
   }
+  const frameInset = 3;
+  const frameRadius = getSelectionFrameRadius(width + frameInset * 2, height + frameInset * 2);
   ctx.save();
   ctx.setLineDash(selected ? [8, 6] : [6, 6]);
   ctx.strokeStyle = selected ? "rgba(59, 130, 246, 0.9)" : "rgba(59, 130, 246, 0.42)";
   ctx.lineWidth = selected ? 2 : 1.5;
-  drawRoundedRect(ctx, x - 3, y - 3, width + 6, height + 6, 20);
+  drawRoundedRect(ctx, x - frameInset, y - frameInset, width + frameInset * 2, height + frameInset * 2, frameRadius);
   ctx.stroke();
   ctx.restore();
 }
@@ -181,6 +195,49 @@ function drawHandles(ctx, element, view) {
       ctx.stroke();
     });
   }
+  ctx.restore();
+}
+
+function drawMultiSelectionHandles(ctx, view, selectedItems = []) {
+  const bounds = getMultiSelectionBounds(selectedItems);
+  if (!bounds) {
+    return;
+  }
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const leftTop = getScreenPoint(view, { x: bounds.left, y: bounds.top });
+  const rightBottom = getScreenPoint(view, { x: bounds.right, y: bounds.bottom });
+  const width = Math.max(1, Math.abs(rightBottom.x - leftTop.x));
+  const height = Math.max(1, Math.abs(rightBottom.y - leftTop.y));
+  const x = Math.min(leftTop.x, rightBottom.x);
+  const y = Math.min(leftTop.y, rightBottom.y);
+
+  drawSelectionFrame(ctx, x, y, width, height, true, false);
+
+  const handles = getMultiSelectionHandleMap(bounds);
+  const visibleHandles = [
+    "multi-nw",
+    "multi-ne",
+    "multi-se",
+    "multi-sw",
+    ...(shouldShowMultiSelectionEdgeHandles(bounds, scale) ? ["multi-n", "multi-e", "multi-s", "multi-w"] : []),
+  ];
+
+  const handleRadius = getMultiSelectionHandleRadiusPx();
+  ctx.save();
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "rgba(59, 130, 246, 0.95)";
+  ctx.lineWidth = 1.5;
+  visibleHandles.forEach((handleKey) => {
+    const handlePoint = handles[handleKey];
+    if (!handlePoint) {
+      return;
+    }
+    const point = getScreenPoint(view, handlePoint);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, handleRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
   ctx.restore();
 }
 
@@ -387,6 +444,7 @@ function drawFileCardLod(ctx, element, view, selected, hover, { drawSelectionFra
 
 function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
   const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const scalePercent = getCanvasLodScalePercent(scale);
   if (!item || typeof item !== "object") {
     return "full";
   }
@@ -395,29 +453,29 @@ function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
   if (
     item.type === "fileCard" &&
     (
-      scale <= CANVAS_LOD_FILE_CARD_MIN_SCALE ||
+      scalePercent <= Math.round(CANVAS_LOD_FILE_CARD_MIN_SCALE * 100) ||
       screenWidth <= CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX ||
       screenHeight <= CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX
     )
   ) {
     return "summary";
   }
-  if (item.type === "mindNode" && scale < CANVAS_LOD_MIND_NODE_MIN_SCALE) {
+  if (item.type === "mindNode" && scalePercent <= Math.round(CANVAS_LOD_MIND_NODE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "image" && scale < CANVAS_LOD_IMAGE_MIN_SCALE) {
+  if (item.type === "image" && scalePercent <= Math.round(CANVAS_LOD_IMAGE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "table" && scale < CANVAS_LOD_TABLE_MIN_SCALE) {
+  if (item.type === "table" && scalePercent <= Math.round(CANVAS_LOD_TABLE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "codeBlock" && scale <= CANVAS_LOD_CODE_BLOCK_MIN_SCALE) {
+  if (item.type === "codeBlock" && scalePercent <= Math.round(CANVAS_LOD_CODE_BLOCK_MIN_SCALE * 100)) {
     return "summary";
   }
-  if ((item.type === "mathBlock" || item.type === "mathInline") && scale <= CANVAS_LOD_MATH_MIN_SCALE) {
+  if ((item.type === "mathBlock" || item.type === "mathInline") && scalePercent <= Math.round(CANVAS_LOD_MATH_MIN_SCALE * 100)) {
     return "summary";
   }
-  if ((item.type === "text" || item.type === "flowNode") && scale <= CANVAS_LOD_TEXT_MIN_SCALE) {
+  if ((item.type === "text" || item.type === "flowNode") && scalePercent <= Math.round(CANVAS_LOD_TEXT_MIN_SCALE * 100)) {
     return "summary";
   }
   return "full";
@@ -687,6 +745,7 @@ function drawInteractionLayer(ctx, {
   items,
   draftElement,
   hoveredItem,
+  selectedItems = [],
 } = {}) {
   if (hoveredItem) {
     const bounds = getElementBounds(hoveredItem);
@@ -703,6 +762,9 @@ function drawInteractionLayer(ctx, {
     );
   }
   drawSelectionRect(ctx, view, selectionRect);
+  if (Array.isArray(selectedItems) && selectedItems.length >= 2) {
+    drawMultiSelectionHandles(ctx, view, selectedItems);
+  }
   drawAlignmentSnapGuides(ctx, alignmentSnap, alignmentSnapConfig, width, height);
   if (!(Array.isArray(items) && items.length) && !draftElement) {
     drawHint(ctx, width, height);
@@ -770,6 +832,7 @@ function getInteractionVisualSignature({
   items = [],
   draftElement = null,
   hoveredItem = null,
+  selectedIds = [],
 } = {}) {
   const guides = Array.isArray(alignmentSnap?.guides) ? alignmentSnap.guides : [];
   const guideSignature = guides
@@ -785,6 +848,7 @@ function getInteractionVisualSignature({
   return [
     getRectSignature(selectionRect),
     String(hoveredItem?.id || ""),
+    Array.isArray(selectedIds) ? selectedIds.map((id) => String(id || "")).filter(Boolean).sort().join("|") : "",
     alignmentSnap?.active ? "active" : "",
     guideSignature,
     hintVisible,
@@ -918,6 +982,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         items,
         draftElement,
         hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+        selectedIds,
       });
       const viewVisualSignature = getViewVisualSignature(view);
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
@@ -1063,6 +1128,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       }
 
       if (effectiveInteractionDirty) {
+        const selectedIdSet = new Set(Array.isArray(selectedIds) ? selectedIds : []);
         clearLayerContext(interactionLayer, width, height);
         drawInteractionLayer(interactionLayer.ctx, {
           view,
@@ -1074,6 +1140,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
           items,
           draftElement,
           hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+          selectedItems:
+            Array.isArray(selectedIds) && selectedIds.length >= 2
+              ? frameVisibleItems.filter((item) => selectedIdSet.has(item.id))
+              : [],
         });
       }
 

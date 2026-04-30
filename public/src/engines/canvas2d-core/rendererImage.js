@@ -2,6 +2,7 @@ import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { drawLodTextBars, drawRoundedRectPath, drawTableStyleLodShell } from "./rendererLod.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
+import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 const IMAGE_LOD_RADIUS_PX = 16;
 
@@ -34,14 +35,7 @@ function applyImageTransform(ctx, width, height, rotation, flipX, flipY) {
 }
 
 function drawRoundedRect(ctx, x, y, width, height, radius) {
-  const nextRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + nextRadius, y);
-  ctx.arcTo(x + width, y, x + width, y + height, nextRadius);
-  ctx.arcTo(x + width, y + height, x, y + height, nextRadius);
-  ctx.arcTo(x, y + height, x, y, nextRadius);
-  ctx.arcTo(x, y, x + width, y, nextRadius);
-  ctx.closePath();
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius);
 }
 
 function wrapTextByChar(ctx, text, x, y, maxWidth, lineHeight, maxLines = 4) {

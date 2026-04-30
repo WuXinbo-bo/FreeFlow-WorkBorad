@@ -1,16 +1,13 @@
 import { resolveLodHeaderLayout, resolveLodShellGeometry, resolveLodTextBarLayout } from "./lodPreviewLayout.js";
+import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 export const LOD_CARD_RADIUS_PX = 12;
 
 export function drawRoundedRectPath(ctx, x, y, width, height, radius = LOD_CARD_RADIUS_PX) {
-  const nextRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + nextRadius, y);
-  ctx.arcTo(x + width, y, x + width, y + height, nextRadius);
-  ctx.arcTo(x + width, y + height, x, y + height, nextRadius);
-  ctx.arcTo(x, y + height, x, y, nextRadius);
-  ctx.arcTo(x, y, x + width, y, nextRadius);
-  ctx.closePath();
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius, {
+    maxRadiusPx: Math.max(12, Number(radius) || LOD_CARD_RADIUS_PX),
+    maxCornerRatio: 0.18,
+  });
 }
 
 export function getLodInset(width, height, ratio = 0.06) {

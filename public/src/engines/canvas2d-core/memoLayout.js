@@ -106,6 +106,6 @@ export function getMemoLayout(element = {}, { kind = "fileCard", textOverride = 
     textWidth,
     lineCount,
     maxLines: MEMO_MAX_LINES,
-    radius: Math.max(12, height * 0.2),
+    radius: clamp(Math.max(10, height * 0.14), 10, 18),
   };
 }

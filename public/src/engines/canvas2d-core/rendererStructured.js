@@ -8,19 +8,16 @@ import {
   scaleSceneValue,
 } from "./viewportMetrics.js";
 import { drawLodHeaderStrip, drawLodTextBars, drawTableStyleLodShell } from "./rendererLod.js";
+import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 const STRUCTURED_CODE_BLOCK_RADIUS_PX = 12;
 const STRUCTURED_TABLE_RADIUS_PX = 12;
 
 function drawRoundedRectPath(ctx, x, y, width, height, radius = 12) {
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r);
-  ctx.arcTo(x, y + height, x, y, r);
-  ctx.arcTo(x, y, x + width, y, r);
-  ctx.closePath();
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius, {
+    maxRadiusPx: Math.max(12, Number(radius) || 12),
+    maxCornerRatio: 0.18,
+  });
 }
 
 function wrapCodeLine(ctx, line, maxWidth) {

@@ -23,9 +23,9 @@ export function resolveLodShellGeometry({
   const panelY = Number(y) + safeInset;
   const panelWidth = Math.max(1, safeWidth - safeInset * 2);
   const panelHeight = Math.max(1, safeHeight - safeInset * 2);
-  const safeRadius = clampLodValue(radius, 0, Math.min(safeWidth, safeHeight) / 2);
+  const safeRadius = clampLodValue(radius, 0, Math.min(Math.min(safeWidth, safeHeight) * 0.18, 18));
   const requestedPanelRadius = panelRadius == null ? Math.max(0, safeRadius - 4) : Number(panelRadius);
-  const safePanelRadius = clampLodValue(requestedPanelRadius, 0, Math.min(panelWidth, panelHeight) / 2);
+  const safePanelRadius = clampLodValue(requestedPanelRadius, 0, Math.min(Math.min(panelWidth, panelHeight) * 0.18, 16));
   return {
     x: Number(x) || 0,
     y: Number(y) || 0,
