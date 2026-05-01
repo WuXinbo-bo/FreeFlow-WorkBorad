@@ -26,10 +26,7 @@ function clearFreshBackendModules() {
 
 async function writeBoard(filePath, title) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(
-    filePath,
-    JSON.stringify(
-      {
+  const board = {
         schemaVersion: 1,
         items: [
           {
@@ -45,12 +42,26 @@ async function writeBoard(filePath, title) {
         selectedIds: [],
         view: { scale: 1, offsetX: 0, offsetY: 0 },
         updatedAt: Date.now(),
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
+      };
+  const payload = filePath.toLowerCase().endsWith(".freeflow")
+    ? {
+        kind: "freeflow.canvas.board",
+        formatVersion: 1,
+        app: "FreeFlow",
+        source: "check-recent-canvas-startup",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        payloadKind: "structured-host-board",
+        payload: {
+          kind: "structured-host-board",
+          version: "1.0.0",
+          createdAt: Date.now(),
+          meta: {},
+          board,
+        },
+      }
+    : board;
+  await fs.writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
 async function main() {
@@ -59,7 +70,7 @@ async function main() {
   const appDataDir = path.join(homeDir, "AppData");
   const boardDir = path.join(homeDir, "CanvasBoards");
   const oldBoardPath = path.join(boardDir, "old-board.json");
-  const recentBoardPath = path.join(boardDir, "recent-board.json");
+  const recentBoardPath = path.join(boardDir, "recent-board.freeflow");
 
   process.env.FREEFLOW_HOME_DIR = homeDir;
   process.env.FREEFLOW_USER_DATA_DIR = appDataDir;
@@ -112,6 +123,24 @@ async function main() {
   const boardInfo = await canvasBoardService.readCanvasBoard();
   assert.strictEqual(boardInfo.file, recentBoardPath, "canvas board service should read the latest recent board");
   assert.strictEqual(boardInfo.board.items[0]?.text, "recent", "canvas board service should load recent board content");
+
+  await uiSettingsService.writeUiSettingsStore({
+    canvasBoardSavePath: boardDir,
+    canvasLastOpenedBoardPath: oldBoardPath,
+  });
+  const migratedBoardInfo = await canvasBoardService.readCanvasBoard();
+  assert.strictEqual(
+    path.extname(migratedBoardInfo.file),
+    ".freeflow",
+    "legacy JSON board reads should produce and switch to a .freeflow copy"
+  );
+  assert.notStrictEqual(migratedBoardInfo.file, oldBoardPath, "legacy JSON source should not be overwritten in place");
+  const migratedSettings = await uiSettingsService.readUiSettingsStore();
+  assert.strictEqual(
+    migratedSettings.canvasLastOpenedBoardPath,
+    migratedBoardInfo.file,
+    "legacy migration should persist the upgraded recent board path"
+  );
 
   console.log("[check-recent-canvas-startup] recent canvas persistence and startup resolution passed");
 }

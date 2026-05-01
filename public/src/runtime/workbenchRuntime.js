@@ -3481,7 +3481,7 @@ function normalizeCanvasBoardSavePathValue(value = "") {
   const trimmed = clean.replace(/[\\/]+$/, "");
   const segments = trimmed.split(/[\\/]/).filter(Boolean);
   const last = segments[segments.length - 1] || "";
-  if (last.toLowerCase().endsWith(".json")) {
+  if (/\.(?:freeflow|json)$/i.test(last)) {
     return segments.slice(0, -1).join(clean.includes("\\") ? "\\" : "/");
   }
   return trimmed;
@@ -3565,7 +3565,9 @@ async function loadCanvasBoardFromStorage() {
     if (!readResult?.ok) {
       throw new Error(readResult?.error || "无法读取启动画布");
     }
-    const parsed = JSON.parse(readResult.text || "{}");
+    const parsedRaw = JSON.parse(String(readResult.text || "{}").replace(/^\uFEFF/, ""));
+    const payload = parsedRaw?.kind === "freeflow.canvas.board" ? parsedRaw.payload || {} : parsedRaw;
+    const parsed = payload?.kind === "structured-host-board" ? payload.board || {} : payload;
     state.canvasBoard = normalizeCanvasBoard(parsed);
     applyCanvasBoardStorageInfo({
       file: startupInitialBoardPath,

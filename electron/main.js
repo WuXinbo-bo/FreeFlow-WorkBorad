@@ -40,6 +40,14 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
+const FREEFLOW_BOARD_EXTENSION = ".freeflow";
+const LEGACY_BOARD_EXTENSION = ".json";
+const DEFAULT_CANVAS_BOARD_FILE_NAME = `canvas-board${FREEFLOW_BOARD_EXTENSION}`;
+
+function isCanvasBoardFileName(fileName = "") {
+  const value = String(fileName || "").trim().toLowerCase();
+  return value.endsWith(FREEFLOW_BOARD_EXTENSION) || value.endsWith(LEGACY_BOARD_EXTENSION);
+}
 const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.9-rc";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
@@ -2107,9 +2115,10 @@ ipcMain.handle("desktop-shell:pick-canvas-board-path", async (_event, payload) =
   const result = await dialog.showSaveDialog(mainWindow || undefined, {
     title: "选择画布保存文件",
     buttonLabel: "选择此位置",
-    defaultPath: defaultPath || path.join(CANVAS_BOARD_DIR, "canvas-board.json"),
+    defaultPath: defaultPath || path.join(CANVAS_BOARD_DIR, DEFAULT_CANVAS_BOARD_FILE_NAME),
     filters: [
-      { name: "JSON 文件", extensions: ["json"] },
+      { name: "FreeFlow 画布", extensions: ["freeflow"] },
+      { name: "旧版 JSON 画布", extensions: ["json"] },
       { name: "所有文件", extensions: ["*"] },
     ],
     properties: ["showOverwriteConfirmation"],
@@ -2141,7 +2150,8 @@ ipcMain.handle("desktop-shell:pick-canvas-board-open", async (_event, payload) =
     title: "选择画布文件",
     defaultPath: defaultPath || CANVAS_BOARD_DIR,
     filters: [
-      { name: "JSON 文件", extensions: ["json"] },
+      { name: "FreeFlow 画布", extensions: ["freeflow"] },
+      { name: "旧版 JSON 画布", extensions: ["json"] },
       { name: "所有文件", extensions: ["*"] },
     ],
     properties: ["openFile"],
@@ -2163,7 +2173,7 @@ ipcMain.handle("desktop-shell:list-canvas-boards", async (_event, payload) => {
     const entries = await fs.promises.readdir(resolvedFolder, { withFileTypes: true });
     const boards = [];
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
+      if (!entry.isFile() || !isCanvasBoardFileName(entry.name)) {
         continue;
       }
       const filePath = path.join(resolvedFolder, entry.name);

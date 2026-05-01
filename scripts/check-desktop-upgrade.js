@@ -202,6 +202,10 @@ async function runScenario({
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `${name}: 历史会话未保留`);
   assert(boardInfo.board.schemaVersion === 1, `${name}: 老画布未纳入 schemaVersion`);
   assert(boardInfo.board.items[0]?.text?.includes(missingRecentBoard ? "教程画布" : "我的旧画布"), `${name}: 老画布未正常读取`);
+  assert(path.extname(boardInfo.file) === ".freeflow", `${name}: 老画布读取后未升级为 .freeflow 格式`);
+  if (!missingRecentBoard) {
+    assert(boardInfo.file !== recentBoardPath, `${name}: 老 JSON 画布不应被原地覆盖`);
+  }
   assert(ensureTutorialBoardFileCallCount === 1, `${name}: 教程画布刷新链路未执行`);
   assert(startupContext.startup.tutorialBoardPath === tutorialBoardPath, `${name}: 教程画布路径未回传`);
 
@@ -213,7 +217,7 @@ async function runScenario({
   } else {
     assert(
       startupContext.startup.initialBoardPath === recentBoardPath,
-      `${name}: 最近画布未保留`
+      `${name}: 首次启动应先打开用户记录的旧 JSON 最近画布`
     );
   }
 

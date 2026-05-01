@@ -3,9 +3,12 @@ const path = require("path");
 const { DATA_DIR, CANVAS_BOARD_DIR, CACHE_DIR, RUNTIME_DIR } = require("../config/paths");
 const { readUiSettingsStore, writeUiSettingsStore } = require("./uiSettingsService");
 const { normalizeUiSettings, pickWorkbenchPreferences } = require("../models/uiSettingsModel");
+const {
+  DEFAULT_BOARD_FILE_NAME,
+  deriveFreeFlowBoardPathFromLegacyPath,
+} = require("../models/canvasBoardFileFormat");
 
 const STARTUP_SCHEMA_VERSION = 1;
-const DEFAULT_BOARD_FILE_NAME = "canvas-board.json";
 
 function normalizeDirPath(value = "") {
   return String(value || "").trim().replace(/[\\/]+$/, "");
@@ -37,6 +40,39 @@ function isTutorialBoardPath(filePath = "") {
     return false;
   }
   return path.basename(normalizedPath).toLowerCase() === "freeflow教程画布.json".toLowerCase();
+}
+
+async function resolveExistingBoardPath(filePath = "") {
+  const normalizedPath = normalizeFilePath(filePath);
+  if (!normalizedPath) {
+    return "";
+  }
+  if (await pathExists(normalizedPath)) {
+    return normalizedPath;
+  }
+  if (normalizedPath.toLowerCase().endsWith(".json")) {
+    const upgradedPath = deriveFreeFlowBoardPathFromLegacyPath(normalizedPath);
+    if (upgradedPath && upgradedPath !== normalizedPath && (await pathExists(upgradedPath))) {
+      return upgradedPath;
+    }
+  }
+  return "";
+}
+
+async function resolveDefaultBoardInFolder(folderPath = "") {
+  const normalizedFolder = normalizeDirPath(folderPath);
+  if (!normalizedFolder) {
+    return "";
+  }
+  const defaultFreeFlowPath = joinPath(normalizedFolder, DEFAULT_BOARD_FILE_NAME);
+  if (await pathExists(defaultFreeFlowPath)) {
+    return defaultFreeFlowPath;
+  }
+  const legacyDefaultPath = joinPath(normalizedFolder, "canvas-board.json");
+  if (await pathExists(legacyDefaultPath)) {
+    return legacyDefaultPath;
+  }
+  return "";
 }
 
 async function pathExists(targetPath = "") {
@@ -103,9 +139,17 @@ async function ensureAppStartupState(options = {}) {
     settingsChanged = true;
   }
 
-  if (nextSettings.canvasLastOpenedBoardPath && !(await pathExists(nextSettings.canvasLastOpenedBoardPath))) {
-    nextSettings.canvasLastOpenedBoardPath = "";
-    settingsChanged = true;
+  if (nextSettings.canvasLastOpenedBoardPath) {
+    const resolvedRecentPath = await resolveExistingBoardPath(nextSettings.canvasLastOpenedBoardPath);
+    if (resolvedRecentPath) {
+      if (resolvedRecentPath !== nextSettings.canvasLastOpenedBoardPath) {
+        nextSettings.canvasLastOpenedBoardPath = resolvedRecentPath;
+        settingsChanged = true;
+      }
+    } else {
+      nextSettings.canvasLastOpenedBoardPath = "";
+      settingsChanged = true;
+    }
   }
 
   if (typeof ensureTutorialBoardFile === "function") {
@@ -127,8 +171,8 @@ async function ensureAppStartupState(options = {}) {
   }
 
   if (!initialBoardPath) {
-    const candidateBoardPath = joinPath(nextSettings.canvasBoardSavePath, DEFAULT_BOARD_FILE_NAME);
-    if (await pathExists(candidateBoardPath)) {
+    const candidateBoardPath = await resolveDefaultBoardInFolder(nextSettings.canvasBoardSavePath);
+    if (candidateBoardPath) {
       initialBoardPath = candidateBoardPath;
     }
   }

@@ -224,6 +224,15 @@ import { refreshTextLinkSemantics } from "./textEditing/linkSemantics.js";
 import { resolveUrlMeta } from "./textEditing/linkMetaResolver.js";
 import { CONFIG } from "../../config/app.config.js";
 import { API_ROUTES, readJsonResponse } from "../../api/http.js";
+import {
+  DEFAULT_BOARD_FILE_NAME,
+  deriveFreeFlowBoardPathFromLegacyPath,
+  ensureFreeFlowBoardFileName,
+  isLegacyJsonBoardFileName,
+  isSupportedBoardFileName,
+  parseBoardFileText,
+  wrapFreeFlowBoardPayload,
+} from "./boardFileFormat.js";
 
 const TOOL_SET = new Set(["select", "text", ...DRAW_TOOLS]);
 const DEFAULT_TEXT_FONT_SIZE = 20;
@@ -641,7 +650,6 @@ function repairMisclassifiedCodeBlocksOnBoard(board, fontSizeFallback = DEFAULT_
 
 const AUTOSAVE_INTERVAL_MS = 30000;
 const AUTOSAVE_ENABLED_KEY = "ai_worker_canvas2d_autosave_v1";
-const DEFAULT_BOARD_FILE_NAME = "canvas-board.json";
 const DEFAULT_NEW_BOARD_BASE = "FreeFlowBoard";
 const RENDER_TEXT_IN_CANVAS = false;
 const CANVAS_CLIPBOARD_MIME = "application/x-freeflow-canvas2d";
@@ -733,10 +741,6 @@ function writeClipboardSemanticHtmlCache(text = "", baseFontSize = DEFAULT_TEXT_
 
 function normalizeExportHistoryBoardKey(value = "") {
   return String(value || "").trim().replace(/\\/g, "/").toLowerCase();
-}
-
-function normalizeJsonTextForParse(value = "") {
-  return String(value || "").replace(/^\uFEFF/, "");
 }
 
 function readExportHistoryStorage() {
@@ -5387,8 +5391,8 @@ let tablePointerSelectionState = {
     return segments.slice(0, -1).join(separator);
   }
 
-  function isJsonFileName(name) {
-    return String(name || "").toLowerCase().endsWith(".json");
+  function isBoardFileName(name) {
+    return isSupportedBoardFileName(name);
   }
 
   function resolveBoardFolderPath(rawPath) {
@@ -5397,7 +5401,7 @@ let tablePointerSelectionState = {
       return "";
     }
     const fileName = getFileNameFromPath(cleanPath);
-    if (isJsonFileName(fileName)) {
+    if (isBoardFileName(fileName)) {
       return getFolderFromPath(cleanPath);
     }
     return stripTrailingSeparators(cleanPath);
@@ -5418,7 +5422,7 @@ let tablePointerSelectionState = {
       return "";
     }
     const fileName = getFileNameFromPath(cleanPath);
-    if (isJsonFileName(fileName)) {
+    if (isBoardFileName(fileName)) {
       return cleanPath;
     }
     return joinPath(cleanPath, DEFAULT_BOARD_FILE_NAME);
@@ -5671,12 +5675,62 @@ let tablePointerSelectionState = {
     }
   }
 
-  function ensureJsonExtension(name) {
+  function ensureBoardFileExtension(name) {
     const raw = String(name || "").trim();
     if (!raw) {
       return "";
     }
-    return raw.toLowerCase().endsWith(".json") ? raw : `${raw}.json`;
+    return ensureFreeFlowBoardFileName(raw);
+  }
+
+  function buildBoardFilePayload(targetPath) {
+    const payload = structuredImportRuntime.serializeBoard(state.board, {
+      meta: {
+        boardFilePath: targetPath,
+      },
+    });
+    return wrapFreeFlowBoardPayload(payload, {
+      updatedAt: Date.now(),
+    });
+  }
+
+  async function findAvailableMigrationPath(legacyPath) {
+    const basePath = deriveFreeFlowBoardPathFromLegacyPath(legacyPath);
+    if (!basePath) {
+      return "";
+    }
+    if (typeof globalThis?.desktopShell?.pathExists !== "function") {
+      return basePath;
+    }
+    const exists = await globalThis.desktopShell.pathExists(basePath);
+    if (!exists) {
+      return basePath;
+    }
+    const folder = getFolderFromPath(basePath);
+    const fileName = getFileName(basePath).replace(/\.freeflow$/i, "");
+    let index = 1;
+    while (index < 9999) {
+      const candidate = joinPath(folder, `${fileName}-migrated-${index}.freeflow`);
+      const candidateExists = await globalThis.desktopShell.pathExists(candidate);
+      if (!candidateExists) {
+        return candidate;
+      }
+      index += 1;
+    }
+    return joinPath(folder, `${fileName}-migrated-${Date.now()}.freeflow`);
+  }
+
+  async function migrateLegacyBoardFileIfNeeded(sourcePath, payload) {
+    if (!isLegacyJsonBoardFileName(sourcePath) || typeof globalThis?.desktopShell?.writeFile !== "function") {
+      return "";
+    }
+    const targetPath = await findAvailableMigrationPath(sourcePath);
+    if (!targetPath) {
+      return "";
+    }
+    const envelope = wrapFreeFlowBoardPayload(payload, { updatedAt: Date.now() });
+    const result = await globalThis.desktopShell.writeFile(targetPath, JSON.stringify(envelope, null, 2));
+    return result?.ok ? String(result.filePath || targetPath).trim() : "";
   }
 
   async function pickSavePath(defaultPath) {
@@ -5759,16 +5813,8 @@ let tablePointerSelectionState = {
         }
         return false;
       }
-      targetPath = ensureJsonExtension(targetPath);
-      const payload = JSON.stringify(
-        structuredImportRuntime.serializeBoard(state.board, {
-          meta: {
-            boardFilePath: targetPath,
-          },
-        }),
-        null,
-        2
-      );
+      targetPath = ensureBoardFileExtension(targetPath);
+      const payload = JSON.stringify(buildBoardFilePayload(targetPath), null, 2);
       const result = await globalThis.desktopShell.writeFile(targetPath, payload);
       if (!result?.ok) {
         if (!silent) {
@@ -5843,16 +5889,18 @@ let tablePointerSelectionState = {
         return false;
       }
       let parsed = null;
+      let boardPayload = null;
       try {
-        parsed = JSON.parse(normalizeJsonTextForParse(readResult?.text || ""));
+        parsed = parseBoardFileText(readResult?.text || "");
+        boardPayload = parsed.payload;
       } catch (error) {
         if (!silent) {
-          setStatus("画布 JSON 解析失败", "warning");
+          setStatus("画布文件解析失败", "warning");
         }
         return false;
       }
       suppressDirtyTracking = true;
-      const restoredBoard = structuredImportRuntime.deserializeBoard(parsed).board;
+      const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
       state.board = normalizeBoard(
         repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE)
       );
@@ -5866,12 +5914,19 @@ let tablePointerSelectionState = {
       finishImageEdit();
       syncBoard({ persist: false, emit: true, markDirty: false });
       suppressDirtyTracking = false;
-      await setBoardFilePath(targetPath, { emit: false, updateSettings });
+      let canonicalPath = targetPath;
+      if (parsed.legacy || isLegacyJsonBoardFileName(targetPath)) {
+        const migratedPath = await migrateLegacyBoardFileIfNeeded(targetPath, boardPayload);
+        if (migratedPath) {
+          canonicalPath = migratedPath;
+        }
+      }
+      await setBoardFilePath(canonicalPath, { emit: false, updateSettings });
       setBoardDirty(false, { emit: false });
       store.emit();
       void resolveFileCardSources();
       if (!silent) {
-        setStatus("画布已加载");
+        setStatus(canonicalPath !== targetPath ? "旧画布已升级为 FreeFlow 格式" : "画布已加载");
       }
       return true;
     })()
@@ -5894,7 +5949,7 @@ let tablePointerSelectionState = {
   function sanitizeBoardFileBaseName(value) {
     const clean = String(value || "")
       .trim()
-      .replace(/\.json$/i, "")
+      .replace(/\.(?:freeflow|json)$/i, "")
       .replace(/[\\/:"*?<>|]+/g, "-")
       .replace(/\s+/g, " ")
       .trim();
@@ -5910,7 +5965,7 @@ let tablePointerSelectionState = {
     let index = 0;
     while (index < 9999) {
       const name = index === 0 ? cleanBaseName : `${cleanBaseName}_${index}`;
-      const filePath = joinPath(cleanFolder || "", `${name}.json`);
+      const filePath = joinPath(cleanFolder || "", `${name}.freeflow`);
       if (!existsFn) {
         return filePath;
       }
@@ -5920,7 +5975,7 @@ let tablePointerSelectionState = {
       }
       index += 1;
     }
-    return joinPath(cleanFolder || "", `${cleanBaseName}_${Date.now()}.json`);
+    return joinPath(cleanFolder || "", `${cleanBaseName}_${Date.now()}.freeflow`);
   }
 
   async function maybeSaveBeforeSwitch() {
@@ -6046,7 +6101,7 @@ let tablePointerSelectionState = {
     }
     const currentName = getFileName(currentPath);
     const providedName = typeof nextName === "string" && nextName.trim() ? nextName.trim() : currentName;
-    const cleanName = ensureJsonExtension(providedName);
+    const cleanName = ensureBoardFileExtension(providedName);
     if (!cleanName || cleanName === currentName) {
       return false;
     }
@@ -6132,7 +6187,7 @@ let tablePointerSelectionState = {
     if (!nextFolder) {
       return "";
     }
-    const currentName = isJsonFileName(getFileName(state.boardFilePath))
+    const currentName = isBoardFileName(getFileName(state.boardFilePath))
       ? getFileName(state.boardFilePath)
       : DEFAULT_BOARD_FILE_NAME;
     const nextFilePath = joinPath(nextFolder, currentName);
@@ -6166,7 +6221,7 @@ let tablePointerSelectionState = {
       return "";
     }
     await ensureDirectoryIfSupported(nextFolder);
-    const currentName = isJsonFileName(getFileName(state.boardFilePath))
+    const currentName = isBoardFileName(getFileName(state.boardFilePath))
       ? getFileName(state.boardFilePath)
       : DEFAULT_BOARD_FILE_NAME;
     let nextFilePath = joinPath(nextFolder, currentName);

@@ -15,7 +15,7 @@ function formatPathLabel(pathValue = "", emptyText = "未设置") {
 
 function formatBoardDisplayName(name = "") {
   const value = String(name || "").trim() || "未命名画布";
-  return value.toLowerCase().endsWith(".json") ? value.slice(0, -5) : value;
+  return value.replace(/\.(?:freeflow|json)$/i, "");
 }
 
 function formatFileSize(size) {
@@ -46,20 +46,20 @@ function formatTime(value) {
   }
 }
 
-function normalizeJsonName(value) {
+function normalizeBoardName(value) {
   const clean = String(value || "").trim();
   if (!clean) {
     return "";
   }
   const safe = clean
-    .replace(/\.json$/i, "")
+    .replace(/\.(?:freeflow|json)$/i, "")
     .replace(/[\\/:"*?<>|]+/g, "-")
     .replace(/\s+/g, " ")
     .trim();
   if (!safe) {
     return "";
   }
-  return `${safe}.json`;
+  return `${safe}.freeflow`;
 }
 
 function getFolderName(pathValue = "") {
@@ -89,7 +89,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
     boards.find((board) => String(board.filePath || "") === currentPath) ||
     (currentPath
       ? {
-          name: currentName || "当前画布.json",
+          name: currentName || "当前画布.freeflow",
           filePath: currentPath,
           size: 0,
           modifiedAt: 0,
@@ -250,7 +250,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
 
   const handleRename = () =>
     runBusy(async () => {
-      const targetName = normalizeJsonName(renameDraft);
+      const targetName = normalizeBoardName(renameDraft);
       if (!targetName) {
         return;
       }
@@ -424,7 +424,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
 
           <div className="canvas2d-board-workspace-note">
             <strong>结构</strong>
-            <span>画布保存为 JSON，图片资源默认写入工作区 `Images`。</span>
+            <span>画布保存为 FreeFlow 专属格式，旧版 JSON 会在打开时生成升级副本。</span>
           </div>
 
           {error ? <div className="canvas2d-board-workspace-error">{error}</div> : null}

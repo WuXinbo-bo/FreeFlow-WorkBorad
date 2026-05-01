@@ -63,6 +63,7 @@ Last initialized: 2026-05-01
 - `src/backend/models/uiSettingsModel.js`: UI settings schema, default values, normalization, workbench preference projection.
 - `src/backend/models/themeSettingsModel.js`: theme defaults and theme normalization.
 - `src/backend/models/canvasBoardModel.js`: canvas board schema and normalization.
+- `src/backend/models/canvasBoardFileFormat.js`: backend `.freeflow` board envelope format constants, parser/wrapper and legacy JSON compatibility helpers.
 - `src/backend/models/*Model.js`: other persistent store schemas.
 - `src/backend/utils/jsonStore.js`: JSON write utility.
 - `src/backend/utils/versionedStore.js`: versioned JSON read/upgrade utility.
@@ -114,6 +115,7 @@ Last initialized: 2026-05-01
 ### Main Engine
 
 - `public/src/engines/canvas2d-core/createCanvas2DEngine.js`: Canvas2D engine factory, board loading/saving coordination, canvas interactions, export history, UI settings cache access, recent board path resolution, import/export orchestration.
+- `public/src/engines/canvas2d-core/boardFileFormat.js`: renderer `.freeflow` board envelope format constants, parser/wrapper and legacy JSON compatibility helpers.
 - `public/src/engines/canvas2d-core/ui/index.jsx`: React UI entry for Canvas2D-specific dialogs/panels.
 - `public/src/engines/canvas2d-core/reactBridge.js`: bridge between imperative engine and React UI.
 - `public/src/engines/canvas2d-core/ui/BoardWorkspaceDialog.jsx`: canvas workspace/file management dialog.
@@ -169,9 +171,11 @@ Last initialized: 2026-05-01
 ### 5. Canvas Board Save/Open
 
 1. Canvas board storage path derives from `uiSettings.canvasBoardSavePath` and `uiSettings.canvasLastOpenedBoardPath`.
-2. Backend board read/write uses `src/backend/services/canvasBoardService.js`.
-3. Desktop file/folder picking uses `window.desktopShell` from `electron/preload.js`, handled by `electron/main.js`.
-4. Canvas workspace dialog is `public/src/engines/canvas2d-core/ui/BoardWorkspaceDialog.jsx`.
+2. New primary board files use the `.freeflow` extension with a versioned FreeFlow envelope around the structured host board payload.
+3. Legacy `.json` boards are compatibility inputs only; opening or backend-reading one creates a `.freeflow` copy and updates the recent-board path without overwriting the old JSON file.
+4. Backend board read/write uses `src/backend/services/canvasBoardService.js` and `src/backend/models/canvasBoardFileFormat.js`.
+5. Desktop file/folder picking and workspace listing use `window.desktopShell` from `electron/preload.js`, handled by `electron/main.js`; selectors list `.freeflow` first and `.json` as legacy.
+6. Canvas workspace dialog is `public/src/engines/canvas2d-core/ui/BoardWorkspaceDialog.jsx`.
 
 ### 6. Word Export and Preview
 
@@ -194,10 +198,10 @@ Last initialized: 2026-05-01
 - UI settings can regress if a new file/store is introduced outside `uiSettingsService`.
 - `data/ui-settings.json` is a legacy/project file and must not be treated as the authoritative user settings file after AppData migration.
 - Browser localStorage is heavily used; any startup or settings change must define cache priority explicitly.
+- Canvas board persistence must not regress to bare JSON for new saves; `.json` support is for legacy import/migration and tutorial template compatibility only.
 - `workbenchRuntime.js` owns many unrelated concerns; edits must search for delayed/async code that can overwrite state after an earlier save.
 - Electron main/preload/renderer IPC names must stay synchronized.
 - Built bundles under `public/assets/*/current/*.js` can drift from source; source changes may require corresponding build scripts.
 - CSS stacking, overlay z-index, pointer-events and Electron window shape can interact; dialog/menu fixes must verify both browser layer and desktop click shape.
 - Tutorial startup state has version and first-run logic; version changes and persistence state must be checked together.
 - Canvas import pipeline is modular; do not bypass canonical/parsers/renderers when adding new input types unless explicitly adding a host-level compatibility path.
-

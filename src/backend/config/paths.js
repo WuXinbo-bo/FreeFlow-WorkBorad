@@ -26,7 +26,7 @@ const PERMISSIONS_FILE = path.join(DATA_DIR, "permissions.json");
 const CLIPBOARD_STORE_FILE = path.join(DATA_DIR, "clipboard-store.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const SHORTCUT_SETTINGS_FILE = path.join(DATA_DIR, "shortcut-settings.json");
-const CANVAS_BOARD_FILE = path.join(CANVAS_BOARD_DIR, "canvas-board.json");
+const CANVAS_BOARD_FILE = path.join(CANVAS_BOARD_DIR, "canvas-board.freeflow");
 const AGENT_SCREENSHOT_FILE = path.join(DATA_DIR, "agent-current-window.png");
 
 process.env.FREEFLOW_HOME_DIR = USER_APP_DIR;
