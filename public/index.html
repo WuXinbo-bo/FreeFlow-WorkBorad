@@ -827,9 +827,9 @@
           <details class="drawer-group">
             <summary class="drawer-group-summary">
               <div>
-                <div class="eyebrow">Shortcuts</div>
-                <strong class="panel-title">全局快捷键</strong>
-                <div id="shortcut-settings-summary" class="menu-summary-note">完全穿透快捷键</div>
+                <div class="eyebrow">Habits</div>
+                <strong class="panel-title">习惯设置</strong>
+                <div id="habit-settings-summary" class="menu-summary-note">快捷键与默认布局</div>
               </div>
               <span class="secondary-menu-indicator">详情</span>
             </summary>
@@ -857,6 +857,37 @@
                   <button id="clickthrough-shortcut-reset-btn" class="ghost-btn compact-btn" type="button">恢复默认</button>
                 </div>
                 <div id="clickthrough-shortcut-status" class="panel-note">当前快捷键：Ctrl+Shift+X</div>
+              </section>
+              <section class="usage-card habit-settings-card">
+                <div class="panel-head">
+                  <div class="section-title">画布与对话区</div>
+                  <div class="pill-note">启动默认</div>
+                </div>
+                <label class="model-select-wrap">
+                  <span>默认左右</span>
+                  <select id="default-canvas-panel-side-select" aria-label="设置画布默认所在侧">
+                    <option value="left">画布左侧 / 对话右侧</option>
+                    <option value="right">对话左侧 / 画布右侧</option>
+                  </select>
+                </label>
+                <label class="mode-toggle mode-toggle-block">
+                  <span>画布默认展开</span>
+                  <input id="default-canvas-panel-visible-input" type="checkbox" checked />
+                </label>
+                <label class="mode-toggle mode-toggle-block">
+                  <span>对话区默认展开</span>
+                  <input id="default-chat-panel-visible-input" type="checkbox" checked />
+                </label>
+                <label class="mode-toggle mode-toggle-block">
+                  <span>启动默认全屏</span>
+                  <input id="default-launch-fullscreen-input" type="checkbox" />
+                </label>
+                <div class="settings-action-row habit-settings-actions">
+                  <button id="workbench-habit-save-btn" class="ghost-btn compact-btn" type="button">保存并应用</button>
+                  <button id="workbench-habit-apply-btn" class="ghost-btn compact-btn" type="button">仅应用本次</button>
+                  <button id="workbench-habit-reset-btn" class="ghost-btn compact-btn" type="button">恢复默认</button>
+                </div>
+                <div id="workbench-habit-status" class="panel-note">当前默认：画布在左，画布默认展开，对话默认展开</div>
               </section>
             </div>
           </details>

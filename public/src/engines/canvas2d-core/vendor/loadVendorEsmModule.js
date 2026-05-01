@@ -1,6 +1,8 @@
 const VENDOR_MODULE_URLS = Object.freeze({
   mermaid: new URL("../../../../assets/vendor/mermaid/mermaid.esm.min.mjs", import.meta.url).toString(),
   "pdf-lib": new URL("../../../../assets/vendor/pdf-lib.esm.min.js", import.meta.url).toString(),
+  "docx-preview": new URL("../../../../assets/vendor/docx-preview/docx-preview.mjs", import.meta.url).toString(),
+  "pdfjs-dist": new URL("../../../../assets/vendor/pdfjs-dist/pdf.mjs", import.meta.url).toString(),
 });
 
 const vendorModulePromiseCache = new Map();

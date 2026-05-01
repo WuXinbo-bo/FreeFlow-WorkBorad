@@ -10,6 +10,7 @@ const {
   LevelSuffix,
   LineRuleType,
   Math: DocxMath,
+  MathCurlyBrackets,
   MathFraction,
   MathFunction,
   MathIntegral,
@@ -35,6 +36,7 @@ const {
   VerticalAlignTable,
   WidthType,
   convertMillimetersToTwip,
+  createMathAccentCharacter,
 } = require("docx");
 
 const AST_KIND = "freeflow-word-export";
@@ -604,6 +606,65 @@ function createNumberingConfig() {
   };
 }
 
+function collectOrderedListIds(nodes = [], sink = new Set()) {
+  (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (node.type === "list" && node.ordered && node.listId) {
+      sink.add(String(node.listId));
+    }
+    if (Array.isArray(node.children)) {
+      collectOrderedListIds(node.children, sink);
+    }
+    if (Array.isArray(node.items)) {
+      node.items.forEach((item) => collectOrderedListIds(item?.children || [], sink));
+    }
+    if (Array.isArray(node.rows)) {
+      node.rows.forEach((row) => {
+        (Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+          collectOrderedListIds(cell?.children || [], sink);
+        });
+      });
+    }
+  });
+  return sink;
+}
+
+function createNumberingConfigForAst(ast = null) {
+  const baseConfig = createNumberingConfig();
+  const listIds = new Set();
+  (Array.isArray(ast?.sections) ? ast.sections : []).forEach((section) => {
+    collectOrderedListIds(section?.children || [], listIds);
+  });
+  const dynamicConfigs = Array.from(listIds).map((listId) => ({
+    reference: `freeflow-ordered-list-${String(listId)}`,
+    levels: Array.from({ length: 9 }, (_, level) => ({
+      level,
+      format: LevelFormat.DECIMAL,
+      text: `%${level + 1}.`,
+      alignment: AlignmentType.LEFT,
+      suffix: LevelSuffix.TAB,
+      start: 1,
+      style: {
+        paragraph: {
+          indent: {
+            left: normalizeIndentTwip(720 + normalizeListDepth(level) * 360),
+            hanging: normalizeIndentTwip(360),
+          },
+        },
+      },
+    })),
+  }));
+  return {
+    config: [
+      ...baseConfig.config.filter((entry) => entry.reference !== "freeflow-ordered-list"),
+      ...dynamicConfigs,
+      ...baseConfig.config.filter((entry) => entry.reference === "freeflow-ordered-list"),
+    ],
+  };
+}
+
 function createCompilerState(ast, theme) {
   const footnoteMap = new Map();
   (Array.isArray(ast.footnotes) ? ast.footnotes : []).forEach((entry, index) => {
@@ -910,6 +971,38 @@ function parseLatexToWordMathChildren(latex = "") {
     const value = String(text || "");
     return value ? new MathRun(value) : null;
   }
+  function extractChildrenText(children = []) {
+    return (Array.isArray(children) ? children : [])
+      .map((child) => {
+        const textNode = child?.root?.[0];
+        const value = textNode?.root?.[0];
+        return typeof value === "string" ? value : "";
+      })
+      .join("");
+  }
+  function accentNode(accent, children = []) {
+    const safeChildren = children && children.length ? children : [textRun(" ")].filter(Boolean);
+    const node = {
+      root: [],
+      prepForXml(context) {
+        return {
+          "m:acc": [
+            {
+              "m:accPr": [
+                createMathAccentCharacter({ accent }).prepForXml(context),
+              ],
+            },
+            {
+              "m:e": safeChildren.map((child) =>
+                child && typeof child.prepForXml === "function" ? child.prepForXml(context) : child
+              ),
+            },
+          ],
+        };
+      },
+    };
+    return node;
+  }
   function parseCommandAtom(command) {
     if (command === "frac" || command === "dfrac" || command === "tfrac") {
       const numerator = readGroup();
@@ -922,16 +1015,45 @@ function parseLatexToWordMathChildren(latex = "") {
       return [new MathRadical({ degree: degree || undefined, children })];
     }
     if (command === "sum") {
-      return [new MathSum({ children: [textRun(" ")].filter(Boolean) })];
+      return [new MathSum({ children: [] })];
     }
     if (command === "prod") {
       return [textRun("∏")].filter(Boolean);
     }
     if (command === "int") {
-      return [new MathIntegral({ children: [textRun(" ")].filter(Boolean) })];
+      return [new MathIntegral({ children: [] })];
     }
     if (LATEX_FUNCTIONS.has(command)) {
-      return [new MathFunction({ name: [textRun(command)].filter(Boolean), children: [textRun(" ")].filter(Boolean) })];
+      return [textRun(command)].filter(Boolean);
+    }
+    if (command === "mathbb") {
+      const children = readGroup();
+      const value = extractChildrenText(children).trim();
+      const blackboardMap = {
+        R: "ℝ",
+        Z: "ℤ",
+        N: "ℕ",
+        Q: "ℚ",
+        C: "ℂ",
+        P: "ℙ",
+      };
+      return [textRun(blackboardMap[value] || value || " ")].filter(Boolean);
+    }
+    if (command === "mathcal") {
+      const children = readGroup();
+      return [textRun(extractChildrenText(children) || " ")].filter(Boolean);
+    }
+    if (command === "vec") {
+      return [accentNode("⃗", readGroup())];
+    }
+    if (command === "bar") {
+      return [accentNode("¯", readGroup())];
+    }
+    if (command === "ddot") {
+      return [accentNode("¨", readGroup())];
+    }
+    if (command === "hbar") {
+      return [textRun("ℏ")].filter(Boolean);
     }
     if (command === "left") {
       const open = consume();
@@ -986,10 +1108,10 @@ function parseLatexToWordMathChildren(latex = "") {
     }
     const safeBase = base && base.length ? base : [textRun(" ")].filter(Boolean);
     if (safeBase.length === 1 && safeBase[0] instanceof MathSum) {
-      return [new MathSum({ children: [textRun(" ")].filter(Boolean), subScript, superScript })];
+      return [new MathSum({ children: [], subScript, superScript })];
     }
     if (safeBase.length === 1 && safeBase[0] instanceof MathIntegral) {
-      return [new MathIntegral({ children: [textRun(" ")].filter(Boolean), subScript, superScript })];
+      return [new MathIntegral({ children: [], subScript, superScript })];
     }
     if (subScript && superScript) {
       return [new MathSubSuperScript({ children: safeBase, subScript, superScript })];
@@ -1456,7 +1578,9 @@ function compileListNode(node, state, context = {}, depth = 0) {
             children: paragraphRuns,
             alignment: mapAlignment(firstBlock.align || "left"),
             numbering: {
-              reference: node.ordered ? "freeflow-ordered-list" : "freeflow-bullet-list",
+              reference: node.ordered
+                ? `freeflow-ordered-list-${String(node.listId || "default")}`
+                : "freeflow-bullet-list",
               level: currentDepth,
             },
             spacing: buildSpacing(state.theme, "list"),
@@ -1742,7 +1866,7 @@ async function compileWordExportAstToDocxBuffer(ast) {
     creator: String(normalizedAst?.meta?.creator || "FreeFlow").trim() || "FreeFlow",
     lastModifiedBy: String(normalizedAst?.meta?.lastModifiedBy || "FreeFlow").trim() || "FreeFlow",
     styles: createDocumentStyles(theme),
-    numbering: createNumberingConfig(),
+    numbering: createNumberingConfigForAst(normalizedAst),
     footnotes: compileFootnotes(normalizedAst, state),
     sections: normalizedAst.sections.map((section) => buildSectionOptions(section, theme, state)),
   });

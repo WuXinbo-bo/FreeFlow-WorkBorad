@@ -12,7 +12,18 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
     },
     copyFormats: Object.freeze([
       Object.freeze({ format: "plain", action: "copy-text-plain", menuLabel: "纯文本", statusLabel: "纯文本" }),
-      Object.freeze({ format: "html", action: "copy-text-html", menuLabel: "富文本 HTML", statusLabel: "富文本 HTML" }),
+      Object.freeze({
+        format: "html",
+        action: "copy-text-html",
+        menuLabel: "富文本（Word 直通）",
+        statusLabel: "富文本（Word 直通）",
+      }),
+      Object.freeze({
+        format: "ppt-html",
+        action: "copy-text-ppt-html",
+        menuLabel: "富文本（PPT直通）",
+        statusLabel: "富文本（PPT直通）",
+      }),
       Object.freeze({ format: "markdown", action: "copy-text-markdown", menuLabel: "Markdown", statusLabel: "Markdown" }),
       Object.freeze({ format: "object-link", action: "copy-text-object-link", menuLabel: "对象链接", statusLabel: "对象链接" }),
     ]),

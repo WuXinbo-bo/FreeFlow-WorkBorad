@@ -6,6 +6,7 @@ if (typeof electron === "string") {
 const { app, BrowserWindow, ipcMain, shell, globalShortcut, clipboard, desktopCapturer, session, screen, dialog, nativeImage } = electron;
 const { execFile } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const HTMLtoDOCX = require("html-to-docx");
 const { compileWordExportAstToDocxBuffer } = require("./wordDocxCompiler");
 const { ensureDoubaoWindow, chatWithDoubao, cancelDoubaoChat, prepareDoubaoPrompt } = require("./doubao-web");
@@ -39,13 +40,14 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.8-rc";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.9-rc";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
 const APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
 const PIN_LEVEL = "screen-saver";
 const PIN_RELATIVE_LEVEL = 1;
+const WORD_PREVIEW_TIMEOUT_MS = 45000;
 
 let mainWindow = null;
 let clickThroughEnabled = false;
@@ -70,6 +72,14 @@ let startupContextCache = null;
 
 const { startServer, stopServer, registerDesktopBridge } = require("../server");
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[FreeFlow] unhandled rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[FreeFlow] uncaught exception:", error);
+});
+
 function resolveAppIconPath() {
   const candidatePaths = [path.join(app.getAppPath(), "build", "icon.ico")];
   for (const candidatePath of candidatePaths) {
@@ -78,6 +88,283 @@ function resolveAppIconPath() {
     }
   }
   return "";
+}
+
+function execFileAsync(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(command, args, {
+      windowsHide: true,
+      timeout: WORD_PREVIEW_TIMEOUT_MS,
+      ...options,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+    child?.stdin?.end?.();
+  });
+}
+
+function normalizeExecutablePath(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/^["']+|["']+$/g, "").trim();
+}
+
+function getLibreOfficeCandidates() {
+  const envCandidate = normalizeExecutablePath(process.env.FREEFLOW_LIBREOFFICE_PATH || process.env.LIBREOFFICE_PATH || "");
+  return [
+    envCandidate,
+    "soffice",
+    "libreoffice",
+    "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+    "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+  ].filter(Boolean);
+}
+
+function getPdfToPngCandidates() {
+  const envCandidate = normalizeExecutablePath(process.env.FREEFLOW_PDF_TO_PNG_PATH || "");
+  return [
+    envCandidate ? { command: envCandidate, kind: "pdftoppm" } : null,
+    { command: "pdftoppm", kind: "pdftoppm" },
+    { command: "mutool", kind: "mutool" },
+    { command: "magick", kind: "magick" },
+  ].filter(Boolean);
+}
+
+function convertDocxToPdfWithLibreOfficePackage(docxPath, outputPdfPath) {
+  return new Promise((resolve) => {
+    let libre = null;
+    try {
+      libre = require("libreoffice-convert");
+    } catch {
+      resolve(false);
+      return;
+    }
+    const convert = typeof libre?.convertWithOptions === "function"
+      ? libre.convertWithOptions
+      : typeof libre?.convert === "function"
+        ? libre.convert
+        : null;
+    if (typeof convert !== "function") {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(false);
+      }
+    }, WORD_PREVIEW_TIMEOUT_MS);
+    try {
+      fs.promises.readFile(docxPath).then((sourceBuffer) => {
+        const done = (error, pdfBuffer) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          if (error || !pdfBuffer || !pdfBuffer.byteLength) {
+            resolve(false);
+            return;
+          }
+          fs.promises.writeFile(outputPdfPath, pdfBuffer)
+            .then(() => resolve(fs.existsSync(outputPdfPath)))
+            .catch(() => resolve(false));
+        };
+        if (convert === libre.convertWithOptions) {
+          convert(sourceBuffer, "pdf", undefined, {
+            fileName: path.basename(docxPath),
+            sofficeBinaryPaths: getLibreOfficeCandidates(),
+            execOptions: { windowsHide: true, timeout: WORD_PREVIEW_TIMEOUT_MS },
+          }, done);
+          return;
+        }
+        convert(sourceBuffer, ".pdf", undefined, done);
+      }).catch(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve(false);
+      });
+    } catch {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(false);
+      }
+    }
+  });
+}
+
+async function convertDocxToPdfWithWord(docxPath, outputPdfPath) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$word = $null",
+    "$doc = $null",
+    "try {",
+    "  $word = New-Object -ComObject Word.Application",
+    "  $word.Visible = $false",
+    "  $doc = $word.Documents.Open($args[0], $false, $true)",
+    "  $doc.ExportAsFixedFormat($args[1], 17)",
+    "} finally {",
+    "  if ($doc -ne $null) { $doc.Close($false) | Out-Null }",
+    "  if ($word -ne $null) { $word.Quit() | Out-Null }",
+    "}",
+  ].join("\n");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  try {
+    await execFileAsync("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-EncodedCommand",
+      encoded,
+      docxPath,
+      outputPdfPath,
+    ]);
+    return fs.existsSync(outputPdfPath);
+  } catch {
+    return false;
+  }
+}
+
+async function convertDocxToPdfWithLibreOffice(docxPath, outputDir) {
+  for (const candidate of getLibreOfficeCandidates()) {
+    try {
+      await execFileAsync(candidate, [
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        outputDir,
+        docxPath,
+      ]);
+      const pdfPath = path.join(outputDir, `${path.basename(docxPath, path.extname(docxPath))}.pdf`);
+      if (fs.existsSync(pdfPath)) {
+        return pdfPath;
+      }
+    } catch {
+      // Try the next local converter candidate.
+    }
+  }
+  return "";
+}
+
+async function convertPdfToPngImages(pdfPath, outputDir) {
+  for (const candidate of getPdfToPngCandidates()) {
+    try {
+      if (candidate.kind === "pdftoppm") {
+        const prefix = path.join(outputDir, "page");
+        await execFileAsync(candidate.command, ["-png", "-r", "180", pdfPath, prefix]);
+      } else if (candidate.kind === "mutool") {
+        await execFileAsync(candidate.command, ["draw", "-r", "180", "-o", path.join(outputDir, "page-%d.png"), pdfPath]);
+      } else if (candidate.kind === "magick") {
+        await execFileAsync(candidate.command, ["-density", "180", pdfPath, "-quality", "95", path.join(outputDir, "page-%d.png")]);
+      }
+      const files = (await fs.promises.readdir(outputDir))
+        .filter((name) => /^page[-\d]*.*\.png$/i.test(name))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      if (files.length) {
+        const images = [];
+        for (const name of files) {
+          const filePath = path.join(outputDir, name);
+          const buffer = await fs.promises.readFile(filePath);
+          images.push({
+            name,
+            mime: "image/png",
+            dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
+          });
+        }
+        return images;
+      }
+    } catch {
+      // Try the next local rasterizer candidate.
+    }
+  }
+  return [];
+}
+
+async function buildWordPreviewImagesFromAst(ast, options = {}) {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "freeflow-word-preview-"));
+  const defaultName = String(options.defaultName || "freeflow-word-preview").trim().replace(/[\\/:*?"<>|]+/g, "_") || "freeflow-word-preview";
+  const docxPath = path.join(tempRoot, `${defaultName}.docx`);
+  const pdfPath = path.join(tempRoot, `${defaultName}.pdf`);
+  try {
+    const buffer = await compileWordExportAstToDocxBuffer(ast);
+    if (!buffer || !buffer.byteLength) {
+      return { ok: false, code: "WORD_PREVIEW_DOCX_EMPTY", message: "Word 预览文档生成失败", images: [] };
+    }
+    await fs.promises.writeFile(docxPath, buffer);
+    let finalPdfPath = "";
+    if (await convertDocxToPdfWithLibreOfficePackage(docxPath, pdfPath)) {
+      finalPdfPath = pdfPath;
+    }
+    if (!finalPdfPath && await convertDocxToPdfWithWord(docxPath, pdfPath)) {
+      finalPdfPath = pdfPath;
+    }
+    if (!finalPdfPath) {
+      finalPdfPath = await convertDocxToPdfWithLibreOffice(docxPath, tempRoot);
+    }
+    if (!finalPdfPath) {
+      return {
+        ok: false,
+        code: "WORD_PREVIEW_PDF_CONVERTER_MISSING",
+        message: "未检测到可用的 Word/LibreOffice PDF 转换能力，无法生成 1:1 预览",
+        images: [],
+      };
+    }
+    const images = await convertPdfToPngImages(finalPdfPath, tempRoot);
+    if (!images.length) {
+      return {
+        ok: false,
+        code: "WORD_PREVIEW_IMAGE_CONVERTER_MISSING",
+        message: "PDF 已生成，但未检测到 pdftoppm、mutool 或 ImageMagick，无法转为预览图片",
+        images: [],
+      };
+    }
+    return {
+      ok: true,
+      code: "WORD_PREVIEW_OK",
+      message: "Word 预览已生成",
+      images,
+      pageCount: images.length,
+    };
+  } finally {
+    setTimeout(() => {
+      fs.promises.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }, 30000);
+  }
+}
+
+async function buildWordPreviewDocxFromAst(ast) {
+  const buffer = await compileWordExportAstToDocxBuffer(ast);
+  if (!buffer || !buffer.byteLength) {
+    return {
+      ok: false,
+      code: "WORD_PREVIEW_DOCX_EMPTY",
+      message: "Word 预览文档生成失败",
+      docxBase64: "",
+      size: 0,
+    };
+  }
+  return {
+    ok: true,
+    code: "WORD_PREVIEW_DOCX_OK",
+    message: "Word 预览文档已生成",
+    docxBase64: buffer.toString("base64"),
+    size: buffer.byteLength,
+  };
 }
 
 function normalizeAcceleratorToken(token = "") {
@@ -599,6 +886,31 @@ function getDefaultWindowBoundsForDisplay(display = screen.getPrimaryDisplay()) 
   return { x, y, width, height };
 }
 
+function getStartupWindowOptions() {
+  const display = screen.getPrimaryDisplay();
+  const defaultBounds = getDefaultWindowBoundsForDisplay(display);
+  const shouldLaunchFullscreen = Boolean(
+    startupContextCache?.workbenchPreferences?.defaultLaunchFullscreen ??
+    startupContextCache?.uiSettings?.defaultLaunchFullscreen
+  );
+  if (!shouldLaunchFullscreen) {
+    desktopShellFullscreenEnabled = false;
+    desktopShellRestoreBounds = null;
+    return defaultBounds;
+  }
+
+  const workArea = display?.workArea || defaultBounds;
+  desktopShellFullscreenEnabled = true;
+  desktopShellRestoreBounds = defaultBounds;
+  return {
+    ...defaultBounds,
+    x: Math.round(Number(workArea.x) || 0),
+    y: Math.round(Number(workArea.y) || 0),
+    width: Math.max(WINDOW_CONFIG.minWidth, Math.round(Number(workArea.width) || defaultBounds.width)),
+    height: Math.max(WINDOW_CONFIG.minHeight, Math.round(Number(workArea.height) || defaultBounds.height)),
+  };
+}
+
 function normalizeWindowBounds(bounds) {
   if (!bounds) return null;
   return {
@@ -960,9 +1272,12 @@ async function getCaptureSourcesPayload() {
 
 function createMainWindow() {
   const appIconPath = resolveAppIconPath();
+  const startupBounds = getStartupWindowOptions();
   const window = new BrowserWindow({
-    width: WINDOW_CONFIG.width,
-    height: WINDOW_CONFIG.height,
+    x: startupBounds.x,
+    y: startupBounds.y,
+    width: startupBounds.width,
+    height: startupBounds.height,
     minWidth: WINDOW_CONFIG.minWidth,
     minHeight: WINDOW_CONFIG.minHeight,
     transparent: WINDOW_CONFIG.transparent,
@@ -1672,7 +1987,7 @@ ipcMain.handle("desktop-shell:ensure-tutorial-board", async () => {
 
 ipcMain.handle("desktop-shell:get-startup-context", async () => {
   try {
-    return await ensureDesktopStartupContext({ force: true });
+    return await ensureDesktopStartupContext();
   } catch (error) {
     return {
       ok: false,
@@ -1836,6 +2151,59 @@ ipcMain.handle("desktop-shell:pick-canvas-board-open", async (_event, payload) =
     canceled: result.canceled,
     filePath: result.filePaths?.[0] || "",
   };
+});
+
+ipcMain.handle("desktop-shell:list-canvas-boards", async (_event, payload) => {
+  const folderPath = String(payload?.folderPath || "").trim();
+  if (!folderPath) {
+    return { ok: false, error: "工作区路径不能为空", folderPath: "", boards: [] };
+  }
+  try {
+    const resolvedFolder = path.resolve(folderPath);
+    const entries = await fs.promises.readdir(resolvedFolder, { withFileTypes: true });
+    const boards = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
+        continue;
+      }
+      const filePath = path.join(resolvedFolder, entry.name);
+      let stat = null;
+      try {
+        stat = await fs.promises.stat(filePath);
+      } catch {
+        continue;
+      }
+      boards.push({
+        name: entry.name,
+        filePath,
+        size: stat.size,
+        modifiedAt: stat.mtimeMs,
+      });
+    }
+    boards.sort((a, b) => Number(b.modifiedAt || 0) - Number(a.modifiedAt || 0));
+    return { ok: true, error: "", folderPath: resolvedFolder, boards };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message || "读取画布工作区失败",
+      folderPath,
+      boards: [],
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:ensure-directory", async (_event, targetPath) => {
+  const normalizedPath = String(targetPath || "").trim();
+  if (!normalizedPath) {
+    return { ok: false, error: "路径不能为空", path: "" };
+  }
+  try {
+    const resolvedPath = path.resolve(normalizedPath);
+    await fs.promises.mkdir(resolvedPath, { recursive: true });
+    return { ok: true, error: "", path: resolvedPath };
+  } catch (error) {
+    return { ok: false, error: error.message || "创建文件夹失败", path: normalizedPath };
+  }
 });
 
 ipcMain.handle("desktop-shell:pick-image-save-path", async (_event, payload) => {
@@ -2004,6 +2372,25 @@ ipcMain.handle("desktop-shell:export-word-docx", async (_event, payload) => {
       ok: false,
       canceled: false,
       error: `结构化 Word 导出失败：${error?.message || "Word 导出失败"}`,
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:preview-word-docx", async (_event, payload) => {
+  const ast = payload?.ast && typeof payload.ast === "object" ? payload.ast : null;
+  if (!ast) {
+    return { ok: false, canceled: false, code: "WORD_PREVIEW_EMPTY", message: "预览内容为空", docxBase64: "" };
+  }
+  try {
+    return await buildWordPreviewDocxFromAst(ast);
+  } catch (error) {
+    console.error("[FreeFlow] preview-word-docx failed:", error);
+    return {
+      ok: false,
+      canceled: false,
+      code: "WORD_PREVIEW_FAILED",
+      message: `Word 预览生成失败：${error?.message || "未知错误"}`,
+      docxBase64: "",
     };
   }
 });
@@ -2272,3 +2659,4 @@ app.on("before-quit", async () => {
   globalShortcut.unregisterAll();
   await stopServer().catch(() => {});
 });
+

@@ -1,7 +1,10 @@
 export const API_ROUTES = {
   uiSettings: "/api/ui-settings",
+  workbenchPreferences: "/api/ui-settings/workbench-preferences",
   themeSettings: "/api/theme-settings",
   modelProviderSettings: "/api/model-provider-settings",
+  filePreviewDocxBase64: "/api/file-preview/docx-base64",
+  filePreviewPdfBase64: "/api/file-preview/pdf-base64",
   meta: "/api/meta",
   sessions: "/api/sessions",
   canvasBoard: "/api/canvas-board",

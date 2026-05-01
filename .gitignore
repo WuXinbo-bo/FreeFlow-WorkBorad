@@ -1,6 +1,12 @@
 node_modules/
 release/
 tmp/
+output/
+.playwright-cli/
+public/assets/vendor/docx-preview/
+public/assets/vendor/html-to-docx/
+public/assets/vendor/jszip/
+public/assets/vendor/pdfjs-dist/
 
 .env
 .env.local

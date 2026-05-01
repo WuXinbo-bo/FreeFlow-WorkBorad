@@ -39,6 +39,12 @@ function toPanelOpacityPercent(value) {
   return Math.round(Math.min(Math.max(next, 0.55), 1) * 100);
 }
 
+function toCanvasOpacityPercent(value) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return Math.round(DEFAULT_THEME_SETTINGS.canvasOpacity * 100);
+  return Math.round(Math.min(Math.max(next, 0.2), 1) * 100);
+}
+
 function toBackgroundOpacityPercent(value) {
   const next = Number(value);
   if (!Number.isFinite(next)) return Math.round(DEFAULT_THEME_SETTINGS.backgroundOpacity * 100);
@@ -122,6 +128,11 @@ export function mountThemeSettingsPanel(
               <span class="theme-panel-slider-value" data-theme-value="panelOpacity"></span>
             </label>
             <label class="settings-field theme-panel-slider">
+              <span class="label">画布透明度</span>
+              <input class="theme-panel-range" data-theme-slider="canvasOpacity" type="range" min="20" max="100" step="1" />
+              <span class="theme-panel-slider-value" data-theme-value="canvasOpacity"></span>
+            </label>
+            <label class="settings-field theme-panel-slider">
               <span class="label">背景透出</span>
               <input class="theme-panel-range" data-theme-slider="backgroundOpacity" type="range" min="0" max="100" step="1" />
               <span class="theme-panel-slider-value" data-theme-value="backgroundOpacity"></span>
@@ -140,8 +151,10 @@ export function mountThemeSettingsPanel(
   const presetGridEl = host.querySelector("[data-theme-presets]");
   const descriptionEl = host.querySelector("[data-theme-description]");
   const panelOpacityRangeEl = host.querySelector('[data-theme-slider="panelOpacity"]');
+  const canvasOpacityRangeEl = host.querySelector('[data-theme-slider="canvasOpacity"]');
   const backgroundOpacityRangeEl = host.querySelector('[data-theme-slider="backgroundOpacity"]');
   const panelOpacityValueEl = host.querySelector('[data-theme-value="panelOpacity"]');
+  const canvasOpacityValueEl = host.querySelector('[data-theme-value="canvasOpacity"]');
   const backgroundOpacityValueEl = host.querySelector('[data-theme-value="backgroundOpacity"]');
   const colorGridEl = host.querySelector("[data-theme-colors]");
 
@@ -152,6 +165,7 @@ export function mountThemeSettingsPanel(
   function update(settings = {}) {
     const themePreset = getThemePresetMeta(settings.themePreset);
     const panelOpacityPercent = toPanelOpacityPercent(settings.panelOpacity);
+    const canvasOpacityPercent = toCanvasOpacityPercent(settings.canvasOpacity);
     const backgroundOpacityPercent = toBackgroundOpacityPercent(settings.backgroundOpacity);
 
     if (presetGridEl) {
@@ -166,11 +180,17 @@ export function mountThemeSettingsPanel(
     if (panelOpacityRangeEl) {
       panelOpacityRangeEl.value = String(panelOpacityPercent);
     }
+    if (canvasOpacityRangeEl) {
+      canvasOpacityRangeEl.value = String(canvasOpacityPercent);
+    }
     if (backgroundOpacityRangeEl) {
       backgroundOpacityRangeEl.value = String(backgroundOpacityPercent);
     }
     if (panelOpacityValueEl) {
       panelOpacityValueEl.textContent = `${panelOpacityPercent}%`;
+    }
+    if (canvasOpacityValueEl) {
+      canvasOpacityValueEl.textContent = `${canvasOpacityPercent}%`;
     }
     if (backgroundOpacityValueEl) {
       backgroundOpacityValueEl.textContent = `${backgroundOpacityPercent}%`;
@@ -215,6 +235,14 @@ export function mountThemeSettingsPanel(
       if (slider.dataset.themeSlider === "panelOpacity") {
         onPreviewChange({
           panelOpacity: Math.min(Math.max(Number(slider.value) / 100, 0.55), 1),
+          themePreset: "custom",
+        });
+        return;
+      }
+
+      if (slider.dataset.themeSlider === "canvasOpacity") {
+        onPreviewChange({
+          canvasOpacity: Math.min(Math.max(Number(slider.value) / 100, 0.2), 1),
           themePreset: "custom",
         });
         return;

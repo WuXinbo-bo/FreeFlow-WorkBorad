@@ -6,8 +6,12 @@ import {
   CanvasTutorialOverlay,
 } from "../tutorial-system/canvasTutorialIndex.js";
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
+import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
+import { BoardWorkspaceDialog } from "./BoardWorkspaceDialog.jsx";
 import { buildCanvasSearchResults } from "../search/canvasSearchIndex.js";
 import { getElementBounds } from "../elements/index.js";
+import { getFileCardPreviewBounds } from "../elements/fileCard.js";
+import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../../../tutorial-core/tutorialTypes.js";
 
@@ -165,6 +169,464 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+const FILE_CARD_PREVIEW_ZOOM_MIN = 0.34;
+const FILE_CARD_PREVIEW_ZOOM_MAX = 1.9;
+const FILE_CARD_PREVIEW_DEFAULT_ZOOM = 0.82;
+const FILE_CARD_PREVIEW_DOCX_PAGE_WIDTH = 794;
+const FILE_CARD_PREVIEW_PDF_PAGE_WIDTH = 794;
+
+function buildFallbackFileCardPreviewItem(request = null) {
+  const anchor = request?.anchor && typeof request.anchor === "object" ? request.anchor : null;
+  if (!anchor) {
+    return null;
+  }
+  return {
+    id: String(request?.itemId || ""),
+    type: "fileCard",
+    x: Number(anchor.x || 0) || 0,
+    y: Number(anchor.y || 0) || 0,
+    width: Math.max(1, Number(anchor.width || 0) || 0),
+    height: Math.max(1, Number(anchor.height || 0) || 0),
+    fileName: String(request?.fileName || "文件预览"),
+    name: String(request?.fileName || "文件预览"),
+  };
+}
+
+function decodeBase64ToByteArray(base64 = "") {
+  const normalized = String(base64 || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const binary = globalThis.atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function getFileCardPreviewRuntimeLabel(status = "", renderState = "") {
+  const normalizedRender = String(renderState || "").trim();
+  const normalizedStatus = String(status || "").trim();
+  if (normalizedRender === "failed" || normalizedStatus === "failed" || normalizedStatus === "unavailable") {
+    return "渲染失败";
+  }
+  if (normalizedRender === "suppressed") return "已省略";
+  if (normalizedRender === "deferred") return "恢复中";
+  if (normalizedRender === "ready") return "已恢复";
+  if (normalizedRender === "rendering") return "解析中";
+  return "加载中";
+}
+
+function getPreviewDisplayLabel(request = null) {
+  const kind = String(request?.previewKind || "").trim().toLowerCase();
+  if (kind === "pdf") {
+    return {
+      badge: "PDF",
+      noun: "PDF",
+      loadingText: "正在加载 PDF 预览...",
+      preparingText: "正在准备 PDF 预览...",
+      suppressedText: "当前视图过小，已省略实时 PDF 预览。放大后自动恢复。",
+      renderingText: "正在解析 PDF 文档...",
+      readyText: "PDF 预览已生成",
+      failedText: "PDF 预览渲染失败",
+      unavailableText: "PDF 预览暂不可用",
+      generatingText: "正在生成 PDF 预览",
+      scrollAriaLabel: "PDF 预览滚动区域",
+    };
+  }
+  return {
+    badge: "DOCX",
+    noun: "Word",
+    loadingText: "正在加载 Word 预览...",
+    preparingText: "正在准备 Word 预览...",
+    suppressedText: "当前视图过小，已省略实时 Word 预览。放大后自动恢复。",
+    renderingText: "正在解析 Word 文档...",
+    readyText: "Word 预览已生成",
+    failedText: "Word 预览渲染失败",
+    unavailableText: "Word 预览暂不可用",
+    generatingText: "正在生成 Word 预览",
+    scrollAriaLabel: "Word 预览滚动区域",
+  };
+}
+
+function FileCardAttachedPreview({ request = null, board = null, bridge = null }) {
+  const hostRef = useRef(null);
+  const styleRef = useRef(null);
+  const scrollRef = useRef(null);
+  const frameRef = useRef(null);
+  const zoomRef = useRef(FILE_CARD_PREVIEW_DEFAULT_ZOOM);
+  const previewLabel = useMemo(() => getPreviewDisplayLabel(request), [request]);
+  const [fitScale, setFitScale] = useState(1);
+  const [contentHeight, setContentHeight] = useState(1123);
+  const [renderState, setRenderState] = useState({
+    status: String(request?.previewRenderState || request?.previewStatus || "loading"),
+    message: String(request?.previewRenderMessage || request?.previewMessage || previewLabel.loadingText),
+    loadState: "待开始",
+    parseState: "待开始",
+    pageCount: 0,
+    contentNodeCount: 0,
+    runtimeLabel: "加载中",
+  });
+
+  const item = useMemo(() => {
+    if (!request?.itemId || !Array.isArray(board?.items)) {
+      return buildFallbackFileCardPreviewItem(request);
+    }
+    return board.items.find((entry) => String(entry?.id || "") === String(request.itemId || "")) || buildFallbackFileCardPreviewItem(request);
+  }, [board?.items, request?.itemId]);
+
+  const placement = useMemo(() => {
+    if (!request?.open || !board?.view) {
+      return null;
+    }
+    const bounds = item
+      ? getFileCardPreviewBounds(item, { expanded: Boolean(request.expanded) })
+      : {
+          left: Number(request?.anchor?.x || 0) || 0,
+          top: (Number(request?.anchor?.y || 0) || 0) + (Number(request?.anchor?.height || 128) || 128) - 20,
+          width: 360,
+          height: request?.expanded ? 920 : 468,
+        };
+    const scale = Math.max(0.1, Number(board.view.scale || 1));
+    return {
+      screenWidth: bounds.width * scale,
+      screenHeight: bounds.height * scale,
+      style: {
+        left: `${Math.round(bounds.left * scale + Number(board.view.offsetX || 0))}px`,
+        top: `${Math.round(bounds.top * scale + Number(board.view.offsetY || 0))}px`,
+        width: `${Math.round(bounds.width)}px`,
+        height: `${Math.round(bounds.height)}px`,
+        transform: `scale(${scale})`,
+        transformOrigin: "top left",
+      },
+    };
+  }, [board?.view, item, request?.expanded, request?.open]);
+  const style = placement?.style || null;
+  const livePreviewSuppressed = Boolean(placement && (placement.screenWidth < 260 || placement.screenHeight < 220));
+
+  const previewKind = String(request?.previewKind || "docx").trim().toLowerCase();
+  const previewMime = String(request?.previewMime || "").trim().toLowerCase();
+  const fileBase64 = String(request?.previewFileBase64 || "").trim();
+  const previewStatus = String(request?.previewStatus || "").trim();
+  const previewBaseWidth = previewKind === "pdf" ? FILE_CARD_PREVIEW_PDF_PAGE_WIDTH : FILE_CARD_PREVIEW_DOCX_PAGE_WIDTH;
+  const previewZoom = clamp(
+    Number(request?.previewZoom || FILE_CARD_PREVIEW_DEFAULT_ZOOM) || FILE_CARD_PREVIEW_DEFAULT_ZOOM,
+    FILE_CARD_PREVIEW_ZOOM_MIN,
+    FILE_CARD_PREVIEW_ZOOM_MAX
+  );
+
+  useEffect(() => {
+    zoomRef.current = previewZoom;
+  }, [previewZoom]);
+
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!(scroll instanceof HTMLElement) || !request?.open) {
+      return undefined;
+    }
+    const updateFitScale = () => {
+      const availableWidth = Math.max(160, Number(scroll.clientWidth || 0) - 36);
+      const nextFitScale = clamp(availableWidth / previewBaseWidth, 0.22, 1);
+      setFitScale((current) => (Math.abs(current - nextFitScale) > 0.01 ? nextFitScale : current));
+    };
+    updateFitScale();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(updateFitScale) : null;
+    observer?.observe(scroll);
+    window.addEventListener("resize", updateFitScale);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateFitScale);
+    };
+  }, [previewBaseWidth, request?.expanded, request?.id, request?.open, style?.width]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const styleHost = styleRef.current;
+    if (!(host instanceof HTMLElement) || !(styleHost instanceof HTMLElement)) {
+      return undefined;
+    }
+    if (!request?.open) {
+      return undefined;
+    }
+    const diagnostics = request?.previewDiagnostics && typeof request.previewDiagnostics === "object"
+      ? request.previewDiagnostics
+      : {};
+    if (livePreviewSuppressed) {
+      host.innerHTML = "";
+      styleHost.innerHTML = "";
+      setRenderState({
+        status: "suppressed",
+        message: previewLabel.suppressedText,
+        loadState: String(diagnostics.loadState || "文档已加载"),
+        parseState: String(diagnostics.parseState || "已暂停"),
+        pageCount: Number(diagnostics.pageCount || 0) || 0,
+        contentNodeCount: Number(diagnostics.contentNodeCount || 0) || 0,
+        runtimeLabel: "已省略",
+      });
+      setContentHeight(1123);
+      return undefined;
+    }
+    if (previewStatus !== "ready" || !fileBase64) {
+      host.innerHTML = "";
+      styleHost.innerHTML = "";
+      setContentHeight(1123);
+      setRenderState({
+        status: previewStatus || "loading",
+        message: String(request?.previewMessage || previewLabel.loadingText),
+        loadState: String(diagnostics.loadState || (previewStatus === "failed" ? "加载失败" : "加载中")),
+        parseState: String(diagnostics.parseState || "待开始"),
+        pageCount: Number(diagnostics.pageCount || 0) || 0,
+        contentNodeCount: Number(diagnostics.contentNodeCount || 0) || 0,
+        runtimeLabel: getFileCardPreviewRuntimeLabel(previewStatus, request?.previewRenderState),
+      });
+      return undefined;
+    }
+
+    let cancelled = false;
+    setRenderState({
+      status: "rendering",
+      message: previewLabel.renderingText,
+      loadState: "文档已加载",
+      parseState: "解析中",
+      pageCount: 0,
+      contentNodeCount: 0,
+      runtimeLabel: "解析中",
+    });
+
+    const render = async () => {
+      const bytes = decodeBase64ToByteArray(fileBase64);
+      if (!bytes?.length) {
+        throw new Error("预览文档为空");
+      }
+      host.innerHTML = "";
+      styleHost.innerHTML = "";
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      let pages = 0;
+      let nodes = 0;
+      if (previewKind === "pdf") {
+        const module = await loadVendorEsmModule("pdfjs-dist");
+        const { getDocument, GlobalWorkerOptions } = module || {};
+        if (typeof getDocument !== "function" || !GlobalWorkerOptions) {
+          throw new Error("pdfjs-dist 未提供 PDF 渲染能力");
+        }
+        if (!GlobalWorkerOptions.workerSrc) {
+          GlobalWorkerOptions.workerSrc = new URL("../../../../assets/vendor/pdfjs-dist/pdf.worker.mjs", import.meta.url).toString();
+        }
+        const loadingTask = getDocument({
+          data: bytes,
+          useWorkerFetch: false,
+          isEvalSupported: false,
+          cMapUrl: new URL("../../../../assets/vendor/pdfjs-dist/cmaps/", import.meta.url).toString(),
+          standardFontDataUrl: new URL("../../../../assets/vendor/pdfjs-dist/standard_fonts/", import.meta.url).toString(),
+          wasmUrl: new URL("../../../../assets/vendor/pdfjs-dist/wasm/", import.meta.url).toString(),
+        });
+        const pdfDocument = await loadingTask.promise;
+        pages = Number(pdfDocument.numPages || 0) || 0;
+        for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
+          if (cancelled) {
+            break;
+          }
+          const page = await pdfDocument.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1 });
+          const pageShell = document.createElement("div");
+          pageShell.className = "canvas2d-file-preview-react-pdf-page";
+          pageShell.style.width = `${Math.round(viewport.width)}px`;
+          pageShell.style.height = `${Math.round(viewport.height)}px`;
+          const canvas = document.createElement("canvas");
+          canvas.className = "canvas2d-file-preview-react-pdf-canvas";
+          canvas.width = Math.max(1, Math.floor(viewport.width));
+          canvas.height = Math.max(1, Math.floor(viewport.height));
+          canvas.style.width = `${Math.round(viewport.width)}px`;
+          canvas.style.height = `${Math.round(viewport.height)}px`;
+          pageShell.appendChild(canvas);
+          host.appendChild(pageShell);
+          const context = canvas.getContext("2d", { alpha: false });
+          if (!context) {
+            throw new Error("PDF 预览画布上下文不可用");
+          }
+          await page.render({
+            canvasContext: context,
+            viewport,
+          }).promise;
+          nodes += 1;
+        }
+        setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
+      } else {
+        const module = await loadVendorEsmModule("docx-preview");
+        const renderAsync = module?.renderAsync;
+        if (typeof renderAsync !== "function") {
+          throw new Error("docx-preview 未提供 renderAsync");
+        }
+        await renderAsync(buffer, host, styleHost, {
+          className: "canvas2d-file-card-docx-preview-document",
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          breakPages: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          useBase64URL: true,
+        });
+        setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
+        pages = host.querySelectorAll(
+          "section.docx, section.canvas2d-file-card-docx-preview-document, .docx-wrapper section.docx, .canvas2d-file-card-docx-preview-document-wrapper section.canvas2d-file-card-docx-preview-document"
+        ).length;
+        nodes = host.querySelectorAll(
+          "article, p, table, ul, ol, li, img, svg, canvas, .docx-wrapper *, section.docx *, .canvas2d-file-card-docx-preview-document-wrapper *, section.canvas2d-file-card-docx-preview-document *"
+        ).length;
+      }
+      if (!pages || !nodes) {
+        throw new Error(`${previewLabel.noun} 页面未成功生成：页面 ${pages}，正文节点 ${nodes}`);
+      }
+      if (!cancelled) {
+        setRenderState({
+          status: "ready",
+          message: previewLabel.readyText,
+          loadState: "文档已加载",
+          parseState: "是",
+          pageCount: pages,
+          contentNodeCount: nodes,
+          runtimeLabel: "已恢复",
+        });
+      }
+    };
+
+    void render().catch((error) => {
+      if (cancelled) {
+        return;
+      }
+      const pages =
+        previewKind === "pdf"
+          ? host.querySelectorAll(".canvas2d-file-preview-react-pdf-page").length
+          : host.querySelectorAll(
+              "section.docx, section.canvas2d-file-card-docx-preview-document, .docx-wrapper section.docx, .canvas2d-file-card-docx-preview-document-wrapper section.canvas2d-file-card-docx-preview-document"
+            ).length;
+      const nodes =
+        previewKind === "pdf"
+          ? host.querySelectorAll(".canvas2d-file-preview-react-pdf-canvas").length
+          : host.querySelectorAll(
+              "article, p, table, ul, ol, li, img, svg, canvas, .docx-wrapper *, section.docx *, .canvas2d-file-card-docx-preview-document-wrapper *, section.canvas2d-file-card-docx-preview-document *"
+            ).length;
+      setRenderState({
+        status: "failed",
+        message: String(error?.message || previewLabel.failedText).trim() || previewLabel.failedText,
+        loadState: "文档已加载",
+        parseState: "否",
+        pageCount: pages,
+        contentNodeCount: nodes,
+        runtimeLabel: "渲染失败",
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileBase64, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const frame = frameRef.current;
+    if (host instanceof HTMLElement && frame instanceof HTMLElement) {
+      const effectiveZoom = String(clamp(previewZoom * fitScale, 0.18, FILE_CARD_PREVIEW_ZOOM_MAX));
+      const normalizedHeight = `${Math.max(1123, Number(contentHeight || 1123) || 1123)}px`;
+      frame.style.setProperty("--file-card-preview-zoom", effectiveZoom);
+      frame.style.setProperty("--file-card-preview-content-height", normalizedHeight);
+      frame.style.setProperty("--file-card-preview-base-width", `${previewBaseWidth}px`);
+      host.style.setProperty("--file-card-preview-zoom", effectiveZoom);
+      host.style.setProperty("--file-card-preview-content-height", normalizedHeight);
+      host.style.setProperty("--file-card-preview-base-width", `${previewBaseWidth}px`);
+    }
+  }, [contentHeight, fitScale, previewBaseWidth, previewZoom]);
+
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!(scroll instanceof HTMLElement) || !request?.open) {
+      return undefined;
+    }
+    const handleWheel = (event) => {
+      event.stopPropagation();
+      if (!event.ctrlKey && !event.metaKey) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      const nextZoom = clamp(zoomRef.current + direction * 0.1, FILE_CARD_PREVIEW_ZOOM_MIN, FILE_CARD_PREVIEW_ZOOM_MAX);
+      bridge?.setFileCardPreviewZoom?.(request.id, nextZoom);
+    };
+    scroll.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      scroll.removeEventListener("wheel", handleWheel);
+    };
+  }, [bridge, request?.id, request?.open]);
+
+  if (!request?.open) {
+    return null;
+  }
+
+  const diagnosticStyle = style || {
+    left: "24px",
+    top: "24px",
+    width: "360px",
+    height: "468px",
+    transform: "scale(1)",
+    transformOrigin: "top left",
+  };
+  const missingAnchor = !item || !style;
+  const statusLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState.status);
+  const showPlaceholder = renderState.status !== "ready" || missingAnchor;
+
+  return (
+    <div
+      className="canvas2d-file-preview-react"
+      style={diagnosticStyle}
+      data-render-state={missingAnchor ? "failed" : renderState.status}
+      data-preview-kernel={previewKind === "pdf" ? "react-pdfjs-v1" : "react-docx-v2"}
+    >
+      <div className="canvas2d-file-preview-react-head">
+        <div className="canvas2d-file-preview-react-kicker">
+          <span>{String(request?.previewBadgeLabel || previewLabel.badge)}</span>
+          <span>文档预览</span>
+        </div>
+        <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览">
+          ×
+        </button>
+      </div>
+      <div className="canvas2d-file-preview-react-actions">
+        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom - 0.1)}>-</button>
+        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, FILE_CARD_PREVIEW_DEFAULT_ZOOM)}>
+          {Math.round(previewZoom * 100)}%
+        </button>
+        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom + 0.1)}>+</button>
+        <button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)}>
+          {request.expanded ? "收起" : "全部展开"}
+        </button>
+      </div>
+      <div className="canvas2d-file-preview-react-shell">
+        <div className="canvas2d-file-preview-react-diagnostics">
+          <span>加载文档 <strong>{renderState.loadState}</strong></span>
+          <span>解析成功 <strong>{renderState.parseState}</strong></span>
+          <span>正文节点数 <strong>{renderState.contentNodeCount}</strong></span>
+          <span>当前状态 <strong>{statusLabel}</strong></span>
+        </div>
+        <div ref={styleRef} className="canvas2d-file-preview-react-style-root" />
+        <div ref={scrollRef} className="canvas2d-file-preview-react-scroll" tabIndex={0} aria-label={previewLabel.scrollAriaLabel}>
+          <div ref={frameRef} className={`canvas2d-file-preview-react-frame${previewKind === "pdf" ? " is-pdf" : " is-docx"}`}>
+            <div ref={hostRef} className={`canvas2d-file-preview-react-content${previewKind === "pdf" ? " is-pdf" : " is-docx"}`} />
+          </div>
+        </div>
+        {showPlaceholder ? (
+          <div className="canvas2d-file-preview-react-placeholder">
+            <strong>{renderState.status === "failed" ? previewLabel.unavailableText : previewLabel.generatingText}</strong>
+            <span>{missingAnchor ? "预览锚点缺失：当前文件卡位置数据不可用，已显示诊断壳。" : renderState.message}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function formatExportRecordTime(value) {
   const numeric = Number(value || 0);
   if (!numeric) {
@@ -202,7 +664,7 @@ function getExportScopeLabel(scope = "") {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.0.8-rc" },
+  { label: "版本号", value: "v1.0.9-rc" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },
@@ -276,8 +738,7 @@ function Canvas2DControls({ engine }) {
   const [capturePngMenuOpen, setCapturePngMenuOpen] = useState(false);
   const [captureIncludeBackground, setCaptureIncludeBackground] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [fileMenuOpen, setFileMenuOpen] = useState(true);
-  const [pathMenuOpen, setPathMenuOpen] = useState(false);
+  const [boardWorkspaceOpen, setBoardWorkspaceOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
   const [backgroundMenuOpen, setBackgroundMenuOpen] = useState(false);
@@ -290,6 +751,7 @@ function Canvas2DControls({ engine }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
+  const [infoPanelAutoHidden, setInfoPanelAutoHidden] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [exportHistoryOpen, setExportHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -298,6 +760,7 @@ function Canvas2DControls({ engine }) {
   const [uiViewport, setUiViewport] = useState({ width: 1440, height: 900 });
   const rootRef = useRef(null);
   const toolbarRef = useRef(null);
+  const infoPanelRef = useRef(null);
   const drawMenuRef = useRef(null);
   const captureMenuRef = useRef(null);
   const menuRef = useRef(null);
@@ -457,6 +920,11 @@ function Canvas2DControls({ engine }) {
     () => (Array.isArray(snapshot?.exportHistory) ? snapshot.exportHistory.slice(0, 10) : []),
     [snapshot?.exportHistory, snapshot?.exportHistoryUpdatedAt]
   );
+  const wordExportPreviewRequest = snapshot?.wordExportPreviewRequest || null;
+  const fileCardPreviewRequests = useMemo(
+    () => (Array.isArray(snapshot?.fileCardPreviewRequests) ? snapshot.fileCardPreviewRequests : []),
+    [snapshot?.fileCardPreviewRequests]
+  );
   const searchHighlightStyle = useMemo(() => {
     if (!searchHighlight?.bounds) {
       return null;
@@ -513,6 +981,69 @@ function Canvas2DControls({ engine }) {
   }, [searchResults.length]);
 
   useEffect(() => {
+    const rootElement = rootRef.current;
+    const infoElement = infoPanelRef.current;
+    if (!(rootElement instanceof HTMLElement) || !(infoElement instanceof HTMLElement)) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    const scheduleUpdate = () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        frameId = 0;
+        const infoRect = infoElement.getBoundingClientRect();
+        const topbarStackRect =
+          rootElement.querySelector(".canvas2d-engine-topbar-stack") instanceof HTMLElement
+            ? rootElement.querySelector(".canvas2d-engine-topbar-stack").getBoundingClientRect()
+            : null;
+        const toolbarWrapRect =
+          rootElement.querySelector(".canvas2d-engine-toolbar-wrap") instanceof HTMLElement
+            ? rootElement.querySelector(".canvas2d-engine-toolbar-wrap").getBoundingClientRect()
+            : null;
+        const searchRect = searchRef.current instanceof HTMLElement ? searchRef.current.getBoundingClientRect() : null;
+        const exportRect =
+          exportHistoryRef.current instanceof HTMLElement ? exportHistoryRef.current.getBoundingClientRect() : null;
+        const overlapSafetyGap = 28;
+        const occupiedLeft = Math.min(
+          topbarStackRect ? topbarStackRect.left : Number.POSITIVE_INFINITY,
+          toolbarWrapRect ? toolbarWrapRect.left : Number.POSITIVE_INFINITY,
+          searchRect ? searchRect.left : Number.POSITIVE_INFINITY,
+          exportRect ? exportRect.left : Number.POSITIVE_INFINITY
+        );
+        const nextHidden = Number.isFinite(occupiedLeft) && occupiedLeft <= infoRect.right + overlapSafetyGap;
+        setInfoPanelAutoHidden((current) => (current === nextHidden ? current : nextHidden));
+      });
+    };
+
+    scheduleUpdate();
+    const resizeObserver =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => {
+            scheduleUpdate();
+          })
+        : null;
+    resizeObserver?.observe(rootElement);
+    resizeObserver?.observe(infoElement);
+    if (searchRef.current instanceof HTMLElement) {
+      resizeObserver?.observe(searchRef.current);
+    }
+    if (exportHistoryRef.current instanceof HTMLElement) {
+      resizeObserver?.observe(exportHistoryRef.current);
+    }
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleUpdate);
+    };
+  }, [searchOpen, exportHistoryOpen, uiViewport.width, uiViewport.height]);
+
+  useEffect(() => {
     function onWindowKeyDown(event) {
       const key = String(event.key || "").toLowerCase();
       const target = event.target;
@@ -556,6 +1087,16 @@ function Canvas2DControls({ engine }) {
   };
 
   const openSearch = () => {
+    setDrawMenuOpen(false);
+    setCaptureMenuOpen(false);
+    setCapturePdfMenuOpen(false);
+    setCapturePngMenuOpen(false);
+    setMenuOpen(false);
+    setExportMenuOpen(false);
+    setAlignmentSnapMenuOpen(false);
+    setBackgroundMenuOpen(false);
+    setAboutMenuOpen(false);
+    setExportHistoryOpen(false);
     setSearchOpen(true);
   };
 
@@ -691,11 +1232,10 @@ function Canvas2DControls({ engine }) {
 
   const closeMenu = () => {
     setMenuOpen(false);
-    setFileMenuOpen(true);
-    setPathMenuOpen(false);
     setExportMenuOpen(false);
     setAlignmentSnapMenuOpen(false);
     setBackgroundMenuOpen(false);
+    setAboutMenuOpen(false);
   };
 
   return (
@@ -707,9 +1247,13 @@ function Canvas2DControls({ engine }) {
       }}
     >
       <div
-        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed ? " is-info-collapsed" : ""}`}
+        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed ? " is-info-collapsed" : ""}${infoPanelAutoHidden ? " is-info-auto-hidden" : ""}`}
       >
-      <div className="canvas2d-engine-corner canvas2d-engine-corner-top-left" aria-label="工作白板模式信息">
+      <div
+        ref={infoPanelRef}
+        className="canvas2d-engine-corner canvas2d-engine-corner-top-left"
+        aria-label="工作白板模式信息"
+      >
         <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact${infoPanelCollapsed ? " is-collapsed" : ""}`}>
           <div className="canvas2d-brand-row" aria-label="FreeFlow 品牌">
             <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
@@ -774,7 +1318,12 @@ function Canvas2DControls({ engine }) {
       </div>
 
       <div className="canvas2d-engine-topbar-stack">
-      <div className="canvas2d-engine-toolbar-wrap" aria-label="工作白板工具栏">
+      <div
+        className={`canvas2d-engine-toolbar-wrap${
+          drawMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
+        }`}
+        aria-label="工作白板工具栏"
+      >
         <div className="canvas2d-engine-toolbar" role="toolbar" ref={toolbarRef}>
           <button
             type="button"
@@ -793,7 +1342,22 @@ function Canvas2DControls({ engine }) {
             <button
               type="button"
               className={`canvas2d-engine-tool${drawActive ? " is-active" : ""}`}
-              onClick={() => setDrawMenuOpen((value) => !value)}
+              onClick={() =>
+                setDrawMenuOpen((value) => {
+                  const next = !value;
+                  setCaptureMenuOpen(false);
+                  setCapturePdfMenuOpen(false);
+                  setCapturePngMenuOpen(false);
+                  setMenuOpen(false);
+                  setExportMenuOpen(false);
+                  setAlignmentSnapMenuOpen(false);
+                  setBackgroundMenuOpen(false);
+                  setAboutMenuOpen(false);
+                  setSearchOpen(false);
+                  setExportHistoryOpen(false);
+                  return next;
+                })
+              }
               aria-haspopup="menu"
               aria-expanded={drawMenuOpen}
               title="画图工具"
@@ -907,6 +1471,14 @@ function Canvas2DControls({ engine }) {
               type="button"
               className={`canvas2d-engine-tool${captureMenuOpen ? " is-active" : ""}`}
               onClick={() => {
+                setDrawMenuOpen(false);
+                setMenuOpen(false);
+                setExportMenuOpen(false);
+                setAlignmentSnapMenuOpen(false);
+                setBackgroundMenuOpen(false);
+                setAboutMenuOpen(false);
+                setSearchOpen(false);
+                setExportHistoryOpen(false);
                 setCaptureMenuOpen((value) => {
                   const next = !value;
                   if (!next) {
@@ -1036,6 +1608,18 @@ function Canvas2DControls({ engine }) {
               onClick={() =>
                 setMenuOpen((value) => {
                   const next = !value;
+                  setDrawMenuOpen(false);
+                  setCaptureMenuOpen(false);
+                  setCapturePdfMenuOpen(false);
+                  setCapturePngMenuOpen(false);
+                  setSearchOpen(false);
+                  setExportHistoryOpen(false);
+                  if (!next) {
+                    setExportMenuOpen(false);
+                    setAlignmentSnapMenuOpen(false);
+                    setBackgroundMenuOpen(false);
+                    setAboutMenuOpen(false);
+                  }
                   return next;
                 })
               }
@@ -1053,110 +1637,17 @@ function Canvas2DControls({ engine }) {
                   <div className="canvas2d-engine-menu-title">画布管理</div>
                   <button
                     type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${fileMenuOpen ? " is-active" : ""}`}
+                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary canvas2d-engine-menu-item-path"
                     role="menuitem"
-                    aria-expanded={fileMenuOpen}
-                    onClick={() => setFileMenuOpen((value) => !value)}
+                    title={boardFilePath || "未设置画布工作区"}
+                    onClick={() => {
+                      closeMenu();
+                      setBoardWorkspaceOpen(true);
+                    }}
                   >
-                    <span>画布文件</span>
-                    <ChevronIcon open={fileMenuOpen} />
+                    <span>画布工作区</span>
+                    <span className="canvas2d-engine-menu-meta">{formatPathLabel(boardFilePath, "未设置")}</span>
                   </button>
-                  {fileMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group">
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMenu();
-                          void bridge.newBoard();
-                        }}
-                      >
-                        <span>新建画布</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMenu();
-                          void bridge.openBoard();
-                        }}
-                      >
-                        <span>选择画布</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMenu();
-                          void bridge.saveBoard();
-                        }}
-                      >
-                        <span>保存画布</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMenu();
-                          void bridge.saveBoardAs();
-                        }}
-                      >
-                        <span>画布另存为</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMenu();
-                          setEditingTitle(true);
-                        }}
-                      >
-                        <span>画布重命名</span>
-                      </button>
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${pathMenuOpen ? " is-active" : ""}`}
-                    role="menuitem"
-                    aria-expanded={pathMenuOpen}
-                    onClick={() => setPathMenuOpen((value) => !value)}
-                  >
-                    <span>画布位置</span>
-                    <ChevronIcon open={pathMenuOpen} />
-                  </button>
-                  {pathMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group">
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item canvas2d-engine-menu-item-path"
-                        role="menuitem"
-                        title={boardFilePath || "未设置画布位置"}
-                        onClick={() => {
-                          closeMenu();
-                          void bridge.revealBoardInFolder();
-                        }}
-                      >
-                        <span>打开画布位置</span>
-                        <span className="canvas2d-engine-menu-meta">{formatPathLabel(boardFilePath, "未设置")}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          void bridge.pickCanvasBoardSavePath();
-                        }}
-                      >
-                        <span>设置画布位置</span>
-                      </button>
-                    </div>
-                  ) : null}
                   <button
                     type="button"
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${exportMenuOpen ? " is-active" : ""}`}
@@ -1381,7 +1872,7 @@ function Canvas2DControls({ engine }) {
           </div>
         </div>
       </div>
-      <div className="canvas2d-engine-search-stack">
+      <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen ? " is-overlay-active" : ""}`}>
         <div className="canvas2d-engine-search-row">
           <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
             <CanvasSearchOverlay
@@ -1406,7 +1897,22 @@ function Canvas2DControls({ engine }) {
             <button
               type="button"
               className={`canvas2d-engine-export-history-trigger${exportHistoryOpen ? " is-active" : ""}`}
-              onClick={() => setExportHistoryOpen((value) => !value)}
+              onClick={() =>
+                setExportHistoryOpen((value) => {
+                  const next = !value;
+                  setDrawMenuOpen(false);
+                  setCaptureMenuOpen(false);
+                  setCapturePdfMenuOpen(false);
+                  setCapturePngMenuOpen(false);
+                  setMenuOpen(false);
+                  setExportMenuOpen(false);
+                  setAlignmentSnapMenuOpen(false);
+                  setBackgroundMenuOpen(false);
+                  setAboutMenuOpen(false);
+                  setSearchOpen(false);
+                  return next;
+                })
+              }
               title="查看最近导出记录"
               aria-label="查看最近导出记录"
             >
@@ -1477,6 +1983,15 @@ function Canvas2DControls({ engine }) {
         <div className="canvas2d-engine-search-highlight" style={searchHighlightStyle} />
       ) : null}
 
+      {fileCardPreviewRequests.map((request) => (
+        <FileCardAttachedPreview
+          key={request?.id || `file-card-preview-${request?.itemId || Math.random()}`}
+          request={request}
+          board={snapshot?.board}
+          bridge={bridge}
+        />
+      ))}
+
       <div className="canvas2d-engine-corner canvas2d-engine-corner-bottom-right" aria-label="工作白板缩放区">
         <div className="canvas2d-floating-card canvas2d-floating-card-zoom">
           <div className="canvas2d-zoom-display">
@@ -1507,6 +2022,22 @@ function Canvas2DControls({ engine }) {
         onNext={() => tutorialRuntime.goToNextStep()}
         onPrevious={() => tutorialRuntime.goToPreviousStep()}
         onSkip={() => tutorialRuntime.skipCurrentStep()}
+      />
+
+      <WordExportPreviewDialog
+        request={wordExportPreviewRequest}
+        exporting={Boolean(wordExportPreviewRequest?.exporting)}
+        onClose={() => bridge.closeWordExportPreview(wordExportPreviewRequest?.id)}
+        onConfirm={() => {
+          void bridge.confirmWordExportPreview(wordExportPreviewRequest?.id);
+        }}
+      />
+
+      <BoardWorkspaceDialog
+        open={boardWorkspaceOpen}
+        bridge={bridge}
+        snapshot={snapshot}
+        onClose={() => setBoardWorkspaceOpen(false)}
       />
 
       {pdfExportBusy ? (
@@ -1592,3 +2123,4 @@ function Canvas2DControls({ engine }) {
 }
 
 export default Canvas2DControls;
+

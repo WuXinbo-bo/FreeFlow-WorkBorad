@@ -49,7 +49,7 @@ export const CONFIG = {
   canvasTextBoxDefaultFontSize: 18,
   canvasTextBoxMinFontSize: 14,
   canvasTextBoxMaxFontSize: 72,
-  startupTutorialIntroVersion: "1.0.8-rc",
+  startupTutorialIntroVersion: "1.0.9-rc",
 };
 
 const browserWindow = typeof window === "undefined" ? null : window;
@@ -62,3 +62,4 @@ export const DOUBAO_WEB_MODEL = "doubao:web";
 export const LOCAL_MODEL_PREFIX = "local::";
 export const CLOUD_MODEL_PREFIX = "cloud::";
 export const AGENT_PREFERRED_MODEL = `${CLOUD_MODEL_PREFIX}glm-4.6v-flash`;
+

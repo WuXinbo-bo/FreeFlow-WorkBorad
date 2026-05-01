@@ -1,4 +1,4 @@
-export const TUTORIAL_VERSION = "1.0.8-rc";
+export const TUTORIAL_VERSION = "1.0.9-rc";
 
 export const TUTORIAL_IDS = Object.freeze({
   MAIN_SHELL: "main-shell",
@@ -31,3 +31,4 @@ export const TUTORIAL_EVENT_TYPES = Object.freeze({
   START_GLOBAL_TUTORIAL: "start-global-tutorial",
   START_CANVAS_TUTORIAL: "start-canvas-tutorial",
 });
+

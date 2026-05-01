@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const esbuild = require("esbuild");
+const packageJson = require("../package.json");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
@@ -14,6 +15,8 @@ const MERMAID_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "mermaid");
 const XLSX_MODULE_FILE = path.join(ROOT_DIR, "node_modules", "xlsx", "xlsx.mjs");
 const XLSX_VENDOR_DIR = path.join(PUBLIC_DIR, "vendor", "xlsx");
 const XLSX_VENDOR_FILE = path.join(XLSX_VENDOR_DIR, "xlsx.mjs");
+const PDFJS_DIST_DIR = path.join(ROOT_DIR, "node_modules", "pdfjs-dist");
+const PDFJS_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "pdfjs-dist");
 const PRISM_COMPONENT_FILES = [
   "prism-core.min.js",
   "prism-clike.min.js",
@@ -87,11 +90,35 @@ async function copyXlsxVendorAsset() {
   await fs.copyFile(XLSX_MODULE_FILE, XLSX_VENDOR_FILE);
 }
 
+async function copyPdfjsVendorAssets() {
+  try {
+    await fs.access(PDFJS_DIST_DIR);
+  } catch {
+    return;
+  }
+  await ensureDir(PDFJS_VENDOR_DIR);
+  await fs.copyFile(
+    path.join(PDFJS_DIST_DIR, "build", "pdf.mjs"),
+    path.join(PDFJS_VENDOR_DIR, "pdf.mjs")
+  );
+  await fs.copyFile(
+    path.join(PDFJS_DIST_DIR, "build", "pdf.worker.mjs"),
+    path.join(PDFJS_VENDOR_DIR, "pdf.worker.mjs")
+  );
+  await fs.rm(path.join(PDFJS_VENDOR_DIR, "cmaps"), { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
+  await fs.rm(path.join(PDFJS_VENDOR_DIR, "standard_fonts"), { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
+  await fs.rm(path.join(PDFJS_VENDOR_DIR, "wasm"), { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
+  await fs.cp(path.join(PDFJS_DIST_DIR, "cmaps"), path.join(PDFJS_VENDOR_DIR, "cmaps"), { recursive: true, force: true });
+  await fs.cp(path.join(PDFJS_DIST_DIR, "standard_fonts"), path.join(PDFJS_VENDOR_DIR, "standard_fonts"), { recursive: true, force: true });
+  await fs.cp(path.join(PDFJS_DIST_DIR, "wasm"), path.join(PDFJS_VENDOR_DIR, "wasm"), { recursive: true, force: true });
+}
+
 async function main() {
   await ensureDir(OUT_DIR);
   await copyPrismVendorAssets();
   await copyMermaidVendorAssets();
   await copyXlsxVendorAsset();
+  await copyPdfjsVendorAssets();
 
   await esbuild.build({
     entryPoints: [ENTRY_FILE],
@@ -109,6 +136,7 @@ async function main() {
       ".jsx": "jsx",
     },
   });
+  await fs.appendFile(OUT_FILE, `\n/* FreeFlow canvas2d-ui version: ${packageJson.version} */\n`, "utf8");
 }
 
 main().catch((error) => {

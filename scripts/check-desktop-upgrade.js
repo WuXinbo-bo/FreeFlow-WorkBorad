@@ -50,7 +50,13 @@ async function writeJson(filePath, payload) {
   await fsp.writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
-async function runScenario({ name, missingRecentBoard = false, hasShownStartupTutorial = false }) {
+async function runScenario({
+  name,
+  missingRecentBoard = false,
+  hasShownStartupTutorial = false,
+  dismissedTutorialIntroVersion = "",
+  lastTutorialIntroVersion = "",
+}) {
   const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "freeflow-upgrade-"));
   const homeDir = path.join(tempRoot, "FreeFlow");
   const appDataDir = path.join(homeDir, "AppData");
@@ -77,6 +83,8 @@ async function runScenario({ name, missingRecentBoard = false, hasShownStartupTu
     canvasBoardSavePath: boardDir,
     canvasLastOpenedBoardPath: missingRecentBoard ? recentBoardPath : recentBoardPath,
     hasShownStartupTutorial,
+    lastTutorialIntroVersion,
+    dismissedTutorialIntroVersion,
     canvasImageSavePath: path.join(boardDir, "importImage"),
     textColor: "#123456",
     dialogColor: "#f0f0f0",
@@ -169,9 +177,24 @@ async function runScenario({ name, missingRecentBoard = false, hasShownStartupTu
   const shortcutSettings = JSON.parse(await fsp.readFile(SHORTCUT_SETTINGS_FILE, "utf8"));
 
   assert(startupContext.ok, `${name}: 启动上下文初始化失败`);
-  assert(uiSettings.schemaVersion === 1, `${name}: ui-settings 未写入 schemaVersion`);
+  assert(uiSettings.schemaVersion === 2, `${name}: ui-settings 未写入 schemaVersion`);
   assert(uiSettings.textColor === "#123456", `${name}: 主题设置未保留`);
   assert(uiSettings.dialogColor === "#f0f0f0", `${name}: 对话框颜色未保留`);
+  assert(uiSettings.defaultCanvasPanelSide === "left", `${name}: 习惯设置默认画布侧未兼容`);
+  assert(uiSettings.defaultChatPanelSide === "right", `${name}: 习惯设置默认对话侧未兼容`);
+  assert(uiSettings.defaultCanvasPanelVisible === true, `${name}: 习惯设置默认画布开关未兼容`);
+  assert(uiSettings.defaultChatPanelVisible === true, `${name}: 习惯设置默认对话开关未兼容`);
+  assert(uiSettings.defaultLaunchFullscreen === false, `${name}: 习惯设置默认全屏开关未兼容`);
+  assert(startupContext.workbenchPreferences.defaultCanvasPanelSide === uiSettings.defaultCanvasPanelSide, `${name}: 启动习惯画布侧不一致`);
+  assert(startupContext.workbenchPreferences.defaultChatPanelSide === uiSettings.defaultChatPanelSide, `${name}: 启动习惯对话侧不一致`);
+  assert(startupContext.workbenchPreferences.defaultCanvasPanelVisible === uiSettings.defaultCanvasPanelVisible, `${name}: 启动习惯画布开关不一致`);
+  assert(startupContext.workbenchPreferences.defaultChatPanelVisible === uiSettings.defaultChatPanelVisible, `${name}: 启动习惯对话开关不一致`);
+  assert(startupContext.workbenchPreferences.defaultLaunchFullscreen === uiSettings.defaultLaunchFullscreen, `${name}: 启动习惯全屏开关不一致`);
+  assert(
+    uiSettings.dismissedTutorialIntroVersion === dismissedTutorialIntroVersion,
+    `${name}: 已关闭教程版本被启动迁移覆盖`
+  );
+  assert(uiSettings.lastTutorialIntroVersion === lastTutorialIntroVersion, `${name}: 教程介绍版本被启动迁移覆盖`);
   assert(shortcutSettings.clickThroughAccelerator === "Control+Alt+X", `${name}: 快捷键设置未保留`);
   assert(providerSettings.schemaVersion === 1, `${name}: AI 配置未纳入 schemaVersion`);
   assert(providerSettings.cloud.baseUrl === "https://api.example.com/v1", `${name}: AI 配置未保留`);
@@ -194,6 +217,13 @@ async function runScenario({ name, missingRecentBoard = false, hasShownStartupTu
     );
   }
 
+  if (dismissedTutorialIntroVersion) {
+    assert(
+      startupContext.startup.shouldOpenStartupTutorial === false,
+      `${name}: 当前版本教程已关闭后不应再次触发启动教程`
+    );
+  }
+
   return {
     name,
     tempRoot,
@@ -210,13 +240,22 @@ async function main() {
     const result = await runScenario({
       name: scenarioName,
       missingRecentBoard: scenarioName === "tutorial-fallback",
-      hasShownStartupTutorial: scenarioName === "legacy-user-template-refresh",
+      hasShownStartupTutorial:
+        scenarioName === "legacy-user-template-refresh" ||
+        scenarioName === "current-version-intro-dismissed",
+      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.0.9-rc" : "",
+      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.0.9-rc" : "",
     });
     console.log(JSON.stringify(result));
     return;
   }
 
-  const scenarios = ["recent-board-preserved", "tutorial-fallback", "legacy-user-template-refresh"];
+  const scenarios = [
+    "recent-board-preserved",
+    "tutorial-fallback",
+    "legacy-user-template-refresh",
+    "current-version-intro-dismissed",
+  ];
   const results = [];
 
   for (const name of scenarios) {

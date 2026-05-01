@@ -36,6 +36,21 @@ export function createCanvas2DReactBridge(engine) {
     exportBoardAsPng(options) {
       return engine?.exportBoardAsPng?.(options);
     },
+    confirmWordExportPreview(requestId) {
+      return engine?.confirmWordExportPreview?.(requestId);
+    },
+    closeWordExportPreview(requestId) {
+      return engine?.closeWordExportPreview?.(requestId);
+    },
+    closeFileCardPreview(requestId) {
+      return engine?.closeFileCardPreview?.(requestId);
+    },
+    toggleFileCardPreviewExpanded(requestId) {
+      return engine?.toggleFileCardPreviewExpanded?.(requestId);
+    },
+    setFileCardPreviewZoom(requestId, zoom) {
+      return engine?.setFileCardPreviewZoom?.(requestId, zoom);
+    },
     addFlowNode() {
       engine?.addFlowNode?.();
     },
@@ -68,6 +83,18 @@ export function createCanvas2DReactBridge(engine) {
     },
     pickCanvasBoardSavePath() {
       return engine?.pickCanvasBoardSavePath?.();
+    },
+    getCanvasBoardWorkspace() {
+      return engine?.getCanvasBoardWorkspace?.();
+    },
+    pickCanvasWorkspaceFolder() {
+      return engine?.pickCanvasWorkspaceFolder?.();
+    },
+    listCanvasBoards(folderPath) {
+      return engine?.listCanvasBoards?.(folderPath);
+    },
+    createBoardInWorkspace(folderPath, name) {
+      return engine?.createBoardInWorkspace?.(folderPath, name);
     },
     revealCanvasImageSavePath() {
       return engine?.revealCanvasImageSavePath?.();

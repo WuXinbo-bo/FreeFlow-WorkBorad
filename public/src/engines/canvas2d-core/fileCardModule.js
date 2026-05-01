@@ -5,10 +5,13 @@ export function isFileCard(item) {
 export function buildFileCardContextMenuHtml(item = {}) {
   const locked = Boolean(item?.locked);
   const lockLabel = locked ? "解锁" : "锁定";
+  const ext = String(item?.ext || "").trim().toLowerCase();
+  const previewSupported = ext === "docx" || ext === "pdf";
   return `
     <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+    <button type="button" class="canvas2d-context-menu-item${previewSupported ? "" : " is-disabled"}" data-action="file-preview"${previewSupported ? "" : ' disabled title="当前仅支持 DOCX / PDF 预览"'}>预览</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="file-reveal">打开所在位置</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="file-memo">标签与备忘录</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="file-mark">重点标记</button>

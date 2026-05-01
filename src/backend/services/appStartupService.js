@@ -2,7 +2,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { DATA_DIR, CANVAS_BOARD_DIR, CACHE_DIR, RUNTIME_DIR } = require("../config/paths");
 const { readUiSettingsStore, writeUiSettingsStore } = require("./uiSettingsService");
-const { normalizeUiSettings } = require("../models/uiSettingsModel");
+const { normalizeUiSettings, pickWorkbenchPreferences } = require("../models/uiSettingsModel");
 
 const STARTUP_SCHEMA_VERSION = 1;
 const DEFAULT_BOARD_FILE_NAME = "canvas-board.json";
@@ -94,14 +94,12 @@ async function ensureAppStartupState(options = {}) {
   let shouldOpenStartupTutorial = false;
   let tutorialBoardPath = "";
 
-  if (
-    nextSettings.canvasLastOpenedBoardPath &&
-    !nextSettings.hasShownStartupTutorial &&
-    isTutorialBoardPath(nextSettings.canvasLastOpenedBoardPath)
-  ) {
-    // Older builds wrote the startup tutorial into "recent board", causing it to reopen forever.
+  if (nextSettings.canvasLastOpenedBoardPath && isTutorialBoardPath(nextSettings.canvasLastOpenedBoardPath)) {
+    // Tutorial boards are launch-only assets and must never become the user's recent board.
     nextSettings.canvasLastOpenedBoardPath = "";
-    nextSettings.hasShownStartupTutorial = true;
+    if (!nextSettings.hasShownStartupTutorial) {
+      nextSettings.hasShownStartupTutorial = true;
+    }
     settingsChanged = true;
   }
 
@@ -140,6 +138,7 @@ async function ensureAppStartupState(options = {}) {
   return {
     ok: true,
     uiSettings: persistedSettings,
+    workbenchPreferences: pickWorkbenchPreferences(persistedSettings),
     startup: {
       schemaVersion: migrationInfo.currentVersion,
       migrations: migrationInfo.applied,

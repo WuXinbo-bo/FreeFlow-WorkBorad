@@ -171,6 +171,44 @@ function createPersistenceController(deps) {
       }
     },
 
+    async getWorkbenchPreferences(_req, res) {
+      try {
+        const preferences = await uiSettingsService.readWorkbenchPreferencesStore();
+        res.json({
+          ok: true,
+          file: uiSettingsService.UI_SETTINGS_FILE,
+          preferences,
+        });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: "Failed to read workbench preferences",
+          details: error.message,
+          file: uiSettingsService.UI_SETTINGS_FILE,
+        });
+      }
+    },
+
+    async saveWorkbenchPreferences(req, res) {
+      try {
+        const next = await uiSettingsService.writeWorkbenchPreferencesStore(req.body || {});
+        res.json({
+          ok: true,
+          file: uiSettingsService.UI_SETTINGS_FILE,
+          preferences: next.preferences,
+          uiSettings: next.uiSettings,
+          updatedAt: next.uiSettings.updatedAt,
+        });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: "Failed to write workbench preferences",
+          details: error.message,
+          file: uiSettingsService.UI_SETTINGS_FILE,
+        });
+      }
+    },
+
     async getThemeSettings(_req, res) {
       try {
         const store = await themeSettingsService.readThemeSettingsStore();
@@ -255,6 +293,150 @@ function createPersistenceController(deps) {
             : "Failed to extract file text",
           details: error.statusCode ? undefined : error.message,
           filePath: String(req.body?.filePath || "").trim(),
+        });
+      }
+    },
+
+    async getDocxPreviewBase64(req, res) {
+      const filePath = String(req.body?.filePath || "").trim();
+      const fileName = String(req.body?.fileName || "").trim();
+      const mimeType = String(req.body?.mimeType || "").trim().toLowerCase();
+      const lowerPath = filePath.toLowerCase();
+      const lowerName = fileName.toLowerCase();
+      const isDocx =
+        mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        lowerPath.endsWith(".docx") ||
+        lowerName.endsWith(".docx");
+
+      if (!filePath) {
+        return res.status(400).json({
+          ok: false,
+          error: "filePath is required",
+          code: "FILE_PREVIEW_PATH_REQUIRED",
+          data: "",
+          mime: "",
+        });
+      }
+
+      if (!isDocx) {
+        return res.status(400).json({
+          ok: false,
+          error: "Only DOCX preview is supported",
+          code: "FILE_PREVIEW_UNSUPPORTED_TYPE",
+          data: "",
+          mime: "",
+        });
+      }
+
+      try {
+        const permissions = await permissionsService.readPermissionsStore();
+        const allowedRoots = Array.isArray(permissions?.allowedRoots) ? permissions.allowedRoots : [];
+        const normalizedFilePath = permissionsService.normalizeRootPath(filePath);
+        const withinAllowedRoot = allowedRoots.some((root) => {
+          const normalizedRoot = permissionsService.normalizeRootPath(root);
+          return normalizedRoot && normalizedFilePath && normalizedFilePath.startsWith(normalizedRoot);
+        });
+
+        if (!withinAllowedRoot) {
+          return res.status(403).json({
+            ok: false,
+            error: "File path is outside allowed roots",
+            code: "FILE_PREVIEW_FORBIDDEN",
+            data: "",
+            mime: "",
+          });
+        }
+
+        const fs = require("fs");
+        const path = require("path");
+        const resolvedPath = path.resolve(filePath);
+        const buffer = await fs.promises.readFile(resolvedPath);
+        res.json({
+          ok: true,
+          filePath: resolvedPath,
+          data: buffer.toString("base64"),
+          mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: "Failed to read DOCX preview file",
+          code: "FILE_PREVIEW_READ_FAILED",
+          details: error.message,
+          data: "",
+          mime: "",
+        });
+      }
+    },
+
+    async getPdfPreviewBase64(req, res) {
+      const filePath = String(req.body?.filePath || "").trim();
+      const fileName = String(req.body?.fileName || "").trim();
+      const mimeType = String(req.body?.mimeType || "").trim().toLowerCase();
+      const lowerPath = filePath.toLowerCase();
+      const lowerName = fileName.toLowerCase();
+      const isPdf =
+        mimeType === "application/pdf" ||
+        lowerPath.endsWith(".pdf") ||
+        lowerName.endsWith(".pdf");
+
+      if (!filePath) {
+        return res.status(400).json({
+          ok: false,
+          error: "filePath is required",
+          code: "FILE_PREVIEW_PATH_REQUIRED",
+          data: "",
+          mime: "",
+        });
+      }
+
+      if (!isPdf) {
+        return res.status(400).json({
+          ok: false,
+          error: "Only PDF preview is supported",
+          code: "FILE_PREVIEW_UNSUPPORTED_TYPE",
+          data: "",
+          mime: "",
+        });
+      }
+
+      try {
+        const permissions = await permissionsService.readPermissionsStore();
+        const allowedRoots = Array.isArray(permissions?.allowedRoots) ? permissions.allowedRoots : [];
+        const normalizedFilePath = permissionsService.normalizeRootPath(filePath);
+        const withinAllowedRoot = allowedRoots.some((root) => {
+          const normalizedRoot = permissionsService.normalizeRootPath(root);
+          return normalizedRoot && normalizedFilePath && normalizedFilePath.startsWith(normalizedRoot);
+        });
+
+        if (!withinAllowedRoot) {
+          return res.status(403).json({
+            ok: false,
+            error: "File path is outside allowed roots",
+            code: "FILE_PREVIEW_FORBIDDEN",
+            data: "",
+            mime: "",
+          });
+        }
+
+        const fs = require("fs");
+        const path = require("path");
+        const resolvedPath = path.resolve(filePath);
+        const buffer = await fs.promises.readFile(resolvedPath);
+        res.json({
+          ok: true,
+          filePath: resolvedPath,
+          data: buffer.toString("base64"),
+          mime: "application/pdf",
+        });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: "Failed to read PDF preview file",
+          code: "FILE_PREVIEW_READ_FAILED",
+          details: error.message,
+          data: "",
+          mime: "",
         });
       }
     },

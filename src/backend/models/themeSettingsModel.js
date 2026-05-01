@@ -36,6 +36,7 @@ function getColorBrightness(hexColor) {
 
 const DEFAULT_THEME_SETTINGS = Object.freeze({
   panelOpacity: 0.96,
+  canvasOpacity: 0.95,
   backgroundColor: "#f8f9fa",
   backgroundOpacity: 1,
   textColor: "#212529",
@@ -57,6 +58,7 @@ const DEFAULT_THEME_SETTINGS = Object.freeze({
 
 const THEME_SETTING_KEYS = Object.freeze([
   "panelOpacity",
+  "canvasOpacity",
   "backgroundColor",
   "backgroundOpacity",
   "textColor",
@@ -80,6 +82,12 @@ function normalizePanelOpacity(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_THEME_SETTINGS.panelOpacity;
   return Math.min(Math.max(parsed, 0.55), 1);
+}
+
+function normalizeCanvasOpacity(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_THEME_SETTINGS.canvasOpacity;
+  return Math.min(Math.max(parsed, 0.2), 1);
 }
 
 function normalizeBackgroundOpacity(value) {
@@ -153,6 +161,7 @@ function normalizeThemeSettings(payload = {}) {
   const colors = deriveThemeColors(source);
   return {
     panelOpacity: normalizePanelOpacity(source.panelOpacity),
+    canvasOpacity: normalizeCanvasOpacity(source.canvasOpacity),
     ...colors,
     backgroundOpacity: normalizeBackgroundOpacity(source.backgroundOpacity),
     themePreset:
@@ -166,6 +175,7 @@ module.exports = {
   DEFAULT_THEME_SETTINGS,
   THEME_SETTING_KEYS,
   normalizePanelOpacity,
+  normalizeCanvasOpacity,
   normalizeBackgroundOpacity,
   normalizeHexColor,
   pickThemeSettings,

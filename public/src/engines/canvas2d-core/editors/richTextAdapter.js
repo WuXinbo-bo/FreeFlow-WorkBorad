@@ -1715,6 +1715,12 @@ export function createRichTextAdapter(
     return true;
   }
 
+  function insertTextSplitMarker() {
+    return insertHtml(
+      '<hr data-ff-text-split="true"><div data-ff-text-split-spacer="true"><br></div>'
+    );
+  }
+
   function insertTable({ rows = 3, columns = 3 } = {}) {
     const rowCount = Math.max(2, Number(rows) || 3);
     const columnCount = Math.max(2, Number(columns) || 3);
@@ -2100,6 +2106,9 @@ export function createRichTextAdapter(
     }
     if (name === "insertHorizontalRule") {
       return insertHorizontalRule();
+    }
+    if (name === "insertTextSplitMarker") {
+      return insertTextSplitMarker();
     }
     if (name === "insertTable") {
       return insertTable(typeof value === "object" && value ? value : {});

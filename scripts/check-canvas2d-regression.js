@@ -1058,13 +1058,30 @@ async function runPasteSemanticChecks(browser) {
         assert(Boolean(target), "inline math paste did not create rich text math item", items);
       },
     },
+    {
+      key: "richHtmlTypographyScale",
+      text: "一级标题\n副标题正文\n普通正文",
+      html: `
+        <h1><span style="font-size:48px">一级标题</span></h1>
+        <div><span style="font-size:16px">副标题正文</span></div>
+        <div><span style="font-size:13px">普通正文</span></div>
+      `,
+      verify: (items) => {
+        const textItems = items.filter((item) => item.type === "text");
+        assert(textItems.length >= 1, "rich html typography paste did not create text items", items);
+        const html = textItems.map((item) => String(item.html || "")).join("\n");
+        assert(/<h1[\s>]/i.test(html), "rich html typography paste lost heading semantics", textItems);
+        assert(!/<h1\b[^>]*>[\s\S]*?data-ff-font-size[\s\S]*?<\/h1>/i.test(html), "heading kept imported inline font-size", html);
+        assert(!/data-ff-font-size=/i.test(html), "body text kept imported webpage body font-size", html);
+      },
+    },
   ];
 
   const result = {};
   for (const scenario of cases) {
     const session = await createPage(browser, { board: createBoard([], [], { scale: 1, offsetX: 0, offsetY: 0 }) });
     try {
-      await dispatchCanvasPaste(session.page, { text: scenario.text });
+      await dispatchCanvasPaste(session.page, { text: scenario.text, html: scenario.html || "" });
       const snapshotItems = await session.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);
       scenario.verify(snapshotItems);
       assert(session.getErrors().length === 0, `paste semantic check ${scenario.key} produced page errors`, session.getErrors());

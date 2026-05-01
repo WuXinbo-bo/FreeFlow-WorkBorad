@@ -84,6 +84,7 @@ export function buildThemeCssVariables(payload = {}) {
     "--app-button-shadow-rgb": rgbToCss(buttonShadow),
     "--app-button-text-rgb": rgbToCss(buttonText),
     "--surface-alpha": theme.panelOpacity.toFixed(2),
+    "--canvas-viewport-alpha": theme.canvasOpacity.toFixed(2),
     "--surface-elevated-alpha": Math.min(theme.panelOpacity + 0.04, 0.98).toFixed(2),
     "--surface-card-alpha": Math.max(theme.panelOpacity - 0.02, 0.5).toFixed(2),
     "--surface-desktop-alpha": Math.max(theme.panelOpacity - 0.44, 0.14).toFixed(2),

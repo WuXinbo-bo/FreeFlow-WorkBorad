@@ -505,6 +505,14 @@ export function mountGlobalTutorialHost({
     runtime.closeCenter();
   }
 
+  function dismissIntroForCurrentVersion() {
+    if (typeof onIntroDismissVersion === "function") {
+      onIntroDismissVersion();
+      return;
+    }
+    onIntroDismiss?.();
+  }
+
   function openIntro() {
     runtime.setCenterView("intro");
   }
@@ -609,6 +617,10 @@ export function mountGlobalTutorialHost({
     host.querySelectorAll("[data-global-tutorial-close]").forEach((button) => {
       button.addEventListener("click", () => {
         if (snapshot.centerOpen) {
+          const centerView = String(snapshot?.centerView || "").trim().toLowerCase();
+          if (centerView === "intro" || centerView === "intro-later") {
+            dismissIntroForCurrentVersion();
+          }
           closeCenter();
           return;
         }
@@ -629,12 +641,18 @@ export function mountGlobalTutorialHost({
     host.querySelectorAll("[data-global-tutorial-action]").forEach((button) => {
       button.addEventListener("click", () => handleAction(button.getAttribute("data-global-tutorial-action")));
     });
-    host.querySelector("[data-global-tutorial-open-center]")?.addEventListener("click", () => runtime.setCenterView("root"));
+    host.querySelector("[data-global-tutorial-open-center]")?.addEventListener("click", () => {
+      const centerView = String(snapshot?.centerView || "").trim().toLowerCase();
+      if (centerView === "intro" || centerView === "intro-later") {
+        dismissIntroForCurrentVersion();
+      }
+      runtime.setCenterView("root");
+    });
     host.querySelector("[data-global-tutorial-dismiss-intro]")?.addEventListener("click", () => {
       runtime.setCenterView("intro-later");
     });
     host.querySelector("[data-global-tutorial-later-confirm]")?.addEventListener("click", () => {
-      onIntroDismiss?.();
+      dismissIntroForCurrentVersion();
       closeCenter();
     });
     host.querySelector("[data-global-tutorial-back-root]")?.addEventListener("click", () => runtime.setCenterView("root"));

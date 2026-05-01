@@ -159,11 +159,19 @@ const DEFAULT_APP_SUBTITLE = "自由画布与 AI 工作台";
 const DEFAULT_CANVAS_TITLE = "FreeFlow 工作白板";
 const DEFAULT_CLICK_THROUGH_ACCELERATOR = "CommandOrControl+Shift+X";
 const DEFAULT_CLICK_THROUGH_DISPLAY = "Ctrl+Shift+X";
+const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
+  defaultCanvasPanelSide: "left",
+  defaultChatPanelSide: "right",
+  defaultCanvasPanelVisible: true,
+  defaultChatPanelVisible: true,
+  defaultLaunchFullscreen: false,
+});
 const PANEL_LAYOUT_MIN_HEIGHT = 320;
 const PANEL_LAYOUT_EDGE_OFFSET = 0;
 const PANEL_RESIZER_SIZE = 34;
 const PANEL_RESIZER_CORNER_OFFSET = 24;
 let startupContextPromise = null;
+let startupTutorialIntroPersistSeq = 0;
 
 function normalizeShortcutAcceleratorToken(token = "") {
   const value = String(token || "").trim();
@@ -264,6 +272,29 @@ function normalizeShortcutSettings(input = {}) {
   };
 }
 
+function normalizeWorkbenchPanelSide(value, fallback = "left") {
+  const side = String(value || "").trim().toLowerCase();
+  return side === "right" || side === "left" ? side : fallback;
+}
+
+function normalizeWorkbenchPreferences(input = {}) {
+  const defaultCanvasPanelSide = normalizeWorkbenchPanelSide(
+    input?.defaultCanvasPanelSide,
+    DEFAULT_WORKBENCH_PREFERENCES.defaultCanvasPanelSide
+  );
+  return {
+    defaultCanvasPanelSide,
+    defaultChatPanelSide: defaultCanvasPanelSide === "left" ? "right" : "left",
+    defaultCanvasPanelVisible: input?.defaultCanvasPanelVisible === false ? false : true,
+    defaultChatPanelVisible: input?.defaultChatPanelVisible === false ? false : true,
+    defaultLaunchFullscreen: input?.defaultLaunchFullscreen === true,
+  };
+}
+
+function pickWorkbenchPreferences(input = {}) {
+  return normalizeWorkbenchPreferences(input || {});
+}
+
 function matchesShortcutKeyboardEvent(event, accelerator) {
   const normalized = normalizeShortcutAccelerator(accelerator);
   const parts = normalized.split("+");
@@ -326,6 +357,7 @@ function normalizeUiSettings(payload = {}) {
     typeof payload.canvasImageSavePath === "string" && payload.canvasImageSavePath.trim()
       ? payload.canvasImageSavePath.trim()
       : "";
+  const workbenchPreferences = normalizeWorkbenchPreferences(payload);
   const theme = normalizeThemeSettings(payload);
 
   return {
@@ -338,6 +370,7 @@ function normalizeUiSettings(payload = {}) {
     lastTutorialIntroVersion: lastTutorialIntroVersion.slice(0, 80),
     dismissedTutorialIntroVersion: dismissedTutorialIntroVersion.slice(0, 80),
     canvasImageSavePath: normalizeCanvasImageSavePathValue(canvasImageSavePath).slice(0, 400),
+    ...workbenchPreferences,
     ...theme,
   };
 }
@@ -1379,12 +1412,20 @@ const canvasBoardPathInputEl = document.querySelector("#canvas-board-path-input"
 const drawerCanvasImagePathInputEl = document.querySelector("#drawer-canvas-image-path-input");
 const drawerCanvasImagePathBrowseBtn = document.querySelector("#drawer-canvas-image-path-browse-btn");
 const drawerCanvasImagePathOpenBtn = document.querySelector("#drawer-canvas-image-path-open-btn");
-const shortcutSettingsSummaryEl = document.querySelector("#shortcut-settings-summary");
+const habitSettingsSummaryEl = document.querySelector("#habit-settings-summary");
 const clickThroughShortcutInputEl = document.querySelector("#clickthrough-shortcut-input");
 const clickThroughShortcutSaveBtn = document.querySelector("#clickthrough-shortcut-save-btn");
 const clickThroughShortcutResetBtn = document.querySelector("#clickthrough-shortcut-reset-btn");
 const clickThroughShortcutStatusEl = document.querySelector("#clickthrough-shortcut-status");
 const clickThroughShortcutNoteEl = document.querySelector("#clickthrough-shortcut-note");
+const defaultCanvasPanelSideSelectEl = document.querySelector("#default-canvas-panel-side-select");
+const defaultCanvasPanelVisibleInputEl = document.querySelector("#default-canvas-panel-visible-input");
+const defaultChatPanelVisibleInputEl = document.querySelector("#default-chat-panel-visible-input");
+const defaultLaunchFullscreenInputEl = document.querySelector("#default-launch-fullscreen-input");
+const workbenchHabitSaveBtn = document.querySelector("#workbench-habit-save-btn");
+const workbenchHabitResetBtn = document.querySelector("#workbench-habit-reset-btn");
+const workbenchHabitApplyBtn = document.querySelector("#workbench-habit-apply-btn");
+const workbenchHabitStatusEl = document.querySelector("#workbench-habit-status");
 const conversationShellClickThroughNoteEl = document.querySelector("#conversation-shell-clickthrough-note");
 const themeSettingsPanelHostEl = document.querySelector("#theme-settings-panel-host");
 const canvasModeLegacyBtn = document.querySelector("#canvas-mode-legacy-btn");
@@ -3100,6 +3141,7 @@ function applyUiSettings() {
   if (drawerCanvasImagePathInputEl) {
     drawerCanvasImagePathInputEl.value = getCanvasImageSavePath();
   }
+  renderWorkbenchHabitSettings();
   syncCanvasPathActionButtons(getCanvasBoardSavePath());
   syncCanvasImagePathActionButtons(getCanvasImageSavePath());
   emitCanvasBoardPathChanged(getCanvasBoardSavePath());
@@ -3184,6 +3226,36 @@ function writeUiSettingsCache(payload = {}) {
   }
 }
 
+function writeStartupContextUiSettings(nextUiSettings = {}) {
+  const context = getStartupContext();
+  if (!context) {
+    return;
+  }
+  const nextNormalizedUiSettings = normalizeUiSettings({
+    ...(context.uiSettings || {}),
+    ...nextUiSettings,
+  });
+  const nextStartup = {
+    ...(context.startup || {}),
+  };
+  if (typeof nextUiSettings.canvasBoardSavePath === "string") {
+    nextStartup.boardSavePath = nextNormalizedUiSettings.canvasBoardSavePath;
+  }
+  if (typeof nextUiSettings.canvasImageSavePath === "string") {
+    nextStartup.canvasImageSavePath = nextNormalizedUiSettings.canvasImageSavePath;
+  }
+  if (typeof nextUiSettings.canvasLastOpenedBoardPath === "string") {
+    nextStartup.lastOpenedBoardPath = nextNormalizedUiSettings.canvasLastOpenedBoardPath;
+    nextStartup.initialBoardPath = nextNormalizedUiSettings.canvasLastOpenedBoardPath;
+  }
+  globalThis.__FREEFLOW_STARTUP_CONTEXT = {
+    ...context,
+    uiSettings: nextNormalizedUiSettings,
+    workbenchPreferences: pickWorkbenchPreferences(nextNormalizedUiSettings),
+    startup: nextStartup,
+  };
+}
+
 function getStartupTutorialIntroVersion() {
   return String(CONFIG.startupTutorialIntroVersion || "").trim();
 }
@@ -3212,6 +3284,7 @@ function shouldAutoShowStartupTutorialIntro() {
 }
 
 async function persistStartupTutorialIntroSettings(overrides = {}) {
+  const persistSeq = ++startupTutorialIntroPersistSeq;
   const introVersion = getStartupTutorialIntroVersion();
   const payload = buildUiSettingsPayload({
     hasShownStartupTutorial: true,
@@ -3231,6 +3304,9 @@ async function persistStartupTutorialIntroSettings(overrides = {}) {
     if (!response.ok || !data.ok) {
       throw new Error(data.details || data.error || "保存界面设置失败");
     }
+    if (persistSeq !== startupTutorialIntroPersistSeq) {
+      return;
+    }
     state.uiSettings = normalizeUiSettings({
       ...payload,
       ...data,
@@ -3238,6 +3314,9 @@ async function persistStartupTutorialIntroSettings(overrides = {}) {
     writeUiSettingsCache(state.uiSettings);
     applyUiSettings();
   } catch {
+    if (persistSeq !== startupTutorialIntroPersistSeq) {
+      return;
+    }
     state.uiSettings = normalizeUiSettings(payload);
     writeUiSettingsCache(state.uiSettings);
   }
@@ -3253,6 +3332,9 @@ function syncCanvasLastOpenedBoardPathState(nextPath) {
     canvasLastOpenedBoardPath: cleanPath,
   });
   writeUiSettingsCache(state.uiSettings);
+  writeStartupContextUiSettings({
+    canvasLastOpenedBoardPath: cleanPath,
+  });
 }
 
 function renderClipboardStore() {
@@ -4510,6 +4592,9 @@ function startClipboardPolling() {
 
 async function loadUiSettings() {
   const cached = readUiSettingsCache();
+  const startupContext = await loadStartupContext();
+  const startupUiSettings = startupContext?.uiSettings || {};
+  const startupWorkbenchPreferences = startupContext?.workbenchPreferences || {};
   try {
     const response = await fetch(API_ROUTES.uiSettings);
     const data = await readJsonResponse(response, "界面设置");
@@ -4519,18 +4604,23 @@ async function loadUiSettings() {
     }
 
     state.uiSettings = normalizeUiSettings({
-      ...cached,
+      ...startupUiSettings,
+      ...startupWorkbenchPreferences,
       ...data,
     });
   } catch (error) {
-    const startupContext = await loadStartupContext();
     state.uiSettings = normalizeUiSettings({
+      ...startupUiSettings,
+      ...startupWorkbenchPreferences,
       ...cached,
-      ...(startupContext?.uiSettings || {}),
     });
     setStatus(`界面设置读取失败：${error.message}`, "warning");
   }
 
+  state.workbenchPreferences = pickWorkbenchPreferences({
+    ...state.uiSettings,
+    ...startupWorkbenchPreferences,
+  });
   writeUiSettingsCache(state.uiSettings);
   applyUiSettings();
 }
@@ -4544,30 +4634,51 @@ function buildUiSettingsPayload(overrides = {}) {
     canvasBoardSavePath:
       overrides.canvasBoardSavePath ??
       canvasBoardPathInputEl?.value ??
-      cached.canvasBoardSavePath ??
-      state.uiSettings?.canvasBoardSavePath,
+      state.uiSettings?.canvasBoardSavePath ??
+      cached.canvasBoardSavePath,
     canvasLastOpenedBoardPath:
       overrides.canvasLastOpenedBoardPath ??
-      cached.canvasLastOpenedBoardPath ??
-      state.uiSettings?.canvasLastOpenedBoardPath,
+      state.uiSettings?.canvasLastOpenedBoardPath ??
+      cached.canvasLastOpenedBoardPath,
     hasShownStartupTutorial:
       overrides.hasShownStartupTutorial ??
-      cached.hasShownStartupTutorial ??
-      state.uiSettings?.hasShownStartupTutorial,
+      state.uiSettings?.hasShownStartupTutorial ??
+      cached.hasShownStartupTutorial,
     lastTutorialIntroVersion:
       overrides.lastTutorialIntroVersion ??
-      cached.lastTutorialIntroVersion ??
-      state.uiSettings?.lastTutorialIntroVersion,
+      state.uiSettings?.lastTutorialIntroVersion ??
+      cached.lastTutorialIntroVersion,
     dismissedTutorialIntroVersion:
       overrides.dismissedTutorialIntroVersion ??
-      cached.dismissedTutorialIntroVersion ??
-      state.uiSettings?.dismissedTutorialIntroVersion,
+      state.uiSettings?.dismissedTutorialIntroVersion ??
+      cached.dismissedTutorialIntroVersion,
     canvasImageSavePath:
       overrides.canvasImageSavePath ??
       canvasImagePathInputEl?.value ??
-      cached.canvasImageSavePath ??
-      state.uiSettings?.canvasImageSavePath,
+      state.uiSettings?.canvasImageSavePath ??
+      cached.canvasImageSavePath,
+    defaultCanvasPanelSide:
+      overrides.defaultCanvasPanelSide ??
+      state.uiSettings?.defaultCanvasPanelSide ??
+      cached.defaultCanvasPanelSide,
+    defaultChatPanelSide:
+      overrides.defaultChatPanelSide ??
+      state.uiSettings?.defaultChatPanelSide ??
+      cached.defaultChatPanelSide,
+    defaultCanvasPanelVisible:
+      overrides.defaultCanvasPanelVisible ??
+      state.uiSettings?.defaultCanvasPanelVisible ??
+      cached.defaultCanvasPanelVisible,
+    defaultChatPanelVisible:
+      overrides.defaultChatPanelVisible ??
+      state.uiSettings?.defaultChatPanelVisible ??
+      cached.defaultChatPanelVisible,
+    defaultLaunchFullscreen:
+      overrides.defaultLaunchFullscreen ??
+      state.uiSettings?.defaultLaunchFullscreen ??
+      cached.defaultLaunchFullscreen,
     panelOpacity: overrides.panelOpacity ?? state.uiSettings?.panelOpacity,
+    canvasOpacity: overrides.canvasOpacity ?? state.uiSettings?.canvasOpacity,
     backgroundColor: overrides.backgroundColor ?? state.uiSettings?.backgroundColor,
     backgroundOpacity: overrides.backgroundOpacity ?? state.uiSettings?.backgroundOpacity,
     textColor: overrides.textColor ?? state.uiSettings?.textColor,
@@ -4591,6 +4702,7 @@ function buildUiSettingsPayload(overrides = {}) {
 function buildThemeSettingsPayload(overrides = {}) {
   return normalizeThemeSettings({
     panelOpacity: overrides.panelOpacity ?? state.uiSettings?.panelOpacity,
+    canvasOpacity: overrides.canvasOpacity ?? state.uiSettings?.canvasOpacity,
     backgroundColor: overrides.backgroundColor ?? state.uiSettings?.backgroundColor,
     backgroundOpacity: overrides.backgroundOpacity ?? state.uiSettings?.backgroundOpacity,
     textColor: overrides.textColor ?? state.uiSettings?.textColor,
@@ -4642,6 +4754,40 @@ async function saveUiSettings(overrides = {}) {
       throw new Error(`设置已保存，但新画布地址写入失败：${error.message}`);
     }
   }
+}
+
+async function saveWorkbenchPreferences(preferences = {}) {
+  const payload = pickWorkbenchPreferences(preferences);
+  state.workbenchPreferences = payload;
+  state.uiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    ...payload,
+  });
+  writeUiSettingsCache(state.uiSettings);
+  writeStartupContextUiSettings(state.uiSettings);
+
+  const response = await fetch(API_ROUTES.workbenchPreferences, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await readJsonResponse(response, "习惯设置");
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.details || data.error || "保存习惯设置失败");
+  }
+
+  const nextUiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    ...(data.uiSettings || {}),
+    ...(data.preferences || {}),
+  });
+  state.uiSettings = nextUiSettings;
+  state.workbenchPreferences = pickWorkbenchPreferences(data.preferences || nextUiSettings);
+  writeUiSettingsCache(nextUiSettings);
+  writeStartupContextUiSettings(nextUiSettings);
+  applyUiSettings();
+  return state.workbenchPreferences;
 }
 
 async function saveThemeSettings(overrides = {}) {
@@ -4849,8 +4995,8 @@ function renderAiRuntimeSummary() {
 async function bootstrap() {
   document.body.classList.toggle("desktop-mode", IS_DESKTOP_APP);
   state.activeRightPanelView = normalizeRightPanelView(localStorage.getItem(CONFIG.rightPanelViewKey));
-  await loadUiSettings();
   await loadStartupContext();
+  await loadUiSettings();
   await loadCanvasBoardFromStorage();
   await loadSessions();
   await loadClipboardStore();
@@ -4927,9 +5073,6 @@ async function bootstrap() {
 
   if (shouldAutoShowStartupTutorialIntro()) {
     globalTutorialHost.openIntro();
-    void persistStartupTutorialIntroSettings({
-      dismissedTutorialIntroVersion: "",
-    });
   }
 
   try {
@@ -4974,13 +5117,14 @@ function setDrawerOpen(open) {
   });
   syncEmbeddedWindowOverlayVisibility();
   scheduleDesktopWindowShapeSync();
+  requestDrawerWindowShapeFinalSync();
 }
 
 function initializePaneLayout() {
   if (!workspaceEl) return;
 
   state.historyExpanded = localStorage.getItem(CONFIG.historyExpandedKey) === "true";
-  resetStagePanelsToDefault({ persist: true, announce: false });
+  applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
 }
 
 function setDesktopMenuOpen(open) {
@@ -5290,6 +5434,40 @@ function savePanelLayoutState() {
   persistLegacyPaneState();
 }
 
+function getWorkbenchPreferencesFromState() {
+  return pickWorkbenchPreferences(state.workbenchPreferences || state.uiSettings || {});
+}
+
+function buildPanelLayoutFromWorkbenchPreferences(preferences = getWorkbenchPreferencesFromState()) {
+  const nextPreferences = normalizeWorkbenchPreferences(preferences);
+  const nextLayout = createDefaultPanelLayout(getPanelLayoutViewportOptions());
+  nextLayout.left.dockSide = nextPreferences.defaultCanvasPanelSide;
+  nextLayout.right.dockSide = nextPreferences.defaultChatPanelSide;
+  const viewport = getWorkspaceViewport();
+  for (const side of ["left", "right"]) {
+    const frame = getDefaultPanelFrameForViewport(side, nextLayout[side], viewport);
+    nextLayout[side].x = frame.x;
+    nextLayout[side].y = frame.y;
+    nextLayout[side].width = frame.width;
+    nextLayout[side].height = frame.height;
+  }
+  nextLayout.left.collapsed = !nextPreferences.defaultCanvasPanelVisible;
+  nextLayout.right.collapsed = !nextPreferences.defaultChatPanelVisible;
+  nextLayout.left.hidden = false;
+  nextLayout.right.hidden = false;
+  nextLayout.left.zIndex = nextPreferences.defaultCanvasPanelSide === "right" ? 14 : 10;
+  nextLayout.right.zIndex = nextPreferences.defaultChatPanelSide === "right" ? 14 : 10;
+  return normalizePanelLayout(nextLayout, getPanelLayoutViewportOptions());
+}
+
+function applyWorkbenchPreferencesToPanelLayout({ persist = true, announce = false } = {}) {
+  state.panelLayout = buildPanelLayoutFromWorkbenchPreferences();
+  applyPanelLayoutState({ persist });
+  if (announce) {
+    setStatus("已按习惯设置应用默认布局", "success");
+  }
+}
+
 function clampPaneWidth(value, min, max) {
     return Math.min(Math.max(Number(value) || min, min), max);
   }
@@ -5368,6 +5546,10 @@ function clearStagePanelsState() {
   try {
     localStorage.removeItem(CONFIG.stagePanelsKey);
     localStorage.removeItem(CONFIG.panelLayoutKey);
+    localStorage.removeItem(CONFIG.leftPanelCollapsedKey);
+    localStorage.removeItem(CONFIG.rightPanelCollapsedKey);
+    localStorage.removeItem(CONFIG.leftPanelWidthKey);
+    localStorage.removeItem(CONFIG.rightPanelWidthKey);
   } catch {
     // Ignore transient storage failures and keep layout in memory.
   }
@@ -5415,6 +5597,10 @@ function getPanelKeyByDockSide(dockSide) {
 }
 
 function setStagePanelFront(side) {
+  const panel = state.panelLayout?.[side];
+  if (!panel || panel.hidden || panel.collapsed) {
+    return;
+  }
   bringPanelToFront(side);
   refreshPanelLayoutVisualState();
 }
@@ -5440,6 +5626,11 @@ function renderPanelLayoutSide(side) {
 
   const dockSide = panelState.dockSide === "right" ? "right" : "left";
   const isHidden = Boolean(panelState.hidden || panelState.collapsed);
+  if (isHidden) {
+    element.style.setProperty("display", "none", "important");
+  } else {
+    element.style.removeProperty("display");
+  }
   element.style.left = `${Math.round(Number(panelState.x) || 0)}px`;
   element.style.top = `${Math.round(Number(panelState.y) || 0)}px`;
   element.style.width = `${Math.round(Math.max(0, Number(panelState.width) || 0))}px`;
@@ -5555,7 +5746,7 @@ function resetStagePanelsToDefault({ persist = true, announce = false } = {}) {
 }
 
 function restoreDefaultStagePanels() {
-  resetStagePanelsToDefault({ persist: true, announce: true });
+  applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: true });
 }
 
 function setStagePanelHidden(side, hidden) {
@@ -5632,13 +5823,15 @@ function syncPaneVisibility({ syncShape = true } = {}) {
   const rightDockPanel = state.panelLayout?.[rightDockPanelKey];
   const leftDockCollapsed = Boolean(leftDockPanel?.collapsed || leftDockPanel?.hidden);
   const rightDockCollapsed = Boolean(rightDockPanel?.collapsed || rightDockPanel?.hidden);
+  const canvasPanelCollapsed = Boolean(state.panelLayout?.left?.collapsed || state.panelLayout?.left?.hidden);
+  const chatPanelCollapsed = Boolean(state.panelLayout?.right?.collapsed || state.panelLayout?.right?.hidden);
 
   workspaceEl.classList.toggle("left-collapsed", leftDockCollapsed);
   workspaceEl.classList.toggle("right-collapsed", rightDockCollapsed);
-  sidePanelEl?.classList.toggle("is-collapsed", state.leftPanelCollapsed);
-  conversationPanel?.classList.toggle("is-collapsed", state.rightPanelCollapsed);
-  desktopClearStageEl?.classList.toggle("is-pane-collapsed", state.leftPanelCollapsed);
-  conversationPanel?.classList.toggle("is-pane-collapsed", state.rightPanelCollapsed);
+  sidePanelEl?.classList.toggle("is-collapsed", canvasPanelCollapsed);
+  conversationPanel?.classList.toggle("is-collapsed", chatPanelCollapsed);
+  desktopClearStageEl?.classList.toggle("is-pane-collapsed", canvasPanelCollapsed);
+  conversationPanel?.classList.toggle("is-pane-collapsed", chatPanelCollapsed);
   leftPaneResizerEl?.classList.toggle("is-hidden", Boolean(state.panelLayout.left?.collapsed || state.panelLayout.left?.hidden));
   rightPaneResizerEl?.classList.toggle("is-hidden", Boolean(state.panelLayout.right?.collapsed || state.panelLayout.right?.hidden));
 
@@ -5885,6 +6078,11 @@ async function initializeDesktopShell() {
   });
   await refreshShortcutSettings();
   await refreshDesktopShellState();
+  const shouldLaunchFullscreen = Boolean(state.uiSettings?.defaultLaunchFullscreen);
+  if (Boolean(state.desktopShellState.fullscreen) !== shouldLaunchFullscreen && DESKTOP_SHELL?.toggleFullscreen) {
+    await DESKTOP_SHELL.toggleFullscreen();
+    await refreshDesktopShellState();
+  }
   await setDesktopClickThrough(false);
   scheduleDesktopWindowShapeSync();
 }
@@ -5956,7 +6154,7 @@ function syncDesktopShellState(nextState = {}) {
   syncDesktopPassThroughHintLayout();
 
   if (!previousFullscreen && state.desktopShellState.fullscreen) {
-    resetStagePanelsToDefault({ persist: true, announce: false });
+    applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
   }
 }
 
@@ -5975,9 +6173,6 @@ function renderShortcutSettings() {
   if (clickThroughShortcutStatusEl) {
     clickThroughShortcutStatusEl.textContent = `当前快捷键：${display}`;
   }
-  if (shortcutSettingsSummaryEl) {
-    shortcutSettingsSummaryEl.textContent = `完全穿透：${display}`;
-  }
   if (desktopPassThroughCopyEl) {
     desktopPassThroughCopyEl.textContent = `按 ${display} 退出`;
   }
@@ -5990,6 +6185,65 @@ function renderShortcutSettings() {
   if (clickThroughShortcutInputEl?.dataset.accelerator !== accelerator) {
     clickThroughShortcutInputEl.dataset.accelerator = accelerator;
   }
+  renderWorkbenchHabitSettings();
+}
+
+function getWorkbenchHabitDraft() {
+  const canvasSide = normalizeWorkbenchPanelSide(
+    defaultCanvasPanelSideSelectEl?.value || state.uiSettings?.defaultCanvasPanelSide,
+    DEFAULT_WORKBENCH_PREFERENCES.defaultCanvasPanelSide
+  );
+  return normalizeWorkbenchPreferences({
+    defaultCanvasPanelSide: canvasSide,
+    defaultCanvasPanelVisible: defaultCanvasPanelVisibleInputEl
+      ? defaultCanvasPanelVisibleInputEl.checked
+      : state.uiSettings?.defaultCanvasPanelVisible,
+    defaultChatPanelVisible: defaultChatPanelVisibleInputEl
+      ? defaultChatPanelVisibleInputEl.checked
+      : state.uiSettings?.defaultChatPanelVisible,
+    defaultLaunchFullscreen: defaultLaunchFullscreenInputEl
+      ? defaultLaunchFullscreenInputEl.checked
+      : state.uiSettings?.defaultLaunchFullscreen,
+  });
+}
+
+function renderWorkbenchHabitSettings() {
+  const preferences = getWorkbenchPreferencesFromState();
+  const canvasSideLabel = preferences.defaultCanvasPanelSide === "right" ? "画布在右" : "画布在左";
+  const visibleLabels = [
+    preferences.defaultCanvasPanelVisible ? "画布默认展开" : "画布默认收起",
+    preferences.defaultChatPanelVisible ? "对话默认展开" : "对话默认收起",
+    preferences.defaultLaunchFullscreen ? "启动默认全屏" : "启动默认窗口",
+  ];
+  if (defaultCanvasPanelSideSelectEl && document.activeElement !== defaultCanvasPanelSideSelectEl) {
+    defaultCanvasPanelSideSelectEl.value = preferences.defaultCanvasPanelSide;
+  }
+  if (defaultCanvasPanelVisibleInputEl && document.activeElement !== defaultCanvasPanelVisibleInputEl) {
+    defaultCanvasPanelVisibleInputEl.checked = preferences.defaultCanvasPanelVisible;
+  }
+  if (defaultChatPanelVisibleInputEl && document.activeElement !== defaultChatPanelVisibleInputEl) {
+    defaultChatPanelVisibleInputEl.checked = preferences.defaultChatPanelVisible;
+  }
+  if (defaultLaunchFullscreenInputEl && document.activeElement !== defaultLaunchFullscreenInputEl) {
+    defaultLaunchFullscreenInputEl.checked = preferences.defaultLaunchFullscreen;
+  }
+  if (habitSettingsSummaryEl) {
+    habitSettingsSummaryEl.textContent = `${canvasSideLabel} · ${visibleLabels.join(" / ")} · 快捷键 ${getClickThroughShortcutDisplay()}`;
+  }
+  if (workbenchHabitStatusEl) {
+    workbenchHabitStatusEl.textContent = `当前默认：${canvasSideLabel}，${visibleLabels.join("，")}`;
+  }
+}
+
+function previewWorkbenchHabitDraft() {
+  const preferences = getWorkbenchHabitDraft();
+  state.workbenchPreferences = pickWorkbenchPreferences(preferences);
+  state.uiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    ...state.workbenchPreferences,
+  });
+  renderWorkbenchHabitSettings();
+  requestPanelLayoutFinalShapeSync();
 }
 
 async function refreshShortcutSettings() {
@@ -6107,6 +6361,13 @@ function getElementShapeRect(element, padding = 0) {
   if (!(element instanceof Element) || element.classList.contains("is-hidden")) {
     return null;
   }
+  if (
+    element.classList.contains("is-stage-hidden") ||
+    element.classList.contains("is-pane-collapsed") ||
+    element.classList.contains("is-collapsed")
+  ) {
+    return null;
+  }
 
   const style = window.getComputedStyle(element);
   const shapeIncluded = isElementIncludedInWindowShape(element);
@@ -6139,8 +6400,29 @@ function getElementShapeRect(element, padding = 0) {
   };
 }
 
+function getOpenDrawerShapeRect() {
+  if (!state.drawerOpen || !(insightDrawerEl instanceof Element)) {
+    return null;
+  }
+
+  const rect = getElementShapeRect(insightDrawerEl, 12);
+  if (rect) {
+    return rect;
+  }
+
+  const viewportWidth = Math.max(2, Number(window.innerWidth) || 0);
+  const viewportHeight = Math.max(2, Number(window.innerHeight) || 0);
+  const fallbackWidth = Math.min(460, Math.max(2, viewportWidth - 32));
+  return {
+    x: Math.max(0, Math.floor(viewportWidth - fallbackWidth - 8)),
+    y: 0,
+    width: Math.min(viewportWidth, Math.ceil(fallbackWidth + 8)),
+    height: viewportHeight,
+  };
+}
+
 function getBaseDesktopWindowShapeElements() {
-  return [
+  const elements = [
     { element: desktopClearStageEl, padding: 4 },
     { element: sidePanelEl, padding: 2 },
     { element: leftPaneResizerEl, padding: 2 },
@@ -6154,6 +6436,7 @@ function getBaseDesktopWindowShapeElements() {
     { element: restoreRightPaneBtn, padding: 6 },
     { element: insightDrawerHandleEl, padding: 4 },
   ];
+  return elements;
 }
 
 function collectDesktopWindowShapeRects() {
@@ -6179,11 +6462,16 @@ function collectDesktopWindowShapeRects() {
     ];
   }
 
-  return collectWindowShapeRects({
+  const rects = collectWindowShapeRects({
     baseElements: getBaseDesktopWindowShapeElements(),
     overlayRoot: globalOverlayLayerEl,
     getElementShapeRect,
   });
+  const drawerRect = getOpenDrawerShapeRect();
+  if (drawerRect) {
+    rects.push(drawerRect);
+  }
+  return rects;
 }
 
 function bindDesktopWindowShapeAutoSync() {
@@ -6211,6 +6499,7 @@ function bindDesktopWindowShapeAutoSync() {
   [
     desktopMenuPanel,
     desktopStatusBannerEl,
+    insightDrawerEl,
   ].forEach((element) => {
     register(
       bindWindowShapeAutoSync({
@@ -6240,6 +6529,11 @@ function requestPanelLayoutShapeSync() {
 
 function requestPanelLayoutFinalShapeSync(delayMs = 32) {
   desktopWindowShapeScheduler.requestFinalShapeSync(delayMs);
+}
+
+function requestDrawerWindowShapeFinalSync() {
+  scheduleDesktopWindowShapeSync();
+  desktopWindowShapeScheduler.requestFinalShapeSync(260);
 }
 
 function scheduleDesktopWindowShapeSync() {
@@ -6735,6 +7029,97 @@ clickThroughShortcutResetBtn?.addEventListener("click", async () => {
   }
 });
 
+[
+  defaultCanvasPanelSideSelectEl,
+  defaultCanvasPanelVisibleInputEl,
+  defaultChatPanelVisibleInputEl,
+  defaultLaunchFullscreenInputEl,
+].forEach((element) => {
+  element?.addEventListener("change", () => {
+    previewWorkbenchHabitDraft();
+    requestDrawerWindowShapeFinalSync();
+  });
+});
+
+insightDrawerEl?.querySelectorAll("details").forEach((detailsEl) => {
+  detailsEl.addEventListener("toggle", () => {
+    requestDrawerWindowShapeFinalSync();
+  });
+});
+
+insightDrawerEl?.addEventListener("scroll", () => {
+  requestDrawerWindowShapeFinalSync();
+});
+
+insightDrawerEl?.addEventListener("transitionend", (event) => {
+  if (event.target === insightDrawerEl && event.propertyName === "transform") {
+    requestDrawerWindowShapeFinalSync();
+  }
+});
+
+workbenchHabitSaveBtn?.addEventListener("click", async () => {
+  try {
+    if (workbenchHabitSaveBtn) {
+      workbenchHabitSaveBtn.disabled = true;
+      workbenchHabitSaveBtn.textContent = "保存中";
+    }
+    if (workbenchHabitStatusEl) {
+      workbenchHabitStatusEl.textContent = "正在保存并应用布局习惯...";
+    }
+    const preferences = getWorkbenchHabitDraft();
+    await saveWorkbenchPreferences(preferences);
+    clearStagePanelsState();
+    applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    renderWorkbenchHabitSettings();
+    if (workbenchHabitStatusEl) {
+      const savedPreferences = getWorkbenchPreferencesFromState();
+      const canvasSideLabel = savedPreferences.defaultCanvasPanelSide === "right" ? "画布在右" : "画布在左";
+      const visibleLabels = [
+        savedPreferences.defaultCanvasPanelVisible ? "画布默认展开" : "画布默认收起",
+        savedPreferences.defaultChatPanelVisible ? "对话默认展开" : "对话默认收起",
+        savedPreferences.defaultLaunchFullscreen ? "启动默认全屏" : "启动默认窗口",
+      ];
+      workbenchHabitStatusEl.textContent = `已保存并应用：${canvasSideLabel}，${visibleLabels.join("，")}`;
+    }
+    setStatus("习惯设置已保存并应用", "success");
+  } catch (error) {
+    if (workbenchHabitStatusEl) {
+      workbenchHabitStatusEl.textContent = `保存失败：${error.message}`;
+    }
+    setStatus(`保存习惯设置失败：${error.message}`, "warning");
+  } finally {
+    if (workbenchHabitSaveBtn) {
+      workbenchHabitSaveBtn.disabled = false;
+      workbenchHabitSaveBtn.textContent = "保存并应用";
+    }
+  }
+});
+
+workbenchHabitApplyBtn?.addEventListener("click", () => {
+  const preferences = getWorkbenchHabitDraft();
+  state.workbenchPreferences = pickWorkbenchPreferences(preferences);
+  state.uiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    ...state.workbenchPreferences,
+  });
+  writeUiSettingsCache(state.uiSettings);
+  clearStagePanelsState();
+  renderWorkbenchHabitSettings();
+  applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: true });
+});
+
+workbenchHabitResetBtn?.addEventListener("click", async () => {
+  try {
+    await saveWorkbenchPreferences({ ...DEFAULT_WORKBENCH_PREFERENCES });
+    clearStagePanelsState();
+    applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    renderWorkbenchHabitSettings();
+    setStatus("已恢复默认习惯设置", "success");
+  } catch (error) {
+    setStatus(`恢复习惯设置失败：${error.message}`, "warning");
+  }
+});
+
 desktopPinBtn?.addEventListener("click", async () => {
   if (!DESKTOP_SHELL?.setPinned) return;
 
@@ -6972,6 +7357,9 @@ desktopCloseBtn?.addEventListener("click", async () => {
       canvasBoardSavePath: nextValue,
     });
     writeUiSettingsCache(state.uiSettings);
+    writeStartupContextUiSettings({
+      canvasBoardSavePath: nextValue,
+    });
     if (canvasBoardPathInputEl) {
       canvasBoardPathInputEl.value = nextValue;
     }
@@ -7824,9 +8212,6 @@ for (const button of screenSourceActionButtonEls.refresh) {
       setStatus("AI 镜像目标已刷新", "success");
     } catch (error) {
       setStatus(`刷新 AI 镜像目标失败：${error.message}`, "warning");
-    } finally {
-      closeScreenSourceHeaderMenu();
-      closeScreenSourceOverflowMenu();
     }
   });
 }
@@ -7914,7 +8299,6 @@ screenSourceSelectPanelEl?.addEventListener("click", (event) => {
     return;
   }
   updateScreenSourceSelection(nextSourceId);
-  closeScreenSourceTargetMenu();
 });
 
 screenSourceRenderModeSelectEl?.addEventListener("change", async () => {

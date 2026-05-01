@@ -15,6 +15,11 @@ body {
     linear-gradient(180deg, rgb(var(--app-bg-start-rgb) / var(--app-bg-opacity)) 0%, rgb(var(--app-bg-end-rgb) / var(--app-bg-opacity)) 100%);
 }
 
+:root {
+  --ff-shell-shadow-soft: 0 8px 24px rgba(6, 12, 24, 0.12);
+  --ff-shell-shadow-float: 0 14px 36px rgba(6, 12, 24, 0.16);
+}
+
 .page-shell {
   position: relative;
   height: 100vh;
@@ -207,9 +212,7 @@ body.is-pane-y-resizing * {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
     rgb(var(--app-shell-surface-rgb) / 0.78) !important;
-  box-shadow:
-    0 18px 40px rgba(5, 10, 22, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  box-shadow: none !important;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   writing-mode: vertical-rl;
@@ -259,9 +262,7 @@ body.is-pane-y-resizing * {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.028)),
     rgb(var(--app-shell-surface-rgb) / 0.42);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 12px 28px rgba(8, 14, 28, 0.14);
+  box-shadow: none;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   pointer-events: auto;
@@ -278,9 +279,8 @@ body.is-pane-y-resizing * {
   border-radius: 999px;
   outline: none;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 4px 10px rgba(0, 0, 0, 0.14);
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
   cursor: pointer;
   transition:
     transform 120ms ease,
@@ -303,9 +303,8 @@ body.is-pane-y-resizing * {
 .stage-panel-orb:focus-visible {
   transform: scale(1.08);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 8px 16px rgba(0, 0, 0, 0.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.12);
   filter: brightness(1.03);
 }
 
@@ -316,9 +315,8 @@ body.is-pane-y-resizing * {
 .stage-panel-close {
   background: linear-gradient(180deg, #ff8d85, #ff6a63);
   box-shadow:
-    inset 0 1px 0 rgba(255, 240, 238, 0.46),
-    0 0 0 1px rgba(255, 106, 99, 0.12),
-    0 4px 12px rgba(255, 106, 99, 0.18);
+    inset 0 1px 0 rgba(255, 240, 238, 0.42),
+    0 0 0 1px rgba(255, 106, 99, 0.14);
 }
 
 .stage-panel-drag {
@@ -333,9 +331,8 @@ body.is-pane-y-resizing * {
 .stage-panel-drag:hover,
 .stage-panel-drag:focus-visible {
   box-shadow:
-    inset 0 1px 0 rgba(255, 248, 223, 0.46),
-    0 0 0 2px rgba(255, 214, 111, 0.2),
-    0 6px 16px rgba(255, 189, 74, 0.28);
+    inset 0 1px 0 rgba(255, 248, 223, 0.42),
+    0 0 0 2px rgba(255, 214, 111, 0.16);
   filter: brightness(1.04);
 }
 
@@ -347,9 +344,8 @@ body.is-desktop-pinned .stage-panel-drag {
 .stage-panel-reset {
   background: linear-gradient(180deg, #6de7b7, #36c98f);
   box-shadow:
-    inset 0 1px 0 rgba(232, 255, 245, 0.42),
-    0 0 0 1px rgba(54, 201, 143, 0.12),
-    0 4px 12px rgba(54, 201, 143, 0.18);
+    inset 0 1px 0 rgba(232, 255, 245, 0.4),
+    0 0 0 1px rgba(54, 201, 143, 0.14);
 }
 
 .stage-restore-dock {
@@ -563,9 +559,7 @@ body.desktop-mode .desktop-clear-stage > * {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.018)),
     rgb(var(--app-shell-surface-rgb) / 0.54);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 12px 28px rgba(4, 8, 20, 0.14);
+  box-shadow: none;
   cursor: pointer;
   list-style: none;
   font-size: 1.2rem;
@@ -589,9 +583,7 @@ body.desktop-mode .desktop-clear-stage > * {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
     rgb(var(--app-shell-overlay-rgb) / 0.88);
-  box-shadow:
-    0 24px 56px rgba(5, 10, 22, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--ff-shell-shadow-float);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
 }
@@ -666,16 +658,14 @@ body.desktop-mode .desktop-clear-stage > * {
   background:
     linear-gradient(180deg, rgb(var(--app-accent-rgb) / 0.1), rgba(255, 255, 255, 0.018)),
     rgb(var(--theme-control-surface-rgb) / 0.32) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 12px 28px rgba(4, 8, 20, 0.14) !important;
+  box-shadow: none !important;
 }
 
 .primary-btn {
   color: rgb(var(--app-button-text-rgb) / 1) !important;
   border: 0 !important;
   background: linear-gradient(135deg, var(--ui-primary), var(--ui-primary-strong)) !important;
-  box-shadow: 0 16px 34px rgb(var(--app-button-shadow-rgb) / 0.26) !important;
+  box-shadow: none !important;
 }
 
 .canvas-meta-strip {
@@ -757,8 +747,8 @@ body.desktop-mode .desktop-clear-stage > * {
     linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.02)),
     rgb(var(--app-shell-surface-strong-rgb) / 0.68) !important;
   box-shadow:
-    0 16px 40px rgba(8, 14, 28, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 255, 255, 0.02) !important;
   backdrop-filter: blur(20px) !important;
   -webkit-backdrop-filter: blur(20px) !important;
 }
@@ -766,9 +756,8 @@ body.desktop-mode .desktop-clear-stage > * {
 .canvas-card.is-selected {
   border-color: rgb(var(--app-accent-rgb) / 0.44) !important;
   box-shadow:
-    0 18px 52px rgba(8, 14, 28, 0.2),
     0 0 0 1px rgb(var(--app-accent-rgb) / 0.18),
-    0 0 28px rgb(var(--app-accent-rgb) / 0.16) !important;
+    0 0 18px rgb(var(--app-accent-rgb) / 0.12) !important;
 }
 
 .canvas-card-head {
@@ -802,11 +791,11 @@ body.desktop-mode .conversation-panel {
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
   border-radius: 34px !important;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
-    linear-gradient(160deg, rgb(var(--app-shell-surface-deep-rgb) / 0.9), rgb(var(--app-shell-surface-deeper-rgb) / 0.76)) !important;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.014)),
+    linear-gradient(160deg, rgb(var(--app-shell-surface-deep-rgb) / 0.56), rgb(var(--app-shell-surface-deeper-rgb) / 0.42)) !important;
   box-shadow:
-    0 36px 92px rgba(5, 10, 22, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 255, 255, 0.02) !important;
   backdrop-filter: blur(32px) !important;
   -webkit-backdrop-filter: blur(32px) !important;
   transition:
@@ -832,6 +821,7 @@ body.is-pane-y-resizing .pane-edge-y-resizer {
 
 .desktop-clear-stage.is-stage-hidden,
 .conversation-panel.is-stage-hidden {
+  display: none !important;
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -839,6 +829,7 @@ body.is-pane-y-resizing .pane-edge-y-resizer {
 
 .desktop-clear-stage.is-pane-collapsed,
 .conversation-panel.is-pane-collapsed {
+  display: none !important;
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -964,9 +955,7 @@ body.desktop-full-pass-through .stage-restore-dock {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
     rgb(var(--app-shell-overlay-rgb) / 0.9);
-  box-shadow:
-    0 24px 56px rgba(5, 10, 22, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--ff-shell-shadow-float);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   z-index: 90;
@@ -1317,9 +1306,7 @@ body.desktop-full-pass-through .stage-restore-dock {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
     rgb(var(--theme-floating-surface-rgb) / 0.92);
-  box-shadow:
-    0 24px 56px rgba(5, 10, 22, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--ff-shell-shadow-float);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   z-index: 146;
@@ -1412,8 +1399,8 @@ body.desktop-mode .message-bubble {
     linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
     rgb(var(--theme-message-surface-rgb) / 0.68) !important;
   box-shadow:
-    0 16px 40px rgba(8, 14, 28, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 255, 255, 0.02) !important;
   backdrop-filter: blur(22px) !important;
   -webkit-backdrop-filter: blur(22px) !important;
 }
@@ -1448,6 +1435,7 @@ body.desktop-mode .message-bubble {
   color: var(--ui-text-soft) !important;
   cursor: pointer !important;
   line-height: 1 !important;
+  box-shadow: none !important;
 }
 
 .message-menu-trigger::-webkit-details-marker {
@@ -1478,8 +1466,8 @@ body.desktop-mode .composer {
     linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
     rgb(var(--theme-control-surface-strong-rgb) / 0.72) !important;
   box-shadow:
-    0 18px 44px rgba(8, 14, 28, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 255, 255, 0.02) !important;
   backdrop-filter: blur(24px) !important;
   -webkit-backdrop-filter: blur(24px) !important;
   z-index: 2;
@@ -1583,7 +1571,6 @@ summary {
     rgb(var(--theme-control-active-rgb) / 0.68) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 12px 28px rgba(4, 8, 20, 0.16),
     0 0 0 1px rgb(var(--app-accent-rgb) / 0.08) !important;
 }
 
@@ -1612,7 +1599,7 @@ summary {
 
 .composer-thinking-btn.is-active .composer-thinking-icon {
   opacity: 1;
-  filter: drop-shadow(0 0 10px rgb(var(--app-accent-rgb) / 0.34));
+  filter: none;
   transform: scale(1.02);
 }
 
@@ -1628,7 +1615,7 @@ summary {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
     linear-gradient(160deg, rgb(var(--app-shell-overlay-rgb) / 0.94), rgb(var(--app-shell-surface-deeper-rgb) / 0.82)) !important;
-  box-shadow: 0 36px 92px rgba(5, 10, 22, 0.34) !important;
+  box-shadow: var(--ff-shell-shadow-float) !important;
   backdrop-filter: blur(32px) !important;
   -webkit-backdrop-filter: blur(32px) !important;
 }
@@ -1802,6 +1789,10 @@ summary {
   min-height: 0 !important;
   overflow: hidden !important;
   border-radius: 24px !important;
+  background:
+    radial-gradient(circle at 50% 46%, rgb(var(--app-accent-rgb) / 0.04), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(248, 250, 252, 0.975)),
+    rgba(255, 255, 255, 0.985) !important;
 }
 
 .canvas-engine-surface {

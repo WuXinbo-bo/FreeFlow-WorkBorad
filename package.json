@@ -1,6 +1,6 @@
 {
   "name": "freeflow-workboard",
-  "version": "1.0.8-rc",
+  "version": "1.0.9-rc",
   "productName": "FreeFlow",
   "description": "一站式打造属于你的专属办公白板",
   "main": "electron/main.js",
@@ -41,6 +41,7 @@
     "@codemirror/lang-xml": "^6.1.0",
     "codemirror": "^6.0.2",
     "docx": "^9.5.1",
+    "docx-pdf": "^0.0.1",
     "express": "^5.2.1",
     "file-type": "^22.0.0",
     "highlight.js": "^11.11.1",

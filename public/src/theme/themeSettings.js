@@ -4,6 +4,7 @@ import { hexToRgb, mixRgb, normalizeThemeHexColor } from "../utils/color.js";
 const DEFAULT_THEME_PRESET_KEY = "minimalist-slate";
 const DEFAULT_THEME_PRESET_SOURCE = Object.freeze({
   panelOpacity: 0.96,
+  canvasOpacity: 0.95,
   backgroundColor: "#f8f9fa",
   backgroundOpacity: 1,
   textColor: "#212529",
@@ -68,6 +69,9 @@ export const DEFAULT_THEME_SETTINGS = Object.freeze({
   panelOpacity: Number.isFinite(Number(DEFAULT_THEME_PRESET_SOURCE.panelOpacity))
     ? Math.min(Math.max(Number(DEFAULT_THEME_PRESET_SOURCE.panelOpacity), 0.55), 1)
     : 0.96,
+  canvasOpacity: Number.isFinite(Number(DEFAULT_THEME_PRESET_SOURCE.canvasOpacity))
+    ? Math.min(Math.max(Number(DEFAULT_THEME_PRESET_SOURCE.canvasOpacity), 0.2), 1)
+    : 0.95,
   ...deriveThemeColors(DEFAULT_THEME_PRESET_SOURCE),
   backgroundOpacity: Number.isFinite(Number(DEFAULT_THEME_PRESET_SOURCE.backgroundOpacity))
     ? Math.min(Math.max(Number(DEFAULT_THEME_PRESET_SOURCE.backgroundOpacity), 0), 1)
@@ -77,6 +81,7 @@ export const DEFAULT_THEME_SETTINGS = Object.freeze({
 
 export const THEME_SETTING_KEYS = Object.freeze([
   "panelOpacity",
+  "canvasOpacity",
   "backgroundColor",
   "backgroundOpacity",
   "textColor",
@@ -125,6 +130,9 @@ export function resolveThemePresetKey(settings = {}, requestedKey = "") {
       panelOpacity: Number.isFinite(Number(presetSource.panelOpacity))
         ? Math.min(Math.max(Number(presetSource.panelOpacity), 0.55), 1)
         : DEFAULT_THEME_SETTINGS.panelOpacity,
+      canvasOpacity: Number.isFinite(Number(presetSource.canvasOpacity))
+        ? Math.min(Math.max(Number(presetSource.canvasOpacity), 0.2), 1)
+        : DEFAULT_THEME_SETTINGS.canvasOpacity,
       backgroundOpacity: Number.isFinite(Number(presetSource.backgroundOpacity))
         ? Math.min(Math.max(Number(presetSource.backgroundOpacity), 0), 1)
         : DEFAULT_THEME_SETTINGS.backgroundOpacity,
@@ -146,6 +154,10 @@ export function normalizeThemeSettings(payload = {}) {
   const panelOpacity = Number.isFinite(parsedOpacity)
     ? Math.min(Math.max(parsedOpacity, 0.55), 1)
     : DEFAULT_THEME_SETTINGS.panelOpacity;
+  const parsedCanvasOpacity = Number(source.canvasOpacity);
+  const canvasOpacity = Number.isFinite(parsedCanvasOpacity)
+    ? Math.min(Math.max(parsedCanvasOpacity, 0.2), 1)
+    : DEFAULT_THEME_SETTINGS.canvasOpacity;
   const parsedBackgroundOpacity = Number(source.backgroundOpacity);
   const backgroundOpacity = Number.isFinite(parsedBackgroundOpacity)
     ? Math.min(Math.max(parsedBackgroundOpacity, 0), 1)
@@ -154,11 +166,13 @@ export function normalizeThemeSettings(payload = {}) {
 
   return {
     panelOpacity,
+    canvasOpacity,
     ...colors,
     backgroundOpacity,
     themePreset: resolveThemePresetKey(
       {
         panelOpacity,
+        canvasOpacity,
         ...colors,
         backgroundOpacity,
       },

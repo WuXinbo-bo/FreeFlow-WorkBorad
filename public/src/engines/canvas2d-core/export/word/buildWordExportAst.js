@@ -1,5 +1,6 @@
 import {
   ensureRichTextDocumentFields,
+  createRichTextDocumentFromHtml,
   normalizeRichTextDocument,
   RICH_TEXT_BLOCK_TYPES,
   RICH_TEXT_INLINE_NODE_TYPES,
@@ -204,6 +205,7 @@ function createCompilerContext() {
   return {
     footnotes: new Map(),
     footnoteNamespace: "",
+    listSequence: 0,
   };
 }
 
@@ -365,11 +367,13 @@ function buildListItemNode(block = {}, context) {
 }
 
 function buildListNode(block = {}, context) {
+  context.listSequence = (Number(context.listSequence || 0) || 0) + 1;
   return {
     type: "list",
     ordered: block?.attrs?.ordered === true,
     task: block?.attrs?.task === true,
     start: Math.max(1, Number(block?.attrs?.start || 1) || 1),
+    listId: `list-${context.listSequence}`,
     items: (Array.isArray(block.blocks) ? block.blocks : []).map((child) => buildListItemNode(child, context)),
   };
 }
@@ -443,11 +447,21 @@ function registerFootnoteDefinition(block = {}, context) {
 }
 
 function buildHtmlFallbackNode(block = {}) {
+  const html = String(block?.html || "").trim();
+  if (html) {
+    const reparsedDocument = createRichTextDocumentFromHtml(html, String(block?.plainText || ""), {
+      baseFontSize: 18,
+    });
+    const reparsedChildren = buildAstChildrenFromDocument(reparsedDocument, createCompilerContext());
+    if (reparsedChildren.length) {
+      return reparsedChildren;
+    }
+  }
   const plainText = sanitizeText(
     String(
       block?.plainText ||
         serializeRichTextDocumentToPlainText({ blocks: [block] }, "") ||
-        htmlToPlainText(String(block?.html || ""))
+        htmlToPlainText(html)
     )
   ).trim();
   if (!plainText) {

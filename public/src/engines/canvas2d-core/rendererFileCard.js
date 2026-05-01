@@ -175,6 +175,9 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
   const metaFontSize = scaleSceneValue(view, metaFontLogical);
   const tagFontSize = scaleSceneValue(view, tagFontLogical);
   const lineHeight = scaleSceneValue(view, Math.max(16, nameFontLogical * 1.2));
+  const accentSoftColor = String(element.accentSoftColor || "rgba(59, 130, 246, 0.12)");
+  const accentStrokeColor = String(element.accentStrokeColor || "rgba(59, 130, 246, 0.18)");
+  const accentTextColor = String(element.accentTextColor || "#1d4ed8");
 
   const memoLayout = getMemoLayout(element, { kind: "fileCard" });
   const memoX = memoLayout.left * scale + Number(view?.offsetX || 0);
@@ -221,9 +224,9 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
   ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
   ctx.strokeStyle = "rgba(203, 213, 225, 0.96)";
   ctx.lineWidth = 1.25;
-  ctx.shadowColor = "rgba(15, 23, 42, 0.08)";
-  ctx.shadowBlur = 22;
-  ctx.shadowOffsetY = 8;
+  ctx.shadowColor = "rgba(15, 23, 42, 0.03)";
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 2;
   ctx.fill();
   ctx.shadowColor = "transparent";
   ctx.stroke();
@@ -235,11 +238,11 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
   const contentWidth = Math.max(80, width - paddingX * 2);
 
   drawRoundedRect(ctx, x + paddingX, y + paddingY, Math.min(tagWidth, contentWidth), tagHeight, Math.max(8, tagHeight * 0.45));
-  ctx.fillStyle = "rgba(59, 130, 246, 0.12)";
-  ctx.strokeStyle = "rgba(59, 130, 246, 0.18)";
+  ctx.fillStyle = accentSoftColor;
+  ctx.strokeStyle = accentStrokeColor;
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "#1d4ed8";
+  ctx.fillStyle = accentTextColor;
   ctx.font = `600 ${tagFontSize}px "Segoe UI", "PingFang SC", sans-serif`;
   ctx.textBaseline = "middle";
   ctx.fillText(ext, x + paddingX + Math.min(tagWidth, contentWidth) * 0.2, y + paddingY + tagHeight / 2);

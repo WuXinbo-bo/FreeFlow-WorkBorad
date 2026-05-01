@@ -2,6 +2,7 @@ import { getElementBounds } from "./elements/index.js";
 
 const MULTI_SELECTION_MIN_SIZE = 24;
 const MULTI_SELECTION_HANDLE_RADIUS_PX = 7;
+const MULTI_SELECTION_HANDLE_HIT_RADIUS_PX = 12;
 const MULTI_SELECTION_EDGE_HANDLE_MIN_SIDE_PX = 56;
 
 function clamp(value, min, max) {
@@ -85,7 +86,7 @@ export function hitTestMultiSelectionHandle(bounds, scenePoint, scale = 1) {
     return null;
   }
   const safeScale = Math.max(0.1, Number(scale) || 1);
-  const radius = MULTI_SELECTION_HANDLE_RADIUS_PX / safeScale;
+  const radius = MULTI_SELECTION_HANDLE_HIT_RADIUS_PX / safeScale;
   const allowEdges = shouldShowMultiSelectionEdgeHandles(normalized, safeScale);
   const handles = getMultiSelectionHandleMap(normalized);
   const orderedHandles = [

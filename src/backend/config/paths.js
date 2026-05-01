@@ -3,11 +3,11 @@ const os = require("os");
 
 const ROOT_DIR = path.resolve(__dirname, "../../..");
 const USER_APP_DIR = String(process.env.FREEFLOW_HOME_DIR || "").trim() || path.join(os.homedir(), "FreeFlow");
-const IS_PACKAGED_APP_LAYOUT = /(^|[\\/])app\.asar([\\/]|$)/i.test(ROOT_DIR);
-const IS_ELECTRON_RUNTIME = Boolean(process.versions?.electron);
-const DEFAULT_DATA_DIR =
-  IS_PACKAGED_APP_LAYOUT || IS_ELECTRON_RUNTIME ? path.join(USER_APP_DIR, "AppData") : path.join(ROOT_DIR, "data");
-const DATA_DIR = String(process.env.FREEFLOW_USER_DATA_DIR || "").trim() || DEFAULT_DATA_DIR;
+const LEGACY_PROJECT_DATA_DIR =
+  String(process.env.FREEFLOW_LEGACY_PROJECT_DATA_DIR || "").trim() || path.join(ROOT_DIR, "data");
+const DEFAULT_DATA_DIR = path.join(USER_APP_DIR, "AppData");
+const EXPLICIT_USER_DATA_DIR = String(process.env.FREEFLOW_USER_DATA_DIR || "").trim();
+const DATA_DIR = EXPLICIT_USER_DATA_DIR || DEFAULT_DATA_DIR;
 const CANVAS_BOARD_DIR =
   String(process.env.FREEFLOW_CANVAS_BOARD_DIR || "").trim() || path.join(USER_APP_DIR, "CanvasBoards");
 const CACHE_DIR = String(process.env.FREEFLOW_CACHE_DIR || "").trim() || path.join(DATA_DIR, "Cache");
@@ -19,6 +19,7 @@ const DESKTOP_DIR = path.join(os.homedir(), "Desktop");
 const WORKSPACE_DIR = ROOT_DIR;
 const TUTORIAL_ASSET_DIR_NAME = "TutorialAssets";
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
+const LEGACY_PROJECT_UI_SETTINGS_FILE = path.join(LEGACY_PROJECT_DATA_DIR, "ui-settings.json");
 const MODEL_PROFILES_FILE = path.join(DATA_DIR, "model-profiles.json");
 const MODEL_PROVIDER_SETTINGS_FILE = path.join(DATA_DIR, "model-provider-settings.json");
 const PERMISSIONS_FILE = path.join(DATA_DIR, "permissions.json");
@@ -38,8 +39,8 @@ process.env.FREEFLOW_TEMP_DRAG_DIR = TEMP_DRAG_DIR;
 module.exports = {
   ROOT_DIR,
   USER_APP_DIR,
-  IS_PACKAGED_APP_LAYOUT,
-  IS_ELECTRON_RUNTIME,
+  LEGACY_PROJECT_DATA_DIR,
+  EXPLICIT_USER_DATA_DIR,
   DATA_DIR,
   CANVAS_BOARD_DIR,
   CACHE_DIR,
@@ -51,6 +52,7 @@ module.exports = {
   WORKSPACE_DIR,
   TUTORIAL_ASSET_DIR_NAME,
   UI_SETTINGS_FILE,
+  LEGACY_PROJECT_UI_SETTINGS_FILE,
   MODEL_PROFILES_FILE,
   MODEL_PROVIDER_SETTINGS_FILE,
   PERMISSIONS_FILE,

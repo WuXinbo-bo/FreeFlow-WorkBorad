@@ -1,5 +1,11 @@
 "use strict";
 
+self.Prism = {
+  ...(self.Prism || {}),
+  manual: true,
+  disableWorkerMessageHandler: true,
+};
+
 const LANGUAGE_ALIASES = {
   js: "javascript",
   ts: "typescript",

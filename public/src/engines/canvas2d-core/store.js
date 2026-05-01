@@ -79,6 +79,8 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
     boardSaveToastMessage: "",
     exportHistory: [],
     exportHistoryUpdatedAt: 0,
+    wordExportPreviewRequest: null,
+    fileCardPreviewRequests: [],
   };
 
   let cachedBoardSnapshotRevision = -1;
@@ -163,6 +165,24 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       boardSaveToastMessage: state.boardSaveToastMessage,
       exportHistory: Array.isArray(state.exportHistory) ? state.exportHistory.map((entry) => ({ ...entry })) : [],
       exportHistoryUpdatedAt: Number(state.exportHistoryUpdatedAt || 0) || 0,
+      wordExportPreviewRequest:
+        state.wordExportPreviewRequest && typeof state.wordExportPreviewRequest === "object"
+          ? JSON.parse(JSON.stringify({
+              ...state.wordExportPreviewRequest,
+              previewAst: undefined,
+            }))
+          : null,
+      fileCardPreviewRequests: Array.isArray(state.fileCardPreviewRequests)
+        ? state.fileCardPreviewRequests
+            .filter((entry) => entry && typeof entry === "object")
+            .map((entry) =>
+              JSON.parse(
+                JSON.stringify({
+                  ...entry,
+                })
+              )
+            )
+        : [],
       alignmentSnapConfig:
         state.alignmentSnapConfig && typeof state.alignmentSnapConfig === "object"
           ? { ...state.alignmentSnapConfig }

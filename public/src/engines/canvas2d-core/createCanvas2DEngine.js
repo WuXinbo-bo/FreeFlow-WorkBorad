@@ -13,6 +13,7 @@ import {
   collectSnapCandidates,
   createAlignmentSnapConfig,
   createAlignmentSnapState,
+  getSnapAnchors,
   hasActiveAlignmentSnap,
   resolveAlignmentSnap,
   resetAlignmentSnapState,
@@ -35,6 +36,8 @@ import {
   createEditableTableElement,
   createTableStructureFromMatrix,
   flattenTableStructureToMatrix,
+  TABLE_MIN_HEIGHT,
+  TABLE_MIN_WIDTH,
   updateTableElementStructure,
 } from "./elements/table.js";
 import {
@@ -43,11 +46,14 @@ import {
   serializeTableMatrixToTsv,
 } from "./elements/tableFormats.js";
 import {
+  CODE_BLOCK_MIN_HEIGHT,
+  CODE_BLOCK_MIN_WIDTH,
   createCodeBlockElement,
   isMermaidCodeBlock,
   normalizeCodeBlockElement,
   updateCodeBlockElement,
 } from "./elements/codeBlock.js";
+import { MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./elements/math.js";
 import { createFlowModule } from "./flowModule.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { createShapeModule } from "./shapeModule.js";
@@ -185,6 +191,8 @@ import {
   getExportOperationMeta,
   resolveCopyExportAction,
 } from "./export/copyExportProtocol.js";
+import { buildSelectionWordExportPlan } from "./export/word/buildWordExportAst.js";
+import { buildWordExportPreviewModel } from "./export/word/buildWordExportPreviewModel.js";
 import { createStructuredExportRuntime } from "./export/runtime/createStructuredExportRuntime.js";
 import {
   createInputDescriptor,
@@ -196,6 +204,7 @@ import { createStructuredImportRuntime } from "./import/runtime/createStructured
 import { detectTextContentType, DETECTED_TEXT_TYPES } from "./import/gateway/contentTypeDetector.js";
 import {
   ensureRichTextDocumentFields,
+  createRichTextDocument,
   RICH_TEXT_BLOCK_TYPES,
   serializeRichTextBlocksToHtml,
   serializeRichTextDocumentToHtml,
@@ -429,6 +438,7 @@ function buildPersistentRichToolbarHtml() {
       <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
       <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
       <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="text-split" title="拆分文本">—✕—</button>
       ${buildRichLinkMenuHtml()}
       ${buildRichColorControlsHtml()}
     </div>
@@ -453,6 +463,7 @@ function buildSelectionRichToolbarHtml() {
       <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
       <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
       <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="text-split" title="拆分文本">—✕—</button>
       ${buildRichLinkMenuHtml()}
       ${buildRichColorControlsHtml()}
     </div>
@@ -1308,6 +1319,67 @@ function extractStandaloneMathBlockSegments(html = "") {
   return segments;
 }
 
+function extractTextSplitSegments(html = "") {
+  if (typeof document === "undefined") {
+    return [];
+  }
+  const source = String(html || "").trim();
+  if (!source) {
+    return [];
+  }
+  const root = document.createElement("div");
+  root.innerHTML = source;
+  const markerNodes = Array.from(root.querySelectorAll('[data-ff-text-split="true"]'));
+  if (!markerNodes.length) {
+    return [];
+  }
+  Array.from(root.querySelectorAll('[data-ff-text-split-spacer="true"]')).forEach((node) => {
+    node.remove();
+  });
+  const segments = [];
+  const pushRangeSegment = (range) => {
+    if (!(range instanceof Range) || range.collapsed) {
+      return;
+    }
+    const bufferRoot = document.createElement("div");
+    bufferRoot.appendChild(range.cloneContents());
+    const htmlValue = sanitizeHtml(String(bufferRoot.innerHTML || "").trim());
+    if (!htmlValue) {
+      return;
+    }
+    const plainText = sanitizeText(htmlToPlainText(htmlValue));
+    if (!plainText.trim() && !/<(?:img|table|blockquote|pre|ul|ol|hr)\b/i.test(htmlValue)) {
+      return;
+    }
+    segments.push({
+      type: "text",
+      html: htmlValue,
+      plainText,
+    });
+  };
+  let startContainer = root;
+  let startOffset = 0;
+  markerNodes.forEach((marker) => {
+    const parentNode = marker.parentNode;
+    if (!(parentNode instanceof Node)) {
+      return;
+    }
+    const markerIndex = Array.prototype.indexOf.call(parentNode.childNodes, marker);
+    const range = document.createRange();
+    range.setStart(startContainer, startOffset);
+    range.setEndBefore(marker);
+    pushRangeSegment(range);
+    startContainer = parentNode;
+    startOffset = Math.max(0, markerIndex);
+    marker.remove();
+  });
+  const tailRange = document.createRange();
+  tailRange.setStart(startContainer, startOffset);
+  tailRange.setEnd(root, root.childNodes.length);
+  pushRangeSegment(tailRange);
+  return segments;
+}
+
 function buildSplitTextSegmentItem(baseItem, segment, { x = 0, y = 0, width = 240, fontSize = DEFAULT_TEXT_FONT_SIZE } = {}) {
   const html = normalizeRichHtmlInlineFontSizes(String(segment?.html || ""), fontSize).trim();
   const plainText = sanitizeText(segment?.plainText || htmlToPlainText(html));
@@ -1447,6 +1519,32 @@ function buildStandaloneMathBlockSplitItems(baseItem, html = "", options = {}) {
     cursorY += Math.max(40, Number(nextItem.height || 0) || 40) + TEXT_BLOCK_SPLIT_GAP;
   });
   return items.length ? items : null;
+}
+
+function buildTextSplitItems(baseItem, html = "", options = {}) {
+  const rawHtml = String(html || "");
+  if (!/data-ff-text-split\s*=\s*["']?true["']?/i.test(rawHtml)) {
+    return null;
+  }
+  const segments = extractTextSplitSegments(rawHtml);
+  if (segments.length < 2) {
+    return null;
+  }
+  const x = Number(baseItem?.x || 0) || 0;
+  const startY = Number(baseItem?.y || 0) || 0;
+  const width = Math.max(160, Number(options.width || baseItem?.width || 0) || 240);
+  const fontSize = Number(options.fontSize || baseItem?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE;
+  const items = [];
+  let cursorY = startY;
+  segments.forEach((segment) => {
+    const nextItem = buildSplitTextSegmentItem(baseItem, segment, { x, y: cursorY, width, fontSize });
+    if (!nextItem) {
+      return;
+    }
+    items.push(nextItem);
+    cursorY += Math.max(40, Number(nextItem.height || 0) || 40) + TEXT_BLOCK_SPLIT_GAP;
+  });
+  return items.length >= 2 ? items : null;
 }
 
 function syncTextLinkSemanticFields(item, plainText = "", richTextDocument = null, options = {}) {
@@ -1672,6 +1770,24 @@ function buildOverlayTextPreview(text = "", maxLength = 240) {
     return normalized;
   }
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildFileCardPreviewDiagnostics(patch = {}) {
+  const merged = {
+    loadState: "待开始",
+    parseState: "待开始",
+    pageCount: 0,
+    contentNodeCount: 0,
+    runtimeLabel: "待命",
+    ...(patch && typeof patch === "object" ? patch : {}),
+  };
+  return {
+    loadState: String(merged.loadState || "").trim() || "待开始",
+    parseState: String(merged.parseState || "").trim() || "待开始",
+    pageCount: Math.max(0, Number(merged.pageCount || 0) || 0),
+    contentNodeCount: Math.max(0, Number(merged.contentNodeCount || 0) || 0),
+    runtimeLabel: String(merged.runtimeLabel || "").trim() || "待命",
+  };
 }
 
 function hashOverlayContent(value = "") {
@@ -2980,6 +3096,7 @@ export function createCanvas2DEngine(options = {}) {
   state.alignmentSnap = createAlignmentSnapState();
   state.exportHistory = [];
   state.exportHistoryUpdatedAt = 0;
+  state.wordExportPreviewRequest = null;
 
   state.board.items = state.board.items.map((item) => {
     if (item?.type === "text") {
@@ -3492,6 +3609,17 @@ let tablePointerSelectionState = {
     nodeMap: codeBlockDisplayMap,
     visibleIds: codeBlockVisibleIds,
   });
+  let fileCardPreviewSurfaceHost = null;
+  let fileCardPreviewSurfaceRoot = null;
+  let fileCardPreviewSurfaceStyleRoot = null;
+  let fileCardPreviewSurfaceContentRoot = null;
+  let fileCardPreviewWheelCleanup = null;
+  let fileCardPreviewRenderToken = 0;
+  let fileCardPreviewDeferredHydrationTimer = 0;
+  let fileCardPreviewVisibilityRetryTimer = 0;
+  let fileCardPreviewDocxModulePromise = null;
+  const FILE_CARD_PREVIEW_MIN_SCALE = 0.34;
+  const FILE_CARD_PREVIEW_MAX_SCALE = 1.9;
   const nonEditingSceneEventBridge = createSceneEventBridge({
     resolveScenePoint: (event) => toScenePoint(Number(event?.clientX || 0), Number(event?.clientY || 0)),
     resolveTarget: (scenePoint) => hitTestCanvasElement(scenePoint, state.board.view.scale),
@@ -4125,6 +4253,34 @@ let tablePointerSelectionState = {
     };
   }
 
+  function constrainMultiSelectionBoundsToWidthOnly(baseBounds, nextBounds, handle) {
+    if (!baseBounds || !nextBounds) {
+      return nextBounds;
+    }
+    const normalizedHandle = String(handle || "").trim().toLowerCase();
+    const fixedLeft = Number(baseBounds.left || 0);
+    const fixedRight = Number(baseBounds.right ?? (fixedLeft + Number(baseBounds.width || 0)));
+    const fixedTop = Number(baseBounds.top || 0);
+    const fixedHeight = Math.max(1, Number(baseBounds.height || (baseBounds.bottom - baseBounds.top) || 1));
+    const fixedBottom = fixedTop + fixedHeight;
+    let left = Number(nextBounds.left || fixedLeft);
+    let right = Number(nextBounds.right ?? (left + Number(nextBounds.width || 0)));
+
+    if (normalizedHandle === "multi-n" || normalizedHandle === "multi-s") {
+      left = fixedLeft;
+      right = fixedRight;
+    }
+
+    return {
+      left: Math.min(left, right),
+      right: Math.max(left, right),
+      top: fixedTop,
+      bottom: fixedBottom,
+      width: Math.max(1, Math.abs(right - left)),
+      height: fixedHeight,
+    };
+  }
+
   function applyMultiSelectionResize(baseSelection, nextBounds) {
     const baseBounds = baseSelection?.bounds || null;
     const baseItemsMap = baseSelection?.items instanceof Map ? baseSelection.items : new Map();
@@ -4134,9 +4290,6 @@ let tablePointerSelectionState = {
     const safeBaseWidth = Math.max(1, Number(baseBounds.width || (baseBounds.right - baseBounds.left) || 1));
     const safeBaseHeight = Math.max(1, Number(baseBounds.height || (baseBounds.bottom - baseBounds.top) || 1));
     const nextWidth = Math.max(1, Number(nextBounds.width || (nextBounds.right - nextBounds.left) || 1));
-    const nextHeight = Math.max(1, Number(nextBounds.height || (nextBounds.bottom - nextBounds.top) || 1));
-    const scaleX = nextWidth / safeBaseWidth;
-    const scaleY = nextHeight / safeBaseHeight;
     const updatedItems = new Map();
 
     for (const [itemId, baseItem] of baseItemsMap.entries()) {
@@ -4149,9 +4302,9 @@ let tablePointerSelectionState = {
       const relRight = (itemBounds.right - baseBounds.left) / safeBaseWidth;
       const relBottom = (itemBounds.bottom - baseBounds.top) / safeBaseHeight;
       let left = nextBounds.left + relLeft * nextWidth;
-      let top = nextBounds.top + relTop * nextHeight;
+      let top = baseBounds.top + relTop * safeBaseHeight;
       let right = nextBounds.left + relRight * nextWidth;
-      let bottom = nextBounds.top + relBottom * nextHeight;
+      let bottom = baseBounds.top + relBottom * safeBaseHeight;
       let width = Math.max(1, right - left);
       let height = Math.max(1, bottom - top);
 
@@ -4206,9 +4359,9 @@ let tablePointerSelectionState = {
         const endRelX = (Number(baseItem.endX || 0) - baseBounds.left) / safeBaseWidth;
         const endRelY = (Number(baseItem.endY || 0) - baseBounds.top) / safeBaseHeight;
         const startX = nextBounds.left + startRelX * nextWidth;
-        const startY = nextBounds.top + startRelY * nextHeight;
+        const startY = baseBounds.top + startRelY * safeBaseHeight;
         const endX = nextBounds.left + endRelX * nextWidth;
-        const endY = nextBounds.top + endRelY * nextHeight;
+        const endY = baseBounds.top + endRelY * safeBaseHeight;
         updatedItems.set(itemId, {
           ...baseItem,
           startX,
@@ -4244,6 +4397,12 @@ let tablePointerSelectionState = {
         y: top,
         width,
         height,
+        ...(baseItem.type === "text"
+          ? {
+              textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+              textResizeMode: TEXT_RESIZE_MODE_WRAP,
+            }
+          : null),
       });
     }
 
@@ -4322,6 +4481,7 @@ let tablePointerSelectionState = {
     syncRichTextToolbar();
     syncRichTextOverlays(visibleScene);
     syncCodeBlockOverlays(visibleScene);
+    // File-card Word previews are rendered by the Canvas2D React UI from state.
     syncMathOverlays(visibleScene);
     syncCodeBlockToolbar();
     syncImageToolbar();
@@ -4471,6 +4631,116 @@ let tablePointerSelectionState = {
         excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
       }
     );
+  }
+
+  function applyHorizontalResizeSnap({
+    activeItem = null,
+    rawBounds = null,
+    handle = "",
+    excludeIds = [],
+    reason = "resize",
+  } = {}) {
+    if (!state.alignmentSnapConfig?.enabled || !activeItem || !rawBounds) {
+      clearAlignmentSnap(`${reason}-disabled`);
+      return rawBounds;
+    }
+    const normalizedHandle = String(handle || "").trim().toLowerCase();
+    const affectsLeft = normalizedHandle === "nw" || normalizedHandle === "sw" || normalizedHandle === "multi-nw" || normalizedHandle === "multi-sw" || normalizedHandle === "multi-w";
+    const affectsRight = normalizedHandle === "ne" || normalizedHandle === "se" || normalizedHandle === "multi-ne" || normalizedHandle === "multi-se" || normalizedHandle === "multi-e";
+    if (!affectsLeft && !affectsRight) {
+      clearAlignmentSnap(`${reason}-axis-miss`);
+      return rawBounds;
+    }
+
+    const candidates = getAlignmentSnapCandidates(activeItem.id, { excludeIds });
+    if (!candidates.length) {
+      clearAlignmentSnap(`${reason}-candidate-miss`);
+      return rawBounds;
+    }
+
+    const rawAnchors = getSnapAnchors(rawBounds);
+    const activeKey = affectsLeft ? "left" : "right";
+    const screenValue = sceneToScreen(state.board.view, {
+      x: rawAnchors[activeKey],
+      y: rawAnchors.top,
+    }).x;
+    const thresholdPx = Math.max(
+      1,
+      Number(state.alignmentSnapConfig?.thresholdPx || 8) || 1
+    );
+
+    let bestHit = null;
+    candidates.forEach((candidate) => {
+      ["left", "centerX", "right"].forEach((targetKey) => {
+        const targetValue = Number(candidate?.screenAnchors?.[targetKey]);
+        if (!Number.isFinite(targetValue)) {
+          return;
+        }
+        const distancePx = targetValue - screenValue;
+        if (Math.abs(distancePx) > thresholdPx) {
+          return;
+        }
+        if (!bestHit || Math.abs(distancePx) < Math.abs(bestHit.distancePx)) {
+          bestHit = {
+            candidate,
+            targetKey,
+            distancePx,
+            targetScreenValue: targetValue,
+          };
+        }
+      });
+    });
+
+    if (!bestHit) {
+      clearAlignmentSnap(`${reason}-miss`);
+      return rawBounds;
+    }
+
+    const sceneDeltaX = Number(bestHit.distancePx || 0) / Math.max(0.1, Number(state.board.view.scale || 1) || 1);
+    const nextBounds = {
+      ...rawBounds,
+      left: affectsLeft ? Number(rawBounds.left || 0) + sceneDeltaX : Number(rawBounds.left || 0),
+      right: affectsRight ? Number(rawBounds.right || 0) + sceneDeltaX : Number(rawBounds.right || 0),
+    };
+    nextBounds.width = Math.max(1, Number(nextBounds.right || 0) - Number(nextBounds.left || 0));
+    nextBounds.height = Math.max(1, Number(nextBounds.height || (Number(nextBounds.bottom || 0) - Number(nextBounds.top || 0)) || 1));
+
+    const movedScreenBounds = {
+      left: sceneToScreen(state.board.view, { x: nextBounds.left, y: nextBounds.top }).x,
+      top: sceneToScreen(state.board.view, { x: nextBounds.left, y: nextBounds.top }).y,
+      right: sceneToScreen(state.board.view, { x: nextBounds.right, y: nextBounds.top }).x,
+      bottom: sceneToScreen(state.board.view, { x: nextBounds.left, y: nextBounds.bottom }).y,
+    };
+    const guide = {
+      axis: "x",
+      x: bestHit.targetScreenValue,
+      y1: Math.min(movedScreenBounds.top, Number(bestHit.candidate?.screenBounds?.top || movedScreenBounds.top)) - 10,
+      y2: Math.max(movedScreenBounds.bottom, Number(bestHit.candidate?.screenBounds?.bottom || movedScreenBounds.bottom)) + 10,
+    };
+
+    state.alignmentSnap.active = true;
+    state.alignmentSnap.sourceId = String(activeItem.id || "");
+    state.alignmentSnap.sourceType = String(activeItem.type || "");
+    state.alignmentSnap.targetId = String(bestHit.candidate?.id || "");
+    state.alignmentSnap.targetType = String(bestHit.candidate?.type || "");
+    state.alignmentSnap.axisX = {
+      axis: "x",
+      sourceKey: activeKey,
+      targetKey: bestHit.targetKey,
+      distancePx: bestHit.distancePx,
+      screenValue: bestHit.targetScreenValue,
+      sceneValue: Number(bestHit.candidate?.anchors?.[bestHit.targetKey] || 0),
+      targetId: String(bestHit.candidate?.id || ""),
+      targetType: String(bestHit.candidate?.type || ""),
+    };
+    state.alignmentSnap.axisY = null;
+    state.alignmentSnap.snappedScenePoint = {
+      x: affectsLeft ? nextBounds.left : nextBounds.right,
+      y: nextBounds.top,
+    };
+    state.alignmentSnap.guides = state.alignmentSnapConfig?.showGuides ? [guide] : [];
+    state.alignmentSnap.lastReason = reason;
+    return nextBounds;
   }
 
   function setStatus(text, tone = "neutral") {
@@ -4995,6 +5265,35 @@ let tablePointerSelectionState = {
     return readStartupContext()?.uiSettings || null;
   }
 
+  function updateStartupContextUiSettings(patch = {}) {
+    const context = readStartupContext();
+    if (!context) {
+      return;
+    }
+    const nextUiSettings = {
+      ...(context.uiSettings || {}),
+      ...patch,
+    };
+    const nextStartup = {
+      ...(context.startup || {}),
+    };
+    if (typeof patch.canvasBoardSavePath === "string") {
+      nextStartup.boardSavePath = patch.canvasBoardSavePath;
+    }
+    if (typeof patch.canvasImageSavePath === "string") {
+      nextStartup.canvasImageSavePath = patch.canvasImageSavePath;
+    }
+    if (typeof patch.canvasLastOpenedBoardPath === "string") {
+      nextStartup.lastOpenedBoardPath = patch.canvasLastOpenedBoardPath;
+      nextStartup.initialBoardPath = patch.canvasLastOpenedBoardPath;
+    }
+    globalThis.__FREEFLOW_STARTUP_CONTEXT = {
+      ...context,
+      uiSettings: nextUiSettings,
+      startup: nextStartup,
+    };
+  }
+
   async function fetchUiSettings() {
     try {
       const response = await fetch(API_ROUTES.uiSettings);
@@ -5009,9 +5308,9 @@ let tablePointerSelectionState = {
   }
 
   async function resolveCanvasBoardSavePath() {
-    const startup = readStartupUiSettings();
-    if (startup?.canvasBoardSavePath) {
-      const raw = String(startup.canvasBoardSavePath || "").trim();
+    const remote = await fetchUiSettings();
+    if (remote?.canvasBoardSavePath) {
+      const raw = String(remote.canvasBoardSavePath || "").trim();
       return resolveBoardFolderPath(raw) || raw;
     }
     const cached = readUiSettingsCache();
@@ -5019,9 +5318,9 @@ let tablePointerSelectionState = {
       const raw = String(cached.canvasBoardSavePath || "").trim();
       return resolveBoardFolderPath(raw) || raw;
     }
-    const remote = await fetchUiSettings();
-    if (remote?.canvasBoardSavePath) {
-      const raw = String(remote.canvasBoardSavePath || "").trim();
+    const startup = readStartupUiSettings();
+    if (startup?.canvasBoardSavePath) {
+      const raw = String(startup.canvasBoardSavePath || "").trim();
       return resolveBoardFolderPath(raw) || raw;
     }
     return "";
@@ -5029,32 +5328,35 @@ let tablePointerSelectionState = {
 
   async function resolveCanvasLastOpenedBoardPath() {
     const startup = readStartupContext();
+    if (startup?.startup?.initialBoardPath) {
+      return String(startup.startup.initialBoardPath || "").trim();
+    }
     if (startup?.uiSettings?.canvasLastOpenedBoardPath) {
       return String(startup.uiSettings.canvasLastOpenedBoardPath || "").trim();
-    }
-    const cached = readUiSettingsCache();
-    if (cached?.canvasLastOpenedBoardPath) {
-      return String(cached.canvasLastOpenedBoardPath || "").trim();
     }
     const remote = await fetchUiSettings();
     if (remote?.canvasLastOpenedBoardPath) {
       return String(remote.canvasLastOpenedBoardPath || "").trim();
     }
+    const cached = readUiSettingsCache();
+    if (cached?.canvasLastOpenedBoardPath) {
+      return String(cached.canvasLastOpenedBoardPath || "").trim();
+    }
     return "";
   }
 
   async function resolveCanvasImageSavePath() {
-    const startup = readStartupUiSettings();
-    if (startup?.canvasImageSavePath) {
-      return normalizeCanvasImageSavePathValue(startup.canvasImageSavePath);
+    const remote = await fetchUiSettings();
+    if (remote?.canvasImageSavePath) {
+      return normalizeCanvasImageSavePathValue(remote.canvasImageSavePath);
     }
     const cached = readUiSettingsCache();
     if (cached?.canvasImageSavePath) {
       return normalizeCanvasImageSavePathValue(cached.canvasImageSavePath);
     }
-    const remote = await fetchUiSettings();
-    if (remote?.canvasImageSavePath) {
-      return normalizeCanvasImageSavePathValue(remote.canvasImageSavePath);
+    const startup = readStartupUiSettings();
+    if (startup?.canvasImageSavePath) {
+      return normalizeCanvasImageSavePathValue(startup.canvasImageSavePath);
     }
     return "";
   }
@@ -5209,6 +5511,10 @@ let tablePointerSelectionState = {
           }
           const nextCache = { ...payload, ...data, updatedAt: data.updatedAt || Date.now() };
           writeUiSettingsCache(nextCache);
+          updateStartupContextUiSettings({
+            canvasBoardSavePath: resolveBoardFolderPath(nextCache.canvasBoardSavePath || cleanFolderPath),
+            canvasLastOpenedBoardPath: String(nextCache.canvasLastOpenedBoardPath || cleanPath).trim(),
+          });
           notifyCanvasBoardPathChange(resolveBoardFolderPath(nextCache.canvasBoardSavePath || cleanFolderPath));
           notifyCanvasLastOpenedBoardPathChange(String(nextCache.canvasLastOpenedBoardPath || cleanPath).trim());
         } catch {
@@ -5222,9 +5528,9 @@ let tablePointerSelectionState = {
     const cleanPath = String(nextPath || "").trim();
     if (state.boardFilePath === cleanPath) {
       if (updateSettings && cleanPath) {
-        void persistBoardSelectionSetting(cleanPath);
+        return persistBoardSelectionSetting(cleanPath);
       }
-      return;
+      return Promise.resolve();
     }
     state.boardFilePath = cleanPath;
     state.boardFileName = cleanPath ? getFileName(cleanPath) : "未命名画布";
@@ -5233,8 +5539,9 @@ let tablePointerSelectionState = {
       store.emit();
     }
     if (updateSettings) {
-      void persistBoardSelectionSetting(cleanPath);
+      return persistBoardSelectionSetting(cleanPath);
     }
+    return Promise.resolve();
   }
 
   function setBoardDirty(nextDirty, { emit = true } = {}) {
@@ -5398,7 +5705,7 @@ let tablePointerSelectionState = {
     return String(result.filePath || "").trim();
   }
 
-  async function saveBoard({ saveAs = false, autosave = false, silent = false } = {}) {
+  async function saveBoard({ saveAs = false, autosave = false, silent = false, exactPath = false } = {}) {
     if (!useLocalFileSystem) {
       if (!silent) {
         setStatus("当前环境不支持本地保存");
@@ -5419,7 +5726,7 @@ let tablePointerSelectionState = {
       const settingsPath = await resolveCanvasBoardSavePath();
       const boardFolder = resolveBoardFolderPath(settingsPath);
       let targetPath = state.boardFilePath;
-      if (targetPath && boardFolder) {
+      if (targetPath && boardFolder && !exactPath) {
         const name = getFileName(targetPath);
         targetPath = joinPath(boardFolder, name);
       }
@@ -5469,7 +5776,7 @@ let tablePointerSelectionState = {
         }
         return false;
       }
-      setBoardFilePath(targetPath, { emit: false, updateSettings: true });
+      await setBoardFilePath(targetPath, { emit: false, updateSettings: true });
       setBoardDirty(false, { emit: false });
       if (autosave) {
         state.boardAutosaveAt = Date.now();
@@ -5559,7 +5866,7 @@ let tablePointerSelectionState = {
       finishImageEdit();
       syncBoard({ persist: false, emit: true, markDirty: false });
       suppressDirtyTracking = false;
-      setBoardFilePath(targetPath, { emit: false, updateSettings });
+      await setBoardFilePath(targetPath, { emit: false, updateSettings });
       setBoardDirty(false, { emit: false });
       store.emit();
       void resolveFileCardSources();
@@ -5581,14 +5888,28 @@ let tablePointerSelectionState = {
   }
 
   async function resolveUniqueBoardFilePath(folderPath) {
+    return resolveUniqueBoardFilePathByBaseName(folderPath, DEFAULT_NEW_BOARD_BASE);
+  }
+
+  function sanitizeBoardFileBaseName(value) {
+    const clean = String(value || "")
+      .trim()
+      .replace(/\.json$/i, "")
+      .replace(/[\\/:"*?<>|]+/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+    return clean || DEFAULT_NEW_BOARD_BASE;
+  }
+
+  async function resolveUniqueBoardFilePathByBaseName(folderPath, baseName) {
     const cleanFolder = stripTrailingSeparators(folderPath);
-    const baseName = DEFAULT_NEW_BOARD_BASE;
+    const cleanBaseName = sanitizeBoardFileBaseName(baseName);
     const existsFn = typeof globalThis?.desktopShell?.pathExists === "function"
       ? globalThis.desktopShell.pathExists
       : null;
     let index = 0;
     while (index < 9999) {
-      const name = index === 0 ? baseName : `${baseName}_${index}`;
+      const name = index === 0 ? cleanBaseName : `${cleanBaseName}_${index}`;
       const filePath = joinPath(cleanFolder || "", `${name}.json`);
       if (!existsFn) {
         return filePath;
@@ -5599,7 +5920,7 @@ let tablePointerSelectionState = {
       }
       index += 1;
     }
-    return joinPath(cleanFolder || "", `${baseName}_${Date.now()}.json`);
+    return joinPath(cleanFolder || "", `${cleanBaseName}_${Date.now()}.json`);
   }
 
   async function maybeSaveBeforeSwitch() {
@@ -5643,7 +5964,7 @@ let tablePointerSelectionState = {
     syncBoard({ persist: false, emit: true, markDirty: false });
     suppressDirtyTracking = false;
     if (nextPath) {
-      setBoardFilePath(nextPath, { emit: false, updateSettings: true });
+      await setBoardFilePath(nextPath, { emit: false, updateSettings: true });
     }
     setBoardDirty(true);
     setStatus("已新建画布");
@@ -5742,7 +6063,7 @@ let tablePointerSelectionState = {
       setStatus(result?.error || "画布重命名失败", "warning");
       return false;
     }
-    setBoardFilePath(nextPath, { updateSettings: true });
+    await setBoardFilePath(nextPath, { updateSettings: true });
     setStatus("画布已重命名");
     return true;
   }
@@ -5815,10 +6136,145 @@ let tablePointerSelectionState = {
       ? getFileName(state.boardFilePath)
       : DEFAULT_BOARD_FILE_NAME;
     const nextFilePath = joinPath(nextFolder, currentName);
-    setBoardFilePath(nextFilePath, { updateSettings: true });
+    await setBoardFilePath(nextFilePath, { updateSettings: true });
     setStatus("画布保存位置已更新");
     void ensureImportImageFolderExists();
     return nextFolder;
+  }
+
+  async function getCanvasBoardWorkspace() {
+    const currentFolder = resolveBoardFolderPath(state.boardFilePath);
+    if (currentFolder) {
+      return currentFolder;
+    }
+    const settingsPath = await resolveCanvasBoardSavePath();
+    return resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
+  }
+
+  async function pickCanvasWorkspaceFolder() {
+    if (typeof globalThis?.desktopShell?.pickDirectory !== "function") {
+      setStatus("当前环境不支持选择工作区", "warning");
+      return "";
+    }
+    const defaultPath = (await getCanvasBoardWorkspace()) || "";
+    const result = await globalThis.desktopShell.pickDirectory({ defaultPath });
+    if (result?.canceled || !result?.filePath) {
+      return "";
+    }
+    const nextFolder = resolveBoardFolderPath(result.filePath);
+    if (!nextFolder) {
+      return "";
+    }
+    await ensureDirectoryIfSupported(nextFolder);
+    const currentName = isJsonFileName(getFileName(state.boardFilePath))
+      ? getFileName(state.boardFilePath)
+      : DEFAULT_BOARD_FILE_NAME;
+    let nextFilePath = joinPath(nextFolder, currentName);
+    if (typeof globalThis?.desktopShell?.pathExists === "function") {
+      const exists = await globalThis.desktopShell.pathExists(nextFilePath);
+      if (exists && nextFilePath !== state.boardFilePath) {
+        nextFilePath = await resolveUniqueBoardFilePath(nextFolder);
+      }
+    }
+    await setBoardFilePath(nextFilePath, { emit: false, updateSettings: true });
+    setBoardDirty(true, { emit: false });
+    const imageFolder = joinPath(nextFolder, "Images");
+    setCanvasImageSavePath(imageFolder, { updateSettings: true });
+    await ensureDirectoryIfSupported(imageFolder);
+    await saveBoard({ silent: true, exactPath: true });
+    setStatus("画布工作区已切换");
+    store.emit();
+    return nextFolder;
+  }
+
+  async function listCanvasBoards(folderPath) {
+    const targetFolder = String(folderPath || "").trim() || (await getCanvasBoardWorkspace());
+    if (!targetFolder) {
+      return { ok: true, folderPath: "", boards: [], error: "" };
+    }
+    if (typeof globalThis?.desktopShell?.listCanvasBoards !== "function") {
+      return { ok: false, folderPath: targetFolder, boards: [], error: "当前环境不支持读取工作区" };
+    }
+    let result = null;
+    try {
+      result = await globalThis.desktopShell.listCanvasBoards({ folderPath: targetFolder });
+    } catch (error) {
+      return {
+        ok: false,
+        folderPath: targetFolder,
+        boards: [],
+        error: error?.message || "读取画布工作区失败，请重启应用后重试",
+      };
+    }
+    if (!result?.ok) {
+      return {
+        ok: false,
+        folderPath: targetFolder,
+        boards: [],
+        error: result?.error || "读取画布工作区失败",
+      };
+    }
+    return {
+      ok: true,
+      folderPath: String(result.folderPath || targetFolder).trim(),
+      boards: Array.isArray(result.boards) ? result.boards : [],
+      error: "",
+    };
+  }
+
+  async function createBoardInWorkspace(folderPath, nextName) {
+    const targetFolder = resolveBoardFolderPath(folderPath) || (await getCanvasBoardWorkspace());
+    if (!targetFolder) {
+      setStatus("请先选择画布工作区", "warning");
+      return { ok: false, filePath: "", error: "请先选择画布工作区" };
+    }
+    const ensured = await ensureDirectoryIfSupported(targetFolder);
+    if (ensured && !ensured.ok) {
+      const error = ensured.error || "工作区创建失败";
+      setStatus(error, "warning");
+      return { ok: false, filePath: "", error };
+    }
+    const ok = await maybeSaveBeforeSwitch();
+    if (!ok) {
+      return { ok: false, filePath: "", error: "当前画布保存失败，已取消切换" };
+    }
+    const cleanBaseName = sanitizeBoardFileBaseName(nextName);
+    const nextPath = await resolveUniqueBoardFilePathByBaseName(targetFolder, cleanBaseName);
+    suppressDirtyTracking = true;
+    state.board = createEmptyBoard();
+    state.board.selectedIds = [];
+    state.history = createHistoryState();
+    markHistoryBaseline(state.history, takeHistorySnapshot(state));
+    cancelTextEdit();
+    cancelFlowNodeEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    finishImageEdit();
+    syncBoard({ persist: false, emit: true, markDirty: false });
+    suppressDirtyTracking = false;
+    await setBoardFilePath(nextPath, { emit: false, updateSettings: true });
+    setBoardDirty(true, { emit: false });
+    const saved = await saveBoard({ silent: true, exactPath: true });
+    if (!saved) {
+      setStatus("新建画布写入失败", "warning");
+      store.emit();
+      return { ok: false, filePath: nextPath, error: "新建画布写入失败" };
+    }
+    setStatus("已新建画布");
+    return { ok: true, filePath: nextPath, error: "" };
+  }
+
+  async function ensureDirectoryIfSupported(targetPath) {
+    if (typeof globalThis?.desktopShell?.ensureDirectory !== "function") {
+      return null;
+    }
+    try {
+      return await globalThis.desktopShell.ensureDirectory(targetPath);
+    } catch {
+      // The renderer can hot-reload while Electron main still runs the previous IPC table.
+      // Directory creation is also covered by writeFile, so do not block board discovery here.
+      return null;
+    }
   }
 
   function onCanvasBoardPathChanged(event) {
@@ -5988,6 +6444,122 @@ let tablePointerSelectionState = {
       setStatus(statusText);
     }
     return true;
+  }
+
+  function isMergeableRichTextItem(item) {
+    return Boolean(item && item.type === "text");
+  }
+
+  function sortItemsForDocumentMerge(items = []) {
+    const threshold = 28;
+    return [...items].sort((left, right) => {
+      const leftBounds = getElementBounds(left);
+      const rightBounds = getElementBounds(right);
+      const deltaY = Number(leftBounds.top || 0) - Number(rightBounds.top || 0);
+      if (Math.abs(deltaY) > threshold) {
+        return deltaY;
+      }
+      const deltaX = Number(leftBounds.left || 0) - Number(rightBounds.left || 0);
+      if (Math.abs(deltaX) > 1) {
+        return deltaX;
+      }
+      return String(left.id || "").localeCompare(String(right.id || ""));
+    });
+  }
+
+  function mergeSelectedRichTextItems() {
+    const selectedItems = getSelectedItemsFast();
+    if (selectedItems.length < 2) {
+      setStatus("请至少选中两个富文本框", "warning");
+      return false;
+    }
+    if (!selectedItems.every((item) => isMergeableRichTextItem(item))) {
+      setStatus("合并文本仅支持纯富文本框，多选中存在表格或其他独立元素", "warning");
+      return false;
+    }
+    const sortedItems = sortItemsForDocumentMerge(selectedItems);
+    const before = takeHistorySnapshot(state);
+    const bounds = getMultiSelectionBounds(sortedItems);
+    if (!bounds) {
+      setStatus("无法计算合并范围", "warning");
+      return false;
+    }
+    const baseItem = sortedItems[0];
+    const fontSize = Number(baseItem?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE;
+    const width = Math.max(240, Math.ceil(Number(bounds.width || 0) || Number(baseItem?.width || 0) || 240));
+    const mergedHtml = sortedItems
+      .map((item) =>
+        sanitizeHtml(
+          normalizeRichHtmlInlineFontSizes(String(item?.html || ""), Number(item?.fontSize || fontSize) || fontSize)
+        ).trim()
+      )
+      .filter(Boolean)
+      .join("");
+    if (!mergedHtml) {
+      setStatus("选中的文本内容为空，无法合并", "warning");
+      return false;
+    }
+    const mergedPlainText = sanitizeText(
+      sortedItems.map((item) => item?.plainText || item?.text || htmlToPlainText(item?.html || "")).join("")
+    );
+    const mergedItem = buildSplitTextSegmentItem(
+      {
+        ...baseItem,
+        x: Number(bounds.left || baseItem?.x || 0) || 0,
+        y: Number((bounds.top || baseItem?.y || 0)) + Math.max(32, Number(bounds.height || 0) || 32),
+        width,
+        height: Math.max(40, Math.ceil(Number(bounds.height || baseItem?.height || 0) || 40)),
+      },
+      {
+        html: mergedHtml,
+        plainText: mergedPlainText,
+      },
+      {
+        x: Number(bounds.left || baseItem?.x || 0) || 0,
+        y: Number((bounds.top || baseItem?.y || 0)) + Math.max(32, Number(bounds.height || 0) || 32),
+        width,
+        fontSize,
+      }
+    );
+    state.board.items.push(mergedItem);
+    state.board.selectedIds = [mergedItem.id];
+    state.hoverId = mergedItem.id;
+    scheduleUrlMetaHydrationForItem(mergedItem);
+    const beforeOrderIds = Array.isArray(before?.items)
+      ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
+      : [];
+    const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
+    const changed = commitItemsPatchHistory(before, [mergedItem.id], "合并文本", "text-merge", {
+      beforeOrderIds,
+      afterOrderIds,
+      fullOverlayRescan: true,
+    });
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return false;
+    }
+    setStatus("已合并文本");
+    persistCommittedBoardIfPossible();
+    return true;
+  }
+
+  function splitActiveRichTextNow() {
+    if (!state.editingId || state.editingType !== "text") {
+      setStatus("请先进入富文本编辑态", "warning");
+      return false;
+    }
+    const item = sceneRegistry.getItemById(state.editingId, "text");
+    if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
+      setStatus("当前文本不可拆分", "warning");
+      return false;
+    }
+    const activeSession = getActiveRichSession();
+    if (!activeSession?.isActive?.()) {
+      setStatus("当前文本不可拆分", "warning");
+      return false;
+    }
+    activeSession.command("insertTextSplitMarker");
+    return commitTextEdit();
   }
 
   function shouldNormalizeImportedPasteFrameItem(item = {}) {
@@ -7772,6 +8344,8 @@ function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null 
         button.classList.toggle("is-active", formatState.blockType === "blockquote");
       } else if (action === "horizontal-rule") {
         button.classList.toggle("is-active", formatState.blockType === "horizontal-rule");
+      } else if (action === "text-split") {
+        button.classList.remove("is-active");
       } else if (action === "insert-math" || action === "toggle-math-menu") {
         button.classList.toggle("is-active", Boolean(formatState.canEditMath));
       } else if (action === "underline") {
@@ -8934,6 +9508,10 @@ function syncRichToolbarEnhancements(toolbar) {
     }
   }
 
+  function clearInlineFileCardPreviewNode() {
+    // Legacy imperative file-card preview DOM was replaced by the React-owned preview surface.
+  }
+
   function syncCodeBlockOverlays(visibleScene = null) {
     if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
       return;
@@ -9222,6 +9800,53 @@ function syncRichToolbarEnhancements(toolbar) {
       editBaselineSnapshot = null;
       commitItemPatchHistory(before, item.id, null, "删除空白文本", "text-edit");
       setStatus("已删除空白文本");
+      if (state.tool === "text" && shouldExitTextToolAfterEdit) {
+        shouldExitTextToolAfterEdit = false;
+        setTool("select");
+      }
+      return true;
+    }
+    const textSplitItems = buildTextSplitItems(item, html, {
+      width: Math.max(80, Number(item.width || 0) || 80),
+      fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE),
+    });
+    if (Array.isArray(textSplitItems) && textSplitItems.length) {
+      textSplitItems.forEach((entry) => {
+        if (entry?.type === "text") {
+          scheduleUrlMetaHydrationForItem(entry);
+        }
+      });
+      const itemIndex = state.board.items.findIndex((entry) => entry.id === item.id);
+      if (itemIndex >= 0) {
+        state.board.items.splice(itemIndex, 1, ...textSplitItems);
+      } else {
+        state.board.items.push(...textSplitItems);
+      }
+      if (state.hoverId === item.id) {
+        state.hoverId = textSplitItems[0]?.id || null;
+      }
+      state.editingId = null;
+      state.editingType = null;
+      state.board.selectedIds = textSplitItems.map((entry) => entry.id);
+      refs.richEditor.classList.add("is-hidden");
+      richTextSession.clear({ destroyAdapter: false });
+      editBaselineSnapshot = null;
+      const changedIds = [item.id, ...textSplitItems.map((entry) => entry.id)];
+      const beforeOrderIds = Array.isArray(before?.items)
+        ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
+        : [];
+      const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
+      const changed = commitItemsPatchHistory(before, changedIds, "拆分文本", "text-split", {
+        beforeOrderIds,
+        afterOrderIds,
+        fullOverlayRescan: true,
+      });
+      if (!changed) {
+        syncBoard({ persist: false, emit: true, markDirty: false });
+      } else {
+        setStatus("已拆分文本");
+        persistCommittedBoardIfPossible();
+      }
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
         shouldExitTextToolAfterEdit = false;
         setTool("select");
@@ -12813,13 +13438,471 @@ function syncRichToolbarEnhancements(toolbar) {
     setSaveToast(text);
   }
 
-  async function exportRichTextItem(item, format = "word") {
+  function clearWordExportPreviewRequest(requestId = "") {
+    const activeRequestId = String(state.wordExportPreviewRequest?.id || "").trim();
+    const expectedRequestId = String(requestId || "").trim();
+    if (expectedRequestId && activeRequestId && expectedRequestId !== activeRequestId) {
+      return false;
+    }
+    state.wordExportPreviewRequest = null;
+    store.emit();
+    return true;
+  }
+
+  function getFileCardPreviewRequests() {
+    return Array.isArray(state.fileCardPreviewRequests) ? state.fileCardPreviewRequests : [];
+  }
+
+  function findFileCardPreviewRequestIndex(requestId = "") {
+    const expectedRequestId = String(requestId || "").trim();
+    if (!expectedRequestId) {
+      return -1;
+    }
+    return getFileCardPreviewRequests().findIndex((entry) => String(entry?.id || "").trim() === expectedRequestId);
+  }
+
+  function findFileCardPreviewRequest(requestId = "") {
+    const index = findFileCardPreviewRequestIndex(requestId);
+    return index >= 0 ? getFileCardPreviewRequests()[index] || null : null;
+  }
+
+  function patchFileCardPreviewRequest(requestId = "", patch = null) {
+    const index = findFileCardPreviewRequestIndex(requestId);
+    if (index < 0) {
+      return null;
+    }
+    const requests = getFileCardPreviewRequests().slice();
+    const current = requests[index];
+    const nextPatch = patch && typeof patch === "object" ? patch : {};
+    requests[index] = {
+      ...current,
+      ...nextPatch,
+    };
+    state.fileCardPreviewRequests = requests;
+    return requests[index];
+  }
+
+  function clearFileCardPreviewRequest(requestId = "") {
+    const expectedRequestId = String(requestId || "").trim();
+    const requests = getFileCardPreviewRequests();
+    if (!requests.length) {
+      return false;
+    }
+    const targetIndex = expectedRequestId ? findFileCardPreviewRequestIndex(expectedRequestId) : requests.length - 1;
+    if (targetIndex < 0) {
+      return false;
+    }
+    const targetRequest = requests[targetIndex];
+    const activeItemId = String(targetRequest?.itemId || "").trim();
+    const restoreMemoVisible = Boolean(targetRequest?.restoreMemoVisible);
+    if (restoreMemoVisible && activeItemId) {
+      const item = sceneRegistry.getItemById(activeItemId, "fileCard");
+      if (item) {
+        item.memoVisible = true;
+      }
+    }
+    const nextRequests = requests.slice();
+    nextRequests.splice(targetIndex, 1);
+    state.fileCardPreviewRequests = nextRequests;
+    clearInlineFileCardPreviewNode();
+    store.emit();
+    scheduleRender({ overlayDirty: true });
+    return true;
+  }
+
+  function resolveFileCardPreviewSpec(item = null) {
+    if (!item || item.type !== "fileCard") {
+      return null;
+    }
+    const ext = String(item.ext || getFileExtension(item.fileName || item.name || "") || "").trim().toLowerCase();
+    if (ext === "docx") {
+      return {
+        kind: "docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        readRoute: API_ROUTES.filePreviewDocxBase64,
+        fileLabel: "Word",
+        badgeLabel: "DOCX",
+      };
+    }
+    if (ext === "pdf") {
+      return {
+        kind: "pdf",
+        mimeType: "application/pdf",
+        readRoute: API_ROUTES.filePreviewPdfBase64,
+        fileLabel: "PDF",
+        badgeLabel: "PDF",
+      };
+    }
+    return null;
+  }
+
+  async function hydrateFileCardPreviewFile(requestId = "", filePath = "") {
+    const activeRequestId = String(requestId || "").trim();
+    const targetPath = String(filePath || "").trim();
+    if (!activeRequestId || !targetPath) {
+      return false;
+    }
+    try {
+      const current = findFileCardPreviewRequest(activeRequestId);
+      const previewSpec = current?.previewKind ? {
+        kind: String(current.previewKind || "").trim().toLowerCase(),
+        mimeType: String(current.previewMime || "").trim().toLowerCase(),
+        readRoute:
+          String(current.previewKind || "").trim().toLowerCase() === "pdf"
+            ? API_ROUTES.filePreviewPdfBase64
+            : API_ROUTES.filePreviewDocxBase64,
+        fileLabel: String(current.previewKind || "").trim().toLowerCase() === "pdf" ? "PDF" : "Word",
+      } : null;
+      const fileName = String(current?.fileName || "").trim();
+      const mimeType = String(previewSpec?.mimeType || "").trim();
+      let result = null;
+      const isMissingFileForPreview =
+        /^c:[/\\]missing[/\\]/i.test(targetPath) ||
+        /^__ff_missing_preview__/i.test(targetPath);
+      if (typeof globalThis?.desktopShell?.readFileBase64 === "function") {
+        result = await globalThis.desktopShell.readFileBase64(targetPath).catch(() => null);
+      }
+      if (!result?.ok && isMissingFileForPreview) {
+        result = {
+          ok: false,
+          error: "QA missing preview file",
+          data: "",
+          mime: mimeType,
+        };
+      }
+      if (!result?.ok && !isMissingFileForPreview) {
+        const response = await fetch(previewSpec?.readRoute || API_ROUTES.filePreviewDocxBase64, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filePath: targetPath,
+            fileName,
+            mimeType,
+          }),
+        });
+        const payload = await readJsonResponse(response, `${previewSpec?.fileLabel || "文件"}预览文件读取`);
+        result = {
+          ok: response.ok && Boolean(payload?.ok),
+          ...payload,
+        };
+      }
+      const latestRequest = findFileCardPreviewRequest(activeRequestId);
+      if (!latestRequest) {
+        return false;
+      }
+      const mime = String(result?.mime || "").trim().toLowerCase();
+      const fileBase64 = String(result?.data || "").trim();
+      const expectedMime = String(previewSpec?.mimeType || "").trim().toLowerCase();
+      const mimeAccepted = !mime || mime === expectedMime || mime === "application/octet-stream";
+      patchFileCardPreviewRequest(activeRequestId, {
+        previewStatus: result?.ok && fileBase64 && mimeAccepted ? "ready" : "failed",
+        previewMessage:
+          result?.ok && fileBase64 && mimeAccepted
+            ? `${previewSpec?.fileLabel || "文件"}预览已加载`
+            : String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览",
+        previewFileBase64: result?.ok && mimeAccepted ? fileBase64 : "",
+        previewMime: mimeAccepted ? expectedMime : "",
+        previewDiagnostics: buildFileCardPreviewDiagnostics({
+          loadState: result?.ok && fileBase64 && mimeAccepted ? "文档已加载" : "加载失败",
+          parseState: "待开始",
+          pageCount: 0,
+          contentNodeCount: 0,
+          runtimeLabel: result?.ok && fileBase64 && mimeAccepted ? "加载中" : "渲染失败",
+        }),
+      });
+      store.emit();
+      scheduleRender({ overlayDirty: true });
+      if (!(result?.ok && fileBase64 && mimeAccepted)) {
+        setStatus(String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览", "warning");
+      }
+      return Boolean(result?.ok && fileBase64 && mimeAccepted);
+    } catch (error) {
+      const current = findFileCardPreviewRequest(activeRequestId);
+      if (current) {
+        patchFileCardPreviewRequest(activeRequestId, {
+          previewStatus: "failed",
+          previewMessage: String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败",
+          previewFileBase64: "",
+          previewDiagnostics: buildFileCardPreviewDiagnostics({
+            loadState: "加载失败",
+            parseState: "否",
+            pageCount: 0,
+            contentNodeCount: 0,
+            runtimeLabel: "渲染失败",
+          }),
+        });
+        store.emit();
+        scheduleRender({ overlayDirty: true });
+      }
+      setStatus(String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败", "warning");
+      return false;
+    }
+  }
+
+  function openFileCardPreview(item = null) {
+    const previewSpec = resolveFileCardPreviewSpec(item);
+    if (!previewSpec) {
+      setStatus("当前仅支持 DOCX / PDF 文件卡预览", "warning");
+      return false;
+    }
+    const sourcePath = String(item?.sourcePath || "").trim();
+    if (!sourcePath) {
+      setStatus("文件路径为空，无法预览", "warning");
+      return false;
+    }
+    const hasDesktopFileBridge = typeof globalThis?.desktopShell?.readFileBase64 === "function";
+    const requestId = createId("file-card-preview");
+    const restoreMemoVisible = Boolean(item.memoVisible);
+    if (restoreMemoVisible) {
+      item.memoVisible = false;
+    }
+    const anchorWidth = Math.max(1, Number(item.width || 336) || 336);
+    const anchorHeight = Math.max(1, Number(item.height || 128) || 128);
+    const requests = getFileCardPreviewRequests();
+    const existingIndex = requests.findIndex((entry) => String(entry?.itemId || "").trim() === String(item.id || "").trim());
+    const nextRequest = {
+      id: requestId,
+      open: true,
+      createdAt: Date.now(),
+      itemId: String(item.id || "").trim(),
+      fileName: String(item.fileName || item.name || "未命名文件").trim() || "未命名文件",
+      sourcePath,
+      anchor: {
+        x: Number(item.x || 0) || 0,
+        y: Number(item.y || 0) || 0,
+        width: anchorWidth,
+        height: anchorHeight,
+      },
+      previewStatus: "loading",
+      previewMessage: hasDesktopFileBridge ? `正在加载 ${previewSpec.fileLabel} 文件预览...` : `正在通过后端读取 ${previewSpec.fileLabel} 文件预览...`,
+      previewRenderState: "loading",
+      previewRenderMessage: hasDesktopFileBridge ? `正在准备 ${previewSpec.fileLabel} 预览...` : `正在通过后端读取 ${previewSpec.fileLabel} 文件预览...`,
+      previewDiagnostics: buildFileCardPreviewDiagnostics({
+        loadState: hasDesktopFileBridge ? "读取中" : "后端读取中",
+        parseState: "待开始",
+        pageCount: 0,
+        contentNodeCount: 0,
+        runtimeLabel: "加载中",
+      }),
+      previewKind: previewSpec.kind,
+      previewBadgeLabel: previewSpec.badgeLabel,
+      previewMime: previewSpec.mimeType,
+      previewFileBase64: "",
+      expanded: false,
+      previewZoom: 0.82,
+      restoreMemoVisible,
+    };
+    if (existingIndex >= 0) {
+      const nextRequests = requests.slice();
+      const existingRequest = nextRequests[existingIndex];
+      nextRequests[existingIndex] = {
+        ...existingRequest,
+        ...nextRequest,
+      };
+      state.fileCardPreviewRequests = nextRequests;
+    } else {
+      state.fileCardPreviewRequests = [...requests, nextRequest];
+    }
+    store.emit();
+    setStatus(hasDesktopFileBridge ? `正在加载 ${previewSpec.fileLabel} 预览...` : `正在通过后端读取 ${previewSpec.fileLabel} 预览...`);
+    scheduleRender({ overlayDirty: true });
+    void hydrateFileCardPreviewFile(requestId, sourcePath);
+    return true;
+  }
+
+  function toggleFileCardPreviewExpanded(requestId = "") {
+    const expectedRequestId = String(requestId || "").trim();
+    if (!expectedRequestId) {
+      return false;
+    }
+    const activeRequest = findFileCardPreviewRequest(expectedRequestId);
+    if (!activeRequest) {
+      return false;
+    }
+    patchFileCardPreviewRequest(expectedRequestId, {
+      expanded: !activeRequest.expanded,
+    });
+    store.emit();
+    scheduleRender({ overlayDirty: true });
+    return true;
+  }
+
+  function setFileCardPreviewZoom(requestId = "", zoom = 0.82) {
+    const expectedRequestId = String(requestId || "").trim();
+    if (!expectedRequestId) {
+      return false;
+    }
+    const activeRequest = findFileCardPreviewRequest(expectedRequestId);
+    if (!activeRequest) {
+      return false;
+    }
+    const nextZoom = Math.min(1.9, Math.max(0.34, Number(zoom || 0.82) || 0.82));
+    patchFileCardPreviewRequest(expectedRequestId, {
+      previewZoom: nextZoom,
+    });
+    store.emit();
+    scheduleRender({ overlayDirty: true });
+    return true;
+  }
+
+  async function hydrateWordExportPreviewDocx(requestId = "", ast = null, options = {}) {
+    const activeRequestId = String(requestId || "").trim();
+    if (!activeRequestId || !ast || typeof globalThis?.desktopShell?.previewWordDocx !== "function") {
+      const current = state.wordExportPreviewRequest;
+      if (current && String(current.id || "") === activeRequestId) {
+        state.wordExportPreviewRequest = {
+          ...current,
+          previewStatus: "unavailable",
+          previewMessage: "当前环境不支持 Word 预览生成，仍可直接导出 Word",
+        };
+        store.emit();
+      }
+      return false;
+    }
+    try {
+      const result = await globalThis.desktopShell.previewWordDocx({
+        ast,
+        defaultName: options.defaultName || "freeflow-word-preview",
+      });
+      const current = state.wordExportPreviewRequest;
+      if (!current || String(current.id || "") !== activeRequestId) {
+        return false;
+      }
+      const docxBase64 = String(result?.docxBase64 || "").trim();
+      state.wordExportPreviewRequest = {
+        ...current,
+        previewStatus: result?.ok && docxBase64 ? "ready" : "failed",
+        previewMessage: String(result?.message || (result?.ok ? "Word 预览已生成" : "Word 预览生成失败")).trim(),
+        previewDocxBase64: docxBase64,
+        previewDocxSize: Number(result?.size || 0) || 0,
+      };
+      store.emit();
+      return Boolean(result?.ok && docxBase64);
+    } catch (error) {
+      const rawMessage = String(error?.message || error || "").trim();
+      const handlerMissing = /No handler registered/i.test(rawMessage) && /preview-word-docx/i.test(rawMessage);
+      const current = state.wordExportPreviewRequest;
+      if (current && String(current.id || "") === activeRequestId) {
+        state.wordExportPreviewRequest = {
+          ...current,
+          previewStatus: handlerMissing ? "unavailable" : "failed",
+          previewMessage: handlerMissing
+            ? "当前桌面主进程尚未加载 Word 预览接口，请重启应用后再试；正式 Word 导出不受影响"
+            : rawMessage || "Word 预览生成失败",
+          previewDocxBase64: "",
+        };
+        store.emit();
+      }
+      return false;
+    }
+  }
+
+  function buildWordExportPreviewRequest(items = [], options = {}) {
+    const selectedItems = (Array.isArray(items) ? items : []).filter((entry) => entry && typeof entry === "object");
+    const requestId = createId("word-export-preview");
+    const preview = buildWordExportPreviewModel(selectedItems, {
+      title: options.title || "导出 Word",
+    });
+    const ast = preview.ast && typeof preview.ast === "object" ? preview.ast : null;
+    const previewModel = {
+      ...preview,
+      ast: undefined,
+    };
+    return {
+      id: requestId,
+      open: true,
+      createdAt: Date.now(),
+      mode: selectedItems.length === 1 ? "rich-text" : "selection",
+      title: String(options.title || "导出 Word").trim() || "导出 Word",
+      itemIds: selectedItems.map((entry) => String(entry.id || "").trim()).filter(Boolean),
+      preview: previewModel,
+      previewStatus: ast ? "loading" : "failed",
+      previewMessage: ast ? "正在生成临时 Word 预览..." : "没有可用于生成预览的 Word AST",
+      previewDocxBase64: "",
+      previewDocxSize: 0,
+      previewAst: ast,
+      exporting: false,
+    };
+  }
+
+  function openWordExportPreview(items = [], options = {}) {
+    const selectedItems = (Array.isArray(items) ? items : []).filter((entry) => entry && typeof entry === "object");
+    if (!selectedItems.length) {
+      setStatus("未选中可导出内容", "warning");
+      notifyExportToast("未选中可导出内容");
+      return false;
+    }
+    try {
+      const request = buildWordExportPreviewRequest(selectedItems, options);
+      if (!Number(request?.preview?.exportableCount || 0)) {
+        setStatus("当前选择中没有可导出到 Word 的元素", "warning");
+        notifyExportToast("当前选择中没有可导出到 Word 的元素");
+        return false;
+      }
+      state.wordExportPreviewRequest = request;
+      store.emit();
+      void hydrateWordExportPreviewDocx(request.id, request.previewAst, {
+        defaultName: request.mode === "rich-text" ? "freeflow-rich-text-preview" : "freeflow-selection-word-preview",
+      });
+      return true;
+    } catch (error) {
+      const message = String(error?.message || "Word 预览生成失败").trim() || "Word 预览生成失败";
+      setStatus(message, "warning");
+      notifyExportToast(message);
+      return false;
+    }
+  }
+
+  async function confirmWordExportPreview(requestId = "") {
+    const request = state.wordExportPreviewRequest;
+    const expectedRequestId = String(requestId || "").trim();
+    const activeRequestId = String(request?.id || "").trim();
+    if (!request || (expectedRequestId && expectedRequestId !== activeRequestId)) {
+      return false;
+    }
+    const itemIdSet = new Set((Array.isArray(request.itemIds) ? request.itemIds : []).map((id) => String(id || "").trim()));
+    const items = state.board.items.filter((item) => itemIdSet.has(String(item?.id || "").trim()));
+    if (!items.length) {
+      setStatus("可导出内容已不存在", "warning");
+      notifyExportToast("可导出内容已不存在");
+      clearWordExportPreviewRequest(activeRequestId);
+      return false;
+    }
+    state.wordExportPreviewRequest = {
+      ...request,
+      exporting: true,
+    };
+    store.emit();
+    const success =
+      request.mode === "rich-text" && items.length === 1
+        ? await exportRichTextItem(items[0], "word", { skipPreview: true })
+        : await exportSelectionAsWord(items, { skipPreview: true });
+    if (success) {
+      clearWordExportPreviewRequest(activeRequestId);
+      return true;
+    }
+    state.wordExportPreviewRequest = {
+      ...request,
+      exporting: false,
+    };
+    store.emit();
+    return false;
+  }
+
+  async function exportRichTextItem(item, format = "word", options = {}) {
     try {
       const meta = getExportOperationMeta(item?.type, format, item);
       if (!item || !meta) {
         setStatus("仅富文本元素支持此导出");
         notifyExportToast("仅富文本元素支持此导出");
         return false;
+      }
+      if (meta.format === "word" && !options.skipPreview) {
+        return openWordExportPreview([item], {
+          title: "富文本导出 Word",
+        });
       }
       let result = null;
       if (meta.loadingMessage) {
@@ -12955,12 +14038,17 @@ function syncRichToolbarEnhancements(toolbar) {
     return false;
   }
 
-  async function exportSelectionAsWord(items = []) {
+  async function exportSelectionAsWord(items = [], options = {}) {
     const selectedItems = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
     if (!selectedItems.length) {
       setStatus("未选中可导出内容", "warning");
       notifyExportToast("未选中可导出内容");
       return false;
+    }
+    if (!options.skipPreview) {
+      return openWordExportPreview(selectedItems, {
+        title: "多选元素导出 Word",
+      });
     }
     try {
       const result = await structuredExportRuntime.exportSelectionAsWordFile(selectedItems, {
@@ -13095,7 +14183,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     let copied = false;
-    if (meta.format === "html") {
+    if (meta.format === "html" || meta.format === "ppt-html") {
       copied = await writeClipboardTextAndHtml({
         text: payload.plainText || htmlToPlainText(payload.html || ""),
         html: payload.html,
@@ -13128,6 +14216,109 @@ function syncRichToolbarEnhancements(toolbar) {
       markdown: serializeTableMatrixToMarkdown(matrix),
       tsv: serializeTableMatrixToTsv(matrix),
     };
+  }
+
+  function buildSelectionRichTextClipboardContent(items = []) {
+    const plan = buildSelectionWordExportPlan(items);
+    const orderedItems = plan.orderedEntries.map((entry) => entry.item).filter(Boolean);
+    if (!orderedItems.length) {
+      return null;
+    }
+    const htmlParts = [];
+    const markdownParts = [];
+    const plainParts = [];
+
+    orderedItems.forEach((item) => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+      if (item.type === "text" || item.type === "flowNode") {
+        const payload = buildRichTextClipboardContent(item);
+        if (payload?.html) {
+          htmlParts.push(payload.html);
+        }
+        if (payload?.markdown) {
+          markdownParts.push(payload.markdown);
+        }
+        if (payload?.plainText) {
+          plainParts.push(payload.plainText);
+        }
+        return;
+      }
+      if (item.type === "table") {
+        const payload = buildTableClipboardContent(item);
+        if (payload?.plain) {
+          const plain = sanitizeText(payload.plain).trim();
+          const markdown = sanitizeText(payload.markdown || payload.plain).trim();
+          const rows = plain.split("\n").filter(Boolean);
+          const htmlRows = rows
+            .map((row, rowIndex) => {
+              const cells = row.split("\t");
+              const cellTag = rowIndex === 0 ? "th" : "td";
+              return `<tr>${cells.map((cell) => `<${cellTag}>${escapeHtml(cell)}</${cellTag}>`).join("")}</tr>`;
+            })
+            .join("");
+          htmlParts.push(`<table>${htmlRows}</table>`);
+          markdownParts.push(markdown);
+          plainParts.push(plain);
+        }
+        return;
+      }
+      if (item.type === "codeBlock") {
+        const plain = getCodeBlockContent(item);
+        const markdown = serializeCodeBlockToMarkdown(item);
+        htmlParts.push(`<pre><code>${escapeHtml(plain)}</code></pre>`);
+        markdownParts.push(markdown);
+        plainParts.push(plain);
+        return;
+      }
+      if (item.type === "mathBlock" || item.type === "mathInline") {
+        const formula = sanitizeText(String(item.formula || item.plainText || item.text || "")).trim();
+        if (formula) {
+          htmlParts.push(`<p>${escapeHtml(formula)}</p>`);
+          markdownParts.push(item.type === "mathBlock" ? `$$\n${formula}\n$$` : `$${formula}$`);
+          plainParts.push(formula);
+        }
+      }
+    });
+
+    const html = htmlParts.join("<p></p>").trim();
+    const markdown = sanitizeText(markdownParts.join("\n\n")).trim();
+    const plainText = sanitizeText(plainParts.join("\n\n")).trim();
+    return html || markdown || plainText
+      ? {
+          html,
+          markdown,
+          plainText,
+        }
+      : null;
+  }
+
+  async function copySelectedItemsContent(format = "html") {
+    const items = getSelectedItemsFast();
+    const payload = buildSelectionRichTextClipboardContent(items);
+    if (!payload) {
+      setStatus("未选中可复制内容", "warning");
+      return false;
+    }
+    let copied = false;
+    if (format === "markdown") {
+      copied = await writeClipboardTextAndHtml({ text: payload.markdown || payload.plainText });
+    } else if (format === "plain") {
+      copied = await writeClipboardTextAndHtml({ text: payload.plainText });
+    } else {
+      copied = await writeClipboardTextAndHtml({
+        text: payload.plainText || htmlToPlainText(payload.html || ""),
+        html: payload.html,
+      });
+    }
+    if (!copied) {
+      setStatus("复制失败", "warning");
+      return false;
+    }
+    const label = format === "markdown" ? "Markdown" : format === "plain" ? "纯文本" : "富文本";
+    setStatus(`已复制所选${label}`);
+    return true;
   }
 
   async function copyTableTextContent(item, format = "plain") {
@@ -15091,9 +16282,29 @@ function syncRichToolbarEnhancements(toolbar) {
     }
 
     if (pointer.type === "resize-multi-selection") {
-      const nextBounds = computeMultiSelectionResizedBounds(pointer.baseSelection?.bounds, pointer.handle, scenePoint, {
+      const resizedBounds = computeMultiSelectionResizedBounds(pointer.baseSelection?.bounds, pointer.handle, scenePoint, {
         preserveAspect: Boolean(event.shiftKey),
         scaleFromCenter: Boolean(event.altKey),
+      });
+      const constrainedBounds = constrainMultiSelectionBoundsToWidthOnly(
+        pointer.baseSelection?.bounds,
+        resizedBounds,
+        pointer.handle
+      );
+      const selectionIds = pointer.baseSelection?.items instanceof Map ? Array.from(pointer.baseSelection.items.keys()) : [];
+      const nextBounds = applyHorizontalResizeSnap({
+        activeItem: {
+          id: `selection:${selectionIds.join(",")}`,
+          type: "selection-group",
+          x: constrainedBounds.left,
+          y: constrainedBounds.top,
+          width: constrainedBounds.width,
+          height: constrainedBounds.height,
+        },
+        rawBounds: constrainedBounds,
+        handle: pointer.handle,
+        excludeIds: selectionIds,
+        reason: "resize-selection-group",
       });
       applyMultiSelectionResize(pointer.baseSelection, nextBounds);
       state.hoverHandle = pointer.handle;
@@ -15121,7 +16332,19 @@ function syncRichToolbarEnhancements(toolbar) {
           }
           return resizeImageWithAspect(pointer.baseItem, pointer.handle, scenePoint);
         }
-        return resizeElement(pointer.baseItem, pointer.handle, scenePoint);
+        const resizedItem = resizeElement(pointer.baseItem, pointer.handle, scenePoint);
+        const snappedBounds = applyHorizontalResizeSnap({
+          activeItem: resizedItem,
+          rawBounds: getElementBounds(resizedItem),
+          handle: pointer.handle,
+          excludeIds: [pointer.itemId],
+          reason: "resize-selection",
+        });
+        const snappedPoint = {
+          x: pointer.handle === "nw" || pointer.handle === "sw" ? snappedBounds.left : snappedBounds.right,
+          y: pointer.handle === "nw" || pointer.handle === "ne" ? snappedBounds.top : snappedBounds.bottom,
+        };
+        return resizeElement(pointer.baseItem, pointer.handle, snappedPoint);
       });
       state.hoverHandle = pointer.handle;
       scheduleRender();
@@ -15688,8 +16911,17 @@ function syncRichToolbarEnhancements(toolbar) {
       const selectedItems = getSelectedItemsFast();
       const hasGrouped = selectedItems.some((item) => item.groupId);
       const groupLabel = hasGrouped ? "取消组合" : "组合";
+      const canMergeTexts = selectedItems.length >= 2 && selectedItems.every((item) => isMergeableRichTextItem(item));
       refs.contextMenu.innerHTML = `
-        <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制所选</button>
+        <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制</button>
+        <div class="canvas2d-context-submenu">
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">复制所选</button>
+          <div class="canvas2d-context-submenu-panel" role="menu" aria-label="复制所选">
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-html">富文本（Word 直通）</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-markdown">Markdown</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-plain">纯文本</button>
+          </div>
+        </div>
         <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
         <div class="canvas2d-context-submenu">
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">导出</button>
@@ -15699,6 +16931,18 @@ function syncRichToolbarEnhancements(toolbar) {
           </div>
         </div>
         <button type="button" class="canvas2d-context-menu-item" data-action="group-toggle">${groupLabel}</button>
+        ${
+          canMergeTexts
+            ? `
+        <div class="canvas2d-context-submenu">
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">文本结构</button>
+          <div class="canvas2d-context-submenu-panel" role="menu" aria-label="文本结构">
+            <button type="button" class="canvas2d-context-menu-item" data-action="merge-selected-text">合并文本</button>
+          </div>
+        </div>
+        `
+            : ""
+        }
         <div class="canvas2d-context-submenu">
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">对齐</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="对齐">
@@ -16088,6 +17332,18 @@ function syncRichToolbarEnhancements(toolbar) {
       void copySelection();
       hideContextMenu();
     }
+    if (action === "copy-selected-html") {
+      void copySelectedItemsContent("html");
+      hideContextMenu();
+    }
+    if (action === "copy-selected-markdown") {
+      void copySelectedItemsContent("markdown");
+      hideContextMenu();
+    }
+    if (action === "copy-selected-plain") {
+      void copySelectedItemsContent("plain");
+      hideContextMenu();
+    }
     if (action === "delete-selected") {
       removeSelected();
       hideContextMenu();
@@ -16105,6 +17361,10 @@ function syncRichToolbarEnhancements(toolbar) {
       } else {
         groupSelection();
       }
+      hideContextMenu();
+    }
+    if (action === "merge-selected-text") {
+      mergeSelectedRichTextItems();
       hideContextMenu();
     }
     if (action === "bring-front") {
@@ -16565,6 +17825,16 @@ function syncRichToolbarEnhancements(toolbar) {
       }
       hideContextMenu();
     }
+    if (action === "file-preview") {
+      if (state.board.selectedIds.length === 1) {
+        const selected = getSingleSelectedItemFast("fileCard");
+        if (!openFileCardPreview(selected)) {
+          hideContextMenu();
+          return;
+        }
+      }
+      hideContextMenu();
+    }
   }
 
   function applyRichTextCommand(action, color) {
@@ -16715,6 +17985,9 @@ function syncRichToolbarEnhancements(toolbar) {
         activeSession.command("toggleTaskList");
       } else if (action === "horizontal-rule") {
         activeSession.command("insertHorizontalRule");
+      } else if (action === "text-split") {
+        splitActiveRichTextNow();
+        return;
       } else if (action === "color") {
         if (color) {
           activeSession.command("foreColor", color);
@@ -17817,6 +19090,7 @@ function syncRichToolbarEnhancements(toolbar) {
         "ordered-list",
         "task-list",
         "horizontal-rule",
+        "text-split",
         "link",
         "link-canvas",
         "link-remove",
@@ -20155,6 +21429,12 @@ function syncRichToolbarEnhancements(toolbar) {
     renderBoardToCanvas,
     exportBoardAsPdf,
     exportBoardAsPng,
+    openFileCardPreview,
+    confirmWordExportPreview,
+    closeWordExportPreview: clearWordExportPreviewRequest,
+    closeFileCardPreview: clearFileCardPreviewRequest,
+    toggleFileCardPreviewExpanded,
+    setFileCardPreviewZoom,
     addFlowNode() {
       return createFlowNode(getCenterScenePoint());
     },
@@ -20168,6 +21448,10 @@ function syncRichToolbarEnhancements(toolbar) {
     revealBoardInFolder,
     openExternalUrl,
     pickCanvasBoardSavePath,
+    getCanvasBoardWorkspace,
+    pickCanvasWorkspaceFolder,
+    listCanvasBoards,
+    createBoardInWorkspace,
     revealCanvasImageSavePath,
     pickCanvasImageSavePath,
     setBoardBackgroundPattern,
