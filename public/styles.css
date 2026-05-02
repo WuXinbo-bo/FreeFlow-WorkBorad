@@ -9218,9 +9218,10 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-search-wrap {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
   pointer-events: none;
 }
 
@@ -9243,59 +9244,112 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-engine-search-row {
   display: flex;
   align-items: flex-start;
-  justify-content: flex-start;
-  gap: 4px;
-  width: 100%;
+  justify-content: flex-end;
+  gap: 6px;
+  width: auto;
+  margin-left: auto;
 }
 
 .canvas2d-engine-search-placeholder {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid rgba(207, 216, 231, 0.94);
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid rgba(203, 213, 225, 0.96);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.98);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.98), rgba(244, 247, 251, 0.94)),
+    rgba(255, 255, 255, 0.98);
   box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.08),
-    0 2px 6px rgba(15, 23, 42, 0.04);
+    0 14px 28px rgba(15, 23, 42, 0.1),
+    0 3px 8px rgba(15, 23, 42, 0.05);
   color: #0f172a;
   pointer-events: auto;
+  transition:
+    border-color 170ms ease,
+    background 170ms ease,
+    box-shadow 170ms ease,
+    transform 170ms ease;
+}
+
+.canvas2d-engine-search-placeholder:hover,
+.canvas2d-engine-search-placeholder:focus-visible {
+  border-color: rgba(147, 197, 253, 0.98);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 1), rgba(239, 246, 255, 0.98)),
+    rgba(255, 255, 255, 0.99);
+  box-shadow:
+    0 16px 30px rgba(15, 23, 42, 0.08),
+    0 4px 10px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
 }
 
 .canvas2d-engine-search-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
   display: grid;
-  gap: 8px;
-  width: 100%;
-  padding: 8px;
-  border: 1px solid rgba(207, 216, 231, 0.94);
-  border-radius: 17px;
-  background: rgba(255, 255, 255, 0.98);
+  gap: 10px;
+  width: min(430px, calc(100vw - 36px));
+  padding: 12px;
+  border: 1px solid rgba(207, 216, 231, 0.92);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(247, 250, 252, 0.965)),
+    rgba(255, 255, 255, 0.98);
   box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.08),
-    0 2px 6px rgba(15, 23, 42, 0.04);
+    0 26px 60px rgba(15, 23, 42, 0.16),
+    0 10px 24px rgba(15, 23, 42, 0.08);
   pointer-events: auto;
+  z-index: 18;
+  overflow: hidden;
+  animation: canvas2d-search-panel-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.canvas2d-engine-search-panel-header {
+.canvas2d-engine-search-panel-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas2d-engine-search-input-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.98);
+  min-height: 44px;
+  padding: 0 12px 0 10px;
+  border: 1px solid rgba(191, 219, 254, 0.86);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.94);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.canvas2d-engine-search-input-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.canvas2d-engine-search-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #475569;
+  font-size: 0.64rem;
+  font-weight: 850;
 }
 
 .canvas2d-engine-search-input {
@@ -9305,25 +9359,32 @@ body.is-office-embedded #right-pane-resizer {
   outline: none;
   background: transparent;
   color: #0f172a;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.79rem;
+  font-weight: 700;
 }
 
 .canvas2d-engine-search-input::placeholder {
-  color: #94a3b8;
+  color: #8fa1b8;
+}
+
+.canvas2d-engine-search-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .canvas2d-engine-search-close {
   flex: 0 0 auto;
-  min-width: 36px;
-  min-height: 32px;
-  padding: 0 9px;
+  min-width: 42px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 11px;
+  border-radius: 13px;
   background: rgba(248, 250, 252, 0.98);
   color: #475569;
-  font-size: 0.62rem;
-  font-weight: 800;
+  font-size: 0.64rem;
+  font-weight: 850;
 }
 
 .canvas2d-engine-search-close:hover {
@@ -9331,73 +9392,208 @@ body.is-office-embedded #right-pane-resizer {
   background: rgba(239, 246, 255, 0.98);
 }
 
+.canvas2d-engine-search-panel-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
 .canvas2d-engine-search-status {
   color: #64748b;
-  font-size: 0.74rem;
-  font-weight: 700;
-  padding: 0 4px;
+  font-size: 0.71rem;
+  font-weight: 750;
+  padding: 0 2px;
+}
+
+.canvas2d-engine-search-shortcuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.canvas2d-engine-search-shortcuts span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.05);
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.canvas2d-engine-search-subnav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0 1px;
+  position: relative;
+  z-index: 1;
+}
+
+.canvas2d-engine-search-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(226, 232, 240, 0.78);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.86);
+  color: #64748b;
+  font-size: 0.64rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.canvas2d-engine-search-scope-chip strong,
+.canvas2d-engine-search-scope-chip em {
+  font-style: normal;
+}
+
+.canvas2d-engine-search-scope-chip em {
+  color: #94a3b8;
+}
+
+.canvas2d-engine-search-scope-chip.is-active {
+  border-color: rgba(147, 197, 253, 0.78);
+  background: rgba(239, 246, 255, 0.98);
+  color: #1d4ed8;
 }
 
 .canvas2d-engine-search-results {
   display: grid;
   gap: 8px;
-  max-height: 284px;
+  max-height: 320px;
   overflow-y: auto;
   padding-right: 2px;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas2d-engine-search-empty {
   display: grid;
-  gap: 4px;
-  padding: 12px 14px;
+  justify-items: start;
+  gap: 6px;
+  padding: 16px 16px 15px;
   border: 1px dashed rgba(203, 213, 225, 0.96);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.72);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.76);
   color: #64748b;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   line-height: 1.55;
 }
 
+.canvas2d-engine-search-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.05);
+  color: #1d4ed8;
+}
+
 .canvas2d-engine-search-empty strong {
-  color: #334155;
-  font-size: 0.8rem;
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 850;
 }
 
 .canvas2d-engine-search-result {
-  display: flex;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 12px;
   width: 100%;
-  padding: 11px 12px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.98);
+  padding: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    rgba(248, 250, 252, 0.98);
   color: #0f172a;
   text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
 }
 
 .canvas2d-engine-search-result:hover,
 .canvas2d-engine-search-result.is-active {
-  border-color: rgba(96, 165, 250, 0.32);
-  background: rgba(239, 246, 255, 0.98);
+  border-color: rgba(96, 165, 250, 0.38);
+  background:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(247, 250, 252, 0.98)),
+    rgba(239, 246, 255, 0.98);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.08);
+  transform: translateY(-1px);
+}
+
+.canvas2d-engine-search-result-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.05);
+  color: #334155;
+}
+
+.canvas2d-engine-search-result.is-active .canvas2d-engine-search-result-glyph {
+  background: rgba(219, 234, 254, 0.96);
+  color: #1d4ed8;
 }
 
 .canvas2d-engine-search-result-main {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   flex: 1 1 auto;
 }
 
-.canvas2d-engine-search-result-main strong {
-  font-size: 0.82rem;
-  font-weight: 800;
+.canvas2d-engine-search-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.canvas2d-engine-search-result-main span {
+.canvas2d-engine-search-result-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.81rem;
+  font-weight: 850;
+}
+
+.canvas2d-engine-search-result-head em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.05);
   color: #64748b;
-  font-size: 0.76rem;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.canvas2d-engine-search-result-main > span:last-child {
+  color: #64748b;
+  font-size: 0.72rem;
   font-weight: 600;
   line-height: 1.45;
   overflow: hidden;
@@ -9407,9 +9603,9 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-engine-search-mark {
   margin: 0;
-  padding: 0 2px;
-  border-radius: 4px;
-  background: rgba(255, 236, 179, 0.9);
+  padding: 0 3px;
+  border-radius: 6px;
+  background: rgba(255, 236, 179, 0.94);
   color: #7c2d12;
   font-weight: 800;
 }
@@ -9422,12 +9618,14 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-search-result-meta span {
-  padding: 2px 8px;
+  min-width: 44px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.06);
   color: #475569;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
+  text-align: center;
 }
 
 .canvas2d-engine-search-highlight {
@@ -9753,12 +9951,23 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-engine-search-kbd {
   flex: 0 0 auto;
-  padding: 2px 7px;
+  min-height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
   color: rgba(51, 65, 85, 0.88);
-  font-size: 0.55rem;
-  font-weight: 700;
+  font-size: 0.6rem;
+  font-weight: 850;
+}
+
+@keyframes canvas2d-search-panel-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .canvas2d-engine-export-history-wrap {
@@ -9770,27 +9979,41 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-export-history-trigger {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
   padding: 0;
-  border: 1px solid rgba(207, 216, 231, 0.94);
+  border: 1px solid rgba(203, 213, 225, 0.96);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.98);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.98), rgba(244, 247, 251, 0.94)),
+    rgba(255, 255, 255, 0.98);
   box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.08),
-    0 2px 6px rgba(15, 23, 42, 0.04);
+    0 14px 28px rgba(15, 23, 42, 0.1),
+    0 3px 8px rgba(15, 23, 42, 0.05);
   color: #0f172a;
   pointer-events: auto;
+  transition:
+    border-color 170ms ease,
+    background 170ms ease,
+    box-shadow 170ms ease,
+    transform 170ms ease;
 }
 
 .canvas2d-engine-export-history-trigger.is-active,
 .canvas2d-engine-export-history-trigger:hover {
   border-color: rgba(147, 197, 253, 0.98);
-  background: rgba(248, 250, 252, 0.98);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 1), rgba(239, 246, 255, 0.98)),
+    rgba(255, 255, 255, 0.99);
+  box-shadow:
+    0 16px 30px rgba(15, 23, 42, 0.08),
+    0 4px 10px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
 }
 
 .canvas2d-engine-export-history-icon {
@@ -9810,8 +10033,8 @@ body.is-office-embedded #right-pane-resizer {
   min-height: 18px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #e2e8f0;
-  color: #0f172a;
+  background: #0f172a;
+  color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9833,111 +10056,198 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-export-history-panel {
-  width: min(320px, calc(100vw - 36px));
+  position: relative;
+  width: min(430px, calc(100vw - 36px));
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(207, 216, 231, 0.94);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(207, 216, 231, 0.92);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(247, 250, 252, 0.965)),
+    rgba(255, 255, 255, 0.98);
   box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.08),
-    0 2px 6px rgba(15, 23, 42, 0.04);
+    0 26px 60px rgba(15, 23, 42, 0.16),
+    0 10px 24px rgba(15, 23, 42, 0.08);
   pointer-events: auto;
+  overflow: hidden;
+  animation: canvas2d-search-panel-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .canvas2d-engine-export-history-panel-head {
-  display: grid;
-  gap: 2px;
-  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 4px;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas2d-engine-export-history-panel-head strong {
   color: #0f172a;
   font-size: 0.84rem;
+  font-weight: 850;
 }
 
-.canvas2d-engine-export-history-panel-head span {
+.canvas2d-engine-export-history-panel-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.canvas2d-engine-export-history-panel-meta span {
   color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.canvas2d-engine-export-history-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 28px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #334155 !important;
+  font-size: 0.68rem !important;
+  font-weight: 900 !important;
 }
 
 .canvas2d-engine-export-history-list {
   display: grid;
   gap: 8px;
-  max-height: 280px;
+  max-height: 336px;
   overflow-y: auto;
   padding-right: 2px;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas2d-engine-export-history-item {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-areas: "kind main meta";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 0;
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.94);
+  padding: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    rgba(248, 250, 252, 0.98);
   color: #0f172a;
   text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
 }
 
 .canvas2d-engine-export-history-item:hover:not(.is-disabled) {
-  border-color: rgba(191, 219, 254, 0.96);
-  background: rgba(239, 246, 255, 0.98);
+  border-color: rgba(96, 165, 250, 0.38);
+  background:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(247, 250, 252, 0.98)),
+    rgba(239, 246, 255, 0.98);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.08);
+  transform: translateY(-1px);
 }
 
 .canvas2d-engine-export-history-item.is-disabled {
   opacity: 0.72;
 }
 
+.canvas2d-engine-export-history-kind {
+  grid-area: kind;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.05);
+  color: #334155;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.canvas2d-engine-export-history-item:hover:not(.is-disabled) .canvas2d-engine-export-history-kind {
+  background: rgba(219, 234, 254, 0.94);
+  color: #1d4ed8;
+}
+
 .canvas2d-engine-export-history-item-main {
+  grid-area: main;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .canvas2d-engine-export-history-item-main strong {
   color: #0f172a;
-  font-size: 0.8rem;
+  font-size: 0.81rem;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .canvas2d-engine-export-history-item-main span {
   color: #64748b;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   line-height: 1.45;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .canvas2d-engine-export-history-item-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  grid-area: meta;
+  display: grid;
+  gap: 4px;
+  justify-items: end;
 }
 
 .canvas2d-engine-export-history-item-meta span {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 44px;
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(226, 232, 240, 0.72);
+  background: rgba(15, 23, 42, 0.06);
   color: #475569;
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: 0.62rem;
+  font-weight: 800;
 }
 
 .canvas2d-engine-export-history-empty {
   display: grid;
-  gap: 4px;
-  padding: 12px 14px;
+  gap: 6px;
+  padding: 16px;
   border: 1px dashed rgba(203, 213, 225, 0.96);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.72);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.76);
   color: #64748b;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   line-height: 1.5;
+}
+
+.canvas2d-engine-export-history-empty strong {
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 850;
 }
 
 .canvas2d-word-export-overlay {
@@ -9957,6 +10267,162 @@ body.is-office-embedded #right-pane-resizer {
   pointer-events: auto;
 }
 
+.canvas2d-word-export-dialog {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  gap: 12px;
+  width: min(980px, calc(100vw - 68px));
+  height: min(760px, calc(100vh - 68px));
+  min-height: 520px;
+  padding: 18px;
+  border: 1px solid rgba(226, 232, 240, 0.84);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(246, 249, 252, 0.96)),
+    #fff;
+  box-shadow:
+    0 34px 88px rgba(15, 23, 42, 0.24),
+    0 8px 24px rgba(15, 23, 42, 0.1);
+  overflow: hidden;
+}
+
+.canvas2d-word-export-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.canvas2d-word-export-head-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.canvas2d-word-export-head-copy strong {
+  color: #0f172a;
+  font-size: 1.04rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.canvas2d-word-export-head-copy span {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.canvas2d-word-export-head-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.98);
+  color: #334155;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.canvas2d-word-export-head-close:hover {
+  border-color: rgba(191, 219, 254, 0.96);
+  background: rgba(239, 246, 255, 0.98);
+}
+
+.canvas2d-word-export-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.canvas2d-word-export-meta span,
+.canvas2d-word-export-type-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.72);
+  color: #475569;
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.canvas2d-word-export-body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.96), rgba(226, 232, 240, 0.9));
+}
+
+.canvas2d-word-export-docx-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.canvas2d-word-export-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.82);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.canvas2d-word-export-preview-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas2d-word-export-preview-toolbar-group.is-actions {
+  margin-left: auto;
+}
+
+.canvas2d-word-export-preview-toolbar-label {
+  color: #0f172a;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.canvas2d-word-export-preview-toolbar-hint {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.canvas2d-word-export-zoom-btn,
+.canvas2d-word-export-zoom-value {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.98);
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.canvas2d-word-export-zoom-btn:hover,
+.canvas2d-word-export-zoom-value:hover {
+  border-color: rgba(191, 219, 254, 0.96);
+  background: rgba(239, 246, 255, 0.98);
+}
+
+.canvas2d-word-export-docx-preview-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .canvas2d-word-export-docx-iframe {
   display: block;
   width: 100%;
@@ -9968,7 +10434,7 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-word-export-preview-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   padding: 10px 16px 12px;
   border-top: 1px solid rgba(203, 213, 225, 0.82);
@@ -9976,6 +10442,28 @@ body.is-office-embedded #right-pane-resizer {
   color: #64748b;
   font-size: 0.7rem;
   font-weight: 700;
+}
+
+.canvas2d-word-export-note {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(203, 213, 225, 0.92);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.canvas2d-word-export-note strong {
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.canvas2d-word-export-note span {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .canvas2d-word-export-page {
@@ -10202,45 +10690,39 @@ body.is-office-embedded #right-pane-resizer {
   align-items: center;
   justify-content: center;
   padding: 32px;
-  background:
-    radial-gradient(circle at 18% 20%, rgba(14, 165, 233, 0.2), transparent 34%),
-    radial-gradient(circle at 82% 74%, rgba(15, 23, 42, 0.18), transparent 38%),
-    rgba(15, 23, 42, 0.32);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   pointer-events: auto;
 }
 
 .canvas2d-board-workspace-dialog {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 344px;
   gap: 0;
   width: min(1120px, calc(100vw - 56px));
   height: min(720px, calc(100vh - 56px));
   min-height: 560px;
   overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.64);
-  border-radius: 32px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.985), rgba(246, 249, 252, 0.955)),
-    #fff;
+  border: 1px solid rgba(226, 232, 240, 0.78);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.985);
   box-shadow:
-    0 40px 120px rgba(15, 23, 42, 0.28),
-    0 10px 30px rgba(15, 23, 42, 0.12);
+    0 32px 80px rgba(15, 23, 42, 0.22),
+    0 8px 22px rgba(15, 23, 42, 0.08);
+  animation: canvas2d-board-workspace-enter 180ms ease;
 }
 
 .canvas2d-board-workspace-main {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   min-width: 0;
   min-height: 0;
   padding: 20px;
-  background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.93));
+  background: rgba(249, 250, 251, 0.98);
 }
 
 .canvas2d-board-workspace-header,
-.canvas2d-board-workspace-list-head,
 .canvas2d-board-workspace-path-card {
   display: flex;
   align-items: center;
@@ -10263,8 +10745,7 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-board-workspace-eyebrow,
 .canvas2d-board-workspace-path-main span,
 .canvas2d-board-workspace-list-head span,
-.canvas2d-board-workspace-current span,
-.canvas2d-board-workspace-action-card label span {
+.canvas2d-board-workspace-current span {
   color: #64748b;
   font-size: 0.68rem;
   font-weight: 900;
@@ -10292,8 +10773,8 @@ body.is-office-embedded #right-pane-resizer {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(226, 232, 240, 0.72);
-  color: #475569;
+  background: rgba(241, 245, 249, 0.96);
+  color: #334155;
   font-size: 0.68rem;
   font-weight: 850;
   letter-spacing: 0.03em;
@@ -10309,31 +10790,31 @@ body.is-office-embedded #right-pane-resizer {
   width: 36px;
   height: 36px;
   border: 1px solid rgba(203, 213, 225, 0.92);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
   color: #334155;
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   font-weight: 800;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
 .canvas2d-board-workspace-close:hover,
 .canvas2d-board-workspace-path-card button:hover,
-.canvas2d-board-workspace-list-head button:hover,
 .canvas2d-board-workspace-action-grid button:hover,
-.canvas2d-board-workspace-action-card button:hover {
-  border-color: rgba(147, 197, 253, 0.96);
-  background: rgba(239, 246, 255, 0.98);
+.canvas2d-board-workspace-rename-editor button:hover,
+.canvas2d-board-workspace-create-dock button:hover,
+.canvas2d-board-workspace-icon-action:hover {
+  border-color: rgba(148, 163, 184, 0.9);
+  background: rgba(248, 250, 252, 0.98);
 }
 
 .canvas2d-board-workspace-path-card {
-  min-height: 82px;
+  min-height: 78px;
   padding: 16px 18px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 24px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.88));
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.05);
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
 }
 
 .canvas2d-board-workspace-path-main strong {
@@ -10345,6 +10826,15 @@ body.is-office-embedded #right-pane-resizer {
   white-space: nowrap;
 }
 
+.canvas2d-board-workspace-path-main small {
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .canvas2d-board-workspace-path-actions {
   display: flex;
   align-items: center;
@@ -10352,14 +10842,14 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-board-workspace-path-card button,
-.canvas2d-board-workspace-list-head button,
 .canvas2d-board-workspace-action-grid button,
-.canvas2d-board-workspace-action-card button {
+.canvas2d-board-workspace-rename-editor button,
+.canvas2d-board-workspace-create-dock button {
   min-height: 38px;
   padding: 0 15px;
   border: 1px solid rgba(203, 213, 225, 0.92);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
   color: #0f172a;
   font-size: 0.78rem;
   font-weight: 850;
@@ -10370,20 +10860,97 @@ body.is-office-embedded #right-pane-resizer {
     box-shadow 160ms ease;
 }
 
-.canvas2d-board-workspace-list-head {
+.canvas2d-board-workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   padding: 18px 2px 12px;
+}
+
+.canvas2d-board-workspace-list-head {
+  display: grid;
+  gap: 4px;
 }
 
 .canvas2d-board-workspace-list-head strong {
   color: #0f172a;
-  font-size: 1rem;
+  font-size: 0.98rem;
   font-weight: 900;
+}
+
+.canvas2d-board-workspace-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.canvas2d-board-workspace-sort-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.canvas2d-board-workspace-sort-field span {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.canvas2d-board-workspace-sort-field select {
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 0.76rem;
+  font-weight: 800;
+  outline: none;
+}
+
+.canvas2d-board-workspace-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.canvas2d-board-workspace-stat {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 232, 240, 0.88);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.canvas2d-board-workspace-stat span {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.canvas2d-board-workspace-stat strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .canvas2d-board-workspace-list {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
   padding: 2px 4px 4px 0;
@@ -10396,12 +10963,11 @@ body.is-office-embedded #right-pane-resizer {
   align-items: center;
   gap: 14px;
   width: 100%;
-  min-height: 76px;
-  padding: 14px 16px;
-  border: 1px solid rgba(226, 232, 240, 0.88);
-  border-radius: 22px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.84));
+  min-height: 72px;
+  padding: 14px 15px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
   color: #0f172a;
   text-align: left;
   transition:
@@ -10413,17 +10979,16 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-board-workspace-item:hover,
 .canvas2d-board-workspace-item.is-selected {
-  border-color: rgba(96, 165, 250, 0.46);
-  background:
-    linear-gradient(145deg, rgba(239, 246, 255, 0.98), rgba(232, 244, 255, 0.9));
-  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.08);
+  border-color: rgba(96, 165, 250, 0.38);
+  background: rgba(239, 246, 255, 0.78);
+  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.08);
   transform: translateY(-1px);
 }
 
 .canvas2d-board-workspace-item.is-active {
   box-shadow:
-    inset 4px 0 0 rgba(37, 99, 235, 0.86),
-    0 14px 28px rgba(37, 99, 235, 0.08);
+    inset 3px 0 0 rgba(37, 99, 235, 0.78),
+    0 8px 20px rgba(59, 130, 246, 0.08);
 }
 
 .canvas2d-board-workspace-file-icon {
@@ -10431,14 +10996,13 @@ body.is-office-embedded #right-pane-resizer {
   place-items: center;
   width: 46px;
   height: 46px;
-  border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(37, 99, 235, 0.9));
-  color: #fff;
+  border-radius: 14px;
+  background: #dbeafe;
+  color: #1d4ed8;
   font-size: 0.7rem;
   font-weight: 950;
   letter-spacing: 0.08em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .canvas2d-board-workspace-item-main,
@@ -10448,17 +11012,24 @@ body.is-office-embedded #right-pane-resizer {
   min-width: 0;
 }
 
+.canvas2d-board-workspace-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .canvas2d-board-workspace-item-main strong {
   overflow: hidden;
   color: #0f172a;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .canvas2d-board-workspace-item-main span,
-.canvas2d-board-workspace-item-meta span,
+.canvas2d-board-workspace-item-meta small,
 .canvas2d-board-workspace-current small,
 .canvas2d-board-workspace-note span {
   overflow: hidden;
@@ -10471,20 +11042,26 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-board-workspace-item-meta {
   justify-items: end;
-  padding-right: 54px;
-  gap: 6px;
+  gap: 2px;
+}
+
+.canvas2d-board-workspace-item-meta strong {
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
 .canvas2d-board-workspace-active-pill {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  padding: 4px 9px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(219, 234, 254, 0.96);
   color: #1d4ed8;
-  font-size: 0.62rem;
+  font-size: 0.64rem;
   font-weight: 900;
+  letter-spacing: 0.04em;
 }
 
 .canvas2d-board-workspace-empty {
@@ -10508,29 +11085,34 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-board-workspace-side {
-  display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   min-width: 0;
   min-height: 0;
-  padding: 20px 20px 20px 18px;
-  border-left: 1px solid rgba(226, 232, 240, 0.84);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(247, 250, 252, 0.96));
+  padding: 20px;
+  border-left: 1px solid rgba(226, 232, 240, 0.94);
+  background: rgba(255, 255, 255, 0.98);
   overflow: auto;
 }
 
 .canvas2d-board-workspace-current,
-.canvas2d-board-workspace-action-card,
+.canvas2d-board-workspace-create-dock,
 .canvas2d-board-workspace-note,
 .canvas2d-board-workspace-error {
   display: grid;
   gap: 10px;
   padding: 15px;
   border: 1px solid rgba(226, 232, 240, 0.88);
-  border-radius: 22px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.82));
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.canvas2d-board-workspace-current {
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .canvas2d-board-workspace-current strong,
@@ -10570,12 +11152,52 @@ body.is-office-embedded #right-pane-resizer {
   color: #b91c1c;
 }
 
-.canvas2d-board-workspace-action-card label {
+.canvas2d-board-workspace-current-title-row {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
 }
 
-.canvas2d-board-workspace-action-card input {
+.canvas2d-board-workspace-current-title-row strong {
+  font-size: 1.02rem;
+}
+
+.canvas2d-board-workspace-current-path {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas2d-board-workspace-icon-action {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(203, 213, 225, 0.86);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 900;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.canvas2d-board-workspace-rename-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.canvas2d-board-workspace-rename-editor input,
+.canvas2d-board-workspace-create-dock input {
   width: 100%;
   height: 38px;
   padding: 0 12px;
@@ -10588,29 +11210,39 @@ body.is-office-embedded #right-pane-resizer {
   outline: none;
 }
 
-.canvas2d-board-workspace-action-card input:focus {
+.canvas2d-board-workspace-rename-editor input:focus,
+.canvas2d-board-workspace-create-dock input:focus {
   border-color: rgba(96, 165, 250, 0.72);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
-.canvas2d-board-workspace-action-card button.is-primary {
+.canvas2d-board-workspace-rename-editor button.is-primary,
+.canvas2d-board-workspace-create-dock button.is-primary {
   border-color: rgba(37, 99, 235, 0.72);
-  background:
-    linear-gradient(135deg, rgba(37, 99, 235, 0.98), rgba(14, 165, 233, 0.92));
+  background: #2563eb;
   color: #fff;
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.16);
 }
 
 .canvas2d-board-workspace-action-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 9px;
+  padding: 2px 0 0;
+}
+
+.canvas2d-board-workspace-action-grid button {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.canvas2d-board-workspace-danger-action {
+  color: #b91c1c !important;
+  background: rgba(254, 242, 242, 0.98) !important;
+  border-color: rgba(252, 165, 165, 0.84) !important;
 }
 
 .canvas2d-board-workspace-note {
   align-content: start;
-  background:
-    linear-gradient(145deg, rgba(239, 246, 255, 0.9), rgba(232, 244, 255, 0.72));
 }
 
 .canvas2d-board-workspace-note span {
@@ -10625,6 +11257,102 @@ body.is-office-embedded #right-pane-resizer {
   font-size: 0.76rem;
   font-weight: 800;
   line-height: 1.5;
+}
+
+.canvas2d-board-workspace-create-dock {
+  align-self: end;
+  margin-top: auto;
+  padding: 12px;
+}
+
+.canvas2d-board-workspace-create-dock.is-open {
+  gap: 10px;
+  padding: 15px;
+  border-color: rgba(203, 213, 225, 0.94);
+}
+
+.canvas2d-board-workspace-create-trigger {
+  width: 100%;
+  border-color: rgba(37, 99, 235, 0.72) !important;
+  background: #2563eb !important;
+  color: #fff !important;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.16);
+}
+
+.canvas2d-board-workspace-mini-action {
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  color: #64748b !important;
+  font-size: 0.68rem !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-board-workspace-feedback {
+  padding: 10px 12px;
+  border: 1px solid rgba(191, 219, 254, 0.92);
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.9);
+  color: #1d4ed8;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.canvas2d-board-workspace-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.canvas2d-board-workspace-confirm-dialog {
+  width: min(420px, calc(100vw - 48px));
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid rgba(226, 232, 240, 0.94);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
+}
+
+.canvas2d-board-workspace-confirm-eyebrow {
+  color: #b91c1c;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.canvas2d-board-workspace-confirm-dialog strong {
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.canvas2d-board-workspace-confirm-dialog p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.canvas2d-board-workspace-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.canvas2d-board-workspace-confirm-actions button.is-danger {
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.94);
+  color: #fff;
 }
 
 .canvas2d-board-workspace-side button:disabled,
@@ -10658,6 +11386,18 @@ body.is-office-embedded #right-pane-resizer {
   background: transparent;
 }
 
+@keyframes canvas2d-board-workspace-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 860px) {
   .canvas2d-board-workspace-dialog {
     grid-template-columns: 1fr;
@@ -10669,7 +11409,6 @@ body.is-office-embedded #right-pane-resizer {
   .canvas2d-board-workspace-side {
     border-left: 0;
     border-top: 1px solid rgba(226, 232, 240, 0.92);
-    padding-left: 20px;
   }
 
   .canvas2d-board-workspace-path-card {
@@ -10683,6 +11422,30 @@ body.is-office-embedded #right-pane-resizer {
 
   .canvas2d-board-workspace-path-actions button {
     flex: 1;
+  }
+
+  .canvas2d-board-workspace-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .canvas2d-board-workspace-toolbar-actions {
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 720px) {
+  .canvas2d-board-workspace-stat-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .canvas2d-board-workspace-item {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .canvas2d-board-workspace-item-meta {
+    grid-column: 2;
+    justify-items: start;
   }
 }
 
@@ -10702,165 +11465,22 @@ body.is-office-embedded #right-pane-resizer {
   }
 }
 
-.canvas2d-word-export-side {
-  display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto;
-  gap: 14px;
-  min-width: 0;
-  min-height: 0;
-  padding: 18px;
-  border: 1px solid rgba(226, 232, 240, 0.84);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.82);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  border-left: 0;
-  overflow: auto;
-  align-content: start;
-}
-
-.canvas2d-word-export-side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 32px;
-}
-
-.canvas2d-word-export-side-head span {
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 900;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  min-height: 1px;
-}
-
-.canvas2d-word-export-side-head button {
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.96);
-  color: #334155;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-
-.canvas2d-word-export-side-head button:hover {
-  border-color: rgba(191, 219, 254, 0.96);
-  background: rgba(239, 246, 255, 0.98);
-}
-
-.canvas2d-word-export-title {
-  display: grid;
-  gap: 6px;
-  padding-top: 2px;
-}
-
-.canvas2d-word-export-title strong {
-  color: #0f172a;
-  font-size: 1.15rem;
-  font-weight: 900;
-  line-height: 1.25;
-}
-
-.canvas2d-word-export-title span {
-  color: #64748b;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.55;
-}
-
-.canvas2d-word-export-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.canvas2d-word-export-stats div {
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.94);
-}
-
-.canvas2d-word-export-stats span {
-  color: #64748b;
-  font-size: 0.68rem;
-  font-weight: 800;
-}
-
-.canvas2d-word-export-stats strong {
-  color: #0f172a;
-  font-size: 1.18rem;
-  font-weight: 950;
-}
-
 .canvas2d-word-export-type-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.canvas2d-word-export-type-list span {
-  padding: 6px 9px;
-  border-radius: 999px;
-  background: rgba(219, 234, 254, 0.82);
-  color: #1d4ed8;
-  font-size: 0.72rem;
-  font-weight: 900;
-}
-
-.canvas2d-word-export-option-card,
-.canvas2d-word-export-skip-card {
-  display: grid;
-  gap: 6px;
-  padding: 13px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 18px;
-  background: rgba(248, 250, 252, 0.92);
-}
-
-.canvas2d-word-export-option-card span,
-.canvas2d-word-export-skip-card strong {
-  color: #0f172a;
-  font-size: 0.8rem;
-  font-weight: 900;
-}
-
-.canvas2d-word-export-option-card strong {
-  color: #334155;
-  font-size: 0.82rem;
-}
-
-.canvas2d-word-export-option-card small,
-.canvas2d-word-export-skip-card span {
-  color: #64748b;
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.45;
-}
-
-.canvas2d-word-export-skip-card {
-  align-self: start;
-  max-height: 150px;
-  overflow-y: auto;
-}
-
 .canvas2d-word-export-actions {
-  display: grid;
-  grid-template-columns: 1fr 1.4fr;
+  display: flex;
+  justify-content: flex-end;
   gap: 10px;
-  align-self: end;
-  margin-top: auto;
-  padding-top: 8px;
+  padding-top: 2px;
 }
 
 .canvas2d-word-export-actions button {
-  min-height: 42px;
+  min-width: 126px;
+  min-height: 40px;
   border-radius: 15px;
   font-size: 0.82rem;
   font-weight: 900;
@@ -10888,15 +11508,25 @@ body.is-office-embedded #right-pane-resizer {
 
 @media (max-width: 860px) {
   .canvas2d-word-export-overlay {
-    align-items: flex-start;
-    justify-content: flex-start;
     padding: 18px;
-    overflow: auto;
   }
 
   .canvas2d-word-export-dialog {
-    transform-origin: top left;
-    transform: scale(min((100vw - 36px) / 960, (100vh - 36px) / 640));
+    width: min(100vw - 36px, 980px);
+    height: min(100vh - 36px, 760px);
+    min-height: 440px;
+  }
+
+  .canvas2d-word-export-preview-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .canvas2d-word-export-actions {
+    justify-content: stretch;
+  }
+
+  .canvas2d-word-export-actions button {
+    flex: 1 1 0;
   }
 }
 
@@ -11112,6 +11742,56 @@ body.is-office-embedded #right-pane-resizer {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.canvas2d-engine-insert-menu {
+  min-width: 226px;
+}
+
+.canvas2d-engine-insert-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 9px 10px;
+}
+
+.canvas2d-engine-insert-item .canvas2d-engine-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: rgba(226, 232, 240, 0.72);
+  color: #334155;
+  font-size: 0.95rem;
+}
+
+.canvas2d-engine-insert-item:hover:not(.is-disabled) .canvas2d-engine-menu-icon {
+  background: rgba(219, 234, 254, 0.92);
+  color: #1d4ed8;
+}
+
+.canvas2d-engine-insert-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+}
+
+.canvas2d-engine-insert-copy strong {
+  color: #0f172a;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.canvas2d-engine-insert-copy small {
+  color: #64748b;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .canvas2d-engine-menu-row {
@@ -11697,18 +12377,44 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-floating-card-info.is-compact.is-collapsed {
-  min-width: 92px;
-  max-width: 92px;
+  min-width: 70px;
+  max-width: 70px;
   height: auto;
   min-height: 0;
-  padding: 8px 9px;
+  padding: 8px;
   gap: 0;
   align-self: flex-start;
+  border-radius: 18px;
 }
 
 .canvas2d-info-detail {
   display: grid;
   gap: 6px;
+}
+
+.canvas2d-floating-card-info.is-compact.is-collapsed .canvas2d-brand-row {
+  justify-content: center;
+  gap: 0;
+}
+
+.canvas2d-floating-card-info.is-compact.is-collapsed .canvas2d-brand-label {
+  display: none;
+}
+
+.canvas2d-floating-card-info.is-compact.is-collapsed .canvas2d-brand-logo {
+  max-width: 28px;
+  height: 18px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.canvas2d-floating-card-info.is-compact.is-collapsed .canvas2d-info-collapse-toggle {
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  border-color: rgba(191, 219, 254, 0.86);
+  background: rgba(239, 246, 255, 0.96);
+  color: #1d4ed8;
 }
 
 .canvas2d-floating-card-info.is-compact.is-collapsed .canvas2d-info-detail,
@@ -11969,13 +12675,31 @@ body.is-office-embedded #right-pane-resizer {
     width: 100%;
   }
 
-  .canvas2d-engine-search-placeholder,
+  .canvas2d-engine-search-placeholder {
+    width: 36px;
+  }
+
   .canvas2d-engine-search-panel {
     width: 100%;
   }
 
+  .canvas2d-engine-search-panel {
+    right: 0;
+  }
+
+  .canvas2d-engine-search-panel-top,
+  .canvas2d-engine-search-panel-meta {
+    flex-wrap: wrap;
+  }
+
+  .canvas2d-engine-search-panel-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
   .canvas2d-engine-export-history-wrap {
-    width: 42px;
+    width: 36px;
+    height: 36px;
   }
 
   .canvas2d-engine-toolbar-wrap {
@@ -11997,8 +12721,8 @@ body.is-office-embedded #right-pane-resizer {
     min-width: 160px;
   }
 
-  .canvas2d-engine-search-copy span,
-  .canvas2d-engine-search-kbd {
+  .canvas2d-engine-search-kbd,
+  .canvas2d-engine-search-shortcuts {
     display: none;
   }
 
@@ -12011,12 +12735,37 @@ body.is-office-embedded #right-pane-resizer {
   }
 
   .canvas2d-floating-card-info.is-compact {
-    min-width: 92px;
-    max-width: 92px;
+    min-width: 70px;
+    max-width: 70px;
     height: auto;
     min-height: 0;
-    padding: 8px 9px;
+    padding: 8px;
     gap: 0;
+  }
+
+  .canvas2d-floating-card-info.is-compact .canvas2d-brand-row {
+    justify-content: center;
+    gap: 0;
+  }
+
+  .canvas2d-floating-card-info.is-compact .canvas2d-brand-label {
+    display: none;
+  }
+
+  .canvas2d-floating-card-info.is-compact .canvas2d-brand-logo {
+    max-width: 28px;
+    height: 18px;
+    object-fit: contain;
+    object-position: left center;
+  }
+
+  .canvas2d-floating-card-info.is-compact .canvas2d-info-collapse-toggle {
+    width: 22px;
+    height: 22px;
+    margin-left: 6px;
+    border-color: rgba(191, 219, 254, 0.86);
+    background: rgba(239, 246, 255, 0.96);
+    color: #1d4ed8;
   }
 
   .canvas2d-floating-card-info.is-compact .canvas2d-info-detail {
@@ -12031,8 +12780,8 @@ body.is-office-embedded #right-pane-resizer {
   }
 
   .canvas2d-floating-card-info.is-compact {
-    min-width: 84px;
-    max-width: 84px;
+    min-width: 66px;
+    max-width: 66px;
     padding: 8px;
   }
 

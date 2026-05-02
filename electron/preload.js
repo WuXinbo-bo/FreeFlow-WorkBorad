@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   readFileBase64: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file-base64", targetPath),
   writeFile: (targetPath, data) => ipcRenderer.invoke("desktop-shell:write-file", targetPath, data),
   renamePath: (sourcePath, targetPath) => ipcRenderer.invoke("desktop-shell:rename-path", sourcePath, targetPath),
+  removePath: (targetPath) => ipcRenderer.invoke("desktop-shell:remove-path", targetPath),
   getCaptureSources: () => ipcRenderer.invoke("desktop-shell:get-capture-sources"),
   captureScreenImage: () => ipcRenderer.invoke("desktop-shell:capture-screen-image"),
   listAiMirrorTargets: () => ipcRenderer.invoke("desktop-shell:list-ai-mirror-targets"),

@@ -2468,6 +2468,24 @@ ipcMain.handle("desktop-shell:rename-path", async (_event, sourcePath, targetPat
   }
 });
 
+ipcMain.handle("desktop-shell:remove-path", async (_event, targetPath) => {
+  const normalizedPath = String(targetPath || "").trim();
+  if (!normalizedPath) {
+    return { ok: false, error: "路径不能为空" };
+  }
+  try {
+    const resolvedPath = path.resolve(normalizedPath);
+    const stat = await fs.promises.stat(resolvedPath);
+    if (!stat.isFile()) {
+      return { ok: false, error: "仅支持删除文件" };
+    }
+    await fs.promises.unlink(resolvedPath);
+    return { ok: true, filePath: resolvedPath };
+  } catch (error) {
+    return { ok: false, error: error.message || "删除失败" };
+  }
+});
+
 ipcMain.handle("desktop-shell:read-clipboard-files", async () => {
   try {
     return await readClipboardFiles();

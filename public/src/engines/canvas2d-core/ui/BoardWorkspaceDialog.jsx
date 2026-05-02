@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+const SORT_OPTIONS = Object.freeze([
+  { value: "modified-desc", label: "最近修改" },
+  { value: "name-asc", label: "名称" },
+  { value: "size-desc", label: "文件大小" },
+  { value: "modified-asc", label: "最早修改" },
+]);
 
 function formatPathLabel(pathValue = "", emptyText = "未设置") {
   const value = String(pathValue || "").trim();
@@ -68,15 +75,43 @@ function getFolderName(pathValue = "") {
   return segments[segments.length - 1] || "未选择工作区";
 }
 
+function compareBoardsBySort(leftBoard, rightBoard, sortKey) {
+  const leftName = formatBoardDisplayName(leftBoard?.name || "");
+  const rightName = formatBoardDisplayName(rightBoard?.name || "");
+  const leftModified = Number(leftBoard?.modifiedAt || 0);
+  const rightModified = Number(rightBoard?.modifiedAt || 0);
+  const leftSize = Number(leftBoard?.size || 0);
+  const rightSize = Number(rightBoard?.size || 0);
+
+  if (sortKey === "name-asc") {
+    return leftName.localeCompare(rightName, "zh-CN-u-kn-true", { sensitivity: "base" });
+  }
+  if (sortKey === "size-desc") {
+    return rightSize - leftSize || rightModified - leftModified || leftName.localeCompare(rightName, "zh-CN-u-kn-true");
+  }
+  if (sortKey === "modified-asc") {
+    return leftModified - rightModified || leftName.localeCompare(rightName, "zh-CN-u-kn-true");
+  }
+  return rightModified - leftModified || leftName.localeCompare(rightName, "zh-CN-u-kn-true");
+}
+
 export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
   const [folderPath, setFolderPath] = useState("");
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
   const [newBoardName, setNewBoardName] = useState("");
   const [renameDraft, setRenameDraft] = useState("");
+  const [renameEditing, setRenameEditing] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [busyAction, setBusyAction] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
+  const [sortKey, setSortKey] = useState("modified-desc");
+  const renameInputRef = useRef(null);
+  const createInputRef = useRef(null);
 
   const currentPath = String(snapshot?.boardFilePath || "").trim();
   const currentName = String(snapshot?.boardFileName || "").trim();
@@ -96,6 +131,12 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         }
       : null);
   const selectedOrActivePath = selectedPath || currentPath;
+  const selectedTarget = selectedBoard || activeBoard;
+  const selectedFilePath = String(selectedTarget?.filePath || selectedPath || currentPath || "").trim();
+  const isSelectedActive = selectedFilePath && selectedFilePath === currentPath;
+  const sortedBoards = useMemo(() => {
+    return boards.slice().sort((leftBoard, rightBoard) => compareBoardsBySort(leftBoard, rightBoard, sortKey));
+  }, [boards, sortKey]);
 
   const refreshBoards = async (nextFolder = folderPath) => {
     const cleanFolder = String(nextFolder || "").trim();
@@ -105,6 +146,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
     }
     setLoading(true);
     setError("");
+    setFeedback("");
     try {
       const result = await bridge.listCanvasBoards(cleanFolder);
       if (!result?.ok) {
@@ -165,17 +207,32 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       return;
     }
     setRenameDraft(formatBoardDisplayName(selectedBoard?.name || activeBoard?.name || currentName));
+    setRenameEditing(false);
   }, [open, selectedBoard?.name, activeBoard?.name, currentName]);
+
+  useEffect(() => {
+    if (renameEditing) {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }
+  }, [renameEditing]);
+
+  useEffect(() => {
+    if (createOpen) {
+      createInputRef.current?.focus();
+    }
+  }, [createOpen]);
 
   if (!open) {
     return null;
   }
 
-  const runBusy = async (task) => {
+  const runBusy = async (task, action = "") => {
     if (busy) {
       return;
     }
     setBusy(true);
+    setBusyAction(action);
     setError("");
     try {
       await task();
@@ -183,6 +240,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       setError(taskError?.message || "操作失败");
     } finally {
       setBusy(false);
+      setBusyAction("");
     }
   };
 
@@ -192,8 +250,9 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       if (nextFolder) {
         setFolderPath(nextFolder);
         await refreshBoards(nextFolder);
+        setFeedback(`已切换到 ${getFolderName(nextFolder)}`);
       }
-    });
+    }, "pick-folder");
 
   const handleCreate = () =>
     runBusy(async () => {
@@ -211,13 +270,15 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         throw new Error(result?.error || "新建画布失败");
       }
       setNewBoardName("");
-      setSelectedPath(result.filePath || "");
+      setCreateOpen(false);
       await refreshBoards(targetFolder);
-    });
+      setSelectedPath(result.filePath || "");
+      setFeedback("新画布已建立");
+    }, "create");
 
   const handleOpenSelected = (explicitPath = "") =>
     runBusy(async () => {
-      const targetPath = explicitPath || selectedPath || boards[0]?.filePath || "";
+      const targetPath = explicitPath || selectedFilePath || boards[0]?.filePath || "";
       if (!targetPath) {
         return;
       }
@@ -226,7 +287,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         throw new Error("画布打开失败");
       }
       await refreshBoards(folderPath);
-    });
+      setFeedback("画布已打开");
+    }, "open");
 
   const handleSave = () =>
     runBusy(async () => {
@@ -235,7 +297,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         throw new Error("画布保存失败");
       }
       await refreshBoards(folderPath);
-    });
+      setFeedback("画布已保存");
+    }, "save");
 
   const handleSaveAs = () =>
     runBusy(async () => {
@@ -246,7 +309,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       const workspace = String((await bridge.getCanvasBoardWorkspace()) || folderPath).trim();
       setFolderPath(workspace);
       await refreshBoards(workspace);
-    });
+      setFeedback("已另存为新文件");
+    }, "save-as");
 
   const handleRename = () =>
     runBusy(async () => {
@@ -254,23 +318,69 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       if (!targetName) {
         return;
       }
-      const renamed = await bridge.renameBoard(targetName);
-      if (!renamed) {
+      const currentSelectedName = normalizeBoardName(selectedTarget?.name || currentName);
+      if (targetName === currentSelectedName) {
+        setRenameEditing(false);
+        setRenameDraft(formatBoardDisplayName(currentSelectedName));
+        return;
+      }
+      if (!selectedFilePath) {
+        throw new Error("未选中画布");
+      }
+      const result =
+        typeof bridge.renameBoardAtPath === "function"
+          ? await bridge.renameBoardAtPath(selectedFilePath, targetName)
+          : isSelectedActive
+            ? await bridge.renameBoard(targetName)
+            : null;
+      const renamed = typeof result === "boolean" ? { ok: result, filePath: selectedFilePath } : result;
+      if (!renamed?.ok) {
         throw new Error("画布重命名失败");
       }
+      setRenameEditing(false);
       await refreshBoards(folderPath);
-    });
+      setSelectedPath(renamed.filePath || selectedFilePath);
+      setFeedback("名称已更新");
+    }, "rename");
+
+  const handleDelete = () =>
+    runBusy(async () => {
+      if (!selectedFilePath) {
+        throw new Error("未选中画布");
+      }
+      const result = await bridge.deleteBoardAtPath?.(selectedFilePath);
+      if (!result?.ok) {
+        throw new Error(result?.error || "删除画布失败");
+      }
+      setDeleteConfirmOpen(false);
+      await refreshBoards(folderPath);
+      setFeedback("画布已删除");
+    }, "delete");
 
   const handleReveal = () => {
-    bridge.revealBoardInFolder?.();
+    if (typeof bridge.revealBoardPathInFolder === "function") {
+      bridge.revealBoardPathInFolder(selectedFilePath);
+      return;
+    }
+    if (isSelectedActive) {
+      bridge.revealBoardInFolder?.();
+    }
   };
 
   const boardCountLabel = `${boards.length} 个画布`;
   const dirtyLabel = boardDirty ? "未保存" : "已保存";
+  const selectedStatusLabel = isSelectedActive ? dirtyLabel : selectedFilePath ? "未打开" : "未选择";
   const workspaceLabel = folderPath || "选择文件夹后开始管理";
-  const selectedName = formatBoardDisplayName(selectedBoard?.name || activeBoard?.name || currentName);
-  const selectedMetaTime = formatTime(selectedBoard?.modifiedAt || activeBoard?.modifiedAt || 0);
-  const selectedMetaSize = formatFileSize(selectedBoard?.size || activeBoard?.size || 0);
+  const selectedName = formatBoardDisplayName(selectedTarget?.name || currentName);
+  const selectedMetaTime = formatTime(selectedTarget?.modifiedAt || 0);
+  const selectedMetaSize = formatFileSize(selectedTarget?.size || 0);
+  const createButtonLabel = busyAction === "create" ? "正在建立..." : "建立";
+  const canRenameSelected = Boolean(selectedFilePath);
+  const canDeleteSelected = Boolean(selectedFilePath) && !isSelectedActive;
+  const activeBoardLabel = activeBoard ? formatBoardDisplayName(activeBoard.name) : "未打开画布";
+  const selectedPathLabel = selectedFilePath ? formatPathLabel(selectedFilePath, "未选择") : "未选择";
+  const workspaceBadgeLabel = loading ? "同步中" : "本地工作区";
+  const listHintLabel = folderPath ? "双击直接打开" : "先连接工作区";
 
   return (
     <div className="canvas2d-board-workspace-overlay" role="dialog" aria-modal="true" aria-label="画布工作区">
@@ -278,6 +388,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         <section className="canvas2d-board-workspace-main">
           <header className="canvas2d-board-workspace-header">
             <div className="canvas2d-board-workspace-title-block">
+              <span className="canvas2d-board-workspace-eyebrow">Workspace</span>
               <strong>画布工作区</strong>
               <div className="canvas2d-board-workspace-header-meta">
                 <span>{getFolderName(folderPath)}</span>
@@ -293,6 +404,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
             <div className="canvas2d-board-workspace-path-main">
               <span>工作区</span>
               <strong title={folderPath || "未选择工作区"}>{workspaceLabel}</strong>
+              <small title={currentPath || "当前未打开画布"}>{activeBoardLabel}</small>
             </div>
             <div className="canvas2d-board-workspace-path-actions">
               <button type="button" onClick={() => refreshBoards(folderPath)} disabled={loading || busy || !folderPath}>
@@ -304,12 +416,35 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
             </div>
           </div>
 
-          <div className="canvas2d-board-workspace-list-head">
-            <div>
+          <div className="canvas2d-board-workspace-toolbar">
+            <div className="canvas2d-board-workspace-list-head">
               <strong>画布列表</strong>
-              <span>{folderPath ? boardCountLabel : "未连接工作区"}</span>
+              <span>{listHintLabel}</span>
             </div>
-            <span className="canvas2d-board-workspace-list-badge">{loading ? "同步中" : "本地文件"}</span>
+            <div className="canvas2d-board-workspace-toolbar-actions">
+              <span className="canvas2d-board-workspace-list-badge">{workspaceBadgeLabel}</span>
+              <label className="canvas2d-board-workspace-sort-field">
+                <span>排序</span>
+                <select value={sortKey} onChange={(event) => setSortKey(event.target.value)} disabled={loading || busy || boards.length < 2}>
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="canvas2d-board-workspace-stat-strip" aria-hidden="true">
+            <div className="canvas2d-board-workspace-stat">
+              <span>当前画布</span>
+              <strong title={activeBoardLabel}>{activeBoardLabel}</strong>
+            </div>
+            <div className="canvas2d-board-workspace-stat">
+              <span>列表状态</span>
+              <strong>{boardCountLabel}</strong>
+            </div>
           </div>
 
           <div className="canvas2d-board-workspace-list" role="listbox" aria-label="画布文件列表">
@@ -319,7 +454,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
                 <span>扫描本地画布文件</span>
               </div>
             ) : boards.length ? (
-              boards.map((board) => {
+              sortedBoards.map((board) => {
                 const isActive = board.filePath === currentPath;
                 const isSelected = board.filePath === selectedOrActivePath;
                 return (
@@ -333,19 +468,21 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
                       void handleOpenSelected(board.filePath);
                     }}
                     title={board.filePath}
-                  >
+                    >
                     <span className="canvas2d-board-workspace-file-icon" aria-hidden="true">
                       FF
                     </span>
                     <span className="canvas2d-board-workspace-item-main">
-                      <strong>{formatBoardDisplayName(board.name)}</strong>
+                      <span className="canvas2d-board-workspace-item-top">
+                        <strong>{formatBoardDisplayName(board.name)}</strong>
+                        {isActive ? <span className="canvas2d-board-workspace-active-pill">当前</span> : null}
+                      </span>
                       <span>{formatPathLabel(board.filePath)}</span>
                     </span>
                     <span className="canvas2d-board-workspace-item-meta">
-                      <span>{formatTime(board.modifiedAt)}</span>
-                      <span>{formatFileSize(board.size)}</span>
+                      <small>{formatTime(board.modifiedAt)}</small>
+                      <strong>{formatFileSize(board.size)}</strong>
                     </span>
-                    {isActive ? <span className="canvas2d-board-workspace-active-pill">当前</span> : null}
                   </button>
                 );
               })
@@ -362,35 +499,74 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
           <div className="canvas2d-board-workspace-current">
             <div className="canvas2d-board-workspace-current-head">
               <span>当前选中</span>
-              <span className={`canvas2d-board-workspace-status-pill${boardDirty ? " is-dirty" : ""}`}>{dirtyLabel}</span>
+              <span className={`canvas2d-board-workspace-status-pill${isSelectedActive && boardDirty ? " is-dirty" : ""}`}>
+                {selectedStatusLabel}
+              </span>
             </div>
-            <strong title={currentPath || currentName}>{selectedName}</strong>
+            {renameEditing ? (
+              <div className="canvas2d-board-workspace-rename-editor">
+                <input
+                  ref={renameInputRef}
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleRename();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setRenameDraft(selectedName);
+                      setRenameEditing(false);
+                    }
+                  }}
+                  placeholder="画布名称"
+                  disabled={busy}
+                />
+                <button type="button" className="is-primary" onClick={handleRename} disabled={busy || !canRenameSelected}>
+                  {busyAction === "rename" ? "保存中" : "确认"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenameDraft(selectedName);
+                    setRenameEditing(false);
+                  }}
+                  disabled={busy}
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <div className="canvas2d-board-workspace-current-title-row">
+                <strong title={selectedFilePath || currentName}>{selectedName}</strong>
+                <button
+                  type="button"
+                  className="canvas2d-board-workspace-icon-action"
+                  onClick={() => {
+                    setRenameDraft(selectedName);
+                    setRenameEditing(true);
+                  }}
+                  disabled={busy || !canRenameSelected}
+                  aria-label="重命名当前选中画布"
+                  title="重命名"
+                >
+                  ✎
+                </button>
+              </div>
+            )}
             <div className="canvas2d-board-workspace-current-meta">
               <small>{selectedMetaTime}</small>
               <small>{selectedMetaSize}</small>
             </div>
-          </div>
-
-          <div className="canvas2d-board-workspace-action-card">
-            <div className="canvas2d-board-workspace-card-head">
-              <strong>新建画布</strong>
+            <div className="canvas2d-board-workspace-current-path" title={selectedFilePath || "未选择画布"}>
+              {selectedPathLabel}
             </div>
-            <label>
-              <span>名称</span>
-              <input
-                value={newBoardName}
-                onChange={(event) => setNewBoardName(event.target.value)}
-                placeholder="留空自动命名"
-                disabled={busy}
-              />
-            </label>
-            <button type="button" className="is-primary" onClick={handleCreate} disabled={busy}>
-              新建画布
-            </button>
+            {feedback ? <div className="canvas2d-board-workspace-feedback">{feedback}</div> : null}
           </div>
 
           <div className="canvas2d-board-workspace-action-grid">
-            <button type="button" onClick={handleOpenSelected} disabled={busy || !selectedPath}>
+            <button type="button" onClick={() => handleOpenSelected()} disabled={busy || !selectedFilePath}>
               打开
             </button>
             <button type="button" onClick={handleSave} disabled={busy}>
@@ -399,37 +575,92 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
             <button type="button" onClick={handleSaveAs} disabled={busy}>
               另存为
             </button>
-            <button type="button" onClick={handleReveal} disabled={!currentPath}>
+            <button type="button" onClick={handleReveal} disabled={!selectedFilePath}>
               打开位置
             </button>
-          </div>
-
-          <div className="canvas2d-board-workspace-action-card">
-            <div className="canvas2d-board-workspace-card-head">
-              <strong>重命名</strong>
-            </div>
-            <label>
-              <span>当前文件</span>
-              <input
-                value={renameDraft}
-                onChange={(event) => setRenameDraft(event.target.value)}
-                placeholder="输入新名称"
-                disabled={busy || !currentPath}
-              />
-            </label>
-            <button type="button" onClick={handleRename} disabled={busy || !currentPath}>
-              应用重命名
+            <button
+              type="button"
+              className="canvas2d-board-workspace-danger-action"
+              onClick={() => setDeleteConfirmOpen(true)}
+              disabled={busy || !canDeleteSelected}
+              title={isSelectedActive ? "请先切换到其他画布，再删除当前文件" : "删除当前选中的画布文件"}
+            >
+              删除
             </button>
           </div>
 
           <div className="canvas2d-board-workspace-note">
-            <strong>结构</strong>
-            <span>画布保存为 FreeFlow 专属格式，旧版 JSON 会在打开时生成升级副本。</span>
+            <strong>格式兼容</strong>
+            <span>默认保存为 `.freeflow`，打开旧版 JSON 时自动生成升级副本。</span>
+            {!canDeleteSelected && isSelectedActive ? <span>当前已打开的画布不能直接删除，先切换到其他画布。</span> : null}
           </div>
 
           {error ? <div className="canvas2d-board-workspace-error">{error}</div> : null}
+
+          <div className={`canvas2d-board-workspace-create-dock${createOpen ? " is-open" : ""}`}>
+            {createOpen ? (
+              <>
+                <div className="canvas2d-board-workspace-card-head">
+                  <strong>新建画布</strong>
+                  <button
+                    type="button"
+                    className="canvas2d-board-workspace-mini-action"
+                    onClick={() => {
+                      setCreateOpen(false);
+                      setNewBoardName("");
+                    }}
+                    disabled={busy}
+                  >
+                    取消
+                  </button>
+                </div>
+                <input
+                  ref={createInputRef}
+                  value={newBoardName}
+                  onChange={(event) => setNewBoardName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleCreate();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setCreateOpen(false);
+                      setNewBoardName("");
+                    }
+                  }}
+                  placeholder="输入名称，留空自动命名"
+                  disabled={busy}
+                />
+                <button type="button" className="is-primary" onClick={handleCreate} disabled={busy}>
+                  {createButtonLabel}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="canvas2d-board-workspace-create-trigger" onClick={() => setCreateOpen(true)} disabled={busy}>
+                + 新建画布
+              </button>
+            )}
+          </div>
         </aside>
       </div>
+      {deleteConfirmOpen ? (
+        <div className="canvas2d-board-workspace-confirm-backdrop">
+          <div className="canvas2d-board-workspace-confirm-dialog" role="alertdialog" aria-modal="true" aria-label="删除画布确认">
+            <span className="canvas2d-board-workspace-confirm-eyebrow">删除确认</span>
+            <strong title={selectedName}>确认删除「{selectedName}」？</strong>
+            <p>删除后将从当前工作区移除该画布文件，此操作不可撤销。</p>
+            <div className="canvas2d-board-workspace-confirm-actions">
+              <button type="button" onClick={() => setDeleteConfirmOpen(false)} disabled={busy}>
+                取消
+              </button>
+              <button type="button" className="is-danger" onClick={handleDelete} disabled={busy}>
+                {busyAction === "delete" ? "删除中" : "确认删除"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

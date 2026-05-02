@@ -299,66 +299,54 @@ export function WordExportPreviewDialog({
   return (
     <div className="canvas2d-word-export-overlay" role="dialog" aria-modal="true" aria-label="Word 导出预览">
       <div className="canvas2d-word-export-dialog">
-        <section className="canvas2d-word-export-preview-pane" aria-label="Word 预览">
-          <div className="canvas2d-word-export-preview-head">
-            <strong>导出预览</strong>
+        <div className="canvas2d-word-export-head">
+          <div className="canvas2d-word-export-head-copy">
+            <strong>Word 导出预览</strong>
+            <span>排版顺序：从上到下，同一行从左到右</span>
           </div>
-          <div className="canvas2d-word-export-page-shell">
-            <WordDocxPreviewPane request={request} />
-          </div>
-        </section>
+          <button type="button" className="canvas2d-word-export-head-close" onClick={onClose} aria-label="关闭 Word 导出预览">
+            ×
+          </button>
+        </div>
 
-        <aside className="canvas2d-word-export-side" aria-label="导出设置">
-          <div className="canvas2d-word-export-side-head">
-            <span />
-            <button type="button" onClick={onClose} aria-label="关闭 Word 导出预览">
-              ×
-            </button>
+        <div className="canvas2d-word-export-meta">
+          <span>选择 {model.itemCount || 0}</span>
+          <span>可导出 {model.exportableCount || 0}</span>
+          <span>跳过 {model.skippedCount || 0}</span>
+        </div>
+
+        <TypeSummary summary={model.typeSummary || {}} />
+
+        <div className="canvas2d-word-export-body" aria-label="Word 预览">
+          <WordDocxPreviewPane request={request} />
+        </div>
+
+        {skippedItems.length ? (
+          <div className="canvas2d-word-export-note">
+            <strong>已自动跳过</strong>
+            <span>
+              {skippedItems
+                .slice(0, 3)
+                .map((item) => `${item.label || item.type}: ${getSkippedReasonLabel(item.reason)}`)
+                .join(" / ")}
+              {skippedItems.length > 3 ? `，另有 ${skippedItems.length - 3} 个元素` : ""}
+            </span>
           </div>
-          <div className="canvas2d-word-export-title">
-            <strong>Word 导出</strong>
-            <span>排版逻辑：从上到下，同一行从左到右</span>
-          </div>
-          <div className="canvas2d-word-export-stats">
-            <div>
-              <span>选择元素</span>
-              <strong>{model.itemCount || 0}</strong>
-            </div>
-            <div>
-              <span>可导出</span>
-              <strong>{model.exportableCount || 0}</strong>
-            </div>
-            <div>
-              <span>跳过</span>
-              <strong>{model.skippedCount || 0}</strong>
-            </div>
-          </div>
-          <TypeSummary summary={model.typeSummary || {}} />
-          {skippedItems.length ? (
-            <div className="canvas2d-word-export-skip-card">
-              <strong>已自动跳过</strong>
-              {skippedItems.slice(0, 5).map((item, index) => (
-                <span key={`${item.id || "skip"}-${index}`}>
-                  {item.label || item.type}: {getSkippedReasonLabel(item.reason)}
-                </span>
-              ))}
-              {skippedItems.length > 5 ? <span>还有 {skippedItems.length - 5} 个元素</span> : null}
-            </div>
-          ) : null}
-          <div className="canvas2d-word-export-actions">
-            <button type="button" className="canvas2d-word-export-secondary" onClick={onClose} disabled={exporting}>
-              取消
-            </button>
-            <button
-              type="button"
-              className="canvas2d-word-export-primary"
-              onClick={onConfirm}
-              disabled={!canExport}
-            >
-              {exporting ? "正在导出..." : "导出 Word"}
-            </button>
-          </div>
-        </aside>
+        ) : null}
+
+        <div className="canvas2d-word-export-actions">
+          <button type="button" className="canvas2d-word-export-secondary" onClick={onClose} disabled={exporting}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="canvas2d-word-export-primary"
+            onClick={onConfirm}
+            disabled={!canExport}
+          >
+            {exporting ? "正在导出..." : "导出 Word"}
+          </button>
+        </div>
       </div>
     </div>
   );

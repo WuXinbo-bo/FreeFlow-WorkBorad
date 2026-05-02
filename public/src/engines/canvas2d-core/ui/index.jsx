@@ -23,6 +23,23 @@ const DRAW_TOOLS = [
   { key: "highlight", icon: "▭", label: "高亮", shortcut: "H" },
 ];
 
+const INSERT_TOOLS = [
+  {
+    key: "table",
+    icon: "▦",
+    label: "表格",
+    meta: "3 × 3，可继续编辑",
+    shortcut: "Table",
+  },
+  {
+    key: "codeBlock",
+    icon: "</>",
+    label: "代码块",
+    meta: "支持语言与行号",
+    shortcut: "Code",
+  },
+];
+
 function MouseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
@@ -120,6 +137,15 @@ function MenuIcon() {
       <circle cx="6" cy="12" r="1.8" fill="currentColor" />
       <circle cx="12" cy="12" r="1.8" fill="currentColor" />
       <circle cx="18" cy="12" r="1.8" fill="currentColor" />
+    </svg>
+  );
+}
+
+function InsertIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.45" />
     </svg>
   );
 }
@@ -662,6 +688,11 @@ function getExportScopeLabel(scope = "") {
   return "导出";
 }
 
+function getExportHistoryActionLabel(entry = null) {
+  const jumpTarget = String(entry?.jumpTarget || entry?.filePath || "").trim();
+  return jumpTarget ? "打开" : "记录";
+}
+
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
   { label: "版本号", value: "v1.0.9-rc" },
@@ -737,6 +768,7 @@ function Canvas2DControls({ engine }) {
   const [capturePdfMenuOpen, setCapturePdfMenuOpen] = useState(false);
   const [capturePngMenuOpen, setCapturePngMenuOpen] = useState(false);
   const [captureIncludeBackground, setCaptureIncludeBackground] = useState(true);
+  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [boardWorkspaceOpen, setBoardWorkspaceOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -762,6 +794,7 @@ function Canvas2DControls({ engine }) {
   const toolbarRef = useRef(null);
   const infoPanelRef = useRef(null);
   const drawMenuRef = useRef(null);
+  const insertMenuRef = useRef(null);
   const captureMenuRef = useRef(null);
   const menuRef = useRef(null);
   const searchRef = useRef(null);
@@ -836,6 +869,9 @@ function Canvas2DControls({ engine }) {
       if (captureMenuRef.current && captureMenuRef.current.contains(event.target)) {
         return;
       }
+      if (insertMenuRef.current && insertMenuRef.current.contains(event.target)) {
+        return;
+      }
       if (menuRef.current && menuRef.current.contains(event.target)) {
         return;
       }
@@ -849,6 +885,7 @@ function Canvas2DControls({ engine }) {
         return;
       }
       setDrawMenuOpen(false);
+      setInsertMenuOpen(false);
       setCaptureMenuOpen(false);
       setCapturePdfMenuOpen(false);
       setCapturePngMenuOpen(false);
@@ -916,6 +953,16 @@ function Canvas2DControls({ engine }) {
     () => buildCanvasSearchResults(snapshot?.board?.items || [], deferredSearchQuery, 10),
     [snapshot?.board?.items, deferredSearchQuery]
   );
+  const boardSearchStats = useMemo(() => {
+    const items = Array.isArray(snapshot?.board?.items) ? snapshot.board.items : [];
+    return {
+      total: items.length,
+      text: items.filter((item) => item?.type === "text").length,
+      flowNode: items.filter((item) => item?.type === "flowNode").length,
+      fileCard: items.filter((item) => item?.type === "fileCard").length,
+      image: items.filter((item) => item?.type === "image").length,
+    };
+  }, [snapshot?.board?.items]);
   const exportHistory = useMemo(
     () => (Array.isArray(snapshot?.exportHistory) ? snapshot.exportHistory.slice(0, 10) : []),
     [snapshot?.exportHistory, snapshot?.exportHistoryUpdatedAt]
@@ -1088,6 +1135,7 @@ function Canvas2DControls({ engine }) {
 
   const openSearch = () => {
     setDrawMenuOpen(false);
+    setInsertMenuOpen(false);
     setCaptureMenuOpen(false);
     setCapturePdfMenuOpen(false);
     setCapturePngMenuOpen(false);
@@ -1320,7 +1368,7 @@ function Canvas2DControls({ engine }) {
       <div className="canvas2d-engine-topbar-stack">
       <div
         className={`canvas2d-engine-toolbar-wrap${
-          drawMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
+          drawMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
         }`}
         aria-label="工作白板工具栏"
       >
@@ -1345,6 +1393,7 @@ function Canvas2DControls({ engine }) {
               onClick={() =>
                 setDrawMenuOpen((value) => {
                   const next = !value;
+                  setInsertMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
@@ -1466,12 +1515,74 @@ function Canvas2DControls({ engine }) {
             <span className="canvas2d-engine-tool-shortcut">N</span>
           </button>
 
+          <div className="canvas2d-engine-tool-group" ref={insertMenuRef}>
+            <button
+              type="button"
+              className={`canvas2d-engine-tool${insertMenuOpen ? " is-active" : ""}`}
+              onClick={() =>
+                setInsertMenuOpen((value) => {
+                  const next = !value;
+                  setDrawMenuOpen(false);
+                  setCaptureMenuOpen(false);
+                  setCapturePdfMenuOpen(false);
+                  setCapturePngMenuOpen(false);
+                  setMenuOpen(false);
+                  setExportMenuOpen(false);
+                  setAlignmentSnapMenuOpen(false);
+                  setBackgroundMenuOpen(false);
+                  setAboutMenuOpen(false);
+                  setSearchOpen(false);
+                  setExportHistoryOpen(false);
+                  return next;
+                })
+              }
+              aria-haspopup="menu"
+              aria-expanded={insertMenuOpen}
+              title="插入内容"
+            >
+              <span className="canvas2d-engine-tool-icon" aria-hidden="true">
+                <InsertIcon />
+              </span>
+              <span className="canvas2d-engine-tool-shortcut">+</span>
+            </button>
+            {insertMenuOpen ? (
+              <div className="canvas2d-engine-menu canvas2d-engine-insert-menu" role="menu">
+                <div className="canvas2d-engine-menu-title">插入</div>
+                {INSERT_TOOLS.map((tool) => (
+                  <button
+                    key={tool.key}
+                    type="button"
+                    className="canvas2d-engine-menu-item canvas2d-engine-insert-item"
+                    onClick={() => {
+                      if (tool.key === "table") {
+                        bridge.addTable?.({ columns: 3, rows: 3 });
+                      }
+                      if (tool.key === "codeBlock") {
+                        bridge.addCodeBlock?.({ language: "javascript" });
+                      }
+                      setInsertMenuOpen(false);
+                    }}
+                    role="menuitem"
+                  >
+                    <span className="canvas2d-engine-menu-icon" aria-hidden="true">{tool.icon}</span>
+                    <span className="canvas2d-engine-insert-copy">
+                      <strong>{tool.label}</strong>
+                      <small>{tool.meta}</small>
+                    </span>
+                    <kbd>{tool.shortcut}</kbd>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
           <div className="canvas2d-engine-tool-group" ref={captureMenuRef}>
             <button
               type="button"
               className={`canvas2d-engine-tool${captureMenuOpen ? " is-active" : ""}`}
               onClick={() => {
                 setDrawMenuOpen(false);
+                setInsertMenuOpen(false);
                 setMenuOpen(false);
                 setExportMenuOpen(false);
                 setAlignmentSnapMenuOpen(false);
@@ -1609,6 +1720,7 @@ function Canvas2DControls({ engine }) {
                 setMenuOpen((value) => {
                   const next = !value;
                   setDrawMenuOpen(false);
+                  setInsertMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
@@ -1879,6 +1991,7 @@ function Canvas2DControls({ engine }) {
               isOpen={searchOpen}
               query={searchQuery}
               results={searchResults}
+              stats={boardSearchStats}
               activeIndex={searchActiveIndex}
               highlightQuery={searchQuery}
               onOpen={openSearch}
@@ -1901,6 +2014,7 @@ function Canvas2DControls({ engine }) {
                 setExportHistoryOpen((value) => {
                   const next = !value;
                   setDrawMenuOpen(false);
+                  setInsertMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
@@ -1931,15 +2045,22 @@ function Canvas2DControls({ engine }) {
           {exportHistoryOpen ? (
             <div className="canvas2d-engine-export-history-panel">
               <div className="canvas2d-engine-export-history-panel-head">
-                <strong>导出记录</strong>
-                <span>当前画布最近 10 次</span>
+                <strong>最近导出</strong>
+                <span className="canvas2d-engine-export-history-count">{exportHistory.length || 0}</span>
+              </div>
+              <div className="canvas2d-engine-export-history-panel-meta">
+                <span>保留最近 10 条</span>
+                <span>点击可直接打开本地结果</span>
               </div>
               <div className="canvas2d-engine-export-history-list">
                 {exportHistory.length ? (
-                  exportHistory.map((entry) => {
+                  exportHistory.map((entry, index) => {
                     const jumpTarget = String(entry?.jumpTarget || entry?.filePath || "").trim();
                     const pathLabel = String(entry?.filePath || entry?.fileName || "").trim();
                     const interactive = Boolean(jumpTarget);
+                    const kindLabel = getExportKindLabel(entry.kind);
+                    const scopeLabel = getExportScopeLabel(entry.scope);
+                    const timeLabel = formatExportRecordTime(entry.exportedAt);
                     return (
                       <button
                         key={entry.id}
@@ -1953,14 +2074,16 @@ function Canvas2DControls({ engine }) {
                         disabled={!interactive}
                         title={interactive ? pathLabel || jumpTarget : "当前记录未保存本地路径"}
                       >
+                        <span className="canvas2d-engine-export-history-kind" aria-hidden="true">
+                          {kindLabel}
+                        </span>
                         <span className="canvas2d-engine-export-history-item-main">
                           <strong>{entry.title || "导出记录"}</strong>
-                          <span>{pathLabel || "浏览器下载未返回本地路径"}</span>
+                          <span>{timeLabel || "刚刚导出"}</span>
                         </span>
                         <span className="canvas2d-engine-export-history-item-meta">
-                          <span>{getExportScopeLabel(entry.scope)}</span>
-                          <span>{getExportKindLabel(entry.kind)}</span>
-                          <span>{formatExportRecordTime(entry.exportedAt)}</span>
+                          <span>{scopeLabel}</span>
+                          <span>{getExportHistoryActionLabel(entry)}</span>
                         </span>
                       </button>
                     );
@@ -1968,7 +2091,7 @@ function Canvas2DControls({ engine }) {
                 ) : (
                   <div className="canvas2d-engine-export-history-empty">
                     <strong>还没有导出记录</strong>
-                    <span>导出 Word、PDF、PNG 后会出现在这里。</span>
+                    <span>导出 Word、PDF 或 PNG 后，会在这里出现最近记录。</span>
                   </div>
                 )}
               </div>

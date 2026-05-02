@@ -54,6 +54,12 @@ export function createCanvas2DReactBridge(engine) {
     addFlowNode() {
       engine?.addFlowNode?.();
     },
+    addTable(options) {
+      return engine?.addTable?.(options);
+    },
+    addCodeBlock(options) {
+      return engine?.addCodeBlock?.(options);
+    },
     newBoard() {
       return engine?.newBoard?.();
     },
@@ -75,8 +81,17 @@ export function createCanvas2DReactBridge(engine) {
     renameBoard(name) {
       return engine?.renameBoard?.(name);
     },
+    renameBoardAtPath(filePath, name) {
+      return engine?.renameBoardAtPath?.(filePath, name);
+    },
+    deleteBoardAtPath(filePath) {
+      return engine?.deleteBoardAtPath?.(filePath);
+    },
     revealBoardInFolder() {
       return engine?.revealBoardInFolder?.();
+    },
+    revealBoardPathInFolder(filePath) {
+      return engine?.revealBoardPathInFolder?.(filePath);
     },
     openExternalUrl(url) {
       return engine?.openExternalUrl?.(url);

@@ -6091,40 +6091,57 @@ let tablePointerSelectionState = {
   }
 
   async function renameBoard(nextName) {
-    if (!useLocalFileSystem) {
-      setStatus("当前环境不支持重命名", "warning");
-      return false;
-    }
     const currentPath = String(state.boardFilePath || "").trim();
     if (!currentPath) {
       return saveBoardAs();
     }
-    const currentName = getFileName(currentPath);
-    const providedName = typeof nextName === "string" && nextName.trim() ? nextName.trim() : currentName;
-    const cleanName = ensureBoardFileExtension(providedName);
-    if (!cleanName || cleanName === currentName) {
-      return false;
+    const result = await renameBoardAtPath(currentPath, nextName);
+    return Boolean(result?.ok);
+  }
+
+  async function renameBoardAtPath(sourcePath, nextName) {
+    if (!useLocalFileSystem) {
+      setStatus("当前环境不支持重命名", "warning");
+      return { ok: false, filePath: "", error: "当前环境不支持重命名" };
     }
-    const separator = currentPath.includes("\\") ? "\\" : "/";
-    const parts = currentPath.split(/[\\/]/);
+    const currentPath = String(state.boardFilePath || "").trim();
+    const source = String(sourcePath || "").trim() || currentPath;
+    if (!source) {
+      return { ok: false, filePath: "", error: "画布路径为空" };
+    }
+    const sourceName = getFileName(source);
+    const providedName = typeof nextName === "string" && nextName.trim() ? nextName.trim() : sourceName;
+    const cleanName = ensureBoardFileExtension(providedName);
+    if (!cleanName || cleanName === sourceName) {
+      return { ok: false, filePath: source, error: "" };
+    }
+    const separator = source.includes("\\") ? "\\" : "/";
+    const parts = source.split(/[\\/]/);
     parts[parts.length - 1] = cleanName;
     const nextPath = parts.join(separator);
     if (typeof globalThis?.desktopShell?.renamePath !== "function") {
       setStatus("当前环境不支持重命名", "warning");
-      return false;
+      return { ok: false, filePath: "", error: "当前环境不支持重命名" };
     }
-    const result = await globalThis.desktopShell.renamePath(currentPath, nextPath);
+    const result = await globalThis.desktopShell.renamePath(source, nextPath);
     if (!result?.ok) {
       setStatus(result?.error || "画布重命名失败", "warning");
-      return false;
+      return { ok: false, filePath: "", error: result?.error || "画布重命名失败" };
     }
-    await setBoardFilePath(nextPath, { updateSettings: true });
+    if (source === currentPath) {
+      await setBoardFilePath(nextPath, { updateSettings: true });
+    }
     setStatus("画布已重命名");
-    return true;
+    return { ok: true, filePath: nextPath, error: "" };
   }
 
   function revealBoardInFolder() {
     const targetPath = String(state.boardFilePath || "").trim();
+    return revealBoardPathInFolder(targetPath);
+  }
+
+  function revealBoardPathInFolder(filePath) {
+    const targetPath = String(filePath || "").trim();
     if (!targetPath) {
       setStatus("画布路径为空");
       return false;
@@ -6135,6 +6152,33 @@ let tablePointerSelectionState = {
     }
     setStatus("当前环境不支持打开文件夹");
     return false;
+  }
+
+  async function deleteBoardAtPath(filePath) {
+    if (!useLocalFileSystem) {
+      setStatus("当前环境不支持删除", "warning");
+      return { ok: false, error: "当前环境不支持删除" };
+    }
+    const targetPath = String(filePath || "").trim();
+    if (!targetPath) {
+      return { ok: false, error: "画布路径为空" };
+    }
+    const currentPath = String(state.boardFilePath || "").trim();
+    if (currentPath && currentPath === targetPath) {
+      setStatus("请先切换到其他画布再删除当前文件", "warning");
+      return { ok: false, error: "不能直接删除当前已打开画布" };
+    }
+    if (typeof globalThis?.desktopShell?.removePath !== "function") {
+      setStatus("当前环境不支持删除", "warning");
+      return { ok: false, error: "当前环境不支持删除" };
+    }
+    const result = await globalThis.desktopShell.removePath(targetPath);
+    if (!result?.ok) {
+      setStatus(result?.error || "删除画布失败", "warning");
+      return { ok: false, error: result?.error || "删除画布失败" };
+    }
+    setStatus("画布已删除");
+    return { ok: true, filePath: targetPath };
   }
 
   function revealCanvasImageSavePath() {
@@ -15611,6 +15655,31 @@ function syncRichToolbarEnhancements(toolbar) {
     return true;
   }
 
+  function addTable(options = {}) {
+    const columns = Math.max(1, Math.min(12, Math.floor(Number(options?.columns) || 3)));
+    const rows = Math.max(1, Math.min(24, Math.floor(Number(options?.rows) || 3)));
+    const item = createEditableTableElement(getCenterScenePoint(), { columns, rows });
+    const inserted = pushItems([item], { reason: "创建表格", statusText: "已添加表格" });
+    if (inserted) {
+      beginTableEdit(item.id, { rowIndex: 0, columnIndex: 0 });
+    }
+    return inserted;
+  }
+
+  function addCodeBlock(options = {}) {
+    const language = String(options?.language || "javascript").trim();
+    const code = String(options?.code ?? "// 在这里编写代码").trimEnd();
+    const item = createCodeBlockElement(getCenterScenePoint(), code, language, {
+      previewMode: "source",
+      width: 520,
+    });
+    const inserted = pushItems([item], { reason: "创建代码块", statusText: "已添加代码块" });
+    if (inserted) {
+      beginCodeBlockEdit(item.id);
+    }
+    return inserted;
+  }
+
   async function buildExportDragPayload(items) {
     const payload = { paths: [], texts: [], images: [] };
     for (const item of items) {
@@ -21493,6 +21562,8 @@ function syncRichToolbarEnhancements(toolbar) {
     addFlowNode() {
       return createFlowNode(getCenterScenePoint());
     },
+    addTable,
+    addCodeBlock,
     newBoard,
     openBoard,
     openBoardAtPath,
@@ -21500,7 +21571,10 @@ function syncRichToolbarEnhancements(toolbar) {
     saveBoard,
     saveBoardAs,
     renameBoard,
+    renameBoardAtPath,
+    deleteBoardAtPath,
     revealBoardInFolder,
+    revealBoardPathInFolder,
     openExternalUrl,
     pickCanvasBoardSavePath,
     getCanvasBoardWorkspace,
