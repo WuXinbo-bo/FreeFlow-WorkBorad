@@ -9163,6 +9163,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function getActiveRichSelectionFontSize() {
     const input = refs.richSelectionToolbar?.querySelector?.('[data-action="selection-font-size-input"]');
     if (input instanceof HTMLInputElement) {
+      if (input.dataset.mixed === "true") {
+        return Math.max(8, Math.round(Number(richFontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE));
+      }
       const value = Number(input.value || 0);
       if (Number.isFinite(value) && value > 0) {
         return Math.max(8, Math.round(value));
@@ -9176,6 +9179,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
     }
     const formatState = getActiveRichSession()?.getFormatState?.() || {};
+    if (formatState.fontSizeMixed) {
+      return Math.max(8, Math.round(Number(richFontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE));
+    }
     const logicalValue =
       (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
       Math.max(0.1, Number(state.board.view?.scale || 1));

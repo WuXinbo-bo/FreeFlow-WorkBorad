@@ -1226,7 +1226,9 @@ function parseListBlock(element, ordered = false) {
     blocks: listItems,
     attrs: {
       ordered,
-      ...(ordered && Number.isFinite(Number(element.getAttribute("start"))) ? { start: Number(element.getAttribute("start")) } : {}),
+      ...(ordered && element.hasAttribute("start") && Number(element.getAttribute("start")) >= 1
+        ? { start: Math.max(1, Math.round(Number(element.getAttribute("start")) || 1)) }
+        : {}),
       ...(isTaskList ? { task: true } : {}),
     },
     meta: {},
@@ -1463,6 +1465,10 @@ function extractMarksFromElement(element) {
   }
   const textColor = readElementTextColor(element);
   if (textColor) {
+    const previousTextColorIndex = marks.findIndex((mark) => mark?.type === RICH_TEXT_MARK_TYPES.TEXT_COLOR);
+    if (previousTextColorIndex >= 0) {
+      marks.splice(previousTextColorIndex, 1);
+    }
     marks.push({
       type: RICH_TEXT_MARK_TYPES.TEXT_COLOR,
       attrs: { color: textColor },
@@ -1518,7 +1524,13 @@ function dedupeMarks(marks = []) {
 
 function readElementTextColor(element) {
   const style = String(element.style?.color || "").trim();
-  return style || "";
+  if (style) {
+    return style;
+  }
+  if (String(element.tagName || "").toLowerCase() === "font") {
+    return String(element.getAttribute("color") || "").trim();
+  }
+  return "";
 }
 
 function readElementBackgroundColor(element) {

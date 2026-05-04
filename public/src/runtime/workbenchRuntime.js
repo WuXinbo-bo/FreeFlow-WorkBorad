@@ -5176,6 +5176,25 @@ function bringPanelToFront(side) {
   panel.zIndex = getPanelMaxZIndex() + 1;
 }
 
+function getDockedPaneResizeBoundary(side, dockSide) {
+  if (dockSide !== "right") {
+    return PANEL_LAYOUT_EDGE_OFFSET;
+  }
+  const otherSide = side === "left" ? "right" : "left";
+  const otherPanel = state.panelLayout?.[otherSide];
+  if (
+    !otherPanel ||
+    otherPanel.hidden ||
+    otherPanel.collapsed ||
+    otherPanel.dockSide !== "left"
+  ) {
+    return PANEL_LAYOUT_EDGE_OFFSET;
+  }
+  const otherX = Number(otherPanel.x) || 0;
+  const otherWidth = Math.max(0, Number(otherPanel.width) || 0);
+  return Math.max(PANEL_LAYOUT_EDGE_OFFSET, Math.round(otherX + otherWidth));
+}
+
 function clampPanelLayoutSideToWorkspace(side) {
   const panel = state.panelLayout?.[side];
   if (!panel) return;
@@ -5947,14 +5966,18 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const initialWidth = Number(panel.width) || getDefaultPanelFrame(side, panel).width;
   const initialHeight = Number(panel.height) || getDefaultPanelFrame(side, panel).height;
   const initialX = Number(panel.x) || 0;
-  const initialRight = initialX + initialWidth;
   const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
+  const rightDockResizeEdge = Math.max(
+    PANEL_LAYOUT_EDGE_OFFSET,
+    workspaceWidth - PANEL_LAYOUT_EDGE_OFFSET
+  );
+  const rightDockResizeBoundary = getDockedPaneResizeBoundary(side, dockSide);
   const minWidth = Math.max(320, side === "left" ? CONFIG.leftPanelMinWidth : CONFIG.rightPanelMinWidth);
   const sideMaxWidth = side === "left" ? CONFIG.leftPanelMaxWidth : CONFIG.rightPanelMaxWidth;
   const maxWidth = Math.min(
     sideMaxWidth,
     dockSide === "right"
-      ? Math.max(minWidth, initialRight - PANEL_LAYOUT_EDGE_OFFSET)
+      ? Math.max(minWidth, rightDockResizeEdge - rightDockResizeBoundary)
       : Math.max(minWidth, workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET)
   );
   const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(PANEL_LAYOUT_MIN_HEIGHT, workspaceHeight));
@@ -5966,7 +5989,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
     if (dockSide === "right") {
       const proposedWidth = clampPaneWidth(initialWidth - deltaX, minWidth, maxWidth);
       panel.width = proposedWidth;
-      panel.x = Math.round(initialRight - proposedWidth);
+      panel.x = Math.round(rightDockResizeEdge - proposedWidth);
     } else {
       panel.width = clampPaneWidth(initialWidth + deltaX, minWidth, maxWidth);
     }

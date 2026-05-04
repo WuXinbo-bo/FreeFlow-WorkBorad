@@ -9852,7 +9852,8 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-topbar {
-  --canvas2d-topbar-right-width: min(648px, 54vw);
+  --canvas2d-topbar-gap: 18px;
+  --canvas2d-topbar-right-width: min(648px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
   position: absolute;
   top: 18px;
   left: 18px;
@@ -9862,7 +9863,7 @@ body.is-office-embedded #right-pane-resizer {
   grid-template-columns: var(--canvas2d-topbar-left-reserved-width) minmax(0, var(--canvas2d-topbar-right-width));
   align-items: start;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--canvas2d-topbar-gap);
   width: auto;
   pointer-events: none;
 }
@@ -9882,7 +9883,8 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-topbar .canvas2d-engine-toolbar-wrap {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   z-index: 2;
 }
 
@@ -12463,14 +12465,14 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-engine-toolbar-wrap {
   position: absolute;
   pointer-events: none;
-  width: 100%;
+  width: auto;
 }
 
 .canvas2d-engine-toolbar {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 8px;
+  gap: 5px;
+  padding: 6px 7px;
   border: 1px solid rgba(207, 216, 231, 0.94);
   border-radius: 17px;
   background: rgba(255, 255, 255, 0.98);
@@ -12480,21 +12482,22 @@ body.is-office-embedded #right-pane-resizer {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   pointer-events: auto;
-  width: 100%;
+  width: auto;
 }
 
 .canvas2d-engine-toolbar > .canvas2d-engine-tool-group:last-child {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .canvas2d-engine-toolbar > .canvas2d-engine-tool,
 .canvas2d-engine-toolbar > .canvas2d-engine-tool-group {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
 }
 
 .canvas2d-engine-tool-group .canvas2d-engine-tool {
-  width: 100%;
+  width: 32px;
 }
 
 .canvas2d-engine-tool-group {
@@ -12506,8 +12509,8 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-engine-tool {
   position: relative;
-  width: 33px;
-  height: 33px;
+  width: 32px;
+  height: 32px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
@@ -12566,8 +12569,7 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-engine-tool-spacer {
-  width: 24px;
-  flex: 0 0 auto;
+  display: none;
 }
 
 .canvas2d-engine-menu {
@@ -13817,10 +13819,10 @@ body.is-office-embedded #right-pane-resizer {
 
 @media (max-width: 1024px) {
   .canvas2d-engine-topbar {
-    --canvas2d-topbar-right-width: min(560px, calc(100vw - 136px));
+    --canvas2d-topbar-gap: 11px;
+    --canvas2d-topbar-right-width: min(560px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
     left: 14px;
     right: 14px;
-    gap: 11px;
     align-items: start;
   }
 
@@ -13831,8 +13833,8 @@ body.is-office-embedded #right-pane-resizer {
   }
 
   .canvas2d-engine-toolbar {
-    gap: 6px;
-    padding: 6px 8px;
+    gap: 5px;
+    padding: 6px 7px;
   }
 
   .canvas2d-engine-topbar-stack {
@@ -13874,12 +13876,13 @@ body.is-office-embedded #right-pane-resizer {
   }
 
   .canvas2d-engine-toolbar-wrap {
-    width: 100%;
+    width: auto;
+    max-width: 100%;
   }
 
   .canvas2d-engine-tool {
-    width: 33px;
-    height: 33px;
+    width: 32px;
+    height: 32px;
   }
 
   .canvas2d-engine-corner-top-right,
@@ -13908,8 +13911,8 @@ body.is-office-embedded #right-pane-resizer {
 
 @media (max-width: 720px) {
   .canvas2d-engine-topbar {
-    --canvas2d-topbar-right-width: min(360px, calc(100vw - 108px));
-    gap: 8px;
+    --canvas2d-topbar-right-width: min(360px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
+    --canvas2d-topbar-gap: 8px;
   }
 
   .canvas2d-brand-row {
