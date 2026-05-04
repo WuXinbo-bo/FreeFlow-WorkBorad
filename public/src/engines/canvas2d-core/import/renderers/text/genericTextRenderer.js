@@ -4,7 +4,6 @@ import {
   buildTextElementContentFields,
   estimateTextHeight,
   estimateTextWidth,
-  inferHeadingFontSize,
   inlineNodesToHtml,
   inlineNodesToPlainText,
   normalizeInlineContentForCanvasText,
@@ -13,6 +12,7 @@ import {
 import { deriveNodeSourceOrder } from "../shared/sourceOrder.js";
 
 export const GENERIC_TEXT_RENDERER_ID = "generic-text-renderer";
+const IMPORTED_TEXT_BASE_FONT_SIZE = 20;
 
 export function createGenericTextRenderer(options = {}) {
   const id = options.id || GENERIC_TEXT_RENDERER_ID;
@@ -108,7 +108,7 @@ function shouldAggregateBlocksAsSingleTextBox(renderInput, blocks = []) {
 }
 
 function buildAggregatedTextOperation(blocks = [], renderInput, options = {}) {
-  const fontSize = 20;
+  const fontSize = IMPORTED_TEXT_BASE_FONT_SIZE;
   const plainText = blocks.map((block) => sanitizeText(block?.plainText || "")).join("\n\n");
   const html = blocks.map((block) => wrapBlockHtml(block, block?.html || "")).join("");
   const content = buildTextElementContentFields(
@@ -267,14 +267,9 @@ function buildTextOperation(block, index, renderInput, options = {}) {
 }
 
 function inferFontSize(block) {
-  if (block.sourceNodeType === "heading") {
-    const level = Number(block?.node?.attrs?.level) || 1;
-    return inferHeadingFontSize(level);
-  }
-  if (block.blockRole === "blockquote") {
-    return 18;
-  }
-  return 20;
+  // Match direct paste: keep a canonical container base size and let rich-text
+  // heading semantics drive the final h1-h6 visual scale.
+  return IMPORTED_TEXT_BASE_FONT_SIZE;
 }
 
 function shouldForceImportedWrapMode(pipelineOutput) {
