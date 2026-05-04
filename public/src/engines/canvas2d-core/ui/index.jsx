@@ -9,7 +9,13 @@ import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspaceDialog } from "./BoardWorkspaceDialog.jsx";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
-import { buildCanvasSearchResults } from "../search/canvasSearchIndex.js";
+import {
+  buildCanvasSearchIndex,
+  buildCanvasSearchResults,
+  collectCanvasSearchStats,
+  getCanvasSearchScopeItems,
+  CANVAS_SEARCH_FILTER_KEYS,
+} from "../search/canvasSearchIndex.js";
 import { getElementBounds } from "../elements/index.js";
 import { getFileCardPreviewBounds } from "../elements/fileCard.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
@@ -791,6 +797,7 @@ function Canvas2DControls({ engine }) {
   const [exportHistoryOpen, setExportHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const [searchFilterKey, setSearchFilterKey] = useState(CANVAS_SEARCH_FILTER_KEYS.ALL);
   const [searchHighlight, setSearchHighlight] = useState(null);
   const [uiViewport, setUiViewport] = useState({ width: 1440, height: 900 });
   const rootRef = useRef(null);
@@ -953,20 +960,23 @@ function Canvas2DControls({ engine }) {
     const text = String(snapshot?.statusText || "").trim();
     return text.includes("处理中") ? text : "";
   }, [snapshot?.statusText]);
+  const searchIndexEntries = useMemo(
+    () => buildCanvasSearchIndex(snapshot?.board?.items || []),
+    [snapshot?.board?.items]
+  );
   const searchResults = useMemo(
-    () => buildCanvasSearchResults(snapshot?.board?.items || [], deferredSearchQuery, 10),
-    [snapshot?.board?.items, deferredSearchQuery]
+    () =>
+      buildCanvasSearchResults(searchIndexEntries, deferredSearchQuery, {
+        limit: 12,
+        filterKey: searchFilterKey,
+      }),
+    [searchIndexEntries, deferredSearchQuery, searchFilterKey]
   );
   const boardSearchStats = useMemo(() => {
     const items = Array.isArray(snapshot?.board?.items) ? snapshot.board.items : [];
-    return {
-      total: items.length,
-      text: items.filter((item) => item?.type === "text").length,
-      flowNode: items.filter((item) => item?.type === "mindNode").length,
-      fileCard: items.filter((item) => item?.type === "fileCard").length,
-      image: items.filter((item) => item?.type === "image").length,
-    };
+    return collectCanvasSearchStats(items);
   }, [snapshot?.board?.items]);
+  const searchScopeItems = useMemo(() => getCanvasSearchScopeItems(boardSearchStats), [boardSearchStats]);
   const exportHistory = useMemo(
     () => (Array.isArray(snapshot?.exportHistory) ? snapshot.exportHistory.slice(0, 10) : []),
     [snapshot?.exportHistory, snapshot?.exportHistoryUpdatedAt]
@@ -1170,11 +1180,22 @@ function Canvas2DControls({ engine }) {
     setBackgroundMenuOpen(false);
     setAboutMenuOpen(false);
     setExportHistoryOpen(false);
+    setSearchFilterKey(CANVAS_SEARCH_FILTER_KEYS.ALL);
     setSearchOpen(true);
   };
 
   const closeSearch = () => {
     setSearchOpen(false);
+    setSearchActiveIndex(0);
+    setSearchFilterKey(CANVAS_SEARCH_FILTER_KEYS.ALL);
+    setSearchQuery("");
+  };
+
+  const handleSearchFilterChange = (nextKey) => {
+    setSearchFilterKey((current) => {
+      const normalized = String(nextKey || "").trim() || CANVAS_SEARCH_FILTER_KEYS.ALL;
+      return current === normalized ? CANVAS_SEARCH_FILTER_KEYS.ALL : normalized;
+    });
     setSearchActiveIndex(0);
   };
 
@@ -1992,6 +2013,8 @@ function Canvas2DControls({ engine }) {
               query={searchQuery}
               results={searchResults}
               stats={boardSearchStats}
+              scopeItems={searchScopeItems}
+              activeFilterKey={searchFilterKey}
               activeIndex={searchActiveIndex}
               highlightQuery={searchQuery}
               onOpen={openSearch}
@@ -2000,6 +2023,7 @@ function Canvas2DControls({ engine }) {
                 setSearchQuery(value);
                 setSearchActiveIndex(0);
               }}
+              onFilterChange={handleSearchFilterChange}
               onKeyDown={handleSearchKeyDown}
               onHoverResult={setSearchActiveIndex}
               onSelectResult={handleSearchSelect}

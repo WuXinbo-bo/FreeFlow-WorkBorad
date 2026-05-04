@@ -15,6 +15,7 @@ export function buildFileCardContextMenuHtml(item = {}) {
     <button type="button" class="canvas2d-context-menu-item" data-action="file-reveal">打开所在位置</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="file-memo">标签与备忘录</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="file-mark">重点标记</button>
+    <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
     <div class="canvas2d-context-submenu">
       <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
       <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">

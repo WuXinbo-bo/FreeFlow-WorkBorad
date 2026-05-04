@@ -19,6 +19,7 @@ export function buildImageContextMenuHtml(item = {}) {
     <button type="button" class="canvas2d-context-menu-item" data-action="image-export">导出当前图片</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="image-reveal">打开所在位置</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="image-memo">标签与备忘录</button>
+    <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
     <div class="canvas2d-context-submenu">
       <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
       <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">

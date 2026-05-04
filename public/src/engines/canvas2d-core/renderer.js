@@ -8,6 +8,7 @@ import {
   isMindSummaryItem,
   MIND_BRANCH_LEFT,
 } from "./elements/mindMap.js";
+import { getMindRelationshipGeometry, isMindRelationshipItem } from "./elements/mindRelationship.js";
 import { drawTextElement } from "./rendererText.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
@@ -580,6 +581,112 @@ function drawMindMapSummaries(ctx, items = [], view) {
   return drawnCount;
 }
 
+function drawMindRelationshipDeleteBadge(ctx, midpoint, hovered = false) {
+  const radius = hovered ? 9 : 8;
+  ctx.save();
+  ctx.fillStyle = hovered ? "rgba(220, 38, 38, 0.98)" : "rgba(239, 68, 68, 0.94)";
+  ctx.beginPath();
+  ctx.arc(midpoint.x, midpoint.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(midpoint.x - 3.2, midpoint.y - 3.2);
+  ctx.lineTo(midpoint.x + 3.2, midpoint.y + 3.2);
+  ctx.moveTo(midpoint.x + 3.2, midpoint.y - 3.2);
+  ctx.lineTo(midpoint.x - 3.2, midpoint.y + 3.2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function shouldMaskMindRelationshipUnderItem(item = null) {
+  return Boolean(item && item.type === "text");
+}
+
+function maskMindRelationshipTextOverlap(ctx, view, item = null) {
+  if (!shouldMaskMindRelationshipUnderItem(item)) {
+    return;
+  }
+  const bounds = getElementScreenBounds(view, item);
+  const padding = 3;
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  drawRoundedRect(
+    ctx,
+    bounds.left - padding,
+    bounds.top - padding,
+    bounds.width + padding * 2,
+    bounds.height + padding * 2,
+    resolveScreenCornerRadius(10, Math.max(0.1, Number(view?.scale || 1)))
+  );
+  ctx.fillStyle = "#000";
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMindRelationshipLines(ctx, items = [], view, hoverId = null, hoverHandle = null) {
+  const relationships = (Array.isArray(items) ? items : []).filter(isMindRelationshipItem);
+  if (!relationships.length) {
+    return 0;
+  }
+  const itemById = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ""), item]));
+  let drawnCount = 0;
+  relationships.forEach((relationship) => {
+    const geometry = getMindRelationshipGeometry(relationship, itemById);
+    if (!geometry) {
+      return;
+    }
+    const fromPoint = sceneToScreen(view, geometry.fromPoint);
+    const toPoint = sceneToScreen(view, geometry.toPoint);
+    const midpoint = {
+      x: (fromPoint.x + toPoint.x) / 2,
+      y: (fromPoint.y + toPoint.y) / 2,
+    };
+    relationship.__mindRelationshipMidpoint = geometry.midpoint;
+    const hovered =
+      String(hoverId || "") === String(relationship.id || "") ||
+      String(hoverId || "") === String(geometry.fromItem?.id || "") ||
+      String(hoverId || "") === String(geometry.toItem?.id || "") ||
+      hoverHandle === "mind-relationship-delete";
+    ctx.save();
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.96)";
+    ctx.lineWidth = hovered ? 2.6 : 2.1;
+    ctx.setLineDash([8, 6]);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(fromPoint.x, fromPoint.y);
+    ctx.lineTo(toPoint.x, toPoint.y);
+    ctx.stroke();
+    maskMindRelationshipTextOverlap(ctx, view, geometry.fromItem);
+    maskMindRelationshipTextOverlap(ctx, view, geometry.toItem);
+    ctx.restore();
+    if (hovered) {
+      drawMindRelationshipDeleteBadge(ctx, midpoint, true);
+    }
+    drawnCount += 1;
+  });
+  return drawnCount;
+}
+
+function drawMindRelationshipDraft(ctx, relationshipDraft = null, view = null) {
+  if (!relationshipDraft?.fromPoint || !relationshipDraft?.toPoint || !view) {
+    return;
+  }
+  const fromPoint = sceneToScreen(view, relationshipDraft.fromPoint);
+  const toPoint = sceneToScreen(view, relationshipDraft.toPoint);
+  ctx.save();
+  ctx.strokeStyle = "rgba(34, 197, 94, 0.96)";
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([8, 6]);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(fromPoint.x, fromPoint.y);
+  ctx.lineTo(toPoint.x, toPoint.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawMindNode(ctx, element, view, selected, hover) {
   const bounds = getElementScreenBounds(view, element);
   const x = bounds.left;
@@ -890,6 +997,7 @@ function drawVisibleItemsToContext({
   editingId,
   imageEditState,
   flowDraft,
+  relationshipDraft,
   allowLocalFileAccess,
   renderTextInCanvas,
   renderers = [],
@@ -899,6 +1007,9 @@ function drawVisibleItemsToContext({
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
     if ((item.type === "mindNode" || isMindSummaryItem(item)) && !isMindMapItemVisible(item, items)) {
+      return;
+    }
+    if (isMindRelationshipItem(item)) {
       return;
     }
     const isSelected = selected.has(item.id);
@@ -1159,6 +1270,7 @@ function getDynamicVisualSignature({
   dynamicItems = [],
   draftElement = null,
   flowDraft = null,
+  relationshipDraft = null,
   imageEditState = null,
 } = {}) {
   const dynamicIds = (Array.isArray(dynamicItems) ? dynamicItems : [])
@@ -1185,6 +1297,16 @@ function getDynamicVisualSignature({
         String(flowDraft.style || ""),
       ].join(":")
     : "";
+  const relationshipDraftSignature = relationshipDraft
+    ? [
+        String(relationshipDraft.fromId || ""),
+        String(relationshipDraft.toId || ""),
+        Math.round(Number(relationshipDraft.fromPoint?.x || 0)),
+        Math.round(Number(relationshipDraft.fromPoint?.y || 0)),
+        Math.round(Number(relationshipDraft.toPoint?.x || 0)),
+        Math.round(Number(relationshipDraft.toPoint?.y || 0)),
+      ].join(":")
+    : "";
   const imageEditSignature =
     imageEditState && typeof imageEditState === "object"
       ? [
@@ -1193,7 +1315,7 @@ function getDynamicVisualSignature({
           imageEditState.cropPreview ? 1 : 0,
         ].join(":")
       : "";
-  return [dynamicIds, draftSignature, flowDraftSignature, imageEditSignature].join("||");
+  return [dynamicIds, draftSignature, flowDraftSignature, relationshipDraftSignature, imageEditSignature].join("||");
 }
 
 function getInteractionVisualSignature({
@@ -1270,6 +1392,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       allItems = items,
       selectedIds,
       hoverId,
+      hoverHandle,
       selectionRect,
       mindMapDropTargetId,
       mindMapDropHint,
@@ -1277,6 +1400,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       editingId,
       imageEditState,
       flowDraft,
+      relationshipDraft,
       alignmentSnap,
       alignmentSnapConfig,
       allowLocalFileAccess,
@@ -1357,6 +1481,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         dynamicItems,
         draftElement,
         flowDraft,
+        relationshipDraft,
         imageEditState,
       });
       const interactionVisualSignature = getInteractionVisualSignature({
@@ -1438,13 +1563,14 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     selectedIds: [],
                     hoverId: null,
                     editingId: null,
-                  imageEditState: null,
-                  flowDraft: null,
-                  allowLocalFileAccess,
-                  renderTextInCanvas,
-                  allItems,
-                  renderers,
-                }),
+                    imageEditState: null,
+                    flowDraft: null,
+                    relationshipDraft: null,
+                    allowLocalFileAccess,
+                    renderTextInCanvas,
+                    allItems,
+                    renderers,
+                  }),
               })
             : staticItems.length
               ? drawVisibleItemsToContext({
@@ -1456,6 +1582,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   editingId: null,
                   imageEditState: null,
                   flowDraft: null,
+                  relationshipDraft: null,
                   allowLocalFileAccess,
                   renderTextInCanvas,
                   allItems,
@@ -1492,7 +1619,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
         clearLayerContext(connectionLayer, width, height);
         const treeConnectionCount = drawMindMapConnections(connectionLayer.ctx, frameVisibleItems, view);
         const summaryCount = drawMindMapSummaries(connectionLayer.ctx, frameVisibleItems, view);
-        lastMindMapConnectionCount = treeConnectionCount + summaryCount;
+        const relationshipCount = drawMindRelationshipLines(connectionLayer.ctx, frameVisibleItems, view, hoverId, hoverHandle);
+        drawMindRelationshipDraft(connectionLayer.ctx, relationshipDraft, view);
+        lastMindMapConnectionCount = treeConnectionCount + summaryCount + relationshipCount;
       }
 
       if (effectiveDynamicSceneDirty) {
@@ -1506,6 +1635,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           editingId,
           imageEditState,
           flowDraft,
+          relationshipDraft,
           allowLocalFileAccess,
           renderTextInCanvas,
           renderers,

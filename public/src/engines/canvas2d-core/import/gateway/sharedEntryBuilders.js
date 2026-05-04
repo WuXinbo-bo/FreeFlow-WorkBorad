@@ -6,6 +6,7 @@ import {
   createInputDescriptor,
   validateInputDescriptor,
 } from "../protocols/inputDescriptor.js";
+import { htmlToPlainText } from "../../utils.js";
 import {
   detectTextContentType,
   DETECTED_TEXT_TYPES,
@@ -100,7 +101,7 @@ export function createEntryFromMimeType({
   }
   if (safeMimeType === "text/html") {
     return createTypedTextEntry(entryId, safeMimeType, INPUT_ENTRY_KINDS.HTML, safeValue, {
-      text: String(safeValue || ""),
+      text: htmlToPlainText(safeValue),
       html: safeValue,
     });
   }

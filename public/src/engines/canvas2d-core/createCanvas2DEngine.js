@@ -48,6 +48,11 @@ import {
   syncMindNodeTextMetrics,
 } from "./elements/mindMap.js";
 import {
+  createMindRelationshipElement,
+  getMindRelationshipGeometry,
+  isMindRelationshipItem,
+} from "./elements/mindRelationship.js";
+import {
   createEditableTableElement,
   createTableStructureFromMatrix,
   flattenTableStructureToMatrix,
@@ -189,6 +194,7 @@ import {
   htmlToPlainText,
   INLINE_FONT_SIZE_ATTR,
   isEditableElement,
+  downgradeExternalHtmlToCanvasTextSemantics,
   normalizeRichHtml,
   normalizeRichHtmlInlineFontSizes,
   readFileAsDataUrl,
@@ -489,7 +495,13 @@ function buildPersistentRichToolbarHtml() {
       <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
       <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
       <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="text-split" title="拆分文本">—✕—</button>
+      <button type="button" class="canvas2d-rich-btn canvas2d-rich-btn-icon" data-action="text-split" title="拆分文本" aria-label="拆分文本">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="canvas2d-rich-btn-svg">
+          <path d="M3.5 8.25h6.75M3.5 15.75h6.75M13.75 8.25h6.75M13.75 15.75h6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M10.75 8.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M10.75 13.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
       ${buildRichLinkMenuHtml()}
       ${buildRichColorControlsHtml()}
     </div>
@@ -3170,6 +3182,8 @@ export function createCanvas2DEngine(options = {}) {
     sanitizeText,
     sanitizeHtml,
     htmlToPlainText,
+    downgradeExternalHtmlToCanvasTextSemantics: (html) =>
+      downgradeExternalHtmlToCanvasTextSemantics(html, DEFAULT_TEXT_FONT_SIZE),
     hasMarkdownMathText: hasMarkdownMathSyntax,
     htmlContainsRenderableMath,
     convertPlainTextToSemanticHtml: (text) =>
@@ -3300,6 +3314,8 @@ let tablePointerSelectionState = {
   draggingRange: false,
 };
   let flowDraft = null;
+  let relationshipDraft = null;
+  let pendingMindRelationshipSourceId = "";
   const richDisplayMap = new Map();
   const codeBlockDisplayMap = new Map();
   const codeBlockOverlayDirtyIds = new Set();
@@ -3886,6 +3902,211 @@ let tablePointerSelectionState = {
     return hitTestElement(state.board.items, point, scale);
   }
 
+  function getMindRelationshipItems() {
+    return state.board.items.filter(isMindRelationshipItem);
+  }
+
+  function getMindRelationshipById(itemId = "") {
+    const normalizedId = String(itemId || "").trim();
+    if (!normalizedId) {
+      return null;
+    }
+    return getMindRelationshipItems().find((item) => String(item.id || "") === normalizedId) || null;
+  }
+
+  function clearMindRelationshipDraft() {
+    pendingMindRelationshipSourceId = "";
+    relationshipDraft = null;
+  }
+
+  function getMindRelationshipSourceItem() {
+    if (!pendingMindRelationshipSourceId) {
+      return null;
+    }
+    const item = sceneRegistry.getItemById(pendingMindRelationshipSourceId) || null;
+    return isMindRelationshipSourceEligible(item) ? item : null;
+  }
+
+  function isMindRelationshipSourceEligible(item = null) {
+    return Boolean(
+      item &&
+        [
+          "text",
+          "fileCard",
+          "image",
+          "codeBlock",
+          "table",
+          "mathBlock",
+          "mathInline",
+          "shape",
+        ].includes(String(item.type || ""))
+    );
+  }
+
+  function isMindRelationshipTargetEligible(item = null) {
+    return Boolean(item && (item.type === "mindNode" || item.type === "text"));
+  }
+
+  function getMindRelationshipDeleteHitId(scenePoint) {
+    const relationships = getMindRelationshipItems();
+    if (!relationships.length) {
+      return "";
+    }
+    const itemById = new Map((Array.isArray(state.board.items) ? state.board.items : []).map((item) => [String(item?.id || ""), item]));
+    const tolerance = Math.max(10, 12 / Math.max(0.1, Number(state.board.view.scale || 1)));
+    for (let index = relationships.length - 1; index >= 0; index -= 1) {
+      const relationship = relationships[index];
+      const geometry = getMindRelationshipGeometry(relationship, itemById);
+      if (!geometry?.midpoint) {
+        continue;
+      }
+      const distance = Math.hypot(
+        Number(scenePoint?.x || 0) - Number(geometry.midpoint.x || 0),
+        Number(scenePoint?.y || 0) - Number(geometry.midpoint.y || 0)
+      );
+      if (distance <= tolerance) {
+        return String(relationship.id || "");
+      }
+    }
+    return "";
+  }
+
+  function beginMindRelationshipConnection() {
+    if (state.board.selectedIds.length !== 1) {
+      return false;
+    }
+    const item = getSingleSelectedItemFast();
+    if (!isMindRelationshipSourceEligible(item)) {
+      setStatus("当前元素暂不支持连接节点");
+      return false;
+    }
+    if (isLockedItem(item)) {
+      setStatus("元素已锁定，无法连接节点");
+      return false;
+    }
+    pendingMindRelationshipSourceId = String(item.id || "");
+    const bounds = getElementBounds(item);
+    relationshipDraft = {
+      fromId: item.id,
+      toId: "",
+      fromPoint: {
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      },
+      toPoint: {
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      },
+    };
+    hideContextMenu();
+    setStatus("正在连接节点，点击节点或富文本完成");
+    scheduleRender();
+    return true;
+  }
+
+  function updateMindRelationshipDraft(scenePoint) {
+    if (!pendingMindRelationshipSourceId) {
+      relationshipDraft = null;
+      return false;
+    }
+    const source = getMindRelationshipSourceItem();
+    if (!source) {
+      clearMindRelationshipDraft();
+      return false;
+    }
+    const bounds = getElementBounds(source);
+    const hit = hitTestCanvasElement(scenePoint, state.board.view.scale);
+    const targetNode = isMindRelationshipTargetEligible(hit) ? hit : null;
+    const targetBounds = targetNode ? getElementBounds(targetNode) : null;
+    const nextToPoint = targetBounds
+      ? {
+          x: targetBounds.left + targetBounds.width / 2,
+          y: targetBounds.top + targetBounds.height / 2,
+        }
+      : scenePoint;
+    const previous = relationshipDraft;
+    const unchanged =
+      previous &&
+      String(previous.fromId || "") === String(source.id || "") &&
+      String(previous.toId || "") === String(targetNode?.id || "") &&
+      Math.round(Number(previous.toPoint?.x || 0) * 10) === Math.round(Number(nextToPoint.x || 0) * 10) &&
+      Math.round(Number(previous.toPoint?.y || 0) * 10) === Math.round(Number(nextToPoint.y || 0) * 10);
+    if (unchanged) {
+      return false;
+    }
+    relationshipDraft = {
+      fromId: source.id,
+      toId: targetNode?.id || "",
+      fromPoint: {
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      },
+      toPoint: nextToPoint,
+    };
+    return true;
+  }
+
+  function createMindRelationship(sourceId, targetId) {
+    const normalizedSourceId = String(sourceId || "").trim();
+    const normalizedTargetId = String(targetId || "").trim();
+    if (!normalizedSourceId || !normalizedTargetId || normalizedSourceId === normalizedTargetId) {
+      return false;
+    }
+    const exists = state.board.items.some(
+      (item) =>
+        isMindRelationshipItem(item) &&
+        String(item.fromId || "") === normalizedSourceId &&
+        String(item.toId || "") === normalizedTargetId
+    );
+    if (exists) {
+      setStatus("该关系线已存在");
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const relationship = createMindRelationshipElement(normalizedSourceId, normalizedTargetId);
+    state.board.items.unshift(relationship);
+    state.board.selectedIds = [relationship.id];
+    markSceneGraphDirty({ hitTest: true });
+    commitHistory(before, "创建关系线");
+    setStatus("已连接节点");
+    return true;
+  }
+
+  function addMindRelationship(sourceId, targetId) {
+    const source = sceneRegistry.getItemById(String(sourceId || "").trim()) || null;
+    const target = sceneRegistry.getItemById(String(targetId || "").trim()) || null;
+    if (!isMindRelationshipSourceEligible(source)) {
+      return false;
+    }
+    if (!isMindRelationshipTargetEligible(target)) {
+      return false;
+    }
+    if (isLockedItem(source) || isLockedItem(target)) {
+      return false;
+    }
+    return createMindRelationship(source.id, target.id);
+  }
+
+  function removeMindRelationship(relationshipId = "") {
+    const normalizedId = String(relationshipId || "").trim();
+    if (!normalizedId) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const nextItems = state.board.items.filter(
+      (item) => !(isMindRelationshipItem(item) && String(item.id || "") === normalizedId)
+    );
+    if (nextItems.length === state.board.items.length) {
+      return false;
+    }
+    state.board.items = nextItems;
+    state.board.selectedIds = state.board.selectedIds.filter((id) => String(id || "") !== normalizedId);
+    markSceneGraphDirty({ hitTest: true });
+    commitHistory(before, "删除关系线");
+    setStatus("已删除关系线");
+    return true;
+  }
+
   function getViewportPixelSize() {
     return {
       width: Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || refs.surface?.clientWidth || 0) || 1),
@@ -4177,6 +4398,7 @@ let tablePointerSelectionState = {
       sceneKey,
       selectedIds: state.board.selectedIds,
       hoverId: state.hoverId,
+      hoverHandle: state.hoverHandle,
       selectionRect: state.selectionRect,
       mindMapDropTargetId: state.mindMapDropTargetId,
       mindMapDropHint: state.mindMapDropHint,
@@ -4184,6 +4406,7 @@ let tablePointerSelectionState = {
       editingId: state.editingId,
       imageEditState: lightImageEditor.getState(),
       flowDraft,
+      relationshipDraft,
       alignmentSnap: state.alignmentSnap,
       alignmentSnapConfig: state.alignmentSnapConfig,
       allowLocalFileAccess: getAllowLocalFileAccess(),
@@ -13886,6 +14109,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       items,
       selectedIds: [],
       hoverId: null,
+      hoverHandle: null,
       selectionRect: null,
       mindMapDropTargetId: null,
       mindMapDropHint: "",
@@ -13893,6 +14117,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       editingId: null,
       imageEditState: null,
       flowDraft: null,
+      relationshipDraft: null,
       allowLocalFileAccess: getAllowLocalFileAccess(),
       backgroundStyle: {
         fill: "#ffffff",
@@ -16210,7 +16435,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         charset: "utf-8",
         raw: {
           html,
-          text: html,
+          text: htmlToPlainText(html),
         },
         meta: {},
       },
@@ -17014,6 +17239,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         nextHoverHandle = selectedItem ? hitTestHandle(selectedItem, scenePoint, state.board.view.scale) : null;
       }
       hit = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      if (isMindRelationshipItem(hit)) {
+        const relationHandle = hitTestHandle(hit, scenePoint, state.board.view.scale);
+        if (relationHandle) {
+          nextHoverHandle = relationHandle;
+        }
+      }
+      const hoveredRelationshipDeleteId = getMindRelationshipDeleteHitId(scenePoint);
+      if (hoveredRelationshipDeleteId) {
+        hit = getMindRelationshipById(hoveredRelationshipDeleteId) || hit;
+        nextHoverHandle = "mind-relationship-delete";
+      }
       if (hit?.type === "flowNode" && !nextHoverConnector) {
         const side = flowModule.getConnectorHit(hit, scenePoint, state.board.view);
         if (side) {
@@ -17059,6 +17295,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const scenePoint = toScenePoint(event.clientX, event.clientY);
     updateLastPointerPoint(scenePoint);
     clearAlignmentSnap("pointer-down");
+
+    if (pendingMindRelationshipSourceId && event.button === 0) {
+      const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      if (isMindRelationshipTargetEligible(target)) {
+        event.preventDefault();
+        const created = createMindRelationship(pendingMindRelationshipSourceId, target.id);
+        clearMindRelationshipDraft();
+        if (!created) {
+          syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+        }
+        return;
+      }
+      clearMindRelationshipDraft();
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      return;
+    }
 
     if (resolvePendingCanvasLinkBindingMode() && event.button === 0) {
       const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
@@ -17149,6 +17401,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     if (event.button === 0) {
       const flowTarget = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      const relationshipDeleteId = getMindRelationshipDeleteHitId(scenePoint);
+      if (relationshipDeleteId) {
+        event.preventDefault();
+        removeMindRelationship(relationshipDeleteId);
+        return;
+      }
       if (flowTarget?.type === "flowNode") {
         const side = flowModule.getConnectorHit(flowTarget, scenePoint, state.board.view);
         if (side) {
@@ -17416,6 +17674,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     updateLastPointerPoint(scenePoint);
     if (!isInteractiveMode()) {
       return;
+    }
+
+    if (pendingMindRelationshipSourceId) {
+      const draftChanged = updateMindRelationshipDraft(scenePoint);
+      if (draftChanged && !state.pointer) {
+        scheduleRender({ reason: "mind-relationship-draft-move", sceneDirty: false, interactionDirty: true });
+      }
     }
 
     const pointer = state.pointer;
@@ -17823,6 +18088,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       flowDraft = null;
+      return;
+    }
+
+    if (pointer.type === "mind-relationship-connect") {
+      clearMindRelationshipDraft();
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
 
@@ -18403,6 +18674,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
             <div class="canvas2d-context-swatch-row" role="menu" aria-label="边框颜色">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#0f172a" title="黑色"></button>
@@ -18426,6 +18698,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
             <div class="canvas2d-context-swatch-row" role="menu" aria-label="边框颜色">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#0f172a" title="黑色"></button>
@@ -18449,6 +18722,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="arrow-reverse">反转方向</button>
             <div class="canvas2d-context-swatch-row" role="menu" aria-label="线条颜色">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#0f172a" title="黑色"></button>
@@ -18472,6 +18746,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="线条样式">
@@ -18553,6 +18828,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+          ${isMindRelationshipSourceEligible(selectedItem) ? '<button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>' : ""}
           <div class="canvas2d-context-submenu">
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
@@ -19006,6 +19282,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (action === "text-node-toggle") {
       toggleNodeText();
+      hideContextMenu();
+    }
+    if (action === "connect-node" || action === "text-connect-mind-node") {
+      beginMindRelationshipConnection();
       hideContextMenu();
     }
     if (action === "table-edit") {
@@ -23181,6 +23461,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     },
     addMindChildNode(nodeId) {
       return createMindChildNode(nodeId);
+    },
+    addMindRelationship(sourceId, targetId) {
+      return addMindRelationship(sourceId, targetId);
     },
     addMindSiblingNode(nodeId) {
       return createMindSiblingNode(nodeId);

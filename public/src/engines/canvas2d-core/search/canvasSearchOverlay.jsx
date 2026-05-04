@@ -13,8 +13,16 @@ function SearchGlyph() {
   );
 }
 
+function CloseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+      <path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SearchTypeGlyph({ type = "" }) {
-  if (type === "flowNode") {
+  if (type === "flowNode" || type === "mindNode" || type === "mindSummary") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
         <rect x="5" y="5" width="14" height="14" rx="3" fill="none" stroke="currentColor" strokeWidth="1.7" />
@@ -49,12 +57,47 @@ function SearchTypeGlyph({ type = "" }) {
       </svg>
     );
   }
+  if (type === "table") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+        <rect x="4.8" y="5.2" width="14.4" height="13.6" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M4.8 10h14.4M4.8 14.6h14.4M9.6 5.2v13.6M14.4 5.2v13.6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  if (type === "codeBlock") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+        <path d="m9 8-3 4 3 4M15 8l3 4-3 4M13.4 6.8l-2.8 10.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
       <path d="M8 6.6h8M8 11.8h8M8 17h5.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       <rect x="5" y="4.8" width="14" height="14.4" rx="3.2" fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.42" />
     </svg>
   );
+}
+
+function MatchGlyph({ label = "" }) {
+  const normalized = String(label || "").trim();
+  if (normalized.includes("代码")) {
+    return "</>";
+  }
+  if (normalized.includes("表格")) {
+    return "▦";
+  }
+  if (normalized.includes("标题")) {
+    return "T";
+  }
+  if (normalized.includes("链接")) {
+    return "🔗";
+  }
+  if (normalized.includes("文件")) {
+    return "F";
+  }
+  return "·";
 }
 
 function getShortcutLabel() {
@@ -67,10 +110,13 @@ export function CanvasSearchOverlay({
   highlightQuery = "",
   results = [],
   stats = null,
+  scopeItems = [],
+  activeFilterKey = "all",
   activeIndex = 0,
   onOpen,
   onClose,
   onQueryChange,
+  onFilterChange,
   onKeyDown,
   onHoverResult,
   onSelectResult,
@@ -95,20 +141,11 @@ export function CanvasSearchOverlay({
   const hasQuery = normalizeSearchText(query).length > 0;
   const hasResults = results.length > 0;
   const highlightText = normalizeSearchText(highlightQuery || query);
-  const totalItems = Math.max(0, Number(stats?.total || 0) || 0);
-  const searchableCount =
-    Math.max(0, Number(stats?.text || 0) || 0) +
-    Math.max(0, Number(stats?.flowNode || 0) || 0) +
-    Math.max(0, Number(stats?.fileCard || 0) || 0) +
-    Math.max(0, Number(stats?.image || 0) || 0);
+  const totalItems = Math.max(0, Number(stats?.indexTotal || stats?.total || 0) || 0);
+  const activeScope = Array.isArray(scopeItems)
+    ? scopeItems.find((item) => String(item?.key || "").trim() === String(activeFilterKey || "").trim()) || null
+    : null;
   const shortcutLabel = getShortcutLabel();
-  const scopeItems = [
-    { key: "all", label: "画布", count: searchableCount || totalItems, accent: "is-board" },
-    { key: "text", label: "文本", count: stats?.text || 0, accent: "is-text" },
-    { key: "flowNode", label: "节点", count: stats?.flowNode || 0, accent: "is-node" },
-    { key: "fileCard", label: "文件", count: stats?.fileCard || 0, accent: "is-file" },
-    { key: "image", label: "图片", count: stats?.image || 0, accent: "is-image" },
-  ];
 
   const renderHighlighted = (text) => {
     const safeText = String(text || "");
@@ -150,7 +187,6 @@ export function CanvasSearchOverlay({
             <span className="canvas2d-engine-search-icon">
               <SearchGlyph />
             </span>
-            <span className="canvas2d-engine-search-scope-badge">Canvas</span>
           </span>
           <input
             ref={inputRef}
@@ -165,15 +201,15 @@ export function CanvasSearchOverlay({
         <div className="canvas2d-engine-search-panel-actions">
           <span className="canvas2d-engine-search-kbd" aria-hidden="true">{shortcutLabel}</span>
           <button type="button" className="canvas2d-engine-search-close" onClick={onClose} aria-label="关闭搜索">
-            Esc
+            <CloseGlyph />
           </button>
         </div>
       </div>
       <div className="canvas2d-engine-search-panel-meta">
         <div className="canvas2d-engine-search-status">
           {hasQuery
-            ? `找到 ${results.length} 条结果`
-            : `输入即搜，当前 ${searchableCount} 个可检索对象`}
+            ? `在${activeScope?.label || "画布"}中找到 ${results.length} 条结果`
+            : `输入即搜，当前 ${totalItems} 个可检索对象`}
         </div>
         <div className="canvas2d-engine-search-shortcuts" aria-hidden="true">
           <span>↑↓ 切换</span>
@@ -182,61 +218,64 @@ export function CanvasSearchOverlay({
       </div>
       <div className="canvas2d-engine-search-subnav" aria-label="搜索范围">
         {scopeItems.map((item) => (
-          <span
+          <button
             key={item.key}
-            className={`canvas2d-engine-search-scope-chip${item.key === "all" ? " is-active" : ""} ${item.accent}`}
+            type="button"
+            className={`canvas2d-engine-search-scope-chip${item.key === activeFilterKey ? " is-active" : ""} ${item.accent}`}
+            aria-pressed={item.key === activeFilterKey}
+            onClick={() => onFilterChange?.(item.key)}
           >
             <strong>{item.label}</strong>
             <em>{item.count}</em>
-          </span>
+          </button>
         ))}
       </div>
-      <div className="canvas2d-engine-search-results" role="listbox" aria-label="画布搜索结果">
-        {!hasQuery ? (
-          <div className="canvas2d-engine-search-empty">
-            <span className="canvas2d-engine-search-empty-icon" aria-hidden="true">
-              <SearchGlyph />
-            </span>
-            <strong>搜索画布内容</strong>
-            <span>输入关键词后直接定位结果。</span>
-          </div>
-        ) : null}
-        {hasQuery && !hasResults ? (
-          <div className="canvas2d-engine-search-empty">
-            <span className="canvas2d-engine-search-empty-icon" aria-hidden="true">
-              <SearchGlyph />
-            </span>
-            <strong>没有匹配结果</strong>
-            <span>换个关键词，或缩短搜索词再试。</span>
-          </div>
-        ) : null}
-        {hasResults
-          ? results.map((result, index) => (
-              <button
-                key={`${result.id}-${result.matchLabel}-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className={`canvas2d-engine-search-result${index === activeIndex ? " is-active" : ""}`}
-                onMouseEnter={() => onHoverResult?.(index)}
-                onClick={() => onSelectResult?.(result, index)}
-              >
-                <span className={`canvas2d-engine-search-result-glyph is-${result.type}`} aria-hidden="true">
-                  <SearchTypeGlyph type={result.type} />
-                </span>
-                <span className="canvas2d-engine-search-result-main">
-                  <span className="canvas2d-engine-search-result-head">
-                    <strong>{result.title}</strong>
+      {hasQuery ? (
+        <div className="canvas2d-engine-search-results" role="listbox" aria-label="画布搜索结果">
+          {!hasResults ? (
+            <div className="canvas2d-engine-search-empty">
+              <span className="canvas2d-engine-search-empty-icon" aria-hidden="true">
+                <SearchGlyph />
+              </span>
+              <strong>没有匹配结果</strong>
+              <span>{activeScope?.key && activeScope.key !== "all" ? `当前仅检索${activeScope.label}，可切换范围后再试。` : "换个关键词，或缩短搜索词再试。"}</span>
+            </div>
+          ) : null}
+          {hasResults
+            ? results.map((result, index) => (
+                <button
+                  key={result.entryKey || `${result.id}-${result.matchLabel}-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  className={`canvas2d-engine-search-result${index === activeIndex ? " is-active" : ""}`}
+                  onMouseEnter={() => onHoverResult?.(index)}
+                  onClick={() => onSelectResult?.(result, index)}
+                >
+                  <span className={`canvas2d-engine-search-result-glyph is-${result.type}`} aria-hidden="true">
+                    <SearchTypeGlyph type={result.type} />
                   </span>
-                  <span>{renderHighlighted(result.summary)}</span>
-                </span>
-                <span className="canvas2d-engine-search-result-meta">
-                  <span>{index === activeIndex ? "Enter" : `${index + 1}`}</span>
-                </span>
-              </button>
-            ))
-          : null}
-      </div>
+                  <span className="canvas2d-engine-search-result-main">
+                    <span className="canvas2d-engine-search-result-head">
+                      <strong>{result.title}</strong>
+                      <em>{result.typeLabel}</em>
+                    </span>
+                    <span className="canvas2d-engine-search-result-summary">
+                      {renderHighlighted(result.summary)}
+                    </span>
+                  </span>
+                  <span className="canvas2d-engine-search-result-meta">
+                    <span className="canvas2d-engine-search-result-order">{index === activeIndex ? "Enter" : `${index + 1}`}</span>
+                    <span className="canvas2d-engine-search-result-match">
+                      <i aria-hidden="true">{MatchGlyph({ label: result.matchLabel })}</i>
+                      <small>{result.matchLabel}</small>
+                    </span>
+                  </span>
+                </button>
+              ))
+            : null}
+        </div>
+      ) : null}
     </div>
   );
 }

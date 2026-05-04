@@ -13,6 +13,7 @@ const SUPPORTED_LEGACY_TYPES = Object.freeze([
   "flowNode",
   "flowEdge",
   "mindNode",
+  "mindRelationship",
   "shape",
 ]);
 
@@ -138,6 +139,9 @@ function inferNormalizedLegacyType(item) {
   if (type === "mindnode" || type === "mind") {
     return "mindNode";
   }
+  if (type === "mindrelationship" || type === "mind-relationship") {
+    return "mindRelationship";
+  }
   if (type === "flownode" || type === "flow-node" || type === "node") {
     return "flowNode";
   }
@@ -228,6 +232,15 @@ function normalizeLegacySnapshot(item = {}) {
       width: normalizePositiveNumber(item.width, 220),
       height: normalizePositiveNumber(item.height, 96),
       level: normalizeNumber(item.level),
+    };
+  }
+  if (type === "mindRelationship") {
+    return {
+      id: String(item.id || ""),
+      type: "mindRelationship",
+      fromId: String(item.fromId || ""),
+      toId: String(item.toId || ""),
+      createdAt: normalizeNumber(item.createdAt, Date.now()),
     };
   }
   if (type === "shape") {

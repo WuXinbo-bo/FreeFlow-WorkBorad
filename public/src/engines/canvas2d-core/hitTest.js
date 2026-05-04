@@ -1,6 +1,7 @@
 import { getElementBounds } from "./elements/index.js";
 import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
+import { isMindRelationshipItem } from "./elements/mindRelationship.js";
 import { isLinearShape } from "./elements/shapes.js";
 import { invalidateHitTestSpatialIndex, queryHitTestSpatialIndex, resolveHitTestSpatialIndex } from "./hitTestSpatialIndex.js";
 import { getMindNodeLinkAnchorScreenBounds } from "./renderer.js";
@@ -56,6 +57,22 @@ export function hitTestElement(items, point, scale = 1) {
       }
       continue;
     }
+    if (isMindRelationshipItem(item)) {
+      const fromPoint = candidate.geometry?.fromPoint;
+      const toPoint = candidate.geometry?.toPoint;
+      const midpoint = candidate.geometry?.midpoint;
+      if (!fromPoint || !toPoint || !midpoint) {
+        continue;
+      }
+      const midpointHit = Math.hypot(Number(point?.x || 0) - midpoint.x, Number(point?.y || 0) - midpoint.y);
+      if (midpointHit <= Math.max(12, tolerance)) {
+        return item;
+      }
+      if (lineDistance(point, fromPoint, toPoint) <= tolerance) {
+        return item;
+      }
+      continue;
+    }
     if (item.type === "shape" && isLinearShape(item.shapeType)) {
       const startPoint = candidate.geometry?.startPoint || { x: item.startX, y: item.startY };
       const endPoint = candidate.geometry?.endPoint || { x: item.endX, y: item.endY };
@@ -101,6 +118,15 @@ export function hitTestHandle(item, point, scale = 1) {
     });
     if (anchorBounds && pointInBounds(point, anchorBounds, Math.max(2, tolerance * 0.22))) {
       return "mind-link-anchor";
+    }
+  }
+  if (isMindRelationshipItem(item)) {
+    const midpoint = item.__mindRelationshipMidpoint;
+    if (midpoint) {
+      const distance = Math.hypot(Number(point?.x || 0) - Number(midpoint.x || 0), Number(point?.y || 0) - Number(midpoint.y || 0));
+      if (distance <= Math.max(10, tolerance)) {
+        return "mind-relationship-delete";
+      }
     }
   }
   if (item.type === "shape" && item.shapeType === "rect") {

@@ -31,6 +31,7 @@ export function createDragBroker({
   hasMarkdownMathText,
   htmlContainsRenderableMath,
   convertPlainTextToSemanticHtml,
+  downgradeExternalHtmlToCanvasTextSemantics,
 } = {}) {
   async function createElementsFromFiles(files = [], anchorPoint) {
     const list = Array.from(files || []);
@@ -86,8 +87,10 @@ export function createDragBroker({
 
   function createElementsFromHtml(html, anchorPoint) {
     const cleanHtml =
-      typeof normalizeRichHtmlInlineFontSizes === "function"
-        ? normalizeRichHtmlInlineFontSizes(html)
+      typeof downgradeExternalHtmlToCanvasTextSemantics === "function"
+        ? downgradeExternalHtmlToCanvasTextSemantics(html)
+        : typeof normalizeRichHtmlInlineFontSizes === "function"
+          ? normalizeRichHtmlInlineFontSizes(html)
         : String(html || "");
     const plainText = typeof htmlToPlainText === "function" ? htmlToPlainText(cleanHtml) : String(cleanHtml || "");
     if (!plainText.trim() && !cleanHtml.trim()) {

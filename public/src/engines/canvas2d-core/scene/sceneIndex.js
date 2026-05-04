@@ -2,6 +2,7 @@ import { getElementBounds } from "../elements/index.js";
 import { getFlowNodeConnectors } from "../elements/flow.js";
 import { getFileCardMemoBounds } from "../elements/fileCard.js";
 import { getImageMemoBounds } from "../elements/media.js";
+import { getMindRelationshipGeometry, isMindRelationshipItem } from "../elements/mindRelationship.js";
 import { isLinearShape } from "../elements/shapes.js";
 import { screenToScene } from "../camera.js";
 
@@ -166,6 +167,31 @@ function buildFlowEdgeRecord(item, itemIndex, itemById) {
   };
 }
 
+function buildMindRelationshipRecord(item, itemIndex, itemById) {
+  const geometry = getMindRelationshipGeometry(item, itemById);
+  if (!geometry) {
+    return null;
+  }
+  const midpointBounds = toSizedBounds({
+    left: geometry.midpoint.x - 12,
+    top: geometry.midpoint.y - 12,
+    right: geometry.midpoint.x + 12,
+    bottom: geometry.midpoint.y + 12,
+  });
+  const baseBounds = mergeBounds(toSizedBounds(geometry.bounds), midpointBounds);
+  return {
+    item,
+    itemId: String(item.id || ""),
+    itemIndex,
+    itemType: String(item.type || ""),
+    zIndex: itemIndex,
+    bounds: baseBounds,
+    queryBounds: baseBounds,
+    anchors: null,
+    geometry,
+  };
+}
+
 function buildLinearShapeRecord(item, itemIndex) {
   const startPoint = { x: Number(item.startX || 0), y: Number(item.startY || 0) };
   const endPoint = { x: Number(item.endX || 0), y: Number(item.endY || 0) };
@@ -234,6 +260,9 @@ function buildRecord(item, itemIndex, itemById) {
   }
   if (item.type === "flowEdge") {
     return buildFlowEdgeRecord(item, itemIndex, itemById);
+  }
+  if (isMindRelationshipItem(item)) {
+    return buildMindRelationshipRecord(item, itemIndex, itemById);
   }
   if (item.type === "shape" && isLinearShape(item.shapeType)) {
     return buildLinearShapeRecord(item, itemIndex);

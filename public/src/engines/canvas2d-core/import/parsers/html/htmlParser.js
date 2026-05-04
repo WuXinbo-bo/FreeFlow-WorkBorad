@@ -35,13 +35,8 @@ const SAFE_HTML_ATTRS = new Set([
   "width",
 ]);
 const SAFE_STYLE_PROPERTIES = new Set([
-  "background-color",
-  "color",
-  "font-family",
-  "font-size",
   "font-style",
   "font-weight",
-  "line-height",
   "text-align",
   "text-decoration",
   "text-decoration-line",
@@ -1075,6 +1070,50 @@ function findPrimaryCodeDescendant(node) {
   return ownText === codeText ? codeNode : null;
 }
 
+function hasNestedStructuralBlocks(node) {
+  let found = false;
+  walkRawTree(node, (child) => {
+    if (found || child === node || child?.type !== "element") {
+      return;
+    }
+    const tag = String(child.tagName || "").toLowerCase();
+    if (
+      tag === "table" ||
+      tag === "ul" ||
+      tag === "ol" ||
+      tag === "blockquote" ||
+      /^h[1-6]$/.test(tag)
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+function looksLikeHighlightedCodeContainer(node) {
+  if (!node || node.type !== "element") {
+    return false;
+  }
+  const classNames = [];
+  walkRawTree(node, (child) => {
+    if (child?.type === "element" && child?.attrs?.class) {
+      classNames.push(String(child.attrs.class));
+    }
+  });
+  const classText = classNames.join(" ");
+  if (
+    /\b(highlight|hljs|prism|language-|token|codehilite|chroma|shiki|cm-content|monaco-editor)\b/i.test(classText)
+  ) {
+    return true;
+  }
+  const text = extractTextContent(node, { preserveWhitespace: true });
+  const lineCount = text.split(/\r?\n/).length;
+  if (lineCount < 2) {
+    return false;
+  }
+  return /[{}()[\];<>/=]|^\s{2,}|\b(const|let|var|function|class|import|export|def|return|SELECT|FROM)\b/m.test(text);
+}
+
 function shouldTreatPreAsCodeBlock(node) {
   if (!node || node.type !== "element" || node.tagName !== "pre") {
     return false;
@@ -1095,6 +1134,12 @@ function shouldTreatPreAsCodeBlock(node) {
   const text = extractTextContent(node, { preserveWhitespace: true }).trim();
   if (!text) {
     return false;
+  }
+  if (hasNestedStructuralBlocks(node)) {
+    return false;
+  }
+  if (looksLikeHighlightedCodeContainer(node)) {
+    return true;
   }
   const detected = detectTextContentType(text);
   return detected?.type === DETECTED_TEXT_TYPES.CODE;
@@ -1153,6 +1198,10 @@ function readCodeLanguage(node) {
   const classMatch = className.match(/(?:lang|language)-([A-Za-z0-9_+-]+)/i);
   if (classMatch) {
     return classMatch[1].toLowerCase();
+  }
+  const dataLang = String(node?.attrs?.["data-lang"] || "").trim();
+  if (dataLang) {
+    return dataLang.toLowerCase();
   }
   const dataLanguage = String(node?.attrs?.["data-language"] || "").trim();
   if (dataLanguage) {

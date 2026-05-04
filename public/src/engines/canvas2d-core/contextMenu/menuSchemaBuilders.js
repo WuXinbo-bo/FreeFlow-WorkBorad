@@ -91,7 +91,7 @@ export function createRichTextItemContextMenuSchema({ isNode = false } = {}) {
     ...baseElementActionsSchema().slice(0, 2),
     copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("text")),
     baseElementActionsSchema()[2],
-    action(isNode ? "转为普通文本" : "转为节点文本", "text-node-toggle"),
+    ...(!isNode ? [action("连接节点", "connect-node")] : []),
     copyExportSubmenu("导出", "导出", getExportMenuItems("text")),
     baseElementActionsSchema()[3],
   ];
@@ -107,6 +107,7 @@ export function createCodeBlockContextMenuSchema() {
     copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("codeBlock")),
     copyExportSubmenu("导出", "导出", getExportMenuItems("codeBlock")),
     baseElementActionsSchema()[2],
+    action("连接节点", "connect-node"),
     baseElementActionsSchema()[3],
   ];
 }
@@ -142,6 +143,7 @@ export function createTableContextMenuSchema({ editing = false, selectionMode = 
       copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("table")),
       copyExportSubmenu("导出", "导出", getExportMenuItems("table")),
       baseElementActionsSchema()[2],
+      action("连接节点", "connect-node"),
       baseElementActionsSchema()[3],
     ];
   }
@@ -162,7 +164,11 @@ export function buildTableContextMenuHtml(options = {}) {
 }
 
 export function createMathContextMenuSchema() {
-  return [...baseElementActionsSchema()];
+  return [
+    ...baseElementActionsSchema().slice(0, 3),
+    action("连接节点", "connect-node"),
+    baseElementActionsSchema()[3],
+  ];
 }
 
 export function buildMathContextMenuHtml() {

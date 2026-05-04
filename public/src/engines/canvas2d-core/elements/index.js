@@ -4,6 +4,7 @@ import {
   normalizeMindNodeElement,
   normalizeMindSummaryElement,
 } from "./mind.js";
+import { normalizeMindRelationshipElement } from "./mindRelationship.js";
 import { getFlowNodeMinSize, normalizeFlowEdgeElement, normalizeFlowNodeElement } from "./flow.js";
 import { normalizeImageElement } from "./media.js";
 import { normalizeFileCardElement } from "./fileCard.js";
@@ -66,6 +67,9 @@ export function normalizeElement(element = {}) {
   if (type === "mindsummary" || type === "mind-summary") {
     return normalizeMindSummaryElement(element);
   }
+  if (type === "mindrelationship" || type === "mind-relationship") {
+    return normalizeMindRelationshipElement(element);
+  }
   if (type === "flownode" || type === "flow-node" || type === "node") {
     return normalizeFlowNodeElement(element);
   }
@@ -89,11 +93,6 @@ export function normalizeBoard(input = {}) {
   return {
     items: Array.isArray(board.items)
       ? board.items
-          .filter((item) => {
-            const legacyKind = String(item?.kind || "").trim().toLowerCase();
-            const type = String(item?.type || legacyKind || "").trim().toLowerCase();
-            return type !== "mindrelationship" && type !== "mind-relationship";
-          })
           .map((item) => normalizeElement(item))
       : [],
     selectedIds: Array.isArray(board.selectedIds)
@@ -146,6 +145,9 @@ export function moveElement(element, dx, dy) {
     return moveShapeElement(element, dx, dy);
   }
   if (element.type === "flowEdge") {
+    return element;
+  }
+  if (element.type === "mindRelationship") {
     return element;
   }
   return {
@@ -278,6 +280,9 @@ export function getBoardBounds(items = []) {
   let bottom = -Infinity;
   items.forEach((item) => {
     if (item?.type === "flowEdge") {
+      return;
+    }
+    if (item?.type === "mindRelationship") {
       return;
     }
     const bounds = getElementBounds(item);

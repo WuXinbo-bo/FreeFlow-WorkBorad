@@ -2,6 +2,7 @@ import { getElementBounds } from "./elements/index.js";
 import { getFlowNodeConnectors } from "./elements/flow.js";
 import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
+import { getMindRelationshipGeometry, isMindRelationshipItem } from "./elements/mindRelationship.js";
 import { isLinearShape } from "./elements/shapes.js";
 
 const DEFAULT_GRID_CELL_SIZE = 320;
@@ -134,6 +135,34 @@ function buildFlowEdgeRecord(item, itemIndex, itemById) {
   };
 }
 
+function buildMindRelationshipRecord(item, itemIndex, itemById) {
+  const geometry = getMindRelationshipGeometry(item, itemById);
+  if (!geometry) {
+    return null;
+  }
+  const midpointBounds = {
+    left: geometry.midpoint.x - 12,
+    top: geometry.midpoint.y - 12,
+    right: geometry.midpoint.x + 12,
+    bottom: geometry.midpoint.y + 12,
+  };
+  const bounds = clampBounds({
+    left: Math.min(geometry.bounds.left, midpointBounds.left),
+    top: Math.min(geometry.bounds.top, midpointBounds.top),
+    right: Math.max(geometry.bounds.right, midpointBounds.right),
+    bottom: Math.max(geometry.bounds.bottom, midpointBounds.bottom),
+  });
+  return {
+    itemIndex,
+    itemId: item.id,
+    item,
+    itemType: item.type,
+    baseBounds: bounds,
+    queryBounds: bounds,
+    geometry,
+  };
+}
+
 function buildLinearShapeRecord(item, itemIndex) {
   const startPoint = { x: Number(item.startX || 0), y: Number(item.startY || 0) };
   const endPoint = { x: Number(item.endX || 0), y: Number(item.endY || 0) };
@@ -183,6 +212,9 @@ function buildGenericRecord(item, itemIndex) {
 function buildRecord(item, itemIndex, itemById) {
   if (item.type === "flowEdge") {
     return buildFlowEdgeRecord(item, itemIndex, itemById);
+  }
+  if (isMindRelationshipItem(item)) {
+    return buildMindRelationshipRecord(item, itemIndex, itemById);
   }
   if (item.type === "shape" && isLinearShape(item.shapeType)) {
     return buildLinearShapeRecord(item, itemIndex);

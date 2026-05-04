@@ -324,6 +324,152 @@ export function normalizeRichHtmlInlineFontSizes(value = "", baseFontSize = 20) 
   return template.innerHTML;
 }
 
+const EXTERNAL_HTML_SEMANTIC_TAGS = new Set([
+  "a",
+  "blockquote",
+  "br",
+  "code",
+  "div",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "s",
+  "section",
+  "article",
+  "strong",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+]);
+
+function unwrapExternalHtmlElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const parent = element.parentNode;
+  if (!parent) {
+    return;
+  }
+  while (element.firstChild) {
+    parent.insertBefore(element.firstChild, element);
+  }
+  parent.removeChild(element);
+}
+
+function replaceExternalHtmlElementWithText(element, text = "") {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const parent = element.parentNode;
+  if (!parent) {
+    return;
+  }
+  if (text) {
+    parent.insertBefore(document.createTextNode(text), element);
+  }
+  parent.removeChild(element);
+}
+
+function sanitizeExternalHtmlAnchor(element) {
+  if (!(element instanceof HTMLAnchorElement)) {
+    return;
+  }
+  const href = String(element.getAttribute("href") || "").trim();
+  const title = String(element.getAttribute("title") || "").trim();
+  const target = String(element.getAttribute("target") || "").trim();
+  Array.from(element.attributes).forEach((attr) => element.removeAttribute(attr.name));
+  if (/^(https?:|mailto:|tel:|#|\/|\.\.?\/)/i.test(href)) {
+    element.setAttribute("href", href);
+  }
+  if (title) {
+    element.setAttribute("title", title);
+  }
+  if (["_blank", "_self", "_parent", "_top"].includes(target)) {
+    element.setAttribute("target", target);
+  }
+}
+
+function sanitizeExternalHtmlListElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const tag = String(element.tagName || "").toLowerCase();
+  const start = String(element.getAttribute("start") || "").trim();
+  Array.from(element.attributes).forEach((attr) => element.removeAttribute(attr.name));
+  if (tag === "ol" && /^\d+$/.test(start)) {
+    element.setAttribute("start", start);
+  }
+}
+
+export function downgradeExternalHtmlToCanvasTextSemantics(value = "", baseFontSize = 20) {
+  const raw = sanitizeHtml(value);
+  if (!raw.trim()) {
+    return "";
+  }
+  if (typeof document === "undefined") {
+    return normalizeRichHtmlInlineFontSizes(raw, baseFontSize);
+  }
+  const template = document.createElement("template");
+  template.innerHTML = raw;
+  const elements = Array.from(template.content.querySelectorAll("*"));
+  elements.forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "img") {
+      replaceExternalHtmlElementWithText(node, String(node.getAttribute("alt") || "").trim());
+      return;
+    }
+    if (!EXTERNAL_HTML_SEMANTIC_TAGS.has(tag)) {
+      unwrapExternalHtmlElement(node);
+      return;
+    }
+    if (tag === "a") {
+      sanitizeExternalHtmlAnchor(node);
+      return;
+    }
+    if (tag === "ol" || tag === "ul" || tag === "li") {
+      sanitizeExternalHtmlListElement(node);
+      return;
+    }
+    if (
+      tag === "table" ||
+      tag === "thead" ||
+      tag === "tbody" ||
+      tag === "tr" ||
+      tag === "td" ||
+      tag === "th" ||
+      tag === "pre" ||
+      tag === "code" ||
+      /^h[1-6]$/.test(tag)
+    ) {
+      Array.from(node.attributes).forEach((attr) => {
+        if (attr.name === "start" && tag === "ol") {
+          return;
+        }
+        node.removeAttribute(attr.name);
+      });
+      return;
+    }
+    Array.from(node.attributes).forEach((attr) => node.removeAttribute(attr.name));
+  });
+  return normalizeRichHtmlInlineFontSizes(template.innerHTML, baseFontSize);
+}
+
 export function htmlToPlainText(value = "") {
   const raw = normalizeRichHtml(value);
   if (!raw) {
