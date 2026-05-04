@@ -33,6 +33,7 @@ export function syncFloatingToolbarLayout(toolbar, surface, options = {}) {
     preferAboveZoom = true,
     anchor = "center",
   } = options;
+  const collisionReserve = anchor === "bottom-left" ? 28 : 12;
 
   const surfaceRect = surface.getBoundingClientRect();
   const surfaceWidth = surfaceRect.width || surface.clientWidth || 0;
@@ -42,10 +43,12 @@ export function syncFloatingToolbarLayout(toolbar, surface, options = {}) {
   }
 
   const zoomDock = getZoomDockMetrics(surface, surfaceRect);
-  const availableWidthLeftOfZoom = zoomDock ? Math.max(0, zoomDock.left - margin - gap) : surfaceWidth - margin * 2;
+  const availableWidthLeftOfZoom = zoomDock
+    ? Math.max(0, zoomDock.left - margin - gap - collisionReserve)
+    : surfaceWidth - margin * 2;
   const maxToolbarWidth =
     anchor === "bottom-left"
-      ? clamp(availableWidthLeftOfZoom || surfaceWidth - margin * 2, 260, Math.max(260, surfaceWidth - margin * 2))
+      ? clamp(availableWidthLeftOfZoom || surfaceWidth - margin * 2, 220, Math.max(220, surfaceWidth - margin * 2))
       : surfaceWidth - margin * 2;
 
   toolbar.style.transformOrigin = "top left";
@@ -71,7 +74,7 @@ export function syncFloatingToolbarLayout(toolbar, surface, options = {}) {
   let top = Math.max(margin, Math.round(surfaceHeight - baseHeight - margin));
 
   if (zoomDock) {
-    const safeRight = zoomDock.left - gap;
+    const safeRight = zoomDock.left - gap - collisionReserve;
     const canFitLeftOfZoom = baseWidth <= Math.max(0, safeRight - margin);
     if (anchor !== "bottom-left" && canFitLeftOfZoom) {
       left = clamp(left, margin, Math.max(margin, safeRight - baseWidth));
@@ -96,6 +99,7 @@ export function syncFloatingToolbarLayout(toolbar, surface, options = {}) {
     scale: 1,
     left,
     top,
+    maxWidth: maxToolbarWidth,
     width: baseWidth,
     height: baseHeight,
   };

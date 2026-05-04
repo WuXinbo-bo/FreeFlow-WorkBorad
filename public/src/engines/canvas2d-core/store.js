@@ -62,6 +62,8 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
     hoverId: null,
     hoverHandle: null,
     hoverConnector: null,
+    mindMapDropTargetId: null,
+    mindMapDropHint: "",
     selectionRect: null,
     statusText: "工作白板已就绪",
     statusTone: "neutral",
@@ -77,6 +79,14 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
     boardLastSavedAt: null,
     boardSaveToastAt: null,
     boardSaveToastMessage: "",
+    canvasImageManager: {
+      folderPath: "",
+      items: [],
+      loading: false,
+      error: "",
+      lastScannedAt: 0,
+      missingCount: 0,
+    },
     exportHistory: [],
     exportHistoryUpdatedAt: 0,
     wordExportPreviewRequest: null,
@@ -151,6 +161,8 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       editingType: state.editingType,
       hoverId: state.hoverId,
       hoverHandle: state.hoverHandle,
+      mindMapDropTargetId: state.mindMapDropTargetId,
+      mindMapDropHint: state.mindMapDropHint,
       lastSelectionSource: state.lastSelectionSource,
       statusText: state.statusText,
       statusTone: state.statusTone,
@@ -163,6 +175,10 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       boardLastSavedAt: state.boardLastSavedAt,
       boardSaveToastAt: state.boardSaveToastAt,
       boardSaveToastMessage: state.boardSaveToastMessage,
+      canvasImageManager:
+        state.canvasImageManager && typeof state.canvasImageManager === "object"
+          ? JSON.parse(JSON.stringify(state.canvasImageManager))
+          : null,
       exportHistory: Array.isArray(state.exportHistory) ? state.exportHistory.map((entry) => ({ ...entry })) : [],
       exportHistoryUpdatedAt: Number(state.exportHistoryUpdatedAt || 0) || 0,
       wordExportPreviewRequest:

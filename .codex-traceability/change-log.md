@@ -6,6 +6,274 @@
 - 最多保留最近 10 条记录。
 - 新增第 11 条时删除最旧记录。
 
+## 2026-05-02 Win32 Native Embed Keyboard Focus Exit Alignment
+
+Problem:
+
+- User-visible symptom: after the AI mirror starts through the Win32 native embedding mode, keyboard input can remain unavailable to the canvas even after clicking back into renderer-owned regions.
+- Root cause category: split focus ownership / asymmetric native embed lifecycle.
+- Root cause: the Win32 native embed path had explicit focus-enter behavior through `focusEmbeddedWindow()`, but unlike the `WebContentsView` path it had no explicit focus-exit or blur/release path. Renderer focus restoration therefore remained incomplete when leaving the native embedded window.
+
+Files changed:
+
+- `electron/win32/externalWindowEmbed.js`
+- `electron/main.js`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Added explicit native embedded-window blur/release support in `externalWindowEmbed.js`.
+2. Exposed that exit behavior through the same main-process renderer-focus restoration path used when the user clicks back into canvas/assistant/screen renderer regions.
+3. Made `focusRendererSurface()` release both Win32 native embedded focus and `WebContentsView` embedded focus before restoring BrowserWindow and renderer `webContents` focus.
+4. Replaced the weak Win32 blur approach with explicit focus transfer using attached input queues and Win32 foreground/active/focus handoff, because native embedded windows do not reliably relinquish keyboard control through renderer-side intent alone.
+
+Validation:
+
+- `node --check electron/win32/externalWindowEmbed.js`
+- `node --check electron/main.js`
+- `npm run start:desktop` boot smoke test
+
+Future constraints:
+
+- Win32 native embedded focus behavior must remain symmetric: every focus-enter path needs a matching explicit exit path.
+- Do not rely on renderer click handling alone to reclaim keyboard input from native embedded windows.
+
+## 2026-05-02 Canvas Topbar Collision Now Auto-Collapses Info Panel
+
+Problem:
+
+- User-visible requirement: when the top-right canvas interaction controls collide with the left info panel, the left panel should not disappear abruptly. It should transition into its existing compact collapsed state so the motion stays continuous.
+- Root cause category: UI state mismatch / non-continuous collision fallback.
+- Root cause: the current collision logic in the Canvas2D topbar used an `auto hidden` state that directly hid the left info panel, while the product already had a separate collapsed mini-state with an established transition. This made overlap handling feel discontinuous and visually inconsistent.
+
+Files changed:
+
+- `public/src/engines/canvas2d-core/ui/index.jsx`
+- `public/styles.css`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Replaced collision-driven `infoPanelAutoHidden` behavior with `infoPanelAutoCollapsed` in the Canvas2D React topbar owner.
+2. Reused the existing `is-info-collapsed` and `is-collapsed` visual state so collision handling now goes through the established compact-minimized presentation instead of a separate hide path.
+3. Removed the CSS rule that fully hid the left info corner on collision, preserving the current width/padding transition animation instead of abrupt disappearance.
+4. Added hysteresis to the collision rule by separating the collapse threshold from the release threshold, so the info panel no longer oscillates when the top-right controls stop near the overlap boundary.
+5. Switched collision measurement to a stable expanded-width model and added a short auto-collapse hold window, preventing oscillation caused by reading animated intermediate widths during the collapse transition.
+6. Enlarged the collapsed info-panel control so its visual size aligns more closely with the first right-side toolbar control.
+
+Validation:
+
+- `node --check public/src/engines/canvas2d-core/ui/index.jsx`
+
+Future constraints:
+
+- Collision resolution between the top-right control cluster and the left info panel should prefer existing compact states over introducing hide-only fallback states.
+- Do not reintroduce a parallel `auto hidden` visual path for the same collision case unless the full topbar interaction model is redesigned together.
+
+## 2026-05-02 Default AI Mirror Render Mode Switched To WebContentsView
+
+Problem:
+
+- User-visible requirement: make `WebContentsView` the default AI mirror embed mode instead of Win32 embedding.
+- Root cause category: startup default mismatch risk.
+- Root cause: the default AI mirror render mode was still falling back to `win32` in the runtime normalization/load path, while the screen-source state also initialized with `renderMode: "win32"`. Changing only UI text or only one of these points would leave first-run behavior and fallback behavior inconsistent.
+
+Files changed:
+
+- `public/src/runtime/workbenchRuntime.js`
+- `public/src/state/createInitialState.js`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Added a single runtime default constant for AI mirror render mode in `workbenchRuntime.js` and switched it to `webcontentsview`.
+2. Updated `normalizeScreenSourceRenderMode()` and `loadScreenSourceRenderMode()` so first-run users and invalid cached values both fall back to `webcontentsview`.
+3. Updated initial in-memory screen-source state in `createInitialState.js` to match the same default, avoiding startup/state drift before localStorage hydration finishes.
+
+Validation:
+
+- `node --check public/src/runtime/workbenchRuntime.js`
+- `node --check public/src/state/createInitialState.js`
+
+Future constraints:
+
+- Keep AI mirror render-mode defaults centralized; do not reintroduce conflicting fallback literals in other modules.
+- Existing users with an explicit localStorage render mode should continue to keep their saved preference unless a migration is intentionally added.
+
+## 2026-05-02 AI Mirror Keyboard Focus Ownership Stabilization
+
+Problem:
+
+- User-visible symptom: when left or right AI mirror embedding is enabled, keyboard input may be misdetected, causing canvas shortcuts or renderer-side keyboard interception to compete with typing inside the embedded AI mirror surface.
+- Root cause category: IPC/bridge mismatch / split focus ownership.
+- Root cause: keyboard ownership was inferred inside the renderer from `event.target`, hover state, and local clipboard-zone heuristics, but the AI mirror runs in an Electron `WebContentsView` outside the renderer DOM tree. This made renderer-side keyboard handlers incapable of reliably knowing when the real OS/webcontents focus had moved into the embedded mirror.
+
+Files changed:
+
+- `electron/main.js`
+- `electron/preload.js`
+- `electron/web/webContentsViewEmbed.js`
+- `public/src/state/createInitialState.js`
+- `public/src/runtime/workbenchRuntime.js`
+- `public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Added an explicit desktop-shell keyboard focus owner in `electron/main.js` and exposed it through the existing desktop shell state broadcast instead of relying on renderer-only heuristics.
+2. Wired `electron/web/webContentsViewEmbed.js` focus and blur callbacks into main-process keyboard ownership so AI mirror focus becomes authoritative when the embedded `WebContentsView` is active.
+3. Added preload IPC `desktop-shell:set-keyboard-focus-owner` so the renderer can explicitly publish `canvas`, `assistant`, and `screen` focus ownership when local UI regions receive focus/pointer intent.
+4. Updated `workbenchRuntime.js` to synchronize that ownership, mirror it into a read-only renderer-global marker, and hard-stop its legacy document-level keyboard handler when the owner is `ai-mirror`.
+5. Updated `createCanvas2DEngine.js` to bail out from canvas keyboard shortcuts whenever the desktop keyboard owner is `ai-mirror`, preventing canvas hotkeys from stealing input from the embedded AI surface.
+6. Refined the model from `owner sync only` to `owner sync + native renderer focus restore`, because switching away from a `WebContentsView` also requires giving BrowserWindow/renderer `webContents` real focus back before canvas editing can reliably resume.
+7. Removed system-level auto-refocus paths that kept calling `focusEmbeddedScreenSourceWindow()` during embed mount, layout sync, and right-panel view transitions, because those callbacks could immediately steal focus back from the canvas after the user clicked out of the AI mirror.
+
+Validation:
+
+- `node --check electron/main.js`
+- `node --check electron/preload.js`
+- `node --check electron/web/webContentsViewEmbed.js`
+- `node --check public/src/state/createInitialState.js`
+- `node --check public/src/runtime/workbenchRuntime.js`
+- `node --check public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+
+Future constraints:
+
+- Do not attempt to fix embedded-AI keyboard bugs with more renderer DOM hover/target heuristics; the keyboard owner must remain explicit.
+- Keep `electron/main.js` as the single authoritative owner for desktop keyboard focus state, with renderer and `WebContentsView` acting only as reporters.
+- Any future keyboard shortcut layer added in renderer or canvas modules must guard against `keyboardFocusOwner === "ai-mirror"` before intercepting input.
+
+## 2026-05-02 Canvas Image Management Domain Upgrade
+
+Problem:
+
+- User-visible requirement: fix the unstable image-related experience around image import, image insertion, and screenshot-generated images on the canvas, and upgrade the old `画布图片位置` utility into a complete `画布图片管理` capability with its own UI surface.
+- Root cause category: fragmented image workflow / incomplete asset-domain ownership.
+- Root cause: image path selection existed as scattered setting actions, while actual image persistence, screenshot-to-image insertion, clipboard image intake, and managed-file visibility were split across unrelated flows. Users had no unified place to inspect managed image assets, and maintainers had no single domain entry for debugging image-path/persistence issues.
+
+Files changed:
+
+- `electron/main.js`
+- `electron/preload.js`
+- `public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js`
+- `public/src/engines/canvas2d-core/store.js`
+- `public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `public/src/engines/canvas2d-core/reactBridge.js`
+- `public/src/engines/canvas2d-core/ui/index.jsx`
+- `public/src/engines/canvas2d-core/ui/CanvasImageManagerDialog.jsx`
+- `public/styles.css`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Kept `uiSettingsService` as the only persisted authority for `canvasImageSavePath`, and kept `createCanvas2DEngine.js` as the only runtime owner for image-manager state.
+2. Added desktop IPC for image-directory listing and clipboard-image reading, instead of introducing ad hoc renderer-only filesystem logic.
+3. Extended `createCanvasImageStorageManager.js` so the existing image persistence module also resolves the managed-image folder and lists managed images, preserving a single image-storage policy.
+4. Added an engine-owned `canvasImageManager` read model that derives current managed images plus missing canvas image references, and refreshes after import, screenshot insertion, clipboard image insertion, and image-path updates.
+5. Replaced the old `画布图片位置` menu subtree with a dedicated `画布图片管理` dialog that unifies folder actions, local image import, clipboard image import, system screenshot import, and managed-image listing in one product surface.
+
+Validation:
+
+- `node --check electron/main.js`
+- `node --check electron/preload.js`
+- `node --check public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js`
+- `node --check public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `npm run build:canvas2d-ui`
+
+Future constraints:
+
+- Do not create a second image-path or image-manager persistence owner outside `uiSettingsService` and Canvas2D engine orchestration.
+- Keep screenshot, clipboard image intake, and local-image import converging back into the same engine/image-storage flow so bug fixes remain traceable in one place.
+- If relink/replace/missing-file repair is added later, extend `CanvasImageManagerDialog.jsx` and the existing engine image-manager APIs instead of adding another image-fixing panel elsewhere.
+
+## 2026-05-02 Full Product Architecture Refactor Pass
+
+Problem:
+
+- User-visible requirement: perform a one-pass product-level refactor across the project, keeping functionality unchanged while simplifying code, splitting oversized files, and fixing latent structural bugs.
+- Root cause category: oversized-entry accumulation / duplicated-runtime responsibilities.
+- Root cause: core runtime owners had grown into large mixed-responsibility files. `createCanvas2DEngine.js` still bundled workspace orchestration, export-history state, imported-image persistence, preview state, and rendering concerns. `workbenchRuntime.js` likewise mixed startup context bridging, UI settings cache rules, canvas storage restore logic, and workbench UI orchestration. This made future changes error-prone and already produced duplicate declarations and half-finished extractions.
+
+Files changed:
+
+- `public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `public/src/engines/canvas2d-core/workspace/createCanvasWorkspaceManager.js`
+- `public/src/engines/canvas2d-core/export/createCanvasExportHistoryManager.js`
+- `public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js`
+- `public/src/runtime/workbenchRuntime.js`
+- `public/src/runtime/settings/createUiSettingsRuntimeBridge.js`
+- `public/src/runtime/canvas/createCanvasStorageBridge.js`
+- `docs/product-architecture-refactor-overview.md`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Kept `createCanvas2DEngine.js` as the single Canvas2D orchestration owner, but extracted coherent sub-responsibilities into injected modules for workspace management, export history, and imported-image persistence.
+2. Kept `workbenchRuntime.js` as the single workbench state owner, but extracted startup/UI-settings bridging and canvas storage/path bridging into dedicated runtime helpers.
+3. Preserved all existing ownership rules: backend `uiSettingsService` remains the only settings authority, startup context remains a bridge layer, and Canvas2D state/history ownership stays in the engine.
+4. Removed duplicate/legacy in-place implementations that conflicted with the new bridge/module pattern, including repeated image-storage helpers and a duplicated `loadUiSettings` declaration in `workbenchRuntime.js`.
+5. Added a maintainer-facing architecture overview document so the new split is explicit and future refactors can continue from the same module boundaries instead of re-growing the entry files.
+
+Validation:
+
+- `node --check public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `node --check public/src/engines/canvas2d-core/export/createCanvasExportHistoryManager.js`
+- `node --check public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js`
+- `node --check public/src/runtime/workbenchRuntime.js`
+- `node --check public/src/runtime/settings/createUiSettingsRuntimeBridge.js`
+- `node --check public/src/runtime/canvas/createCanvasStorageBridge.js`
+- `npm run build:canvas2d-ui`
+
+Future constraints:
+
+- `createCanvas2DEngine.js` and `workbenchRuntime.js` remain the only state/orchestration owners for their domains; new modules must stay injected and stateless with respect to ownership.
+- Do not move UI settings truth, recent-board truth, or startup truth into browser-only helper modules.
+- Continue future splitting by coherent responsibility clusters only; avoid cross-cutting “mega refactors” that mix startup, persistence, preview, and rendering policy in the same patch.
+
+## 2026-05-02 Canvas Workspace Manager Extraction Stabilization
+
+Problem:
+
+- User-visible requirement: start a system-level refactor without changing functionality, especially by splitting the oversized Canvas2D engine file into more maintainable modules.
+- Root cause category: oversized-module coupling / partial-refactor inconsistency.
+- Root cause: `createCanvas2DEngine.js` had already begun a workspace/file-management extraction, but the repo was left in an invalid intermediate state where the new `workspace` module and the original engine block both coexisted. The extracted code also drifted from the real state owner by reading `state.useLocalFileSystem` and `state.suppressDirtyTracking`, while the authoritative values still lived as engine-local variables/functions.
+
+Files changed:
+
+- `public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `public/src/engines/canvas2d-core/workspace/createCanvasWorkspaceManager.js`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Finished the workspace/file-management extraction by turning `createCanvasWorkspaceManager.js` into an injected submodule instead of a shadow implementation.
+2. Passed the real single-source dependencies from the engine into the manager, including `useLocalFileSystem`, board/file helpers, edit cancelers, board-switch/save operations, and a setter for the engine-local `suppressDirtyTracking`.
+3. Removed the duplicated workspace/file-management function block from `createCanvas2DEngine.js` and redirected the public engine API to the manager methods, preserving the external call surface.
+4. Kept persistence ownership, startup flow, desktop-shell IPC usage, and `BoardWorkspaceDialog.jsx` ownership unchanged so the refactor remains structural only.
+5. Recorded the new module boundary in traceability docs so future refactors continue from the injected-submodule model instead of re-growing the engine file.
+
+Validation:
+
+- `node --check public/src/engines/canvas2d-core/workspace/createCanvasWorkspaceManager.js`
+- `node --check public/src/engines/canvas2d-core/createCanvas2DEngine.js`
+- `npm run build:canvas2d-ui`
+
+Future constraints:
+
+- Keep `public/src/engines/canvas2d-core/createCanvas2DEngine.js` as the orchestration owner; extracted submodules may coordinate behavior but must not create a second persistence or startup source.
+- Any future workspace/file-management split must inject `useLocalFileSystem`, dirty-tracking control, and board path helpers from the engine instead of reading guessed fields from `state`.
+- Continue splitting the 20k-line engine by coherent responsibility clusters only; do not attempt cross-cutting rewrites that mix startup, persistence, preview, and interaction state in one pass.
+
 ## 2026-05-02 Search And Export-History Trigger Unification
 
 ## 2026-05-02 Canvas Workspace Tone And Delete-Confirm Refinement
@@ -415,3 +683,75 @@ Future constraints:
 
 - Do not fork PDF attached preview into a second detached UI or separate state collection; keep Word/PDF under the same file-card preview request pipeline.
 - New previewable document types must extend the shared request/render contract instead of reintroducing format-specific one-off shells.
+
+## 2026-05-02 Win32 AI Mirror Keyboard Focus Root-Cause Refactor
+
+Context:
+
+- User reported that after typing inside the Win32 native embedded AI mirror, clicking back into the canvas still left keyboard input routed to the embedded window.
+- User explicitly required a root-cause fix, not patch-style edits, and requested testing.
+
+Root cause:
+
+- The Win32 embedded window was treated as a continuously focusable surface.
+- Multiple non-user-triggered paths such as attach, bounds sync and visibility restore were auto-calling native focus restoration.
+- Renderer-side focus-owner state and native embedded-window interactivity were not modeled symmetrically, so owner changes could say `canvas` while the native child window still remained able to consume keyboard input.
+
+Files changed:
+
+- `electron/win32/externalWindowEmbed.js`
+- `electron/main.js`
+- `electron/preload.js`
+- `public/src/runtime/workbenchRuntime.js`
+- `.codex-project-rules/absolute-directives.md`
+- `.codex-traceability/architecture-map.md`
+- `.codex-traceability/module-registry.md`
+- `.codex-traceability/change-log.md`
+
+Fix mechanism:
+
+1. Refactored Win32 native embed management from focus tug-of-war to explicit interaction gating.
+2. Added `EnableWindow`-based native interaction control so the embedded child window can remain visible while being non-interactive.
+3. Made Win32 embed attach/minimize/visibility/bounds-sync paths stop auto-focusing the native window.
+4. Centralized desktop keyboard owner changes in `electron/main.js` so any non-`ai-mirror` owner automatically disables Win32 embedded input.
+5. Changed screen-panel pointer activation in `workbenchRuntime.js` to explicitly enter AI mirror mode instead of incorrectly restoring renderer focus on mirror clicks.
+6. Preserved the existing renderer-focus restore path so clicking canvas/assistant continues to reclaim native renderer focus.
+
+Validation:
+
+- `node --check electron/win32/externalWindowEmbed.js`
+- `node --check electron/main.js`
+- `node --check electron/preload.js`
+- `node --check public/src/runtime/workbenchRuntime.js`
+- `npm run start:desktop`
+
+Residual risk:
+
+- Full automated end-to-end reproduction against the Win32 embedded target was not available in this environment, so final behavior still requires in-app manual verification with a real native embedded AI mirror target.
+
+## 2026-05-02 Win32 Embedded Child-Focus Recovery Follow-up
+
+Context:
+
+- After the activation-overlay refactor, the user could still fail to type inside the Win32 embedded mirror even after explicit activation.
+
+Root cause refinement:
+
+- Restoring focus to the embedded top-level `HWND` was still insufficient for some external targets.
+- Real text input can live in the previously focused child control inside the embedded process/window hierarchy.
+
+Files changed:
+
+- `electron/win32/externalWindowEmbed.js`
+
+Fix mechanism:
+
+1. Added Win32 `GetGUIThreadInfo` support to inspect the target GUI thread's current focused child handle.
+2. Captured the last focused child handle before leaving embedded-input mode.
+3. When re-entering embedded-input mode, preferred restoring focus to the remembered child control instead of only the top-level embedded window.
+4. Kept top-level activation plus cross-thread input-queue attachment so focus recovery still works across reparented native window boundaries.
+
+Validation:
+
+- `node --check electron/win32/externalWindowEmbed.js`
+- `npm run start:desktop`

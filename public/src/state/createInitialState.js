@@ -95,6 +95,9 @@ export function createInitialState() {
       fullscreen: false,
       clickThrough: false,
       fullClickThrough: false,
+      keyboardFocusOwner: "",
+      keyboardFocusSourceId: "",
+      keyboardFocusTargetId: "",
     },
     shortcutSettings: {
       clickThroughAccelerator: "CommandOrControl+Shift+X",
@@ -145,7 +148,7 @@ export function createInitialState() {
       selectedSourceLabel: "",
       activeTargetId: "",
       activeMode: "",
-      renderMode: "win32",
+      renderMode: "webcontentsview",
       embeddedSourceId: "",
       embeddedSourceLabel: "",
       embedPolicies: {},

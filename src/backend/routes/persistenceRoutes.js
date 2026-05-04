@@ -26,6 +26,7 @@ function createPersistenceRouter(deps) {
   router.post("/sessions", controller.saveSessions);
   router.get("/canvas-board", controller.getCanvasBoard);
   router.post("/canvas-board", controller.saveCanvasBoard);
+  router.post("/canvas-board/repair", controller.repairCanvasBoard);
 
   return router;
 }

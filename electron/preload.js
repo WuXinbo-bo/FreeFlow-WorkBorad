@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   platform: process.platform,
   readClipboardText: () => ipcRenderer.invoke("desktop-shell:read-clipboard-text"),
   readClipboardFiles: () => ipcRenderer.invoke("desktop-shell:read-clipboard-files"),
+  readClipboardImageDataUrl: () => ipcRenderer.invoke("desktop-shell:read-clipboard-image-data-url"),
   copyFilesToClipboard: (paths) => ipcRenderer.invoke("desktop-shell:copy-files-to-clipboard", paths),
   startFileDrag: (paths) => ipcRenderer.invoke("desktop-shell:start-file-drag", paths),
   startExportDrag: (payload) => ipcRenderer.invoke("desktop-shell:start-export-drag", payload),
@@ -19,6 +20,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   pickCanvasBoardOpenPath: (payload) => ipcRenderer.invoke("desktop-shell:pick-canvas-board-open", payload),
   pickDirectory: (payload) => ipcRenderer.invoke("desktop-shell:pick-directory", payload),
   listCanvasBoards: (payload) => ipcRenderer.invoke("desktop-shell:list-canvas-boards", payload),
+  listCanvasImages: (payload) => ipcRenderer.invoke("desktop-shell:list-canvas-images", payload),
   ensureDirectory: (targetPath) => ipcRenderer.invoke("desktop-shell:ensure-directory", targetPath),
   pickImageSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-image-save-path", payload),
   pickTextSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-text-save-path", payload),
@@ -44,6 +46,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     }
   },
   getState: () => ipcRenderer.invoke("desktop-shell:get-state"),
+  setKeyboardFocusOwner: (payload) => ipcRenderer.invoke("desktop-shell:set-keyboard-focus-owner", payload),
+  focusRendererSurface: (payload) => ipcRenderer.invoke("desktop-shell:focus-renderer-surface", payload),
   notifyRendererReady: () => ipcRenderer.send("desktop-shell:renderer-ready"),
   releaseBootShapeLock: () => ipcRenderer.invoke("desktop-shell:release-boot-shape-lock"),
   minimize: () => ipcRenderer.invoke("desktop-shell:minimize"),
@@ -66,6 +70,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   setExternalWindowVisibility: (visible) => ipcRenderer.invoke("desktop-shell:set-external-window-visibility", visible),
   clearExternalWindow: (payload) => ipcRenderer.invoke("desktop-shell:clear-external-window", payload),
   focusEmbeddedWindow: (payload) => ipcRenderer.invoke("desktop-shell:focus-embedded-window", payload),
+  setEmbeddedWindowInteractive: (payload) => ipcRenderer.invoke("desktop-shell:set-embedded-window-interactive", payload),
   attachAiMirrorWebContentsView: (payload) => ipcRenderer.invoke("desktop-shell:attach-ai-mirror-webcontents-view", payload),
   syncAiMirrorWebContentsViewBounds: (payload) =>
     ipcRenderer.invoke("desktop-shell:sync-ai-mirror-webcontents-view-bounds", payload),
@@ -73,6 +78,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop-shell:set-ai-mirror-webcontents-view-visibility", visible),
   clearAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:clear-ai-mirror-webcontents-view"),
   focusAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:focus-ai-mirror-webcontents-view"),
+  blurAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:blur-ai-mirror-webcontents-view"),
   onStateChange: (listener) => {
     if (typeof listener !== "function") {
       return () => {};

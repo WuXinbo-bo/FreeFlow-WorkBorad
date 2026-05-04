@@ -17,6 +17,7 @@ const {
   wrapFreeFlowBoardPayload,
 } = require("../models/canvasBoardFileFormat");
 const { readUiSettingsStore, writeUiSettingsStore } = require("./uiSettingsService");
+const { repairCanvasBoardFile } = require("./canvasBoardRepairService");
 
 function resolveCanvasBoardFilePath(input = "") {
   const raw = String(input || "").trim();
@@ -207,5 +208,6 @@ module.exports = {
   DEFAULT_BOARD_FILE_NAME,
   resolveCanvasBoardFilePath,
   readCanvasBoard,
+  repairCanvasBoardFile,
   writeCanvasBoard,
 };

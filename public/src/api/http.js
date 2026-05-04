@@ -8,6 +8,7 @@ export const API_ROUTES = {
   meta: "/api/meta",
   sessions: "/api/sessions",
   canvasBoard: "/api/canvas-board",
+  canvasBoardRepair: "/api/canvas-board/repair",
   chatOnce: "/api/chat-once",
 };
 

@@ -1,6 +1,9 @@
 import { DEFAULT_VIEW } from "../constants.js";
 import { clone } from "../utils.js";
-import { normalizeMindNodeElement } from "./mind.js";
+import {
+  normalizeMindNodeElement,
+  normalizeMindSummaryElement,
+} from "./mind.js";
 import { getFlowNodeMinSize, normalizeFlowEdgeElement, normalizeFlowNodeElement } from "./flow.js";
 import { normalizeImageElement } from "./media.js";
 import { normalizeFileCardElement } from "./fileCard.js";
@@ -60,6 +63,9 @@ export function normalizeElement(element = {}) {
   if (type === "mindnode" || type === "mind") {
     return normalizeMindNodeElement(element);
   }
+  if (type === "mindsummary" || type === "mind-summary") {
+    return normalizeMindSummaryElement(element);
+  }
   if (type === "flownode" || type === "flow-node" || type === "node") {
     return normalizeFlowNodeElement(element);
   }
@@ -81,7 +87,15 @@ export function normalizeElement(element = {}) {
 export function normalizeBoard(input = {}) {
   const board = input && typeof input === "object" ? input : {};
   return {
-    items: Array.isArray(board.items) ? board.items.map((item) => normalizeElement(item)) : [],
+    items: Array.isArray(board.items)
+      ? board.items
+          .filter((item) => {
+            const legacyKind = String(item?.kind || "").trim().toLowerCase();
+            const type = String(item?.type || legacyKind || "").trim().toLowerCase();
+            return type !== "mindrelationship" && type !== "mind-relationship";
+          })
+          .map((item) => normalizeElement(item))
+      : [],
     selectedIds: Array.isArray(board.selectedIds)
       ? board.selectedIds.map((id) => String(id || "").trim()).filter(Boolean)
       : [],

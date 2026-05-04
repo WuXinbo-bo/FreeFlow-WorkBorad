@@ -30,12 +30,16 @@ function normalizeBounds(bounds = {}) {
   };
 }
 
-function createWebContentsViewEmbedManager(mainWindowGetter, targets = []) {
+function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], options = {}) {
   if (typeof WebContentsView !== "function") {
     return createUnsupportedManager();
   }
 
   let activeEntry = null;
+  const notifyFocusChanged =
+    typeof options?.onFocusChanged === "function"
+      ? options.onFocusChanged
+      : () => {};
 
   function getMainWindow() {
     const window = typeof mainWindowGetter === "function" ? mainWindowGetter() : null;
@@ -145,6 +149,22 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = []) {
 
     view.webContents.on("page-title-updated", (event) => {
       event.preventDefault();
+    });
+
+    view.webContents.on("focus", () => {
+      notifyFocusChanged({
+        owner: "ai-mirror",
+        targetId: meta.id,
+        sourceId: `webcontentsview:${meta.id}`,
+      });
+    });
+
+    view.webContents.on("blur", () => {
+      notifyFocusChanged({
+        owner: "",
+        targetId: meta.id,
+        sourceId: `webcontentsview:${meta.id}`,
+      });
     });
 
     activeEntry = {
@@ -277,6 +297,31 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = []) {
     };
   }
 
+  function blurTarget() {
+    if (!activeEntry?.view?.webContents || activeEntry.view.webContents.isDestroyed()) {
+      return {
+        ok: true,
+        active: false,
+      };
+    }
+
+    if (typeof activeEntry.view.webContents.blur === "function") {
+      activeEntry.view.webContents.blur();
+    }
+
+    notifyFocusChanged({
+      owner: "",
+      targetId: activeEntry.targetId,
+      sourceId: activeEntry.sourceId,
+    });
+
+    return {
+      ok: true,
+      active: true,
+      sourceId: activeEntry.sourceId,
+    };
+  }
+
   function clearTarget() {
     const previousSourceId = activeEntry?.sourceId || "";
     destroyActiveEntry();
@@ -294,6 +339,7 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = []) {
     syncBounds,
     setVisibility,
     focusTarget,
+    blurTarget,
     clearTarget,
   };
 }

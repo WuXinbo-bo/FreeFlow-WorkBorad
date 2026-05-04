@@ -95,6 +95,8 @@ Last initialized: 2026-05-01
 - `public/src/api/http.js`: API route constants and JSON response validation.
 - `public/src/config/app.config.js`: frontend config keys, localStorage keys and canvas defaults.
 - `public/src/runtime/workbenchRuntime.js`: main browser runtime. Owns settings loading, UI settings cache, workbench preference application, panel layout state, settings UI event handlers, sessions, chat, canvas host coordination and startup tutorial state.
+- `public/src/runtime/settings/createUiSettingsRuntimeBridge.js`: startup context, UI settings cache, startup tutorial gating, and UI settings bootstrap bridge. It must not become a second state owner outside `workbenchRuntime.js`.
+- `public/src/runtime/canvas/createCanvasStorageBridge.js`: canvas path normalization, startup board restore, canvas project-file bridge, and canvas path action-button sync. It operates under `workbenchRuntime.js` state ownership.
 
 ### Layout and Shell
 
@@ -115,6 +117,10 @@ Last initialized: 2026-05-01
 ### Main Engine
 
 - `public/src/engines/canvas2d-core/createCanvas2DEngine.js`: Canvas2D engine factory, board loading/saving coordination, canvas interactions, export history, UI settings cache access, recent board path resolution, import/export orchestration.
+- `public/src/engines/canvas2d-core/workspace/createCanvasWorkspaceManager.js`: workspace/file-management submodule for board rename/delete/reveal, workspace folder switching, board listing/creation, and canvas image/save-path picking. It is dependency-injected by the main engine and must not become a second persistence/state owner.
+- `public/src/engines/canvas2d-core/export/createCanvasExportHistoryManager.js`: export-history submodule for active-board export history synchronization and deduped history recording. It is injected by the main engine and does not own persistence decisions outside the engine flow.
+- `public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js`: image-storage submodule for import-image folder resolution, imported image persistence, and cropped-image save-back. It is injected by the main engine and must not create a parallel asset-storage policy.
+- `public/src/engines/canvas2d-core/ui/CanvasImageManagerDialog.jsx`: dedicated canvas image-management dialog for unified image import, clipboard image intake, screenshot intake, folder actions, and managed-image listing. It is mounted by the Canvas2D React UI owner and consumes engine-owned image-manager state only.
 - `public/src/engines/canvas2d-core/boardFileFormat.js`: renderer `.freeflow` board envelope format constants, parser/wrapper and legacy JSON compatibility helpers.
 - `public/src/engines/canvas2d-core/ui/index.jsx`: React UI entry for Canvas2D-specific dialogs/panels.
 - `public/src/engines/canvas2d-core/reactBridge.js`: bridge between imperative engine and React UI.
@@ -165,7 +171,7 @@ Last initialized: 2026-05-01
 1. Authoritative recent board path is `canvasLastOpenedBoardPath` in UI settings.
 2. Startup resolution is done in `src/backend/services/appStartupService.js`.
 3. Renderer startup board read is coordinated from `public/src/runtime/workbenchRuntime.js`.
-4. Canvas2D engine path resolution is in `public/src/engines/canvas2d-core/createCanvas2DEngine.js`.
+4. Canvas2D engine path resolution is in `public/src/engines/canvas2d-core/createCanvas2DEngine.js`; workspace/file-management actions under the same flow are delegated to `public/src/engines/canvas2d-core/workspace/createCanvasWorkspaceManager.js`.
 5. Cache priority must keep startup context and remote UI settings above localStorage cache.
 
 ### 5. Canvas Board Save/Open
@@ -193,6 +199,25 @@ Last initialized: 2026-05-01
 4. Renderers convert canonical nodes into Canvas2D elements.
 5. Host adapters commit elements, update history, persistence and search integration.
 
+### 9. Desktop Keyboard Focus Ownership
+
+1. Authoritative desktop keyboard focus ownership is broadcast by `electron/main.js` through `getDesktopShellState()`.
+2. Renderer-visible access is only through `electron/preload.js` `window.desktopShell.getState()` / `setKeyboardFocusOwner()` / `onStateChange()`.
+3. `electron/web/webContentsViewEmbed.js` reports AI mirror `WebContentsView` focus and blur back to `electron/main.js`.
+4. `public/src/runtime/workbenchRuntime.js` is the renderer-side bridge for non-mirror domains (`canvas`, `assistant`, `screen`), requests native renderer-focus restoration through preload when exiting AI mirror, and publishes a read-only global marker for engine guards.
+5. `public/src/engines/canvas2d-core/createCanvas2DEngine.js` must treat `globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror"` as a hard stop for canvas keyboard shortcuts and paste interception.
+6. Native Win32 embedding must provide a symmetric focus exit path just like `WebContentsView`; renderer-focus restoration is incomplete if the external embedded window only exposes focus-enter behavior.
+7. Win32 native embedded AI mirror must be modeled as an explicit interaction-gated surface: visible state and interactive/input-owning state are separate, and layout/visibility sync paths must not implicitly reactivate native keyboard ownership.
+
+### 8. Canvas Image Management
+
+1. User opens `画布图片管理` from Canvas2D menu in `public/src/engines/canvas2d-core/ui/index.jsx`.
+2. React dialog `CanvasImageManagerDialog.jsx` reads `snapshot.canvasImageManager` from engine-owned store state.
+3. Refresh/list actions call engine APIs exposed through `public/src/engines/canvas2d-core/reactBridge.js`.
+4. Engine delegates folder resolution and image-directory listing to `createCanvasImageStorageManager.js`, which calls desktop IPC `desktop-shell:list-canvas-images`.
+5. Import local image / clipboard image / system screenshot all return through engine image insertion paths and then refresh the derived image-manager state.
+6. Persisted folder authority remains `uiSettings.canvasImageSavePath`; the image manager list is a runtime read model and must not become a second settings store.
+
 ## Known Risk Areas
 
 - UI settings can regress if a new file/store is introduced outside `uiSettingsService`.
@@ -201,6 +226,7 @@ Last initialized: 2026-05-01
 - Canvas board persistence must not regress to bare JSON for new saves; `.json` support is for legacy import/migration and tutorial template compatibility only.
 - `workbenchRuntime.js` owns many unrelated concerns; edits must search for delayed/async code that can overwrite state after an earlier save.
 - Electron main/preload/renderer IPC names must stay synchronized.
+- Keyboard input ownership across renderer DOM and `WebContentsView` cannot be inferred only from `event.target`, hover, or DOM containment. Desktop focus domain must stay explicit and synchronized through main/preload/renderer.
 - Built bundles under `public/assets/*/current/*.js` can drift from source; source changes may require corresponding build scripts.
 - CSS stacking, overlay z-index, pointer-events and Electron window shape can interact; dialog/menu fixes must verify both browser layer and desktop click shape.
 - Tutorial startup state has version and first-run logic; version changes and persistence state must be checked together.

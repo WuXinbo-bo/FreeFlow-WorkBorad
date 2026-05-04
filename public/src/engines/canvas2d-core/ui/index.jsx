@@ -8,6 +8,7 @@ import {
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspaceDialog } from "./BoardWorkspaceDialog.jsx";
+import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import { buildCanvasSearchResults } from "../search/canvasSearchIndex.js";
 import { getElementBounds } from "../elements/index.js";
 import { getFileCardPreviewBounds } from "../elements/fileCard.js";
@@ -82,10 +83,11 @@ function FileIcon() {
 function NodeIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <rect x="4.5" y="4.5" width="15" height="15" rx="3.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="12" cy="12" r="2.2" fill="currentColor" />
-      <circle cx="6.8" cy="12" r="1.2" fill="currentColor" opacity="0.55" />
-      <circle cx="17.2" cy="12" r="1.2" fill="currentColor" opacity="0.55" />
+      <circle cx="8" cy="12" r="2" fill="currentColor" />
+      <circle cx="16" cy="7.5" r="2" fill="currentColor" opacity="0.88" />
+      <circle cx="16" cy="16.5" r="2" fill="currentColor" opacity="0.88" />
+      <path d="M9.8 11.2 14 8.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M9.8 12.8 14 15.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -771,6 +773,7 @@ function Canvas2DControls({ engine }) {
   const [insertMenuOpen, setInsertMenuOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [boardWorkspaceOpen, setBoardWorkspaceOpen] = useState(false);
+  const [canvasImageManagerOpen, setCanvasImageManagerOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
   const [backgroundMenuOpen, setBackgroundMenuOpen] = useState(false);
@@ -783,7 +786,7 @@ function Canvas2DControls({ engine }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
-  const [infoPanelAutoHidden, setInfoPanelAutoHidden] = useState(false);
+  const [infoPanelAutoCollapsed, setInfoPanelAutoCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [exportHistoryOpen, setExportHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -801,6 +804,7 @@ function Canvas2DControls({ engine }) {
   const exportHistoryRef = useRef(null);
   const searchInputRef = useRef(null);
   const searchHighlightTimerRef = useRef(null);
+  const infoPanelAutoCollapseLockUntilRef = useRef(0);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const titleInputRef = useRef(null);
@@ -958,7 +962,7 @@ function Canvas2DControls({ engine }) {
     return {
       total: items.length,
       text: items.filter((item) => item?.type === "text").length,
-      flowNode: items.filter((item) => item?.type === "flowNode").length,
+      flowNode: items.filter((item) => item?.type === "mindNode").length,
       fileCard: items.filter((item) => item?.type === "fileCard").length,
       image: items.filter((item) => item?.type === "image").length,
     };
@@ -1042,26 +1046,47 @@ function Canvas2DControls({ engine }) {
       frameId = requestAnimationFrame(() => {
         frameId = 0;
         const infoRect = infoElement.getBoundingClientRect();
+        const topbarRect =
+          rootElement.querySelector(".canvas2d-engine-topbar") instanceof HTMLElement
+            ? rootElement.querySelector(".canvas2d-engine-topbar").getBoundingClientRect()
+            : null;
         const topbarStackRect =
           rootElement.querySelector(".canvas2d-engine-topbar-stack") instanceof HTMLElement
             ? rootElement.querySelector(".canvas2d-engine-topbar-stack").getBoundingClientRect()
             : null;
-        const toolbarWrapRect =
-          rootElement.querySelector(".canvas2d-engine-toolbar-wrap") instanceof HTMLElement
-            ? rootElement.querySelector(".canvas2d-engine-toolbar-wrap").getBoundingClientRect()
-            : null;
         const searchRect = searchRef.current instanceof HTMLElement ? searchRef.current.getBoundingClientRect() : null;
         const exportRect =
           exportHistoryRef.current instanceof HTMLElement ? exportHistoryRef.current.getBoundingClientRect() : null;
-        const overlapSafetyGap = 28;
+        const layoutGap = topbarRect && topbarStackRect ? Math.max(0, topbarStackRect.left - topbarRect.left) : 0;
+        const expandedInfoWidth = infoPanelCollapsed || infoPanelAutoCollapsed ? 186 : infoRect.width;
+        const collapsedInfoWidth = 78;
+        const panelSafetyGap = 20;
+        const collapseGap = 10;
+        const releaseGap = 42;
         const occupiedLeft = Math.min(
-          topbarStackRect ? topbarStackRect.left : Number.POSITIVE_INFINITY,
-          toolbarWrapRect ? toolbarWrapRect.left : Number.POSITIVE_INFINITY,
           searchRect ? searchRect.left : Number.POSITIVE_INFINITY,
           exportRect ? exportRect.left : Number.POSITIVE_INFINITY
         );
-        const nextHidden = Number.isFinite(occupiedLeft) && occupiedLeft <= infoRect.right + overlapSafetyGap;
-        setInfoPanelAutoHidden((current) => (current === nextHidden ? current : nextHidden));
+        const infoLeft = infoRect.left;
+        const expandedInfoRight = infoLeft + expandedInfoWidth + Math.max(0, layoutGap);
+        const collapsedInfoRight = infoLeft + collapsedInfoWidth + Math.max(0, layoutGap);
+        const now = performance.now();
+        setInfoPanelAutoCollapsed((current) => {
+          if (!Number.isFinite(occupiedLeft)) {
+            return false;
+          }
+          if (current && now < infoPanelAutoCollapseLockUntilRef.current) {
+            return true;
+          }
+          if (current) {
+            return occupiedLeft <= collapsedInfoRight + releaseGap + panelSafetyGap;
+          }
+          const shouldCollapse = occupiedLeft <= expandedInfoRight + collapseGap;
+          if (shouldCollapse) {
+            infoPanelAutoCollapseLockUntilRef.current = now + 220;
+          }
+          return shouldCollapse;
+        });
       });
     };
 
@@ -1292,17 +1317,18 @@ function Canvas2DControls({ engine }) {
       className="canvas2d-engine-ui"
       style={{
         "--canvas2d-overlay-scale": overlayScale,
+        "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
       }}
     >
       <div
-        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed ? " is-info-collapsed" : ""}${infoPanelAutoHidden ? " is-info-auto-hidden" : ""}`}
+        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >
       <div
         ref={infoPanelRef}
         className="canvas2d-engine-corner canvas2d-engine-corner-top-left"
         aria-label="工作白板模式信息"
       >
-        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact${infoPanelCollapsed ? " is-collapsed" : ""}`}>
+        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-collapsed" : ""}`}>
           <div className="canvas2d-brand-row" aria-label="FreeFlow 品牌">
             <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
             <img
@@ -1314,11 +1340,11 @@ function Canvas2DControls({ engine }) {
               type="button"
               className="canvas2d-info-collapse-toggle"
               onClick={() => setInfoPanelCollapsed((value) => !value)}
-              title={infoPanelCollapsed ? "展开画布信息" : "收起画布信息"}
-              aria-label={infoPanelCollapsed ? "展开画布信息" : "收起画布信息"}
-              aria-pressed={infoPanelCollapsed}
+              title={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"}
+              aria-label={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"}
+              aria-pressed={infoPanelCollapsed || infoPanelAutoCollapsed}
             >
-              <span aria-hidden="true">{infoPanelCollapsed ? "›" : "‹"}</span>
+              <span aria-hidden="true">{infoPanelCollapsed || infoPanelAutoCollapsed ? "›" : "‹"}</span>
             </button>
           </div>
           <div className="canvas2d-info-detail">
@@ -1506,8 +1532,8 @@ function Canvas2DControls({ engine }) {
             type="button"
             className="canvas2d-engine-tool"
             data-tutorial-target="node-button"
-            onClick={() => bridge.addFlowNode()}
-            title="添加节点"
+            onClick={() => bridge.addMindMapRoot()}
+            title="添加思维导图"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
               <NodeIcon />
@@ -1724,6 +1750,7 @@ function Canvas2DControls({ engine }) {
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
+                  setCanvasImageManagerOpen(false);
                   setSearchOpen(false);
                   setExportHistoryOpen(false);
                   if (!next) {
@@ -1749,53 +1776,26 @@ function Canvas2DControls({ engine }) {
                   <div className="canvas2d-engine-menu-title">画布管理</div>
                   <button
                     type="button"
-                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary canvas2d-engine-menu-item-path"
+                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
                     role="menuitem"
-                    title={boardFilePath || "未设置画布工作区"}
                     onClick={() => {
                       closeMenu();
                       setBoardWorkspaceOpen(true);
                     }}
                   >
                     <span>画布工作区</span>
-                    <span className="canvas2d-engine-menu-meta">{formatPathLabel(boardFilePath, "未设置")}</span>
                   </button>
                   <button
                     type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${exportMenuOpen ? " is-active" : ""}`}
+                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-primary${canvasImageManagerOpen ? " is-active" : ""}`}
                     role="menuitem"
-                    aria-expanded={exportMenuOpen}
-                    onClick={() => setExportMenuOpen((value) => !value)}
+                    onClick={() => {
+                      closeMenu();
+                      setCanvasImageManagerOpen(true);
+                    }}
                   >
                     <span>画布图片位置</span>
-                    <ChevronIcon open={exportMenuOpen} />
                   </button>
-                  {exportMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group">
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item canvas2d-engine-menu-item-path"
-                        role="menuitem"
-                        title={canvasImageSavePath || "未设置画布图片位置"}
-                        onClick={() => {
-                          void bridge.revealCanvasImageSavePath();
-                        }}
-                      >
-                        <span>打开图片位置</span>
-                        <span className="canvas2d-engine-menu-meta">{formatPathLabel(canvasImageSavePath, "未设置")}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="canvas2d-engine-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          void bridge.pickCanvasImageSavePath();
-                        }}
-                      >
-                        <span>设置图片位置</span>
-                      </button>
-                    </div>
-                  ) : null}
                   <button
                     type="button"
                     className={`canvas2d-engine-menu-item${autosaveEnabled ? " is-active" : ""}`}
@@ -2034,11 +2034,6 @@ function Canvas2DControls({ engine }) {
                 <ExportHistoryIcon />
               </span>
             </button>
-            {exportHistory.length ? (
-              <span className="canvas2d-engine-export-history-badge" aria-hidden="true">
-                {Math.min(10, exportHistory.length)}
-              </span>
-            ) : null}
           </div>
         </div>
         <div className="canvas2d-engine-export-history-layer">
@@ -2161,6 +2156,12 @@ function Canvas2DControls({ engine }) {
         bridge={bridge}
         snapshot={snapshot}
         onClose={() => setBoardWorkspaceOpen(false)}
+      />
+      <CanvasImageManagerDialog
+        open={canvasImageManagerOpen}
+        bridge={bridge}
+        snapshot={snapshot}
+        onClose={() => setCanvasImageManagerOpen(false)}
       />
 
       {pdfExportBusy ? (

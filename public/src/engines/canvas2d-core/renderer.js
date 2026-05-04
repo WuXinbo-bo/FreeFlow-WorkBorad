@@ -1,6 +1,13 @@
 import { sceneToScreen } from "./camera.js";
 import { getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
+import {
+  collectMindMapVisibleConnections,
+  collectMindMapVisibleSummaries,
+  isMindMapItemVisible,
+  isMindSummaryItem,
+  MIND_BRANCH_LEFT,
+} from "./elements/mindMap.js";
 import { drawTextElement } from "./rendererText.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
@@ -55,6 +62,169 @@ function getHintLogo() {
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
   drawStableRoundedRectPath(ctx, x, y, width, height, radius);
+}
+
+export function getMindNodeLinkAnchorScreenBounds(element, view, bounds = null) {
+  const linkCount = Math.max(0, Array.isArray(element?.links) ? element.links.length : 0);
+  if (!linkCount) {
+    return null;
+  }
+  const rect = bounds || getElementScreenBounds(view, element);
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const size = Math.max(8, Math.min(18, 14 * scale));
+  const inset = Math.max(2, Math.min(10, 6 * scale));
+  const badgeSize = linkCount > 1 ? Math.max(8, Math.min(14, 10 * scale)) : 0;
+  return {
+    left: rect.right - inset - size,
+    top: rect.bottom - inset - size,
+    width: size,
+    height: size,
+    right: rect.right - inset,
+    bottom: rect.bottom - inset,
+    size,
+    inset,
+    badgeSize,
+    linkCount,
+  };
+}
+
+function drawMindNodeLinkAnchor(ctx, element, view, bounds = null, options = {}) {
+  const anchor = getMindNodeLinkAnchorScreenBounds(element, view, bounds);
+  if (!anchor) {
+    return;
+  }
+  if (options.hideWhenSelected && options.selected) {
+    return;
+  }
+  const centerX = anchor.left + anchor.width / 2;
+  const centerY = anchor.top + anchor.height / 2;
+  const loopWidth = anchor.width * 0.34;
+  const loopHeight = anchor.height * 0.2;
+  const stroke = Math.max(1, Math.min(2.2, anchor.width * 0.12));
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(29, 78, 216, 0.96)";
+  ctx.lineWidth = stroke;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.ellipse(centerX - anchor.width * 0.16, centerY + anchor.height * 0.02, loopWidth, loopHeight, -0.62, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(centerX + anchor.width * 0.16, centerY - anchor.height * 0.02, loopWidth, loopHeight, -0.62, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (anchor.linkCount > 1) {
+    const badgeSize = anchor.badgeSize;
+    const badgeX = anchor.right - badgeSize * 0.76;
+    const badgeY = anchor.top - badgeSize * 0.18;
+    drawRoundedRect(ctx, badgeX, badgeY, badgeSize, badgeSize, badgeSize / 2);
+    ctx.fillStyle = "rgba(29, 78, 216, 0.96)";
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 ${Math.max(6, badgeSize * 0.58)}px "Segoe UI", "PingFang SC", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(anchor.linkCount), badgeX + badgeSize / 2, badgeY + badgeSize / 2 + 0.25);
+  }
+  ctx.restore();
+}
+
+function drawMindCollapsedBadge(ctx, element, view, bounds = null) {
+  if (!element?.collapsed) {
+    return;
+  }
+  const childCount = Math.max(0, Array.isArray(element?.childrenIds) ? element.childrenIds.length : 0);
+  if (!childCount) {
+    return;
+  }
+  const rect = bounds || getElementScreenBounds(view, element);
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const badgeHeight = Math.max(3, Math.min(24, 20 * scale));
+  const badgePadX = Math.max(1, 7 * scale);
+  const plusSize = Math.max(2, 9 * scale);
+  const plusStroke = Math.max(0.75, 2 * scale);
+  const gap = Math.max(1, 4 * scale);
+  const fontSize = Math.max(2.5, Math.min(12, 11 * scale));
+  const label = String(childCount);
+  ctx.save();
+  ctx.font = `700 ${fontSize}px "Segoe UI", "PingFang SC", sans-serif`;
+  const labelWidth = Math.ceil(ctx.measureText(label).width);
+  const badgeWidth = badgePadX * 2 + plusSize + gap + labelWidth;
+  const badgeInset = Math.max(1, 10 * scale);
+  const badgeX = rect.right - badgeWidth - badgeInset;
+  const badgeY = rect.top + badgeInset;
+  drawRoundedRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight / 2);
+  ctx.fillStyle = "rgba(37, 99, 235, 0.96)";
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  const plusCenterX = badgeX + badgePadX + plusSize / 2;
+  const plusCenterY = badgeY + badgeHeight / 2;
+  ctx.fillRect(plusCenterX - plusSize / 2, plusCenterY - plusStroke / 2, plusSize, plusStroke);
+  ctx.fillRect(plusCenterX - plusStroke / 2, plusCenterY - plusSize / 2, plusStroke, plusSize);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, badgeX + badgePadX + plusSize + gap, plusCenterY + 0.5);
+  ctx.restore();
+}
+
+function resolveMindNodeVisualStyle(element = {}, view = null) {
+  const depth = Math.max(0, Number(element?.depth || 0) || 0);
+  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const secondaryBorder = Math.max(0.75, Math.min(1.8, scale * 1.15));
+  const accentBarHeight = Math.max(2, Math.min(14, 12 * scale));
+  const secondaryRadius = Math.max(4, Math.min(20, 20 * scale));
+  const secondaryPaddingTop = Math.max(0, 2 * scale);
+  const secondaryPaddingBottom = accentBarHeight + Math.max(1, 8 * scale);
+  const unifiedStroke = "rgba(37, 99, 235, 0.92)";
+  const unifiedStrokeSoft = "rgba(37, 99, 235, 0.88)";
+  const unifiedText = "#1d4ed8";
+  if (depth <= 0) {
+    return {
+      radius: 22,
+      fill: "rgba(221, 235, 255, 0.98)",
+      stroke: unifiedStrokeSoft,
+      strokeWidth: 1.2,
+      shadowColor: "transparent",
+      shadowBlur: 0,
+      shadowOffsetY: 0,
+      textColor: unifiedText,
+      paddingTop: 0,
+      paddingBottom: 0,
+      bottomBarHeight: 0,
+      borderMode: "full",
+    };
+  }
+  if (depth === 1) {
+    return {
+      radius: secondaryRadius,
+      fill: "rgba(255, 255, 255, 0.995)",
+      stroke: unifiedStroke,
+      strokeWidth: secondaryBorder,
+      shadowColor: "transparent",
+      shadowBlur: 0,
+      shadowOffsetY: 0,
+      textColor: unifiedText,
+      paddingTop: secondaryPaddingTop,
+      paddingBottom: secondaryPaddingBottom,
+      bottomBarHeight: accentBarHeight,
+      bottomBarColor: "rgba(37, 99, 235, 0.96)",
+      borderMode: "top-shell",
+    };
+  }
+  return {
+    radius: 18,
+    fill: "rgba(255, 255, 255, 0.995)",
+    stroke: unifiedStrokeSoft,
+    strokeWidth: Math.max(1, Math.min(1.5, scale * 1.02)),
+    shadowColor: "transparent",
+    shadowBlur: 0,
+    shadowOffsetY: 0,
+    textColor: unifiedText,
+    paddingTop: 0,
+    paddingBottom: 0,
+    bottomBarHeight: 0,
+    borderMode: "full",
+  };
 }
 
 function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
@@ -324,6 +494,92 @@ function drawBackground(ctx, width, height, view, options = {}, backgroundPatter
   ctx.restore();
 }
 
+function drawMindMapConnections(ctx, items = [], view) {
+  const connections = collectMindMapVisibleConnections(items);
+  if (!connections.length) {
+    return 0;
+  }
+  const itemById = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ""), item]));
+  let drawnCount = 0;
+  ctx.save();
+  ctx.strokeStyle = "rgba(14, 116, 144, 0.34)";
+  ctx.lineWidth = Math.max(1.2, getViewScale(view) * 1.1);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  connections.forEach((connection) => {
+    const parent = itemById.get(String(connection.parentId || ""));
+    const child = itemById.get(String(connection.childId || ""));
+    if (!parent || !child) {
+      return;
+    }
+    if (!isMindMapItemVisible(parent, items) || !isMindMapItemVisible(child, items)) {
+      return;
+    }
+    const parentBounds = getElementScreenBounds(view, parent);
+    const childBounds = getElementScreenBounds(view, child);
+    const fromX = connection.side === MIND_BRANCH_LEFT ? parentBounds.left : parentBounds.right;
+    const fromY = parentBounds.top + parentBounds.height / 2;
+    const toX = connection.side === MIND_BRANCH_LEFT ? childBounds.right : childBounds.left;
+    const toY = childBounds.top + childBounds.height / 2;
+    const direction = connection.side === MIND_BRANCH_LEFT ? -1 : 1;
+    const elbowX = fromX + direction * Math.max(18, Math.abs(toX - fromX) * 0.38);
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.bezierCurveTo(elbowX, fromY, toX - direction * 12, toY, toX, toY);
+    ctx.stroke();
+    drawnCount += 1;
+  });
+  ctx.restore();
+  return drawnCount;
+}
+
+function drawMindMapSummaries(ctx, items = [], view) {
+  const summaries = collectMindMapVisibleSummaries(items);
+  if (!summaries.length) {
+    return 0;
+  }
+  const itemById = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ""), item]));
+  let drawnCount = 0;
+  ctx.save();
+  summaries.forEach((summary) => {
+    const siblingNodes = (Array.isArray(summary.siblingIds) ? summary.siblingIds : [])
+      .map((id) => itemById.get(String(id || "")))
+      .filter(Boolean);
+    if (siblingNodes.length < 2) {
+      return;
+    }
+    const summaryBounds = getElementScreenBounds(view, summary);
+    const nodeBounds = siblingNodes.map((node) => getElementScreenBounds(view, node));
+    const left = Math.min(...nodeBounds.map((bounds) => bounds.left));
+    const top = Math.min(...nodeBounds.map((bounds) => bounds.top));
+    const right = Math.max(...nodeBounds.map((bounds) => bounds.right));
+    const bottom = Math.max(...nodeBounds.map((bounds) => bounds.bottom));
+    const side = String(summary.branchSide || siblingNodes[0]?.branchSide || "").trim().toLowerCase() === MIND_BRANCH_LEFT
+      ? MIND_BRANCH_LEFT
+      : "right";
+    const braceX = side === MIND_BRANCH_LEFT ? left - 26 : right + 26;
+    const controlX = side === MIND_BRANCH_LEFT ? braceX - 24 : braceX + 24;
+    const labelAnchorX = side === MIND_BRANCH_LEFT ? summaryBounds.right : summaryBounds.left;
+    const labelAnchorY = summaryBounds.top + summaryBounds.height / 2;
+    const midY = top + (bottom - top) / 2;
+    ctx.strokeStyle = "rgba(249, 115, 22, 0.72)";
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(braceX, top + 12);
+    ctx.quadraticCurveTo(controlX, top + 12, braceX, midY);
+    ctx.quadraticCurveTo(controlX, bottom - 12, braceX, bottom - 12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(braceX, midY);
+    ctx.lineTo(labelAnchorX, labelAnchorY);
+    ctx.stroke();
+    drawnCount += 1;
+  });
+  ctx.restore();
+  return drawnCount;
+}
+
 function drawMindNode(ctx, element, view, selected, hover) {
   const bounds = getElementScreenBounds(view, element);
   const x = bounds.left;
@@ -331,33 +587,90 @@ function drawMindNode(ctx, element, view, selected, hover) {
   const width = bounds.width;
   const height = bounds.height;
   const logicalWidth = Math.max(1, Number(element.width) || 1);
-  const padding = scaleSceneValue(view, Math.max(10, logicalWidth * 0.06));
-  const fontSize = scaleSceneValue(view, Math.min(Math.max(12, Number(element.fontSize || 18) * 1.05), 28));
-  const lineHeight = Math.max(18, fontSize * 1.2);
-  const title = String(element.title || "节点");
+  const style = resolveMindNodeVisualStyle(element, view);
 
   ctx.save();
-  drawRoundedRect(ctx, x, y, width, height, 22);
-  ctx.fillStyle = "rgba(236, 254, 255, 0.98)";
-  ctx.strokeStyle = "rgba(14, 116, 144, 0.25)";
-  ctx.lineWidth = 1.2;
-  ctx.shadowColor = "rgba(14, 116, 144, 0.14)";
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetY = 6;
+  drawRoundedRect(ctx, x, y, width, height, style.radius);
+  ctx.fillStyle = style.fill;
+  ctx.strokeStyle = style.stroke;
+  ctx.lineWidth = style.strokeWidth;
+  ctx.shadowColor = style.shadowColor;
+  ctx.shadowBlur = style.shadowBlur;
+  ctx.shadowOffsetY = style.shadowOffsetY;
   ctx.fill();
   ctx.shadowColor = "transparent";
-  ctx.stroke();
+  if (style.borderMode === "full") {
+    ctx.stroke();
+  } else if (style.borderMode === "top-shell") {
+    ctx.save();
+    const inset = style.strokeWidth / 2;
+    const bottomEdge = y + height - Math.max(1, Number(style.bottomBarHeight || 0));
+    const shellRadius = Math.max(8, style.radius);
+    ctx.beginPath();
+    ctx.moveTo(x + inset, bottomEdge);
+    ctx.lineTo(x + inset, y + shellRadius);
+    ctx.quadraticCurveTo(x + inset, y + inset, x + shellRadius, y + inset);
+    ctx.lineTo(x + width - shellRadius, y + inset);
+    ctx.quadraticCurveTo(x + width - inset, y + inset, x + width - inset, y + shellRadius);
+    ctx.lineTo(x + width - inset, bottomEdge);
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x + style.radius * 0.72, y + style.strokeWidth / 2);
+    ctx.lineTo(x + width - style.radius * 0.72, y + style.strokeWidth / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + style.strokeWidth / 2, y + height - 1);
+    ctx.lineTo(x + style.strokeWidth / 2, y + style.radius);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + width - style.strokeWidth / 2, y + height - 1);
+    ctx.lineTo(x + width - style.strokeWidth / 2, y + style.radius);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-  ctx.save();
-  drawRoundedRect(ctx, x, y, width, height, 22);
-  ctx.clip();
-  ctx.fillStyle = element.color || "#0f172a";
-  ctx.font = `600 ${Math.max(1, fontSize)}px "Segoe UI", "PingFang SC", sans-serif`;
-  ctx.textBaseline = "top";
-  wrapTextWithEllipsis(ctx, title, x + padding, y + padding, width - padding * 2, lineHeight, 2);
-  ctx.restore();
+  if (style.bottomBarHeight > 0) {
+    ctx.save();
+    drawRoundedRect(ctx, x, y, width, height, style.radius);
+    ctx.clip();
+    ctx.fillStyle = style.bottomBarColor;
+    ctx.fillRect(x, y + height - style.bottomBarHeight, width, style.bottomBarHeight + 2);
+    ctx.restore();
+  }
 
+  drawMindNodeLinkAnchor(ctx, element, view, bounds, {
+    selected,
+    hideWhenSelected: true,
+  });
+  drawMindCollapsedBadge(ctx, element, view, bounds);
   drawSelectionFrame(ctx, x, y, width, height, selected, hover);
+  if (selected) {
+    drawHandles(ctx, element, view);
+  }
+  ctx.restore();
+}
+
+function drawMindSummaryNode(ctx, element, view, selected, hover) {
+  const bounds = getElementScreenBounds(view, element);
+  const x = bounds.left;
+  const y = bounds.top;
+  const width = bounds.width;
+  const height = bounds.height;
+  ctx.save();
+  ctx.setLineDash([10, 6]);
+  ctx.strokeStyle = "rgba(249, 115, 22, 0.72)";
+  ctx.lineWidth = 1.8;
+  drawRoundedRect(ctx, x, y, width, height, 20);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255, 247, 237, 0.98)";
+  drawRoundedRect(ctx, x + 6, y + 6, Math.max(1, width - 12), Math.max(1, height - 12), 16);
+  ctx.fill();
+  drawMindCollapsedBadge(ctx, element, view, bounds);
+  drawSelectionFrame(ctx, x, y, width, height, selected, false);
   if (selected) {
     drawHandles(ctx, element, view);
   }
@@ -379,7 +692,8 @@ function drawMindNodeLod(ctx, element, view, selected, hover) {
     verticalAlign: "start",
     widths: [0.78, 0.64, 0.56],
   });
-  drawSelectionFrame(ctx, x, y, width, height, selected, hover);
+  drawMindCollapsedBadge(ctx, element, view, bounds);
+  drawSelectionFrame(ctx, x, y, width, height, selected, false);
   if (selected) {
     drawHandles(ctx, element, view);
   }
@@ -400,7 +714,7 @@ function drawTextElementLod(ctx, element, view, selected, hover) {
     verticalAlign: "start",
     widths: [0.82, 0.7, 0.58],
   });
-  drawSelectionFrame(ctx, x, y, width, height, selected, hover);
+  drawSelectionFrame(ctx, x, y, width, height, selected, false);
   if (selected) {
     drawHandles(ctx, element, view);
   }
@@ -489,7 +803,13 @@ function shouldBypassStaticTileCache(item, dynamicIdSet) {
   if (itemId && dynamicIdSet?.has(itemId)) {
     return true;
   }
-  return item.type === "image" || item.type === "table";
+  return (
+    item.type === "image" ||
+    item.type === "table" ||
+    item.type === "fileCard" ||
+    item.type === "mindNode" ||
+    isMindSummaryItem(item)
+  );
 }
 
 
@@ -578,6 +898,9 @@ function drawVisibleItemsToContext({
   let customRendererHandledCount = 0;
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
+    if ((item.type === "mindNode" || isMindSummaryItem(item)) && !isMindMapItemVisible(item, items)) {
+      return;
+    }
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
     const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
@@ -626,17 +949,22 @@ function drawVisibleItemsToContext({
       drawLockBadge(ctx, item, view);
       return;
     }
-    if (item.type === "mindNode") {
-      if (lodMode !== "full") {
-        lodSimplifiedCount += 1;
-        drawMindNodeLod(ctx, item, view, isSelected, isHover);
+      if (item.type === "mindNode") {
+        if (lodMode !== "full") {
+          lodSimplifiedCount += 1;
+          drawMindNodeLod(ctx, item, view, isSelected, isHover);
+          drawLockBadge(ctx, item, view);
+          return;
+        }
+        drawMindNode(ctx, item, view, isSelected, isHover);
         drawLockBadge(ctx, item, view);
         return;
       }
-      drawMindNode(ctx, item, view, isSelected, isHover);
-      drawLockBadge(ctx, item, view);
-      return;
-    }
+      if (isMindSummaryItem(item)) {
+        drawMindSummaryNode(ctx, item, view, isSelected, isHover);
+        drawLockBadge(ctx, item, view);
+        return;
+      }
     if ((item.type === "text" || item.type === "flowNode") && lodMode !== "full") {
       lodSimplifiedCount += 1;
       drawTextElementLod(ctx, item, view, isSelected, isHover);
@@ -745,9 +1073,11 @@ function drawInteractionLayer(ctx, {
   items,
   draftElement,
   hoveredItem,
+  mindMapDropTarget = null,
+  mindMapDropHint = "",
   selectedItems = [],
 } = {}) {
-  if (hoveredItem) {
+  if (hoveredItem && hoveredItem.type !== "mindNode" && !isMindSummaryItem(hoveredItem)) {
     const bounds = getElementBounds(hoveredItem);
     const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
     const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
@@ -760,6 +1090,46 @@ function drawInteractionLayer(ctx, {
       false,
       true
     );
+  }
+  if (mindMapDropTarget) {
+    const bounds = getElementBounds(mindMapDropTarget);
+    const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
+    const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
+    const left = Math.min(topLeft.x, bottomRight.x);
+    const top = Math.min(topLeft.y, bottomRight.y);
+    const frameWidth = Math.max(1, Math.abs(bottomRight.x - topLeft.x));
+    const frameHeight = Math.max(1, Math.abs(bottomRight.y - topLeft.y));
+    const targetInset = 10;
+    const outerRadius = getSelectionFrameRadius(frameWidth + targetInset * 2, frameHeight + targetInset * 2);
+    ctx.save();
+    ctx.fillStyle = "rgba(14, 165, 233, 0.08)";
+    drawRoundedRect(ctx, left - targetInset, top - targetInset, frameWidth + targetInset * 2, frameHeight + targetInset * 2, outerRadius);
+    ctx.fill();
+    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(14, 165, 233, 0.9)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = "rgba(37, 99, 235, 0.96)";
+    drawRoundedRect(ctx, left - 2, top - 2, frameWidth + 4, frameHeight + 4, getSelectionFrameRadius(frameWidth + 4, frameHeight + 4));
+    ctx.stroke();
+    if (mindMapDropHint) {
+      const label = String(mindMapDropHint);
+      ctx.font = '600 12px "Microsoft YaHei", "PingFang SC", sans-serif';
+      const labelWidth = Math.ceil(ctx.measureText(label).width) + 22;
+      const labelHeight = 28;
+      const labelLeft = left + Math.max(0, (frameWidth - labelWidth) / 2);
+      const labelTop = top - labelHeight - 14;
+      ctx.fillStyle = "rgba(2, 132, 199, 0.94)";
+      drawRoundedRect(ctx, labelLeft, labelTop, labelWidth, labelHeight, 14);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, labelLeft + labelWidth / 2, labelTop + labelHeight / 2);
+    }
+    ctx.restore();
   }
   drawSelectionRect(ctx, view, selectionRect);
   if (Array.isArray(selectedItems) && selectedItems.length >= 2) {
@@ -832,6 +1202,8 @@ function getInteractionVisualSignature({
   items = [],
   draftElement = null,
   hoveredItem = null,
+  mindMapDropTarget = null,
+  mindMapDropHint = "",
   selectedIds = [],
 } = {}) {
   const guides = Array.isArray(alignmentSnap?.guides) ? alignmentSnap.guides : [];
@@ -848,6 +1220,8 @@ function getInteractionVisualSignature({
   return [
     getRectSignature(selectionRect),
     String(hoveredItem?.id || ""),
+    String(mindMapDropTarget?.id || ""),
+    String(mindMapDropHint || ""),
     Array.isArray(selectedIds) ? selectedIds.map((id) => String(id || "")).filter(Boolean).sort().join("|") : "",
     alignmentSnap?.active ? "active" : "",
     guideSignature,
@@ -882,6 +1256,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     cacheSize: 0,
   };
   let lastDynamicStats = { customRendererHandledCount: 0, lodSimplifiedCount: 0 };
+  let lastMindMapConnectionCount = 0;
   let lastDynamicVisualSignature = "";
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
@@ -892,9 +1267,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
       canvas,
       view,
       items,
+      allItems = items,
       selectedIds,
       hoverId,
       selectionRect,
+      mindMapDropTargetId,
+      mindMapDropHint,
       draftElement,
       editingId,
       imageEditState,
@@ -924,9 +1302,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
 
       const backgroundLayer = layerStore.ensure("background", width, height, dpr);
       const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
+      const connectionLayer = layerStore.ensure("mindConnections", width, height, dpr);
       const dynamicLayer = layerStore.ensure("dynamicScene", width, height, dpr);
       const interactionLayer = layerStore.ensure("interaction", width, height, dpr);
-      if (!backgroundLayer || !staticLayer || !dynamicLayer || !interactionLayer) {
+      if (!backgroundLayer || !staticLayer || !connectionLayer || !dynamicLayer || !interactionLayer) {
         return null;
       }
 
@@ -948,6 +1327,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
             });
       const frameVisibleItems = cullResult.items;
       const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
+      const mindMapDropTarget =
+        frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
+        allItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
+        null;
       const requiresDynamicHover = hoveredItem?.type === "flowNode";
       const dynamicIdSet = new Set(
         [
@@ -982,6 +1365,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
         items,
         draftElement,
         hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+        mindMapDropTarget,
+        mindMapDropHint,
         selectedIds,
       });
       const viewVisualSignature = getViewVisualSignature(view);
@@ -1016,6 +1401,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
         )
       );
+      const effectiveConnectionDirty = Boolean(forceViewRedraw || effectiveStaticSceneDirty || effectiveDynamicSceneDirty);
       const effectiveInteractionDirty = Boolean(
         forceViewRedraw ||
         forceInteractionRedraw ||
@@ -1052,12 +1438,13 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     selectedIds: [],
                     hoverId: null,
                     editingId: null,
-                    imageEditState: null,
-                    flowDraft: null,
-                    allowLocalFileAccess,
-                    renderTextInCanvas,
-                    renderers,
-                  }),
+                  imageEditState: null,
+                  flowDraft: null,
+                  allowLocalFileAccess,
+                  renderTextInCanvas,
+                  allItems,
+                  renderers,
+                }),
               })
             : staticItems.length
               ? drawVisibleItemsToContext({
@@ -1071,6 +1458,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   flowDraft: null,
                   allowLocalFileAccess,
                   renderTextInCanvas,
+                  allItems,
                   renderers,
                 })
               : {
@@ -1098,6 +1486,13 @@ export function createRenderer({ customRenderers = [] } = {}) {
           coldRenderedTiles: 0,
           dirtyVisibleTiles: 0,
         };
+      }
+
+      if (effectiveConnectionDirty) {
+        clearLayerContext(connectionLayer, width, height);
+        const treeConnectionCount = drawMindMapConnections(connectionLayer.ctx, frameVisibleItems, view);
+        const summaryCount = drawMindMapSummaries(connectionLayer.ctx, frameVisibleItems, view);
+        lastMindMapConnectionCount = treeConnectionCount + summaryCount;
       }
 
       if (effectiveDynamicSceneDirty) {
@@ -1140,6 +1535,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
           items,
           draftElement,
           hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
+          mindMapDropTarget,
+          mindMapDropHint,
           selectedItems:
             Array.isArray(selectedIds) && selectedIds.length >= 2
               ? frameVisibleItems.filter((item) => selectedIdSet.has(item.id))
@@ -1152,6 +1549,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       ctx.clearRect(0, 0, width, height);
       ctx.drawImage(backgroundLayer.canvas, 0, 0, width, height);
       ctx.drawImage(staticLayer.canvas, 0, 0, width, height);
+      ctx.drawImage(connectionLayer.canvas, 0, 0, width, height);
       ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
       ctx.drawImage(interactionLayer.canvas, 0, 0, width, height);
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -1163,6 +1561,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         renderedItems: frameVisibleItems.length,
         staticRenderedItems: staticItems.length,
         dynamicRenderedItems: dynamicItems.length,
+        mindMapConnectionsDrawn: lastMindMapConnectionCount,
         customRendererHandledCount:
           customRendererHandledCount + Math.max(0, Number(tileStats?.customRendererHandledCount || 0) || 0),
         lodSimplifiedCount:

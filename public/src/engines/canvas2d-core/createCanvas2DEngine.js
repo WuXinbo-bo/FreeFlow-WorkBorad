@@ -31,7 +31,22 @@ import {
 import { createFileCardElement, getFileCardMemoBounds } from "./elements/fileCard.js";
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
-import { createMindNodeElement } from "./elements/mind.js";
+import {
+  createMindNodeElement,
+  createMindSummaryElement,
+} from "./elements/mind.js";
+import {
+  applyMindMapAutoLayout,
+  collectMindMapVisibleConnections,
+  isMindMapItemVisible,
+  isMindMapNode,
+  isMindSummaryItem,
+  MIND_BRANCH_AUTO,
+  MIND_BRANCH_LEFT,
+  MIND_BRANCH_RIGHT,
+  normalizeMindBranchSide,
+  syncMindNodeTextMetrics,
+} from "./elements/mindMap.js";
 import {
   createEditableTableElement,
   createTableStructureFromMatrix,
@@ -118,7 +133,12 @@ import {
   undoHistory,
 } from "./history.js";
 import { hitTestElement, hitTestHandle, invalidateHitTestSpatialIndex } from "./hitTest.js";
-import { getStructuredTableSceneGrid, normalizeMathRenderState, scaleSceneValue } from "./viewportMetrics.js";
+import {
+  getElementScreenBounds,
+  getStructuredTableSceneGrid,
+  normalizeMathRenderState,
+  scaleSceneValue,
+} from "./viewportMetrics.js";
 import {
   getSceneRecord,
   invalidateSceneIndex,
@@ -179,6 +199,9 @@ import {
 } from "./utils.js";
 import { createImageModule } from "./imageModule.js";
 import { createStructuredCanvasRenderer } from "./rendererStructured.js";
+import { createCanvasWorkspaceManager } from "./workspace/createCanvasWorkspaceManager.js";
+import { createCanvasExportHistoryManager } from "./export/createCanvasExportHistoryManager.js";
+import { createCanvasImageStorageManager } from "./storage/createCanvasImageStorageManager.js";
 import {
   getExportBounds as getCanvasExportBounds,
   renderBoardToCanvas as renderExportBoardToCanvas,
@@ -210,6 +233,7 @@ import {
   serializeRichTextDocumentToHtml,
   serializeRichTextDocumentToPlainText,
 } from "./textModel/richTextDocument.js";
+import { normalizeTextContentModel } from "./textModel/textContentModel.js";
 import { serializeRichTextDocumentToMarkdown } from "./textModel/serializeRichTextDocumentToMarkdown.js";
 import {
   createRichTextClipboardPayload,
@@ -236,6 +260,7 @@ import {
 
 const TOOL_SET = new Set(["select", "text", ...DRAW_TOOLS]);
 const DEFAULT_TEXT_FONT_SIZE = 20;
+const DEFAULT_MIND_NODE_FONT_SIZE = 18;
 const TEXT_EDIT_MAX_WIDTH = 3200;
 const IMPORTED_PASTE_FRAME_WIDTH = 760;
 const TEXT_BLOCK_SPLIT_GAP = 12;
@@ -293,10 +318,24 @@ const MARKDOWN_SEMANTIC_TEXT_TYPES = new Set([
   DETECTED_TEXT_TYPES.QUOTE,
 ]);
 
-function normalizeBoardBackgroundPattern(value = "") {
-  const normalized = String(value || "").trim().toLowerCase();
-  return BOARD_BACKGROUND_PATTERNS.has(normalized) ? normalized : "dots";
-}
+  function normalizeBoardBackgroundPattern(value = "") {
+    const normalized = String(value || "").trim().toLowerCase();
+    return BOARD_BACKGROUND_PATTERNS.has(normalized) ? normalized : "dots";
+  }
+
+  function getBoardParseErrorMessage(error) {
+    const rawMessage = String(error?.message || "").trim();
+    if (!rawMessage) {
+      return "画布文件解析失败";
+    }
+    if (/unterminated string/i.test(rawMessage) || /unexpected end/i.test(rawMessage)) {
+      return "画布文件已损坏或保存被中断（JSON 内容被截断）";
+    }
+    if (/position\s+\d+/i.test(rawMessage)) {
+      return `画布文件解析失败：${rawMessage}`;
+    }
+    return `画布文件解析失败：${rawMessage}`;
+  }
 
 function getMatchingTextPresetName(fontSize) {
   const size = Math.round(Number(fontSize || 0));
@@ -436,6 +475,9 @@ function buildPersistentRichToolbarHtml() {
     <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-single">
       ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
       <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
       <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
       <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
       <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
@@ -454,26 +496,43 @@ function buildPersistentRichToolbarHtml() {
   `;
 }
 
-function buildSelectionRichToolbarHtml() {
+function buildSelectionRichToolbarHtml(variant = "rich-text") {
+  const normalizedVariant = String(variant || "").trim().toLowerCase() === "mind-node" ? "mind-node" : "rich-text";
+  if (normalizedVariant === "mind-node") {
+    return `
+      <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top" data-row-variant="mind-node">
+        <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
+        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+      </div>
+      <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom" data-row-variant="mind-node">
+        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+        ${buildRichColorControlsHtml()}
+      </div>
+    `;
+  }
   return `
-    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top">
+    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top" data-row-variant="rich-text">
       ${buildRichBlockTypeSelectHtml("block-type", "块级语义")}
       <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
       <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
       <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
     </div>
-    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom">
-      ${buildRichMathMenuHtml()}
-      ${buildRichQuoteMenuHtml()}
+    <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom" data-row-variant="rich-text">
       <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
       <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
       <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="text-split" title="拆分文本">—✕—</button>
-      ${buildRichLinkMenuHtml()}
+      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+      ${buildRichMathMenuHtml()}
+      ${buildRichQuoteMenuHtml()}
+      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
       ${buildRichColorControlsHtml()}
     </div>
   `;
@@ -1062,7 +1121,7 @@ function normalizeUserLinkInput(value = "") {
 }
 
 function applyLinkSemanticsToRichDisplayNode(node, item) {
-  if (!(node instanceof HTMLDivElement) || !item || item.type !== "text") {
+  if (!(node instanceof HTMLDivElement) || !item || (item.type !== "text" && !isMindNodeTextItem(item))) {
     return;
   }
   const anchors = Array.from(node.querySelectorAll("a[href]"));
@@ -1129,12 +1188,16 @@ function getTextResizeMode(item) {
   );
 }
 
+function isMindNodeTextItem(item) {
+  return item?.type === "mindNode" || item?.type === "mindSummary";
+}
+
 function isWrapTextItem(item) {
-  return item?.type === "text" && getTextResizeMode(item) === TEXT_RESIZE_MODE_WRAP;
+  return (item?.type === "text" || isMindNodeTextItem(item)) && getTextResizeMode(item) === TEXT_RESIZE_MODE_WRAP;
 }
 
 function isFixedSizeTextItem(item) {
-  return item?.type === "text" && getTextBoxLayoutMode(item) === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE;
+  return (item?.type === "text" || isMindNodeTextItem(item)) && getTextBoxLayoutMode(item) === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE;
 }
 
 function resolveSessionFontSize(session, fallback = DEFAULT_TEXT_FONT_SIZE) {
@@ -1604,17 +1667,19 @@ function syncTextLinkSemanticFields(item, plainText = "", richTextDocument = nul
   };
 }
 
-function applyRichEditorLayoutStyles(editor, item, scale) {
+  function applyRichEditorLayoutStyles(editor, item, scale) {
   if (!(editor instanceof HTMLDivElement) || !item) {
     return;
   }
   const isFlowNode = item.type === "flowNode";
+  const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
   const isWrapText = isWrapTextItem(item);
   const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(scale) || 1);
   const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(scale) || 1);
   const padding = isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
   const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_BODY_LINE_HEIGHT_RATIO;
   editor.classList.toggle("is-flow-node", isFlowNode);
+  editor.classList.toggle("is-mind-node", isMindNode);
   editor.classList.toggle("is-wrap-mode", isWrapText);
   editor.classList.toggle("is-fixed-size", isFixedSizeTextItem(item));
   editor.style.padding = `${padding.y}px ${padding.x}px`;
@@ -2593,7 +2658,7 @@ function readSceneTextOverlayFrame(node, scale = 1) {
 }
 
 function maybeWritebackTextOverlayFrame(item, node, scale = 1) {
-  if (!item || item.type !== "text") {
+  if (!item || (item.type !== "text" && item.type !== "mindNode" && item.type !== "mindSummary")) {
     return false;
   }
   const layoutMode = getTextBoxLayoutMode(item);
@@ -2604,13 +2669,15 @@ function maybeWritebackTextOverlayFrame(item, node, scale = 1) {
   if (!measuredFrame) {
     return false;
   }
+  const minWidth = item.type === "text" ? 80 : 180;
+  const minHeight = item.type === "text" ? 40 : 72;
   const nextWidth =
     layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
-      ? Math.max(80, measuredFrame.width)
-      : Math.max(80, Number(item.width || 0) || 80);
-  const nextHeight = Math.max(40, measuredFrame.height);
-  const currentWidth = Math.max(80, Math.ceil(Number(item.width || 0) || 80));
-  const currentHeight = Math.max(40, Math.ceil(Number(item.height || 0) || 40));
+      ? Math.max(minWidth, measuredFrame.width)
+      : Math.max(minWidth, Number(item.width || 0) || minWidth);
+  const nextHeight = Math.max(minHeight, measuredFrame.height);
+  const currentWidth = Math.max(minWidth, Math.ceil(Number(item.width || 0) || minWidth));
+  const currentHeight = Math.max(minHeight, Math.ceil(Number(item.height || 0) || minHeight));
   const widthDelta = Math.abs(nextWidth - currentWidth);
   const heightDelta = Math.abs(nextHeight - currentHeight);
   const widthThreshold = layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? 2 : 0;
@@ -2622,6 +2689,9 @@ function maybeWritebackTextOverlayFrame(item, node, scale = 1) {
     item.width = nextWidth;
   }
   item.height = nextHeight;
+  if (item.type === "mindNode" || item.type === "mindSummary") {
+    Object.assign(item, syncMindNodeTextMetrics(item));
+  }
   return true;
 }
 
@@ -2652,7 +2722,7 @@ function getEditingTextBoxMetrics(editor, item, view, plainText = "") {
 }
 
 function getRichEditableItemSignature(item) {
-  if (!item || (item.type !== "text" && item.type !== "flowNode")) {
+  if (!item || (item.type !== "text" && item.type !== "flowNode" && item.type !== "mindNode" && item.type !== "mindSummary")) {
     return "";
   }
   return JSON.stringify({
@@ -2767,201 +2837,13 @@ function isLockedItem(item) {
   return Boolean(item?.locked);
 }
 
+function isMindNodeEditingType(value = "") {
+  return String(value || "").trim().toLowerCase() === "mind-node";
+}
+
 function isExportableItem(item) {
   return item?.type === "fileCard" || item?.type === "image" || item?.type === "text";
 }
-
-  function normalizeExportName(value, fallback) {
-    const base = String(value || "").trim() || fallback;
-    return base.replace(/[\\/:*?"<>|]+/g, "_");
-  }
-
-  function clonePointerBase(item) {
-    if (!item || typeof item !== "object") {
-      return item;
-    }
-    const dataUrl = typeof item.dataUrl === "string" ? item.dataUrl : "";
-    if (item.type === "image" && dataUrl.length > 4096) {
-      return { ...item };
-    }
-    return clone(item);
-  }
-
-  async function resolveImportImageFolder() {
-    if (!useLocalFileSystem || typeof globalThis?.desktopShell?.writeFile !== "function") {
-      return "";
-    }
-    let baseFolder = resolveBoardFolderPath(state.boardFilePath);
-    if (!baseFolder) {
-      const settingsPath = await resolveCanvasBoardSavePath();
-      baseFolder = resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
-    }
-    if (!baseFolder) {
-      const configuredPath = await resolveCanvasImageSavePath();
-      baseFolder = String(configuredPath || "").trim();
-    }
-    if (!baseFolder) {
-      return "";
-    }
-    const normalizedFolder = stripTrailingSeparators(baseFolder);
-    if (getFileNameFromPath(normalizedFolder).toLowerCase() === "importimage") {
-      return normalizedFolder;
-    }
-    return joinPath(normalizedFolder, "importImage");
-  }
-
-  async function ensureImportImageFolderExists() {
-    if (!useLocalFileSystem || typeof globalThis?.desktopShell?.writeFile !== "function") {
-      return false;
-    }
-    const folder = await resolveImportImageFolder();
-    if (!folder) {
-      return false;
-    }
-    const markerPath = joinPath(folder, ".keep");
-    const result = await globalThis.desktopShell.writeFile(markerPath, new Uint8Array());
-    return Boolean(result?.ok);
-  }
-
-  async function saveImageDataToImportFolder({ dataUrl = "", sourcePath = "", name = "image", mime = "" } = {}) {
-    const folder = await resolveImportImageFolder();
-    if (!folder) {
-      return { ok: false, filePath: "", mime: "", error: "未找到当前画布目录" };
-    }
-    let payload = { data: "", mime: mime || "" };
-    if (dataUrl) {
-      payload = await readDataUrlAsBase64(dataUrl);
-    }
-    if (!payload.data && sourcePath && typeof globalThis?.desktopShell?.readFileBase64 === "function") {
-      try {
-        const result = await globalThis.desktopShell.readFileBase64(sourcePath);
-        if (result?.ok && result.data) {
-          payload = { data: result.data, mime: String(result.mime || payload.mime || "") };
-        }
-      } catch {
-        // ignore read failures
-      }
-    }
-    if (!payload.data) {
-      return { ok: false, filePath: "", mime: "", error: "图片数据为空" };
-    }
-    const ext = getImageExtensionFromMime(payload.mime, name, sourcePath);
-    const cleanName = normalizeExportName(name || "image", "image");
-    const filename = `${cleanName}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.${ext}`;
-    const filePath = joinPath(folder, filename);
-    let bytes;
-    try {
-      bytes = base64ToBytes(payload.data);
-    } catch {
-      try {
-        const response = await fetch(dataUrl);
-        const buffer = await response.arrayBuffer();
-        bytes = new Uint8Array(buffer);
-      } catch {
-        return { ok: false, filePath: "", mime: "", error: "图片编码失败" };
-      }
-    }
-    const result = await globalThis.desktopShell.writeFile(filePath, bytes);
-    if (!result?.ok) {
-      return { ok: false, filePath: "", mime: "", error: result?.error || "写入文件失败" };
-    }
-    return { ok: true, filePath, mime: payload.mime || `image/${ext === "jpg" ? "jpeg" : ext}` };
-  }
-
-  async function saveImageItemToImportFolder(item, { dataUrlOverride = "", nameOverride = "", resetTransforms = false } = {}) {
-    if (!item || item.type !== "image") {
-      return false;
-    }
-    const name = String(nameOverride || item.name || item.fileName || "image").trim() || "image";
-    const dataUrl = String(dataUrlOverride || item.dataUrl || "").trim();
-    const sourcePath = String(item.sourcePath || "").trim();
-    const result = await saveImageDataToImportFolder({ dataUrl, sourcePath, name, mime: item.mime || "" });
-    if (!result?.ok || !result.filePath) {
-      return false;
-    }
-    item.sourcePath = result.filePath;
-    item.source = "path";
-    item.dataUrl = "";
-    item.fileId = "";
-    if (result.mime) {
-      item.mime = result.mime;
-    }
-    if (resetTransforms) {
-      item.crop = null;
-      item.rotation = 0;
-      item.flipX = false;
-      item.flipY = false;
-      item.brightness = 0;
-      item.contrast = 0;
-    }
-    const dimensions = await readImageDimensions("", result.filePath, { allowLocalFileAccess: true });
-    if (dimensions?.width && dimensions?.height) {
-      item.naturalWidth = dimensions.width;
-      item.naturalHeight = dimensions.height;
-    }
-    return true;
-  }
-
-  async function persistImportedImages(items = []) {
-    if (!Array.isArray(items) || !items.length) {
-      return false;
-    }
-    let saved = 0;
-    for (const item of items) {
-      if (item?.type !== "image") {
-        continue;
-      }
-      const ok = await saveImageItemToImportFolder(item);
-      if (ok) {
-        saved += 1;
-      }
-    }
-    if (saved) {
-      setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
-    }
-    return saved > 0;
-  }
-
-  async function saveCroppedImageItem(itemId) {
-    const item = getImageItemById(itemId);
-    if (!item) {
-      return false;
-    }
-    const source = resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess: true });
-    if (!source) {
-      return false;
-    }
-    const image = await new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = source;
-    });
-    if (!image) {
-      return false;
-    }
-    const canvas = renderImageToCanvas(item, image);
-    if (!canvas) {
-      return false;
-    }
-    const dataUrl = safeCanvasToDataUrl(canvas);
-    if (!dataUrl) {
-      return false;
-    }
-    const before = takeHistorySnapshot(state);
-    const ok = await saveImageItemToImportFolder(item, {
-      dataUrlOverride: dataUrl,
-      nameOverride: `${item.name || "image"}-crop`,
-      resetTransforms: true,
-    });
-    if (!ok) {
-      return false;
-    }
-    commitHistory(before, "保存裁剪图片");
-    setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
-    return true;
-  }
 
 function getDataUrlMime(dataUrl = "") {
   const match = String(dataUrl || "").match(/^data:([^;]+);/i);
@@ -3129,55 +3011,51 @@ export function createCanvas2DEngine(options = {}) {
     return item;
   });
 
-  function resolveActiveExportHistoryBoardKey() {
-    return normalizeExportHistoryBoardKey(state.boardFilePath || state.boardFileName || "未命名画布");
-  }
-
-  function syncExportHistoryForActiveBoard({ emit = true } = {}) {
-    const cache = readExportHistoryStorage();
-    const boardKey = resolveActiveExportHistoryBoardKey();
-    state.exportHistory = normalizeExportHistoryList(cache[boardKey]);
-    state.exportHistoryUpdatedAt = Date.now();
-    if (emit) {
-      store.emit();
-    }
-    return state.exportHistory;
-  }
-
-  function persistExportHistoryForActiveBoard(entries = []) {
-    const cache = readExportHistoryStorage();
-    const boardKey = resolveActiveExportHistoryBoardKey();
-    cache[boardKey] = normalizeExportHistoryList(entries);
-    writeExportHistoryStorage(cache);
-    state.exportHistory = cache[boardKey];
-    state.exportHistoryUpdatedAt = Date.now();
-    store.emit();
-    return state.exportHistory;
-  }
-
-  function recordExportHistory(entry = {}) {
-    const normalized = normalizeExportHistoryEntry(entry);
-    if (!normalized) {
-      return [];
-    }
-    const existing = Array.isArray(state.exportHistory) ? state.exportHistory : [];
-    const deduped = existing.filter(
-      (item) =>
-        !(
-          String(item.filePath || "").trim() === normalized.filePath &&
-          String(item.kind || "").trim() === normalized.kind &&
-          Math.abs(Number(item.exportedAt || 0) - Number(normalized.exportedAt || 0)) < 1000
-        )
-    );
-    return persistExportHistoryForActiveBoard([normalized, ...deduped]);
-  }
+  const exportHistoryManager = createCanvasExportHistoryManager({
+    state,
+    store,
+    normalizeExportHistoryBoardKey,
+    normalizeExportHistoryEntry,
+    normalizeExportHistoryList,
+    readExportHistoryStorage,
+    writeExportHistoryStorage,
+  });
+  const imageStorageManager = createCanvasImageStorageManager({
+    state,
+    useLocalFileSystem,
+    resolveCanvasBoardSavePath,
+    resolveCanvasImageSavePath,
+    resolveBoardFolderPath,
+    joinPath,
+    stripTrailingSeparators,
+    getFileNameFromPath,
+    getFileExtension,
+    readImageDimensions,
+    resolveImageSource,
+    setSaveToast,
+    getImageItemById: (itemId) => getImageItemById(itemId),
+    renderImageToCanvas,
+    safeCanvasToDataUrl,
+    takeHistorySnapshot: () => takeHistorySnapshot(state),
+    commitHistory,
+  });
+  const {
+    syncExportHistoryForActiveBoard,
+    recordExportHistory,
+  } = exportHistoryManager;
+  const {
+    normalizeExportName,
+    ensureImportImageFolderExists,
+    ensureCanvasImageManagerFolderExists,
+    resolveCanvasImageManagerFolder,
+    saveImageDataToImportFolder,
+    saveImageItemToImportFolder,
+    persistImportedImages,
+    saveCroppedImageItem,
+    listManagedImages,
+  } = imageStorageManager;
 
   syncExportHistoryForActiveBoard({ emit: false });
-
-  function normalizeExportName(value, fallback) {
-    const base = String(value || "").trim() || fallback;
-    return base.replace(/[\\/:*?"<>|]+/g, "_");
-  }
 
   function clonePointerBase(item) {
     if (!item || typeof item !== "object") {
@@ -3188,187 +3066,6 @@ export function createCanvas2DEngine(options = {}) {
       return { ...item };
     }
     return clone(item);
-  }
-
-  async function resolveImportImageFolder() {
-    if (!useLocalFileSystem || typeof globalThis?.desktopShell?.writeFile !== "function") {
-      return "";
-    }
-    let baseFolder = resolveBoardFolderPath(state.boardFilePath);
-    if (!baseFolder) {
-      const settingsPath = await resolveCanvasBoardSavePath();
-      baseFolder = resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
-    }
-    if (!baseFolder) {
-      const configuredPath = await resolveCanvasImageSavePath();
-      baseFolder = String(configuredPath || "").trim();
-    }
-    if (!baseFolder) {
-      return "";
-    }
-    const normalizedFolder = stripTrailingSeparators(baseFolder);
-    if (getFileNameFromPath(normalizedFolder).toLowerCase() === "importimage") {
-      return normalizedFolder;
-    }
-    return joinPath(normalizedFolder, "importImage");
-  }
-
-  async function ensureImportImageFolderExists() {
-    if (!useLocalFileSystem || typeof globalThis?.desktopShell?.writeFile !== "function") {
-      return false;
-    }
-    const folder = await resolveImportImageFolder();
-    if (!folder) {
-      return false;
-    }
-    const markerPath = joinPath(folder, ".keep");
-    const result = await globalThis.desktopShell.writeFile(markerPath, new Uint8Array());
-    return Boolean(result?.ok);
-  }
-
-  async function saveImageDataToImportFolder({ dataUrl = "", sourcePath = "", name = "image", mime = "" } = {}) {
-    const folder = await resolveImportImageFolder();
-    if (!folder) {
-      return { ok: false, filePath: "", mime: "", error: "未找到当前画布目录" };
-    }
-    let payload = { data: "", mime: mime || "" };
-    if (dataUrl) {
-      payload = await readDataUrlAsBase64(dataUrl);
-    }
-    if (!payload.data && sourcePath && typeof globalThis?.desktopShell?.readFileBase64 === "function") {
-      try {
-        const result = await globalThis.desktopShell.readFileBase64(sourcePath);
-        if (result?.ok && result.data) {
-          payload = { data: result.data, mime: String(result.mime || payload.mime || "") };
-        }
-      } catch {
-        // ignore read failures
-      }
-    }
-    if (!payload.data) {
-      return { ok: false, filePath: "", mime: "", error: "图片数据为空" };
-    }
-    const ext = getImageExtensionFromMime(payload.mime, name, sourcePath);
-    const cleanName = normalizeExportName(name || "image", "image");
-    const filename = `${cleanName}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.${ext}`;
-    const filePath = joinPath(folder, filename);
-    let bytes;
-    try {
-      bytes = base64ToBytes(payload.data);
-    } catch {
-      try {
-        const response = await fetch(dataUrl);
-        const buffer = await response.arrayBuffer();
-        bytes = new Uint8Array(buffer);
-      } catch {
-        return { ok: false, filePath: "", mime: "", error: "图片编码失败" };
-      }
-    }
-    const result = await globalThis.desktopShell.writeFile(filePath, bytes);
-    if (!result?.ok) {
-      return { ok: false, filePath: "", mime: "", error: result?.error || "写入文件失败" };
-    }
-    return {
-      ok: true,
-      filePath: String(result.filePath || filePath),
-      mime: payload.mime || `image/${ext === "jpg" ? "jpeg" : ext}`,
-      size: Number(result.size || bytes.byteLength || 0),
-    };
-  }
-
-  async function saveImageItemToImportFolder(item, { dataUrlOverride = "", nameOverride = "", resetTransforms = false } = {}) {
-    if (!item || item.type !== "image") {
-      return false;
-    }
-    const name = String(nameOverride || item.name || item.fileName || "image").trim() || "image";
-    const dataUrl = String(dataUrlOverride || item.dataUrl || "").trim();
-    const sourcePath = String(item.sourcePath || "").trim();
-    const result = await saveImageDataToImportFolder({ dataUrl, sourcePath, name, mime: item.mime || "" });
-    if (!result?.ok || !result.filePath) {
-      return false;
-    }
-    item.sourcePath = result.filePath;
-    item.source = "path";
-    item.dataUrl = "";
-    item.fileId = "";
-    if (result.mime) {
-      item.mime = result.mime;
-    }
-    if (resetTransforms) {
-      item.crop = null;
-      item.rotation = 0;
-      item.flipX = false;
-      item.flipY = false;
-      item.brightness = 0;
-      item.contrast = 0;
-    }
-    const dimensions = await readImageDimensions("", result.filePath, { allowLocalFileAccess: true });
-    if (dimensions?.width && dimensions?.height) {
-      item.naturalWidth = dimensions.width;
-      item.naturalHeight = dimensions.height;
-    }
-    return true;
-  }
-
-  async function persistImportedImages(items = []) {
-    if (!Array.isArray(items) || !items.length) {
-      return false;
-    }
-    let saved = 0;
-    for (const item of items) {
-      if (item?.type !== "image") {
-        continue;
-      }
-      const ok = await saveImageItemToImportFolder(item);
-      if (ok) {
-        saved += 1;
-      }
-    }
-    if (saved) {
-      setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
-    }
-    return saved > 0;
-  }
-
-  async function saveCroppedImageItem(itemId) {
-    const item = getImageItemById(itemId);
-    if (!item) {
-      return false;
-    }
-    const source = resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess: true });
-    if (!source) {
-      return false;
-    }
-    const image = await new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = source;
-    });
-    if (!image) {
-      return false;
-    }
-    const canvas = renderImageToCanvas(item, image);
-    if (!canvas) {
-      return false;
-    }
-    const dataUrl = safeCanvasToDataUrl(canvas);
-    if (!dataUrl) {
-      return false;
-    }
-    const before = takeHistorySnapshot(state);
-    const ok = await saveImageItemToImportFolder(item, {
-      dataUrlOverride: dataUrl,
-      nameOverride: `${item.name || "image"}-crop`,
-      resetTransforms: true,
-    });
-    if (!ok) {
-      return false;
-    }
-    commitHistory(before, "保存裁剪图片");
-    setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
-    return true;
   }
 
   const getAllowLocalFileAccess = () => state.board?.preferences?.allowLocalFileAccess !== false;
@@ -3516,6 +3213,7 @@ export function createCanvas2DEngine(options = {}) {
     tableEditor: null,
     tableCellRichEditor: null,
     tableToolbar: null,
+    mindNodeLinkPanel: null,
     uiHost: null,
     contextMenu: null,
     linkTooltip: null,
@@ -3578,8 +3276,8 @@ let tableInteractionUiState = {
   pointerInsideToolbar: false,
   hoveredCell: null,
 };
-let tableStructureDragState = {
-  kind: "",
+  let tableStructureDragState = {
+    kind: "",
   pointerId: null,
   active: false,
   anchorIndex: -1,
@@ -3589,8 +3287,10 @@ let tableStructureDragState = {
   startRow: 0,
   endRow: 0,
   startColumn: 0,
-  endColumn: 0,
-};
+    endColumn: 0,
+  };
+  let mindNodeChromePointerInside = false;
+  const MIND_MAP_REPARENT_HIT_PAD = 26;
 let tablePointerSelectionState = {
   pointerId: null,
   anchor: null,
@@ -3631,7 +3331,11 @@ let tablePointerSelectionState = {
   const richDisplayEventBridge = createStaticDisplayEventBridge({
     itemSelector: ".canvas2d-rich-item[data-id]",
     resolveItemById: (itemId) =>
-      sceneRegistry.getItemById(itemId, "text") || sceneRegistry.getItemById(itemId, "flowNode") || null,
+      sceneRegistry.getItemById(itemId, "text") ||
+      sceneRegistry.getItemById(itemId, "flowNode") ||
+      sceneRegistry.getItemById(itemId, "mindNode") ||
+      sceneRegistry.getItemById(itemId, "mindSummary") ||
+      null,
     selectItem: ({ itemId, reason }) => {
       if (reason === "contextmenu" && shouldPreserveMultiSelectionForContextTarget(itemId)) {
         state.lastSelectionSource = state.lastSelectionSource || "marquee";
@@ -3652,6 +3356,10 @@ let tablePointerSelectionState = {
       }
       if (context.item?.type === "flowNode") {
         beginFlowNodeEdit(context.itemId);
+        return;
+      }
+      if (context.item?.type === "mindNode" || context.item?.type === "mindSummary") {
+        beginMindNodeEdit(context.itemId);
       }
     },
     onClickItem: (_event, context) => {
@@ -3728,6 +3436,10 @@ let tablePointerSelectionState = {
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
   let pendingCanvasLinkBinding = false;
+  let activeMindNodeLinkHoverId = "";
+  let mindNodeLinkPanelPinnedNodeId = "";
+  let activeMindNodeLinkMenuTargetId = "";
+  let mindNodeLinkMenuCloseTimer = 0;
   let pendingRichExternalLinkEdit = null;
   function clearCodeBlockEditLayoutCache(itemId = "") {
     if (!itemId) {
@@ -4466,6 +4178,8 @@ let tablePointerSelectionState = {
       selectedIds: state.board.selectedIds,
       hoverId: state.hoverId,
       selectionRect: state.selectionRect,
+      mindMapDropTargetId: state.mindMapDropTargetId,
+      mindMapDropHint: state.mindMapDropHint,
       draftElement: state.draftElement,
       editingId: state.editingId,
       imageEditState: lightImageEditor.getState(),
@@ -4489,6 +4203,7 @@ let tablePointerSelectionState = {
     syncMathOverlays(visibleScene);
     syncCodeBlockToolbar();
     syncImageToolbar();
+    syncMindNodeChrome();
     syncCanvasCursor();
     return refs.canvas?.__ffRenderStats || null;
   }
@@ -5069,7 +4784,7 @@ let tablePointerSelectionState = {
   }
 
   function scheduleUrlMetaHydrationForItem(item = null) {
-    if (!linkSemanticEnabled || !item || item.type !== "text") {
+    if (!linkSemanticEnabled || !item || (item.type !== "text" && !isMindNodeTextItem(item))) {
       return;
     }
     const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
@@ -5589,6 +5304,26 @@ let tablePointerSelectionState = {
     store.emit();
   }
 
+  function setCanvasImageManagerState(patch = {}, { emit = true } = {}) {
+    const current = state.canvasImageManager && typeof state.canvasImageManager === "object"
+      ? state.canvasImageManager
+      : {
+          folderPath: "",
+          items: [],
+          loading: false,
+          error: "",
+          lastScannedAt: 0,
+          missingCount: 0,
+        };
+    state.canvasImageManager = {
+      ...current,
+      ...patch,
+    };
+    if (emit) {
+      store.emit();
+    }
+  }
+
   function readAutosaveEnabled() {
     try {
       const raw = localStorage.getItem(AUTOSAVE_ENABLED_KEY);
@@ -5866,7 +5601,9 @@ let tablePointerSelectionState = {
       return boardLoadInFlight;
     }
     boardLoadInFlight = (async () => {
-      if (typeof globalThis?.desktopShell?.pathExists === "function") {
+      const hasDesktopReadBridge = typeof globalThis?.desktopShell?.readFile === "function";
+      const hasDesktopExistsBridge = typeof globalThis?.desktopShell?.pathExists === "function";
+      if (hasDesktopExistsBridge) {
         const exists = await globalThis.desktopShell.pathExists(targetPath);
         if (!exists) {
           if (!silent) {
@@ -5875,29 +5612,66 @@ let tablePointerSelectionState = {
           return false;
         }
       }
-      if (typeof globalThis?.desktopShell?.readFile !== "function") {
-        if (!silent) {
-          setStatus("当前环境不支持读取文件", "warning");
-        }
-        return false;
-      }
-      const readResult = await globalThis.desktopShell.readFile(targetPath);
-      if (!readResult?.ok) {
-        if (!silent) {
-          setStatus(readResult?.error || "画布读取失败", "warning");
-        }
-        return false;
-      }
       let parsed = null;
       let boardPayload = null;
-      try {
-        parsed = parseBoardFileText(readResult?.text || "");
-        boardPayload = parsed.payload;
-      } catch (error) {
-        if (!silent) {
-          setStatus("画布文件解析失败", "warning");
+      if (hasDesktopReadBridge) {
+        const readResult = await globalThis.desktopShell.readFile(targetPath);
+        if (!readResult?.ok) {
+          if (!silent) {
+            setStatus(readResult?.error || "画布读取失败", "warning");
+          }
+          return false;
         }
-        return false;
+        try {
+          parsed = parseBoardFileText(readResult?.text || "");
+          boardPayload = parsed.payload;
+        } catch (error) {
+          if (!silent) {
+            setStatus(getBoardParseErrorMessage(error), "warning");
+          }
+          return false;
+        }
+      } else {
+        try {
+          const requestUrl = `${API_ROUTES.canvasBoard}?filePath=${encodeURIComponent(targetPath)}`;
+          const response = await fetch(requestUrl, { method: "GET" });
+          const data = await readJsonResponse(response, "画布读取");
+          if (!response.ok || !data?.ok) {
+            if (!silent) {
+              setStatus(data?.error || "画布读取失败", "warning");
+            }
+            return false;
+          }
+          const returnedSourcePath = String(data?.sourceFile || data?.file || data?.canonicalFile || "").trim();
+          const normalizedRequestedPath = String(targetPath || "").trim().toLowerCase();
+          const normalizedReturnedPath = returnedSourcePath.toLowerCase();
+          if (normalizedRequestedPath && normalizedReturnedPath && normalizedRequestedPath !== normalizedReturnedPath) {
+            if (!silent) {
+              setStatus("画布读取接口未返回目标文件，请重启应用或开发服务后重试", "warning");
+            }
+            return false;
+          }
+          boardPayload = {
+            kind: "structured-host-board",
+            version: "1.0.0",
+            createdAt: Number(data?.board?.updatedAt || Date.now()) || Date.now(),
+            meta: {
+              boardFilePath: String(data?.file || data?.canonicalFile || targetPath).trim(),
+            },
+            board: data?.board || {},
+          };
+          parsed = {
+            payload: boardPayload,
+            legacy: Boolean(data?.legacy),
+            format: String(data?.format || "backend-api").trim() || "backend-api",
+            envelope: null,
+          };
+        } catch (error) {
+          if (!silent) {
+            setStatus(error?.message || "画布读取失败", "warning");
+          }
+          return false;
+        }
       }
       suppressDirtyTracking = true;
       const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
@@ -6053,6 +5827,38 @@ let tablePointerSelectionState = {
     return loadBoardFromPath(cleanPath, { silent, updateSettings });
   }
 
+  async function repairBoardAtPath(filePath) {
+    const cleanPath = String(filePath || "").trim();
+    if (!cleanPath) {
+      return { ok: false, error: "画布路径为空" };
+    }
+    try {
+      const response = await fetch(API_ROUTES.canvasBoardRepair, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ filePath: cleanPath }),
+      });
+      const data = await readJsonResponse(response, "画布修复");
+      if (!response.ok || !data?.ok) {
+        return {
+          ok: false,
+          error: data?.error || "画布修复失败",
+          repairedFile: String(data?.repairedFile || "").trim(),
+          recoveredItemCount: Number(data?.recoveredItemCount || 0),
+        };
+      }
+      setStatus(`已生成修复副本，恢复 ${Number(data?.recoveredItemCount || 0)} 个节点`);
+      return data;
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || "画布修复失败",
+      };
+    }
+  }
+
   async function ensureTutorialBoard() {
     if (!useLocalFileSystem || typeof globalThis?.desktopShell?.ensureTutorialBoard !== "function") {
       setStatus("当前环境不支持教程画布", "warning");
@@ -6090,292 +5896,6 @@ let tablePointerSelectionState = {
     return saveBoard({ saveAs: true });
   }
 
-  async function renameBoard(nextName) {
-    const currentPath = String(state.boardFilePath || "").trim();
-    if (!currentPath) {
-      return saveBoardAs();
-    }
-    const result = await renameBoardAtPath(currentPath, nextName);
-    return Boolean(result?.ok);
-  }
-
-  async function renameBoardAtPath(sourcePath, nextName) {
-    if (!useLocalFileSystem) {
-      setStatus("当前环境不支持重命名", "warning");
-      return { ok: false, filePath: "", error: "当前环境不支持重命名" };
-    }
-    const currentPath = String(state.boardFilePath || "").trim();
-    const source = String(sourcePath || "").trim() || currentPath;
-    if (!source) {
-      return { ok: false, filePath: "", error: "画布路径为空" };
-    }
-    const sourceName = getFileName(source);
-    const providedName = typeof nextName === "string" && nextName.trim() ? nextName.trim() : sourceName;
-    const cleanName = ensureBoardFileExtension(providedName);
-    if (!cleanName || cleanName === sourceName) {
-      return { ok: false, filePath: source, error: "" };
-    }
-    const separator = source.includes("\\") ? "\\" : "/";
-    const parts = source.split(/[\\/]/);
-    parts[parts.length - 1] = cleanName;
-    const nextPath = parts.join(separator);
-    if (typeof globalThis?.desktopShell?.renamePath !== "function") {
-      setStatus("当前环境不支持重命名", "warning");
-      return { ok: false, filePath: "", error: "当前环境不支持重命名" };
-    }
-    const result = await globalThis.desktopShell.renamePath(source, nextPath);
-    if (!result?.ok) {
-      setStatus(result?.error || "画布重命名失败", "warning");
-      return { ok: false, filePath: "", error: result?.error || "画布重命名失败" };
-    }
-    if (source === currentPath) {
-      await setBoardFilePath(nextPath, { updateSettings: true });
-    }
-    setStatus("画布已重命名");
-    return { ok: true, filePath: nextPath, error: "" };
-  }
-
-  function revealBoardInFolder() {
-    const targetPath = String(state.boardFilePath || "").trim();
-    return revealBoardPathInFolder(targetPath);
-  }
-
-  function revealBoardPathInFolder(filePath) {
-    const targetPath = String(filePath || "").trim();
-    if (!targetPath) {
-      setStatus("画布路径为空");
-      return false;
-    }
-    if (typeof globalThis?.desktopShell?.revealPath === "function") {
-      void globalThis.desktopShell.revealPath(targetPath);
-      return true;
-    }
-    setStatus("当前环境不支持打开文件夹");
-    return false;
-  }
-
-  async function deleteBoardAtPath(filePath) {
-    if (!useLocalFileSystem) {
-      setStatus("当前环境不支持删除", "warning");
-      return { ok: false, error: "当前环境不支持删除" };
-    }
-    const targetPath = String(filePath || "").trim();
-    if (!targetPath) {
-      return { ok: false, error: "画布路径为空" };
-    }
-    const currentPath = String(state.boardFilePath || "").trim();
-    if (currentPath && currentPath === targetPath) {
-      setStatus("请先切换到其他画布再删除当前文件", "warning");
-      return { ok: false, error: "不能直接删除当前已打开画布" };
-    }
-    if (typeof globalThis?.desktopShell?.removePath !== "function") {
-      setStatus("当前环境不支持删除", "warning");
-      return { ok: false, error: "当前环境不支持删除" };
-    }
-    const result = await globalThis.desktopShell.removePath(targetPath);
-    if (!result?.ok) {
-      setStatus(result?.error || "删除画布失败", "warning");
-      return { ok: false, error: result?.error || "删除画布失败" };
-    }
-    setStatus("画布已删除");
-    return { ok: true, filePath: targetPath };
-  }
-
-  function revealCanvasImageSavePath() {
-    const targetPath = String(state.canvasImageSavePath || "").trim();
-    if (!targetPath) {
-        setStatus("画布图片位置为空");
-      return false;
-    }
-    if (typeof globalThis?.desktopShell?.revealPath === "function") {
-      void globalThis.desktopShell.revealPath(targetPath);
-      return true;
-    }
-    setStatus("当前环境不支持打开文件夹");
-    return false;
-  }
-
-  async function pickCanvasImageSavePath() {
-    if (typeof globalThis?.desktopShell?.pickDirectory !== "function") {
-      setStatus("当前环境不支持选择目录", "warning");
-      return "";
-    }
-    const result = await globalThis.desktopShell.pickDirectory({
-      defaultPath: state.canvasImageSavePath || (await resolveCanvasImageSavePath()) || "",
-    });
-    if (result?.canceled || !result?.filePath) {
-      return "";
-    }
-    const nextPath = normalizeCanvasImageSavePathValue(result.filePath);
-    setCanvasImageSavePath(nextPath, { updateSettings: true });
-      setStatus("画布图片位置已更新");
-    return nextPath;
-  }
-
-  async function pickCanvasBoardSavePath() {
-    if (typeof globalThis?.desktopShell?.pickDirectory !== "function") {
-      setStatus("当前环境不支持选择目录", "warning");
-      return "";
-    }
-    const defaultPath =
-      resolveBoardFolderPath(state.boardFilePath) ||
-      (await resolveCanvasBoardSavePath()) ||
-      "";
-    const result = await globalThis.desktopShell.pickDirectory({
-      defaultPath,
-    });
-    if (result?.canceled || !result?.filePath) {
-      return "";
-    }
-    const nextFolder = resolveBoardFolderPath(result.filePath);
-    if (!nextFolder) {
-      return "";
-    }
-    const currentName = isBoardFileName(getFileName(state.boardFilePath))
-      ? getFileName(state.boardFilePath)
-      : DEFAULT_BOARD_FILE_NAME;
-    const nextFilePath = joinPath(nextFolder, currentName);
-    await setBoardFilePath(nextFilePath, { updateSettings: true });
-    setStatus("画布保存位置已更新");
-    void ensureImportImageFolderExists();
-    return nextFolder;
-  }
-
-  async function getCanvasBoardWorkspace() {
-    const currentFolder = resolveBoardFolderPath(state.boardFilePath);
-    if (currentFolder) {
-      return currentFolder;
-    }
-    const settingsPath = await resolveCanvasBoardSavePath();
-    return resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
-  }
-
-  async function pickCanvasWorkspaceFolder() {
-    if (typeof globalThis?.desktopShell?.pickDirectory !== "function") {
-      setStatus("当前环境不支持选择工作区", "warning");
-      return "";
-    }
-    const defaultPath = (await getCanvasBoardWorkspace()) || "";
-    const result = await globalThis.desktopShell.pickDirectory({ defaultPath });
-    if (result?.canceled || !result?.filePath) {
-      return "";
-    }
-    const nextFolder = resolveBoardFolderPath(result.filePath);
-    if (!nextFolder) {
-      return "";
-    }
-    await ensureDirectoryIfSupported(nextFolder);
-    const currentName = isBoardFileName(getFileName(state.boardFilePath))
-      ? getFileName(state.boardFilePath)
-      : DEFAULT_BOARD_FILE_NAME;
-    let nextFilePath = joinPath(nextFolder, currentName);
-    if (typeof globalThis?.desktopShell?.pathExists === "function") {
-      const exists = await globalThis.desktopShell.pathExists(nextFilePath);
-      if (exists && nextFilePath !== state.boardFilePath) {
-        nextFilePath = await resolveUniqueBoardFilePath(nextFolder);
-      }
-    }
-    await setBoardFilePath(nextFilePath, { emit: false, updateSettings: true });
-    setBoardDirty(true, { emit: false });
-    const imageFolder = joinPath(nextFolder, "Images");
-    setCanvasImageSavePath(imageFolder, { updateSettings: true });
-    await ensureDirectoryIfSupported(imageFolder);
-    await saveBoard({ silent: true, exactPath: true });
-    setStatus("画布工作区已切换");
-    store.emit();
-    return nextFolder;
-  }
-
-  async function listCanvasBoards(folderPath) {
-    const targetFolder = String(folderPath || "").trim() || (await getCanvasBoardWorkspace());
-    if (!targetFolder) {
-      return { ok: true, folderPath: "", boards: [], error: "" };
-    }
-    if (typeof globalThis?.desktopShell?.listCanvasBoards !== "function") {
-      return { ok: false, folderPath: targetFolder, boards: [], error: "当前环境不支持读取工作区" };
-    }
-    let result = null;
-    try {
-      result = await globalThis.desktopShell.listCanvasBoards({ folderPath: targetFolder });
-    } catch (error) {
-      return {
-        ok: false,
-        folderPath: targetFolder,
-        boards: [],
-        error: error?.message || "读取画布工作区失败，请重启应用后重试",
-      };
-    }
-    if (!result?.ok) {
-      return {
-        ok: false,
-        folderPath: targetFolder,
-        boards: [],
-        error: result?.error || "读取画布工作区失败",
-      };
-    }
-    return {
-      ok: true,
-      folderPath: String(result.folderPath || targetFolder).trim(),
-      boards: Array.isArray(result.boards) ? result.boards : [],
-      error: "",
-    };
-  }
-
-  async function createBoardInWorkspace(folderPath, nextName) {
-    const targetFolder = resolveBoardFolderPath(folderPath) || (await getCanvasBoardWorkspace());
-    if (!targetFolder) {
-      setStatus("请先选择画布工作区", "warning");
-      return { ok: false, filePath: "", error: "请先选择画布工作区" };
-    }
-    const ensured = await ensureDirectoryIfSupported(targetFolder);
-    if (ensured && !ensured.ok) {
-      const error = ensured.error || "工作区创建失败";
-      setStatus(error, "warning");
-      return { ok: false, filePath: "", error };
-    }
-    const ok = await maybeSaveBeforeSwitch();
-    if (!ok) {
-      return { ok: false, filePath: "", error: "当前画布保存失败，已取消切换" };
-    }
-    const cleanBaseName = sanitizeBoardFileBaseName(nextName);
-    const nextPath = await resolveUniqueBoardFilePathByBaseName(targetFolder, cleanBaseName);
-    suppressDirtyTracking = true;
-    state.board = createEmptyBoard();
-    state.board.selectedIds = [];
-    state.history = createHistoryState();
-    markHistoryBaseline(state.history, takeHistorySnapshot(state));
-    cancelTextEdit();
-    cancelFlowNodeEdit();
-    cancelFileMemoEdit();
-    cancelImageMemoEdit();
-    finishImageEdit();
-    syncBoard({ persist: false, emit: true, markDirty: false });
-    suppressDirtyTracking = false;
-    await setBoardFilePath(nextPath, { emit: false, updateSettings: true });
-    setBoardDirty(true, { emit: false });
-    const saved = await saveBoard({ silent: true, exactPath: true });
-    if (!saved) {
-      setStatus("新建画布写入失败", "warning");
-      store.emit();
-      return { ok: false, filePath: nextPath, error: "新建画布写入失败" };
-    }
-    setStatus("已新建画布");
-    return { ok: true, filePath: nextPath, error: "" };
-  }
-
-  async function ensureDirectoryIfSupported(targetPath) {
-    if (typeof globalThis?.desktopShell?.ensureDirectory !== "function") {
-      return null;
-    }
-    try {
-      return await globalThis.desktopShell.ensureDirectory(targetPath);
-    } catch {
-      // The renderer can hot-reload while Electron main still runs the previous IPC table.
-      // Directory creation is also covered by writeFile, so do not block board discovery here.
-      return null;
-    }
-  }
-
   function onCanvasBoardPathChanged(event) {
     const nextPath = String(event?.detail?.canvasBoardSavePath || "").trim();
     if (!nextPath || nextPath === state.boardFilePath) {
@@ -6399,8 +5919,240 @@ let tablePointerSelectionState = {
       return;
     }
     setCanvasImageSavePath(nextPath, { updateSettings: false });
-      setStatus("画布图片位置已更新");
+    setStatus("画布图片位置已更新");
+    void refreshCanvasImageManager({ silent: true });
   }
+
+  async function buildCanvasImageManagerItems(folderPath = "") {
+    const listing = await listManagedImages(folderPath);
+    if (!listing?.ok) {
+      return listing;
+    }
+    const boardItems = Array.isArray(state.board?.items) ? state.board.items : [];
+    const normalizedManagedItems = listing.images.map((entry) => {
+      const filePath = String(entry?.filePath || "").trim();
+      const references = boardItems.filter(
+        (item) => item?.type === "image" && String(item.sourcePath || "").trim() === filePath
+      );
+      return {
+        ...entry,
+        referenced: references.length > 0,
+        referenceCount: references.length,
+        lastPlacedAt:
+          references.reduce((maxValue, item) => Math.max(maxValue, Number(item?.createdAt || 0) || 0), 0) || 0,
+      };
+    });
+    const missingCanvasItems = boardItems
+      .filter((item) => item?.type === "image")
+      .filter((item) => {
+        const path = String(item.sourcePath || "").trim();
+        if (!path) {
+          return false;
+        }
+        return !normalizedManagedItems.some((entry) => entry.filePath === path);
+      })
+      .map((item) => ({
+        id: `missing:${item.id}`,
+        name: String(item.name || "未命名图片").trim() || "未命名图片",
+        filePath: String(item.sourcePath || "").trim(),
+        size: 0,
+        modifiedAt: Number(item.createdAt || 0) || 0,
+        extension: getFileExtension(item.sourcePath || "").replace(/^\./, ""),
+        mime: String(item.mime || "").trim(),
+        referenced: true,
+        referenceCount: 1,
+        missing: true,
+        itemId: String(item.id || "").trim(),
+      }));
+    return {
+      ok: true,
+      folderPath: listing.folderPath,
+      images: [...normalizedManagedItems, ...missingCanvasItems],
+      error: "",
+      missingCount: missingCanvasItems.length,
+    };
+  }
+
+  async function refreshCanvasImageManager({ silent = false, folderPath = "" } = {}) {
+    if (!silent) {
+      setCanvasImageManagerState({ loading: true, error: "" });
+    } else {
+      setCanvasImageManagerState({ loading: true, error: "" }, { emit: false });
+    }
+    try {
+      await ensureCanvasImageManagerFolderExists();
+      const result = await buildCanvasImageManagerItems(folderPath);
+      if (!result?.ok) {
+        setCanvasImageManagerState({
+          loading: false,
+          error: result?.error || "读取画布图片失败",
+          folderPath: String(result?.folderPath || folderPath || "").trim(),
+          items: [],
+          lastScannedAt: Date.now(),
+          missingCount: 0,
+        });
+        return result;
+      }
+      setCanvasImageManagerState({
+        loading: false,
+        error: "",
+        folderPath: String(result.folderPath || "").trim(),
+        items: Array.isArray(result.images) ? result.images : [],
+        lastScannedAt: Date.now(),
+        missingCount: Number(result.missingCount || 0) || 0,
+      });
+      return { ok: true, folderPath: result.folderPath, items: result.images };
+    } catch (error) {
+      const message = error?.message || "读取画布图片失败";
+      setCanvasImageManagerState({
+        loading: false,
+        error: message,
+        folderPath: String(folderPath || "").trim(),
+        items: [],
+        lastScannedAt: Date.now(),
+        missingCount: 0,
+      });
+      return { ok: false, folderPath: String(folderPath || "").trim(), items: [], error: message };
+    }
+  }
+
+  async function insertManagedCanvasImage(filePath, options = {}) {
+    const targetPath = String(filePath || "").trim();
+    if (!targetPath) {
+      return false;
+    }
+    const dimensions = await readImageDimensions("", targetPath, { allowLocalFileAccess: true });
+    if (!dimensions?.width || !dimensions?.height) {
+      setStatus("图片读取失败", "warning");
+      return false;
+    }
+    const file = {
+      name: getFileName(targetPath) || "图片",
+      type: formatImageMimeFromPath(targetPath),
+      path: targetPath,
+    };
+    const point = options.anchorPoint || getCenterScenePoint();
+    const item = imageModule.createElement(file, point, "", dimensions);
+    item.source = "path";
+    item.sourcePath = targetPath;
+    item.fileId = "";
+    item.locked = false;
+    item.memoVisible = false;
+    item.memo = "";
+    item.groupId = "";
+    const pushed = pushItems([item], {
+      reason: "插入画布图片",
+      statusText: "图片已插入画布",
+    });
+    if (pushed) {
+      state.lastSelectionSource = "click";
+      void refreshCanvasImageManager({ silent: true });
+    }
+    return pushed;
+  }
+
+  function formatImageMimeFromPath(filePath = "") {
+    const ext = String(getFileExtension(filePath) || "").trim().toLowerCase().replace(/^\./, "");
+    if (!ext) {
+      return "image/*";
+    }
+    if (ext === "jpg") {
+      return "image/jpeg";
+    }
+    if (ext === "svg") {
+      return "image/svg+xml";
+    }
+    return `image/${ext}`;
+  }
+
+  async function importCanvasImagesFromClipboard(anchorPoint = getCenterScenePoint()) {
+    if (typeof globalThis?.desktopShell?.readClipboardImageDataUrl !== "function") {
+      setStatus("当前环境不支持读取剪贴板图片", "warning");
+      return false;
+    }
+    const result = await globalThis.desktopShell.readClipboardImageDataUrl();
+    const dataUrl = String(result?.dataUrl || "").trim();
+    if (!dataUrl) {
+      setStatus(result?.error || "剪贴板中没有图片", "warning");
+      return false;
+    }
+    const inserted = await insertImageFromDataUrl(dataUrl, {
+      name: "剪贴板图片",
+      anchorPoint,
+      persistToImportFolder: true,
+    });
+    if (inserted) {
+      void refreshCanvasImageManager({ silent: true });
+    }
+    return inserted;
+  }
+
+  async function captureCanvasImageToManager(anchorPoint = getCenterScenePoint()) {
+    if (typeof globalThis?.desktopShell?.captureScreenImage !== "function") {
+      setStatus("当前环境不支持系统截图", "warning");
+      return false;
+    }
+    setStatus("等待系统截图完成...");
+    const result = await globalThis.desktopShell.captureScreenImage();
+    const dataUrl = String(result?.dataUrl || "").trim();
+    if (!result?.ok || !dataUrl) {
+      setStatus(result?.error || "截图失败", "warning");
+      return false;
+    }
+    const inserted = await insertImageFromDataUrl(dataUrl, {
+      name: "系统截图",
+      anchorPoint,
+      persistToImportFolder: true,
+    });
+    if (inserted) {
+      void refreshCanvasImageManager({ silent: true });
+    }
+    return inserted;
+  }
+
+  const workspaceManager = createCanvasWorkspaceManager({
+    state,
+    store,
+    useLocalFileSystem,
+    setSuppressDirtyTracking(nextValue) {
+      suppressDirtyTracking = Boolean(nextValue);
+    },
+    getFileApi() {
+      return {
+        setStatus,
+        setBoardFilePath,
+        setBoardDirty,
+        setCanvasImageSavePath,
+        resolveCanvasBoardSavePath,
+        resolveCanvasImageSavePath,
+        ensureBoardFileExtension,
+        normalizeCanvasImageSavePathValue,
+        resolveBoardFolderPath,
+        joinPath,
+        isBoardFileName,
+        resolveUniqueBoardFilePath,
+        resolveUniqueBoardFilePathByBaseName,
+        sanitizeBoardFileBaseName,
+      };
+    },
+    getBoardOps() {
+      return {
+        saveBoard,
+        maybeSaveBeforeSwitch,
+        syncBoard,
+        ensureImportImageFolderExists,
+      };
+    },
+    getEditApi() {
+      return {
+        cancelTextEdit,
+        cancelFlowNodeEdit,
+        cancelFileMemoEdit,
+        cancelImageMemoEdit,
+        finishImageEdit,
+      };
+    },
+  });
 
   async function initBoardFileState() {
     state.boardAutosaveEnabled = readAutosaveEnabled();
@@ -6419,6 +6171,7 @@ let tablePointerSelectionState = {
     state.canvasImageSavePath =
       normalizeCanvasImageSavePathValue(startupContext?.startup?.canvasImageSavePath || "") ||
       (await resolveCanvasImageSavePath());
+    state.canvasImageManager.folderPath = (await resolveCanvasImageManagerFolder()) || state.canvasImageSavePath || "";
     store.emit();
     if (useLocalFileSystem && state.boardFilePath) {
       const loaded = await loadBoardFromPath(state.boardFilePath, { silent: true });
@@ -6433,6 +6186,7 @@ let tablePointerSelectionState = {
       }
     }
     void ensureImportImageFolderExists();
+    void refreshCanvasImageManager({ silent: true });
     if (state.boardAutosaveEnabled) {
       startAutosaveTimer();
     }
@@ -7358,6 +7112,7 @@ let tablePointerSelectionState = {
       `;
       refs.fixedOverlayHost.appendChild(refs.tableToolbar);
     }
+    ensureMindNodeChrome();
 
     refs.richEditor = refs.surface.querySelector("#canvas-rich-editor");
     if (!(refs.richEditor instanceof HTMLDivElement)) {
@@ -7464,6 +7219,19 @@ let tablePointerSelectionState = {
         </div>
       `;
       refs.fixedOverlayHost.appendChild(refs.richExternalLinkPanel);
+    }
+
+    refs.mindNodeLinkPanel = refs.fixedOverlayHost.querySelector("#canvas2d-mind-node-link-panel");
+    if (!(refs.mindNodeLinkPanel instanceof HTMLDivElement)) {
+      refs.mindNodeLinkPanel = document.createElement("div");
+      refs.mindNodeLinkPanel.id = "canvas2d-mind-node-link-panel";
+      refs.mindNodeLinkPanel.className = "canvas2d-mind-node-link-panel is-hidden";
+      refs.mindNodeLinkPanel.setAttribute("aria-hidden", "true");
+      refs.mindNodeLinkPanel.innerHTML = `
+        <div class="canvas2d-mind-node-link-strip" data-role="mind-link-strip"></div>
+        <div class="canvas2d-mind-node-link-hover-menu is-hidden" data-role="mind-link-hover-menu"></div>
+      `;
+      refs.fixedOverlayHost.appendChild(refs.mindNodeLinkPanel);
     }
 
     refs.dragIndicator = refs.surface.querySelector("#canvas2d-export-drag-indicator");
@@ -7626,7 +7394,8 @@ let tablePointerSelectionState = {
       refs.richSelectionToolbar = document.createElement("div");
       refs.richSelectionToolbar.id = "canvas2d-rich-selection-toolbar";
       refs.richSelectionToolbar.className = "canvas2d-rich-toolbar canvas2d-rich-selection-toolbar is-hidden";
-      refs.richSelectionToolbar.innerHTML = buildSelectionRichToolbarHtml();
+      refs.richSelectionToolbar.innerHTML = buildSelectionRichToolbarHtml("rich-text");
+      refs.richSelectionToolbar.dataset.variant = "rich-text";
       refs.surface.appendChild(refs.richSelectionToolbar);
     }
     syncRichToolbarEnhancements(refs.richSelectionToolbar);
@@ -7642,7 +7411,7 @@ let tablePointerSelectionState = {
   }
 
   function syncCanvasLinkBindingUi() {
-    const active = Boolean(pendingCanvasLinkBinding);
+    const active = Boolean(resolvePendingCanvasLinkBindingMode());
     refs.surface?.classList.toggle("is-canvas-link-binding", active);
     if (refs.canvasLinkBindingOverlay instanceof HTMLDivElement) {
       refs.canvasLinkBindingOverlay.classList.toggle("is-hidden", !active);
@@ -7652,6 +7421,162 @@ let tablePointerSelectionState = {
       refs.canvasLinkBindingHint.classList.toggle("is-hidden", !active);
       refs.canvasLinkBindingHint.setAttribute("aria-hidden", active ? "false" : "true");
     }
+  }
+
+  function hideMindNodeLinkPanel() {
+    if (!(refs.mindNodeLinkPanel instanceof HTMLDivElement)) {
+      return;
+    }
+    cancelMindNodeLinkMenuCloseTimer();
+    refs.mindNodeLinkPanel.classList.add("is-hidden");
+    refs.mindNodeLinkPanel.setAttribute("aria-hidden", "true");
+    refs.mindNodeLinkPanel.removeAttribute("data-node-id");
+  }
+
+  function clearMindNodeLinkPanelState() {
+    cancelMindNodeLinkMenuCloseTimer();
+    mindNodeLinkPanelPinnedNodeId = "";
+    activeMindNodeLinkMenuTargetId = "";
+  }
+
+  function updateMindNodeLinkTooltip(node = null, clientX = 0, clientY = 0) {
+    if (!(refs.linkTooltip instanceof HTMLDivElement) || !(refs.surface instanceof HTMLDivElement)) {
+      return;
+    }
+    const entries = resolveMindNodeLinkEntries(node).filter((entry) => entry.target);
+    if (!entries.length) {
+      hideLinkMetaTooltip();
+      return;
+    }
+    refs.linkTooltip.innerHTML = `
+      <div class="canvas2d-link-tooltip-title">节点链接 ${entries.length}</div>
+      <div class="canvas2d-link-tooltip-desc">${entries
+        .slice(0, 4)
+        .map((entry) => escapeRichTextHtml(entry.title))
+        .join(" / ")}</div>
+      <div class="canvas2d-link-tooltip-state">canvas-link</div>
+    `;
+    refs.linkTooltip.classList.remove("is-hidden");
+    const hostRect = refs.surface.getBoundingClientRect();
+    const panelWidth = Math.max(160, Math.min(280, refs.linkTooltip.offsetWidth || 220));
+    const panelHeight = Math.max(44, refs.linkTooltip.offsetHeight || 64);
+    const left = Math.min(Math.max(12, Number(clientX || 0) - hostRect.left + 12), Math.max(12, hostRect.width - panelWidth - 12));
+    const top = Math.min(Math.max(12, Number(clientY || 0) - hostRect.top + 12), Math.max(12, hostRect.height - panelHeight - 12));
+    refs.linkTooltip.style.left = `${left}px`;
+    refs.linkTooltip.style.top = `${top}px`;
+  }
+
+  function syncMindNodeLinkPanel() {
+    if (!(refs.mindNodeLinkPanel instanceof HTMLDivElement) || !(refs.fixedOverlayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    const selectedItem = state.tool === "select" ? resolveMindNodeChromeTarget() : null;
+    const pinnedNodeId = String(mindNodeLinkPanelPinnedNodeId || "").trim();
+    const node = (pinnedNodeId && getMindNodeById(pinnedNodeId)) || selectedItem;
+    if (!node || node.type !== "mindNode" || pinnedNodeId !== String(node.id || "").trim()) {
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
+      return;
+    }
+    const entries = resolveMindNodeLinkEntries(node);
+    const nodeRect = getElementScreenBounds(state.board.view, node);
+    const overlayWidth = Math.max(
+      Number(refs.fixedOverlayHost?.clientWidth || 0) || 0,
+      Number(refs.surface?.clientWidth || 0) || 0
+    );
+    const overlayHeight = Math.max(
+      Number(refs.fixedOverlayHost?.clientHeight || 0) || 0,
+      Number(refs.surface?.clientHeight || 0) || 0
+    );
+    const visibleRect = getViewportClampedScreenRect(nodeRect, overlayWidth, overlayHeight);
+    if (!visibleRect) {
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
+      return;
+    }
+    const iconSize = Math.max(18, Math.round((Number(getComputedStyle(refs.mindNodeChrome).getPropertyValue("--mind-link-anchor-size").replace("px", "")) || 18) * 1.08));
+    const gap = 2;
+    const stripWidth = Math.max(iconSize, iconSize * (entries.length + 1) + gap * Math.max(0, entries.length));
+    const stripHeight = iconSize;
+    const hoverMenuWidth = iconSize * 2 + gap;
+    const hoverMenuHeight = iconSize;
+    const panelHeight = Math.max(stripHeight, hoverMenuHeight);
+    const panelWidth = Math.max(stripWidth, hoverMenuWidth);
+    const anchorInset = Math.max(2, Math.round(Number(getComputedStyle(refs.mindNodeChrome).getPropertyValue("--mind-link-anchor-inset").replace("px", "")) || gap));
+    const anchorLeft = Math.round(visibleRect.left + visibleRect.width - anchorInset - iconSize);
+    const anchorTop = Math.round(visibleRect.top + visibleRect.height - anchorInset - iconSize - 4);
+    const anchorCenterY = Math.round(anchorTop + iconSize / 2 - 6);
+    const left = clampTableEditorValue(
+      Math.round(anchorLeft - gap - panelWidth),
+      12,
+      Math.max(12, overlayWidth - panelWidth - 12)
+    );
+    const top = clampTableEditorValue(
+      Math.round(anchorCenterY - panelHeight / 2),
+      12,
+      Math.max(12, overlayHeight - panelHeight - 12)
+    );
+    refs.mindNodeLinkPanel.style.left = `${left}px`;
+    refs.mindNodeLinkPanel.style.top = `${top}px`;
+    refs.mindNodeLinkPanel.style.width = `${panelWidth}px`;
+    refs.mindNodeLinkPanel.style.minWidth = `${panelWidth}px`;
+    refs.mindNodeLinkPanel.style.height = `${panelHeight}px`;
+    refs.mindNodeLinkPanel.style.setProperty("--mind-link-strip-icon-size", `${iconSize}px`);
+    refs.mindNodeLinkPanel.style.setProperty("--mind-link-strip-gap", `${gap}px`);
+    refs.mindNodeLinkPanel.style.setProperty("--mind-link-strip-loop-width", `${Math.max(6, Math.round(iconSize * 0.33))}px`);
+    refs.mindNodeLinkPanel.style.setProperty("--mind-link-strip-loop-height", `${Math.max(4, Math.round(iconSize * 0.2))}px`);
+    refs.mindNodeLinkPanel.style.setProperty("--mind-link-strip-stroke", `${Math.max(1.5, Math.round(iconSize * 0.08))}px`);
+    refs.mindNodeLinkPanel.setAttribute("data-node-id", String(node.id || ""));
+    const strip = refs.mindNodeLinkPanel.querySelector('[data-role="mind-link-strip"]');
+    if (strip instanceof HTMLDivElement) {
+      const nextMarkup = `
+        ${entries
+          .map((entry) => {
+            const missing = !entry.target;
+            const active = activeMindNodeLinkMenuTargetId === entry.targetId;
+            return `
+              <button
+                type="button"
+                class="canvas2d-mind-node-link-glyph is-link${missing ? " is-missing" : ""}${active ? " is-active" : ""}"
+                data-action="mind-link-open-menu"
+                data-target-id="${escapeHtml(entry.targetId)}"
+                aria-label="链接"
+                title="${escapeHtml(entry.title)}"
+                ${missing ? "disabled" : ""}
+              ></button>
+            `;
+          })
+          .join("")}
+        <button type="button" class="canvas2d-mind-node-link-glyph is-add" data-action="mind-link-add" aria-label="添加链接" title="添加链接"></button>
+      `;
+      if (strip.innerHTML !== nextMarkup) {
+        strip.innerHTML = nextMarkup;
+      } else {
+        strip.querySelectorAll('[data-action="mind-link-open-menu"]').forEach((button) => {
+          if (!(button instanceof HTMLButtonElement)) {
+            return;
+          }
+          const targetId = String(button.getAttribute("data-target-id") || "").trim();
+          button.classList.toggle("is-active", targetId === activeMindNodeLinkMenuTargetId);
+        });
+      }
+    }
+    const hoverMenu = refs.mindNodeLinkPanel.querySelector('[data-role="mind-link-hover-menu"]');
+    if (hoverMenu instanceof HTMLDivElement) {
+      const activeEntry = entries.find((entry) => entry.targetId === activeMindNodeLinkMenuTargetId && entry.target);
+      if (!activeEntry) {
+        hoverMenu.classList.add("is-hidden");
+        hoverMenu.innerHTML = "";
+      } else {
+        hoverMenu.classList.remove("is-hidden");
+        hoverMenu.innerHTML = `
+          <button type="button" class="canvas2d-mind-node-link-glyph is-jump" data-action="mind-link-focus" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="跳转" title="跳转"></button>
+          <button type="button" class="canvas2d-mind-node-link-glyph is-delete" data-action="mind-link-remove" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="删除链接" title="删除链接"></button>
+        `;
+      }
+    }
+    refs.mindNodeLinkPanel.classList.remove("is-hidden");
+    refs.mindNodeLinkPanel.setAttribute("aria-hidden", "false");
   }
 
   function syncEditorLayout() {
@@ -7666,9 +7591,13 @@ let tablePointerSelectionState = {
         richColorPreviewCommitTimer = 0;
       }
       pendingRichColorPreview = "";
-      pendingCanvasLinkBinding = false;
-      syncCanvasLinkBindingUi();
+      if (!resolvePendingCanvasLinkBindingMode()) {
+        pendingCanvasLinkBinding = false;
+        syncCanvasLinkBindingUi();
+      }
       closeRichExternalLinkEditor();
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
       refs.codeBlockEditor?.classList.add("is-hidden");
@@ -7725,7 +7654,10 @@ let tablePointerSelectionState = {
       return;
     }
     const isFlowNode = state.editingType === "flow-node";
-    const item = sceneRegistry.getItemById(state.editingId, isFlowNode ? "flowNode" : "text");
+    const isMindNode = isMindNodeEditingType(state.editingType);
+    const item = isMindNode
+      ? sceneRegistry.getItemById(state.editingId, "mindNode") || sceneRegistry.getItemById(state.editingId, "mindSummary")
+      : sceneRegistry.getItemById(state.editingId, isFlowNode ? "flowNode" : "text");
     if (!item) {
       state.editingId = null;
       state.editingType = null;
@@ -7733,17 +7665,29 @@ let tablePointerSelectionState = {
       richTextSession.clear({ destroyAdapter: false });
       return;
     }
-    if (isFlowNode ? isLockedItem(item) : isLockedText(item)) {
-      isFlowNode ? cancelFlowNodeEdit() : cancelTextEdit();
+    if (isFlowNode ? isLockedItem(item) : isMindNode ? isLockedItem(item) : isLockedText(item)) {
+      if (isFlowNode) {
+        cancelFlowNodeEdit();
+      } else if (isMindNode) {
+        cancelMindNodeEdit();
+      } else {
+        cancelTextEdit();
+      }
       return;
     }
+    const editingContent = isMindNode ? normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true }) : null;
     richTextSession.syncContent({
       itemId: item.id,
-      html: normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
-      plainText: item.plainText || item.text || "",
-      fontSize: item.fontSize || DEFAULT_TEXT_FONT_SIZE,
+      html: isMindNode
+        ? editingContent.html
+        : normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
+      plainText: isMindNode ? editingContent.plainText : item.plainText || item.text || "",
+      fontSize: item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
     });
-    richFontSize = normalizeRichEditorFontSize(item.fontSize || DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_SIZE);
+    richFontSize = normalizeRichEditorFontSize(
+      item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
+      isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE
+    );
     syncRichTextFontSize();
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
     applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
@@ -7753,10 +7697,195 @@ let tablePointerSelectionState = {
   }
 
   function getActiveRichEditingItem() {
-    if (!state.editingId || (state.editingType !== "text" && state.editingType !== "flow-node")) {
+    if (!state.editingId || (state.editingType !== "text" && state.editingType !== "flow-node" && !isMindNodeEditingType(state.editingType))) {
       return null;
     }
     return sceneRegistry.getItemById(state.editingId) || null;
+  }
+
+  function getMindNodeDepth(item = null) {
+    if (!item) {
+      return 0;
+    }
+    if (Number.isFinite(Number(item.depth))) {
+      return Math.max(0, Number(item.depth));
+    }
+    let depth = 0;
+    let current = item;
+    const visited = new Set();
+    while (current?.parentId) {
+      const parentId = String(current.parentId || "").trim();
+      if (!parentId || visited.has(parentId)) {
+        break;
+      }
+      visited.add(parentId);
+      const parent = sceneRegistry.getItemById(parentId, "mindNode");
+      if (!parent) {
+        break;
+      }
+      depth += 1;
+      current = parent;
+    }
+    return depth;
+  }
+
+  function resolveMindNodeDefaultBlockType(item = null) {
+    const depth = getMindNodeDepth(item);
+    if (depth <= 0) {
+      return "heading-1";
+    }
+    if (depth === 1) {
+      return "heading-3";
+    }
+    return "paragraph";
+  }
+
+  function resolveMindNodeFixedFontSize(item = null) {
+    const depth = getMindNodeDepth(item);
+    if (depth <= 0) {
+      return 18;
+    }
+    if (depth === 1) {
+      return 16;
+    }
+    return 14;
+  }
+
+  function buildEmptyMindNodeEditorHtml(item = null) {
+    const targetBlockType = resolveMindNodeDefaultBlockType(item);
+    if (targetBlockType === "heading-1") {
+      return "<h1><br></h1>";
+    }
+    if (targetBlockType === "heading-3") {
+      return "<h3><br></h3>";
+    }
+    return "<p><br></p>";
+  }
+
+  function ensureMindNodeRichTextSemanticDefaults(item = null) {
+    if (!item || !richTextSession.isActive()) {
+      return;
+    }
+    const targetBlockType = resolveMindNodeDefaultBlockType(item);
+    const formatState = richTextSession.getFormatState?.() || {};
+    const currentBlockType = String(formatState.blockType || "").trim().toLowerCase();
+    if (currentBlockType !== targetBlockType) {
+      richTextSession.command?.("setBlockType", targetBlockType);
+    }
+  }
+
+  function isMindNodeRichEditingActive() {
+    const item = getActiveRichEditingItem();
+    return item?.type === "mindNode" || item?.type === "mindSummary";
+  }
+
+  function normalizeMindNodeRichTextDocumentForLevel(documentValue = null, item = null) {
+    const targetBlockType = resolveMindNodeDefaultBlockType(item);
+    const targetHeadingLevel = targetBlockType === "heading-1" ? 1 : targetBlockType === "heading-3" ? 3 : 0;
+    const sourceBlocks = Array.isArray(documentValue?.blocks) ? documentValue.blocks : [];
+    const normalizedBlocks = sourceBlocks
+      .map((block) => {
+        if (!block || typeof block !== "object") {
+          return null;
+        }
+        const inlineContent = Array.isArray(block.content) ? block.content.filter(Boolean) : [];
+        if (targetHeadingLevel > 0) {
+          return {
+            type: "heading",
+            attrs: {
+              level: targetHeadingLevel,
+            },
+            content: inlineContent,
+          };
+        }
+        return {
+          type: "paragraph",
+          content: inlineContent,
+        };
+      })
+      .filter((block) => Array.isArray(block?.content) && block.content.length);
+    if (!normalizedBlocks.length) {
+      normalizedBlocks.push(
+        targetHeadingLevel > 0
+          ? { type: "heading", attrs: { level: targetHeadingLevel }, content: [] }
+          : { type: "paragraph", content: [] }
+      );
+    }
+    return {
+      ...(documentValue && typeof documentValue === "object" ? documentValue : {}),
+      blocks: normalizedBlocks,
+    };
+  }
+
+  function normalizeMindNodeTextContentForEditor(item = null, { preserveEmpty = true } = {}) {
+    const fixedFontSize = resolveMindNodeFixedFontSize(item);
+    if (!item) {
+      return {
+        html: "",
+        plainText: "",
+        text: "",
+        richTextDocument: normalizeMindNodeRichTextDocumentForLevel(null, item),
+        linkTokens: [],
+        urlMetaCache: {},
+        fontSize: fixedFontSize,
+        textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+        textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      };
+    }
+    const fallbackPlainText = preserveEmpty
+      ? String(item.plainText || item.text || item.title || "")
+      : String(item.plainText || item.text || item.title || "").trim();
+    const content = normalizeTextContentModel(
+      {
+        ...item,
+        plainText: fallbackPlainText,
+        text: fallbackPlainText,
+        html: item.html || "",
+        textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+        textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      },
+      {
+        ...item,
+        plainText: fallbackPlainText,
+        text: fallbackPlainText,
+        html: item.html || "",
+        fontSize: item.fontSize || DEFAULT_MIND_NODE_FONT_SIZE,
+      }
+    );
+    const richTextDocument = normalizeMindNodeRichTextDocumentForLevel(content.richTextDocument, item);
+    const serializedHtml = serializeRichTextDocumentToHtml(richTextDocument, content.html || "");
+    const html = normalizeRichHtmlInlineFontSizes(
+      serializedHtml.trim() ? serializedHtml : buildEmptyMindNodeEditorHtml(item),
+      fixedFontSize
+    );
+    const plainText = serializeRichTextDocumentToPlainText(richTextDocument, content.plainText || fallbackPlainText);
+    return {
+      ...content,
+      html,
+      plainText,
+      text: plainText,
+      richTextDocument,
+      fontSize: normalizeRichEditorFontSize(fixedFontSize, fixedFontSize),
+      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+      textResizeMode: TEXT_RESIZE_MODE_WRAP,
+    };
+  }
+
+  function applyMindNodeTextContent(item, content) {
+    if (!item || !content) {
+      return item;
+    }
+    item.html = content.html || "";
+    item.text = content.plainText || "";
+    item.plainText = content.plainText || "";
+    item.richTextDocument = content.richTextDocument || null;
+    item.linkTokens = Array.isArray(content.linkTokens) ? content.linkTokens : [];
+    item.urlMetaCache = content.urlMetaCache && typeof content.urlMetaCache === "object" ? content.urlMetaCache : {};
+    item.fontSize = resolveMindNodeFixedFontSize(item);
+    item.textBoxLayoutMode = TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT;
+    item.textResizeMode = TEXT_RESIZE_MODE_WRAP;
+    item.title = buildTextTitle(content.plainText || "");
+    return Object.assign(item, syncMindNodeTextMetrics(item));
   }
 
   function getTableCellKey(rowIndex = 0, columnIndex = 0) {
@@ -7818,22 +7947,24 @@ let tablePointerSelectionState = {
 
   function resolveRichCommandTarget() {
     const active = getActiveRichEditingItem();
-    if (active && (active.type === "text" || active.type === "flowNode")) {
+    if (active && (active.type === "text" || active.type === "flowNode" || active.type === "mindNode")) {
       return active;
     }
     const selected = getSingleSelectedItemFast();
-    if (!selected || (selected.type !== "text" && selected.type !== "flowNode")) {
+    if (!selected || (selected.type !== "text" && selected.type !== "flowNode" && selected.type !== "mindNode")) {
       return null;
     }
     if (state.editingId !== selected.id) {
       if (selected.type === "flowNode") {
         beginFlowNodeEdit(selected.id);
+      } else if (selected.type === "mindNode") {
+        beginMindNodeEdit(selected.id);
       } else {
         beginTextEdit(selected.id);
       }
     }
     const rebound = getActiveRichEditingItem();
-    return rebound && (rebound.type === "text" || rebound.type === "flowNode") ? rebound : null;
+    return rebound && (rebound.type === "text" || rebound.type === "flowNode" || rebound.type === "mindNode") ? rebound : null;
   }
 
   function isRecognizedExternalLinkValue(value = "") {
@@ -8419,6 +8550,7 @@ function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null 
   if (!(toolbar instanceof HTMLDivElement)) {
     return;
   }
+  const isMindNodeEditor = editingItem?.type === "mindNode" || editingItem?.type === "mindSummary";
   toolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
     const action = button.getAttribute("data-action");
     if (action === "bold") {
@@ -8457,6 +8589,12 @@ function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null 
             toComparableRichToolbarColor(buttonColor) ===
               toComparableRichToolbarColor(formatState.color, richToolbarColorSlots[0])
         );
+      } else if (action === "align-left") {
+        button.classList.toggle("is-active", String(formatState.align || "left") === "left");
+      } else if (action === "align-center") {
+        button.classList.toggle("is-active", String(formatState.align || "") === "center");
+      } else if (action === "align-right") {
+        button.classList.toggle("is-active", String(formatState.align || "") === "right");
       }
     });
   syncRichToolbarColorControls(toolbar, formatState);
@@ -8485,8 +8623,29 @@ function syncRichToolbarButtons(toolbar, formatState = {}, { editingItem = null 
     }
       const value = String(formatState.blockType || "paragraph");
       input.value = /^heading-[1-6]$/.test(value) || value === "paragraph" ? value : "paragraph";
+      input.disabled = isMindNodeEditor;
+      input.classList.toggle("is-disabled", isMindNodeEditor);
+      input.setAttribute("aria-disabled", isMindNodeEditor ? "true" : "false");
     });
-  }
+  toolbar.querySelectorAll("[data-size-control], [data-action=\"selection-font-size-input\"], [data-action=\"toggle-font-size-panel\"], [data-action=\"font-size-preset\"]").forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    if (isMindNodeEditor) {
+      node.setAttribute("aria-disabled", "true");
+      if ("disabled" in node) {
+        node.disabled = true;
+      }
+      node.classList.add("is-disabled");
+    } else {
+      node.removeAttribute("aria-disabled");
+      if ("disabled" in node) {
+        node.disabled = false;
+      }
+      node.classList.remove("is-disabled");
+    }
+  });
+}
 
   function getRichSelectionFontSizeControl() {
     return refs.richSelectionToolbar?.querySelector?.("[data-size-control]") || null;
@@ -8529,6 +8688,28 @@ function closeRichSelectionFontSizePanel() {
     if (nextOpen) {
       requestAnimationFrame(() => centerActiveRichSelectionFontSizePreset());
   }
+}
+
+function syncRichToolbarWrapState(toolbar, { forceWrapped = false, availableWidth = 0, widthBuffer = 0 } = {}) {
+  if (!(toolbar instanceof HTMLDivElement)) {
+    return;
+  }
+  const width = Math.max(0, Number(availableWidth || 0));
+  const buffer = Math.max(0, Number(widthBuffer || 0));
+  const primaryRow = toolbar.querySelector(".canvas2d-rich-toolbar-row-single");
+  const naturalWidth =
+    primaryRow instanceof HTMLElement
+      ? Math.max(
+          Math.ceil(primaryRow.scrollWidth || 0),
+          Math.ceil(primaryRow.getBoundingClientRect().width || 0)
+        )
+      : Math.max(
+          Math.ceil(toolbar.scrollWidth || 0),
+          Math.ceil(toolbar.getBoundingClientRect().width || 0)
+        );
+  const effectiveWidth = width > 0 ? Math.max(0, width - buffer) : 0;
+  const shouldWrapByWidth = effectiveWidth > 0 && naturalWidth > effectiveWidth + 1;
+  toolbar.classList.toggle("is-wrapped", forceWrapped || shouldWrapByWidth);
 }
 
 function getRichToolbarSubmenuRoots() {
@@ -8738,6 +8919,24 @@ function syncRichToolbarEnhancements(toolbar) {
   syncRichToolbarColorControls(toolbar, getActiveRichSession()?.getFormatState?.() || {});
 }
 
+function getRichSelectionToolbarVariant(editingItem = null) {
+  return editingItem?.type === "mindNode" || editingItem?.type === "mindSummary" ? "mind-node" : "rich-text";
+}
+
+function ensureRichSelectionToolbarVariant(editingItem = null) {
+  if (!(refs.richSelectionToolbar instanceof HTMLDivElement)) {
+    return;
+  }
+  const nextVariant = getRichSelectionToolbarVariant(editingItem);
+  const currentVariant = String(refs.richSelectionToolbar.dataset.variant || "").trim().toLowerCase();
+  if (currentVariant === nextVariant) {
+    return;
+  }
+  refs.richSelectionToolbar.innerHTML = buildSelectionRichToolbarHtml(nextVariant);
+  refs.richSelectionToolbar.dataset.variant = nextVariant;
+  syncRichToolbarEnhancements(refs.richSelectionToolbar);
+}
+
   function getActiveRichSelectionFontSize() {
     const input = refs.richSelectionToolbar?.querySelector?.('[data-action="selection-font-size-input"]');
     if (input instanceof HTMLInputElement) {
@@ -8822,6 +9021,7 @@ function syncRichToolbarEnhancements(toolbar) {
     top = Math.max(margin, Math.min(top, maxTop));
     toolbar.style.left = `${left}px`;
     toolbar.style.top = `${top}px`;
+    toolbar.classList.remove("is-wrapped");
   }
 
   function syncRichTextToolbar(options = {}) {
@@ -8852,7 +9052,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (editingItem) {
       refs.richToolbar.classList.remove("is-hidden");
-      syncFloatingToolbarLayout(refs.richToolbar, refs.surface, {
+      const layout = syncFloatingToolbarLayout(refs.richToolbar, refs.surface, {
         minScale: 0.72,
         hardMinScale: 0.56,
         preferAboveZoom: false,
@@ -8860,8 +9060,13 @@ function syncRichToolbarEnhancements(toolbar) {
         margin: 8,
         anchor: "bottom-left",
       });
+      syncRichToolbarWrapState(refs.richToolbar, {
+        availableWidth: Number(layout?.maxWidth || 0),
+        widthBuffer: 88,
+      });
     } else {
       refs.richToolbar.classList.add("is-hidden");
+      refs.richToolbar.classList.remove("is-wrapped");
     }
     if (!editingItem && !(state.editingType === "table" && tableCellEditState.active)) {
       refs.richToolbar.querySelectorAll(".canvas2d-rich-btn").forEach((button) => {
@@ -8878,6 +9083,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     syncRichToolbarButtons(refs.richToolbar, formatState, { editingItem });
+    ensureRichSelectionToolbarVariant(editingItem);
     syncRichToolbarButtons(refs.richSelectionToolbar, formatState, { editingItem });
     if (hasExpandedSelection) {
       refs.richSelectionToolbar.classList.remove("is-hidden");
@@ -8887,6 +9093,7 @@ function syncRichToolbarEnhancements(toolbar) {
       });
     } else {
       refs.richSelectionToolbar.classList.add("is-hidden");
+      refs.richSelectionToolbar.classList.remove("is-wrapped");
       closeRichSelectionFontSizePanel();
     }
     syncRichExternalLinkEditorUi();
@@ -8894,6 +9101,9 @@ function syncRichToolbarEnhancements(toolbar) {
 
   function syncRichTextFontSize() {
     if (!(refs.richToolbar instanceof HTMLDivElement)) {
+      return;
+    }
+    if (isMindNodeRichEditingActive()) {
       return;
     }
     const value = String(normalizeRichEditorFontSize(richFontSize || 20, 20));
@@ -9001,6 +9211,30 @@ function syncRichToolbarEnhancements(toolbar) {
     return beforeSignature !== getRichEditableItemSignature(item);
   }
 
+  function syncEditingMindNodeState(item) {
+    if (!item || (item.type !== "mindNode" && item.type !== "mindSummary") || !(refs.richEditor instanceof HTMLDivElement)) {
+      return false;
+    }
+    const beforeSignature = getRichEditableItemSignature(item);
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE)
+    );
+    const content = normalizeMindNodeTextContentForEditor(
+      {
+        ...item,
+        html,
+        plainText: htmlToPlainText(html),
+        text: htmlToPlainText(html),
+        fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE),
+      },
+      { preserveEmpty: true }
+    );
+    applyMindNodeTextContent(item, content);
+    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    return beforeSignature !== getRichEditableItemSignature(item);
+  }
+
   function syncEditingTableCellState({ emit = true, refreshToolbar = true, markDirty = true } = {}) {
     const context = getActiveTableCellRichEditingContext();
     if (!context) {
@@ -9072,6 +9306,8 @@ function syncRichToolbarEnhancements(toolbar) {
       changed = syncEditingTextItemSize(item);
     } else if (item.type === "flowNode") {
       changed = syncEditingFlowNodeState(item);
+    } else if (item.type === "mindNode" || item.type === "mindSummary") {
+      changed = syncEditingMindNodeState(item);
     }
     if (emit && changed) {
       syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
@@ -9180,6 +9416,8 @@ function syncRichToolbarEnhancements(toolbar) {
     const items = [
       ...(sceneIndex.recordsByType.get("text") || []),
       ...(sceneIndex.recordsByType.get("flowNode") || []),
+      ...(sceneIndex.recordsByType.get("mindNode") || []),
+      ...(sceneIndex.recordsByType.get("mindSummary") || []),
     ].map((record) => record.item);
     if (!items.length) {
       hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
@@ -9205,7 +9443,7 @@ function syncRichToolbarEnhancements(toolbar) {
 
     const visibleItems = [];
     let textLayoutWritebackChanged = false;
-    const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["text", "flowNode"], { marginPx: 120 });
+    const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["text", "flowNode", "mindNode", "mindSummary"], { marginPx: 120 });
     candidateRecords.forEach((record) => {
       const item = record.item;
       const left = Number(item.x || 0) * scale + offsetX;
@@ -9237,7 +9475,15 @@ function syncRichToolbarEnhancements(toolbar) {
         refs.richDisplayHost.appendChild(nextNode);
         return nextNode;
       },
-      shouldHide: ({ item, visible }) => !visible || (editingId && editingId === item.id),
+      shouldHide: ({ item, visible }) => {
+        if (!visible || (editingId && editingId === item.id)) {
+          return true;
+        }
+        if (item.type === "mindNode" || item.type === "mindSummary") {
+          return !isMindMapItemVisible(item, state.board.items);
+        }
+        return false;
+      },
       onRemove: (node) => {
         cancelPendingRichOverlayDetail(node);
         node.remove?.();
@@ -9251,6 +9497,7 @@ function syncRichToolbarEnhancements(toolbar) {
       const classSignature = getRichOverlayClassSignature(item);
       if (node.dataset.classSignature !== classSignature) {
         node.classList.toggle("is-flow-node", item.type === "flowNode");
+        node.classList.toggle("is-mind-node", item.type === "mindNode" || item.type === "mindSummary");
         node.classList.toggle("is-wrap-mode", isWrapTextItem(item));
         node.classList.toggle("is-fixed-size", isFixedSizeTextItem(item));
         node.classList.remove("is-locked");
@@ -9258,9 +9505,11 @@ function syncRichToolbarEnhancements(toolbar) {
       }
 
       const fontSize = Math.max(12, Number(item.fontSize || 18)) * scale;
-      const padding = item.type === "flowNode" ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
-      const lineHeightRatio = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
-      const linkSignature = item.type === "text" ? getLinkSemanticSignature(item) : "";
+      const isFlowNode = item.type === "flowNode";
+      const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
+      const padding = isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
+      const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
+      const linkSignature = item.type === "text" || isMindNode ? getLinkSemanticSignature(item) : "";
       const overlayMode = detailMode ? "detail" : resolveRichOverlaySummaryMode({ scale, width, height });
       const detailCacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
       const detailRenderSignature = `${detailCacheKey}|${scaleBucket}`;
@@ -9303,11 +9552,11 @@ function syncRichToolbarEnhancements(toolbar) {
         cancelPendingRichOverlayDetail(node);
         const logicalSummaryWidth = Math.max(24, Number(item.width || 0) || 24);
         const logicalSummaryHeight = Math.max(18, Number(item.height || 0) || 18);
-        const logicalSummaryPaddingX = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.paddingX : 0;
-        const logicalSummaryPaddingY = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.paddingY : 0;
+        const logicalSummaryPaddingX = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingX : 0;
+        const logicalSummaryPaddingY = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingY : 0;
         const summarySignature = [
           overlayMode,
-          item.type === "flowNode" ? "flow" : "text",
+          isFlowNode ? "flow" : isMindNode ? "mind-node" : "text",
           Math.round(logicalSummaryWidth),
           Math.round(logicalSummaryHeight),
           Math.round(logicalSummaryPaddingX),
@@ -9318,7 +9567,7 @@ function syncRichToolbarEnhancements(toolbar) {
           node.innerHTML = buildRichOverlaySkeletonMarkup({
             width: Math.max(24, logicalSummaryWidth - logicalSummaryPaddingX * 2),
             height: Math.max(18, logicalSummaryHeight - logicalSummaryPaddingY * 2),
-            isFlowNode: item.type === "flowNode",
+            isFlowNode,
             showPanel: false,
           });
           node.dataset.text = summarySignature;
@@ -9342,7 +9591,7 @@ function syncRichToolbarEnhancements(toolbar) {
             overflow: "hidden",
           }
         : baseBoxStyles;
-      const fontWeight = item.type === "flowNode" ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
+      const fontWeight = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
       const appliedPaddingX = overlayMode === "detail" ? padding.x : 0;
       const appliedPaddingY = overlayMode === "detail" ? padding.y : 0;
       const styleSignature = getRichOverlayStyleSignature({
@@ -9384,7 +9633,7 @@ function syncRichToolbarEnhancements(toolbar) {
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (overlayMode === "detail" && item.type === "text") {
+      if (overlayMode === "detail" && (item.type === "text" || isMindNode)) {
         const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
@@ -9850,6 +10099,57 @@ function syncRichToolbarEnhancements(toolbar) {
     return true;
   }
 
+  function beginMindNodeEdit(itemId) {
+    const item = sceneRegistry.getItemById(itemId, "mindNode") || sceneRegistry.getItemById(itemId, "mindSummary");
+    if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
+      return false;
+    }
+    if (isLockedItem(item)) {
+      setStatus("思维节点已锁定，无法编辑");
+      return false;
+    }
+    finishImageEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    const initialContent = normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true });
+    applyMindNodeTextContent(item, initialContent);
+    if (!editBaselineSnapshot) {
+      editBaselineSnapshot = takeHistorySnapshot(state);
+    }
+    state.editingId = item.id;
+    state.editingType = "mind-node";
+    state.board.selectedIds = [item.id];
+    richTextSession.begin({
+      itemId: item.id,
+      itemType: "mind-node",
+      html: initialContent.html,
+      plainText: initialContent.plainText,
+      fontSize: item.fontSize || DEFAULT_MIND_NODE_FONT_SIZE,
+      baselineSnapshot: editBaselineSnapshot,
+    });
+    richFontSize = normalizeRichEditorFontSize(item.fontSize || DEFAULT_MIND_NODE_FONT_SIZE, DEFAULT_MIND_NODE_FONT_SIZE);
+    syncRichTextFontSize();
+    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+    refs.richEditor.classList.remove("is-hidden");
+    refs.editor?.classList.add("is-hidden");
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    const focusMindNodeEditor = () => {
+      refs.richEditor?.focus?.({ preventScroll: true });
+      richTextSession.focus();
+      richTextSession.moveCaretToEnd?.();
+    };
+    focusMindNodeEditor();
+    requestAnimationFrame(() => {
+      ensureMindNodeRichTextSemanticDefaults(item);
+      syncActiveRichEditingItemState({ emit: true, refreshToolbar: true, markDirty: false });
+      focusMindNodeEditor();
+      requestAnimationFrame(() => focusMindNodeEditor());
+      syncRichTextToolbar();
+    });
+    return true;
+  }
+
   function commitTextEdit() {
     if (!state.editingId || state.editingType !== "text") {
       return false;
@@ -10142,8 +10442,119 @@ function syncRichToolbarEnhancements(toolbar) {
     return true;
   }
 
+  function relayoutMindMapFromNode(item) {
+    if (!isMindMapNode(item)) {
+      return;
+    }
+    const rootId = String(item.rootId || item.id || "").trim() || String(item.id || "").trim();
+    state.board.items = applyMindMapAutoLayout(state.board.items, rootId);
+  }
+
+  function commitMindNodeEdit() {
+    if (!state.editingId || state.editingType !== "mind-node") {
+      return false;
+    }
+    const item = sceneRegistry.getItemById(state.editingId, "mindNode") || sceneRegistry.getItemById(state.editingId, "mindSummary");
+    if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.richEditor?.classList.add("is-hidden");
+      richTextSession.clear({ destroyAdapter: false });
+      return false;
+    }
+    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
+    const html = normalizeRichHtmlInlineFontSizes(
+      richTextSession.getHTML() || refs.richEditor.innerHTML || "",
+      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE)
+    );
+    const content = normalizeMindNodeTextContentForEditor(
+      {
+        ...item,
+        html,
+        plainText: htmlToPlainText(html),
+        text: htmlToPlainText(html),
+        fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE),
+      },
+      { preserveEmpty: false }
+    );
+    const plainText = content.plainText;
+    if (!plainText.trim()) {
+      if (item.type === "mindSummary") {
+        state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
+        if (state.hoverId === item.id) {
+          state.hoverId = null;
+        }
+        state.editingId = null;
+        state.editingType = null;
+        refs.richEditor.classList.add("is-hidden");
+        richTextSession.clear({ destroyAdapter: false });
+        editBaselineSnapshot = null;
+        commitItemPatchHistory(before, item.id, null, "删除空白摘要节点", "mind-node-edit");
+        setStatus("已删除空白摘要节点");
+        return true;
+      }
+      state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
+      if (item.parentId) {
+        const parent = sceneRegistry.getItemById(item.parentId, "mindNode");
+        if (parent) {
+          parent.childrenIds = (Array.isArray(parent.childrenIds) ? parent.childrenIds : []).filter((childId) => childId !== item.id);
+          relayoutMindMapFromNode(parent);
+          state.board.selectedIds = [parent.id];
+        } else {
+          state.board.selectedIds = [];
+        }
+      } else {
+        state.board.selectedIds = [];
+      }
+      if (state.hoverId === item.id) {
+        state.hoverId = null;
+      }
+      state.editingId = null;
+      state.editingType = null;
+      refs.richEditor.classList.add("is-hidden");
+      richTextSession.clear({ destroyAdapter: false });
+      editBaselineSnapshot = null;
+      commitItemPatchHistory(before, item.id, null, "删除空白思维节点", "mind-node-edit");
+      setStatus("已删除空白思维节点");
+      return true;
+    }
+    applyMindNodeTextContent(item, {
+      ...content,
+      fontSize: resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE),
+    });
+    scheduleUrlMetaHydrationForItem(item);
+    relayoutMindMapFromNode(item);
+    state.editingId = null;
+    state.editingType = null;
+    state.board.selectedIds = [item.id];
+    refs.richEditor.classList.add("is-hidden");
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
+    const changed = commitItemPatchHistory(before, item.id, item, "更新思维节点", "mind-node-edit");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+      return true;
+    }
+    setStatus("思维节点已更新");
+    persistCommittedBoardIfPossible();
+    return true;
+  }
+
   function cancelFlowNodeEdit() {
     if (state.editingType !== "flow-node") {
+      return false;
+    }
+    state.editingId = null;
+    state.editingType = null;
+    refs.richEditor?.classList.add("is-hidden");
+    richTextSession.clear({ destroyAdapter: false });
+    editBaselineSnapshot = null;
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    return true;
+  }
+
+  function cancelMindNodeEdit() {
+    if (state.editingType !== "mind-node") {
       return false;
     }
     state.editingId = null;
@@ -10159,12 +10570,18 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.editingType === "flow-node") {
       return commitFlowNodeEdit();
     }
+    if (state.editingType === "mind-node") {
+      return commitMindNodeEdit();
+    }
     return commitTextEdit();
   }
 
   function cancelRichEdit() {
     if (state.editingType === "flow-node") {
       return cancelFlowNodeEdit();
+    }
+    if (state.editingType === "mind-node") {
+      return cancelMindNodeEdit();
     }
     return cancelTextEdit();
   }
@@ -10297,6 +10714,38 @@ function syncRichToolbarEnhancements(toolbar) {
         title="在当前列后插入一列"
       ></button>
     `;
+  }
+
+  function ensureMindNodeChrome() {
+    refs.mindNodeChrome = refs.fixedOverlayHost?.querySelector?.("#canvas-mind-node-chrome") || null;
+    if (!(refs.mindNodeChrome instanceof HTMLDivElement)) {
+      refs.mindNodeChrome = document.createElement("div");
+      refs.mindNodeChrome.id = "canvas-mind-node-chrome";
+      refs.mindNodeChrome.className = "canvas-mind-node-chrome is-hidden";
+      refs.mindNodeChrome.innerHTML = `
+        <div class="canvas-mind-node-side-control is-left">
+          <button type="button" class="canvas-mind-node-side-btn is-detach" data-action="mind-detach-branch" aria-label="拆分为独立分支" title="拆分为独立分支"></button>
+        </div>
+        <div class="canvas-mind-node-chrome-group">
+          <button type="button" class="canvas-mind-node-tool is-add-child" data-action="mind-add-child" aria-label="添加子节点" title="添加子节点"></button>
+          <button type="button" class="canvas-mind-node-tool is-add-sibling" data-action="mind-add-sibling" aria-label="添加同级节点" title="添加同级节点"></button>
+          <button type="button" class="canvas-mind-node-tool is-insert-bridge" data-action="mind-insert-intermediate" aria-label="插入中间节点" title="插入中间节点"></button>
+          <button type="button" class="canvas-mind-node-tool is-summary" data-action="mind-add-summary" aria-label="添加摘要节点" title="添加摘要节点"></button>
+          <button type="button" class="canvas-mind-node-tool is-demote" data-action="mind-demote" aria-label="降级层级" title="降级层级"></button>
+          <button type="button" class="canvas-mind-node-tool is-promote" data-action="mind-promote" aria-label="提升层级" title="提升层级"></button>
+          <button type="button" class="canvas-mind-node-tool is-toggle-collapse" data-action="mind-toggle-collapse" aria-label="折叠或展开分支" title="折叠或展开分支"></button>
+          <button type="button" class="canvas-mind-node-tool is-relayout" data-action="mind-relayout" aria-label="整理布局" title="整理布局"></button>
+        </div>
+        <div class="canvas-mind-node-side-control is-right">
+          <button type="button" class="canvas-mind-node-side-btn is-add-child" data-action="mind-quick-add-child" aria-label="快速添加子节点" title="快速添加子节点"></button>
+        </div>
+        <div class="canvas-mind-node-corner-control">
+          <button type="button" class="canvas-mind-node-link-anchor" data-action="mind-manage-links" aria-label="节点链接" title="节点链接"></button>
+        </div>
+      `;
+      refs.fixedOverlayHost?.appendChild?.(refs.mindNodeChrome);
+    }
+    return refs.mindNodeChrome;
   }
 
   function ensureTableCellRichEditorHost() {
@@ -11232,6 +11681,195 @@ function syncRichToolbarEnhancements(toolbar) {
   function onTableEdgeInsertClick(event) {
     event.preventDefault();
     event.stopPropagation();
+  }
+
+  function hideMindNodeChrome() {
+    if (!(refs.mindNodeChrome instanceof HTMLDivElement)) {
+      return;
+    }
+    refs.mindNodeChrome.classList.add("is-hidden");
+    refs.mindNodeChrome.removeAttribute("data-node-id");
+    if (!mindNodeChromePointerInside) {
+      hideMindNodeLinkPanel();
+    }
+  }
+
+  function resolveMindNodeChromeTarget() {
+    const selectedIds = Array.isArray(state.board.selectedIds)
+      ? state.board.selectedIds.map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
+    if (!selectedIds.length) {
+      return null;
+    }
+    const selectedIdSet = new Set(selectedIds);
+    const selectedMindNodes = selectedIds
+      .map((id) => getMindNodeById(id))
+      .filter(Boolean);
+    if (!selectedMindNodes.length) {
+      return null;
+    }
+    const rootCandidates = selectedMindNodes.filter((node) => !selectedIdSet.has(String(node.parentId || "").trim()));
+    if (rootCandidates.length !== 1) {
+      return null;
+    }
+    return rootCandidates[0];
+  }
+
+  function clearMindMapDropFeedback() {
+    if (!state.mindMapDropTargetId && !state.mindMapDropHint) {
+      return false;
+    }
+    state.mindMapDropTargetId = null;
+    state.mindMapDropHint = "";
+    return true;
+  }
+
+  function setMindMapDropFeedback(targetId = "", hint = "") {
+    const nextTargetId = String(targetId || "").trim() || null;
+    const nextHint = String(hint || "").trim();
+    if (state.mindMapDropTargetId === nextTargetId && state.mindMapDropHint === nextHint) {
+      return false;
+    }
+    state.mindMapDropTargetId = nextTargetId;
+    state.mindMapDropHint = nextHint;
+    return true;
+  }
+
+  function getViewportClampedScreenRect(rect = null, viewportWidth = 0, viewportHeight = 0) {
+    const width = Math.max(0, Number(viewportWidth || 0) || 0);
+    const height = Math.max(0, Number(viewportHeight || 0) || 0);
+    if (!rect || !width || !height) {
+      return null;
+    }
+    const left = Math.max(0, Math.min(width, Number(rect.left || 0)));
+    const top = Math.max(0, Math.min(height, Number(rect.top || 0)));
+    const right = Math.max(0, Math.min(width, Number(rect.left || 0) + Number(rect.width || 0)));
+    const bottom = Math.max(0, Math.min(height, Number(rect.top || 0) + Number(rect.height || 0)));
+    const clampedWidth = Math.max(0, right - left);
+    const clampedHeight = Math.max(0, bottom - top);
+    if (!clampedWidth || !clampedHeight) {
+      return null;
+    }
+    return {
+      left,
+      top,
+      width: clampedWidth,
+      height: clampedHeight,
+      right,
+      bottom,
+    };
+  }
+
+  function syncMindNodeChrome() {
+    const chrome = ensureMindNodeChrome();
+    if (!(chrome instanceof HTMLDivElement) || !(refs.fixedOverlayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    const selectedItem = state.tool === "select" ? resolveMindNodeChromeTarget() : null;
+    if (
+      !selectedItem ||
+      selectedItem.type !== "mindNode" ||
+      state.editingType === "mind-node" ||
+      state.editingType === "table" ||
+      state.editingType === "codeBlock" ||
+      state.editingType === "file-memo" ||
+      state.editingType === "image-memo"
+    ) {
+      hideMindNodeChrome();
+      return;
+    }
+    const nodeRect = getElementScreenBounds(state.board.view, selectedItem);
+    const overlayWidth = Math.max(
+      Number(refs.fixedOverlayHost?.clientWidth || 0) || 0,
+      Number(refs.surface?.clientWidth || 0) || 0,
+      Number(refs.canvas?.clientWidth || 0) || 0
+    );
+    const overlayHeight = Math.max(
+      Number(refs.fixedOverlayHost?.clientHeight || 0) || 0,
+      Number(refs.surface?.clientHeight || 0) || 0,
+      Number(refs.canvas?.clientHeight || 0) || 0
+    );
+    if (!overlayWidth || !overlayHeight) {
+      hideMindNodeChrome();
+      return;
+    }
+    const visibleRect = getViewportClampedScreenRect(nodeRect, overlayWidth, overlayHeight);
+    if (!visibleRect) {
+      hideMindNodeChrome();
+      return;
+    }
+    const linkCount = getMindNodeLinks(selectedItem).length;
+    if (!linkCount && mindNodeLinkPanelPinnedNodeId === selectedItem.id && !mindNodeChromePointerInside) {
+      mindNodeLinkPanelPinnedNodeId = "";
+    }
+    const toolbar = chrome.querySelector(".canvas-mind-node-chrome-group");
+    const leftSideControl = chrome.querySelector(".canvas-mind-node-side-control.is-left");
+    const rightSideControl = chrome.querySelector(".canvas-mind-node-side-control.is-right");
+    const toolbarWidth = Math.max(152, Number(toolbar?.clientWidth || 168) || 168);
+    const toolbarHeight = Math.max(28, Number(toolbar?.clientHeight || 30) || 30);
+    const sideButtonSize = Math.round(Math.max(16, Math.min(30, scaleSceneValue(state.board.view, 24))));
+    const sideButtonInset = Math.max(1, Math.round(sideButtonSize * 0.08));
+    const sideIconSpan = Math.max(8, Math.round(sideButtonSize * 0.4));
+    const sideIconStroke = Math.max(2, Math.round(sideButtonSize * 0.067));
+    const linkAnchorSize = Math.max(14, Math.round(sideButtonSize * 0.72));
+    const linkAnchorInset = Math.max(2, Math.round(sideButtonInset + sideButtonSize * 0.08));
+    const linkAnchorLoopWidth = Math.max(6, Math.round(linkAnchorSize * 0.33));
+    const linkAnchorLoopHeight = Math.max(4, Math.round(linkAnchorSize * 0.2));
+    const linkAnchorStroke = Math.max(1.5, Math.round(linkAnchorSize * 0.08));
+    const sideControlCenterY = Math.round(Math.max(1, visibleRect.height) / 2);
+    const left = clampTableEditorValue(Math.round(visibleRect.left), 0, Math.max(0, overlayWidth - Math.max(1, Math.round(visibleRect.width))));
+    const top = clampTableEditorValue(Math.round(visibleRect.top), 0, Math.max(0, overlayHeight - Math.max(1, Math.round(visibleRect.height))));
+    chrome.style.left = `${left}px`;
+    chrome.style.top = `${top}px`;
+    chrome.style.width = `${Math.max(1, Math.round(visibleRect.width))}px`;
+    chrome.style.height = `${Math.max(1, Math.round(visibleRect.height))}px`;
+    chrome.style.setProperty("--mind-toolbar-width", `${toolbarWidth}px`);
+    chrome.style.setProperty("--mind-toolbar-height", `${toolbarHeight}px`);
+    chrome.style.setProperty("--mind-side-btn-size", `${sideButtonSize}px`);
+    chrome.style.setProperty("--mind-side-btn-inset", `${sideButtonInset}px`);
+    chrome.style.setProperty("--mind-side-icon-span", `${sideIconSpan}px`);
+    chrome.style.setProperty("--mind-side-icon-stroke", `${sideIconStroke}px`);
+    chrome.style.setProperty("--mind-side-control-center-y", `${sideControlCenterY}px`);
+    chrome.style.setProperty("--mind-link-anchor-size", `${linkAnchorSize}px`);
+    chrome.style.setProperty("--mind-link-anchor-inset", `${linkAnchorInset}px`);
+    chrome.style.setProperty("--mind-link-anchor-loop-width", `${linkAnchorLoopWidth}px`);
+    chrome.style.setProperty("--mind-link-anchor-loop-height", `${linkAnchorLoopHeight}px`);
+    chrome.style.setProperty("--mind-link-anchor-stroke", `${linkAnchorStroke}px`);
+    if (leftSideControl instanceof HTMLDivElement) {
+      leftSideControl.style.left = `${sideButtonInset}px`;
+      leftSideControl.style.right = "auto";
+      leftSideControl.style.top = `${sideControlCenterY}px`;
+    }
+    if (rightSideControl instanceof HTMLDivElement) {
+      rightSideControl.style.left = "auto";
+      rightSideControl.style.right = `${sideButtonInset}px`;
+      rightSideControl.style.top = `${sideControlCenterY}px`;
+    }
+    chrome.setAttribute("data-node-id", String(selectedItem.id || ""));
+    chrome.classList.remove("is-hidden");
+    chrome.classList.toggle("is-hover-active", state.hoverId === selectedItem.id || mindNodeChromePointerInside);
+    const toggleButton = chrome.querySelector('[data-action="mind-toggle-collapse"]');
+    if (toggleButton instanceof HTMLButtonElement) {
+      toggleButton.classList.toggle("is-collapsed", selectedItem.collapsed === true);
+      toggleButton.setAttribute("aria-label", selectedItem.collapsed ? "展开分支" : "折叠分支");
+      toggleButton.setAttribute("title", selectedItem.collapsed ? "展开分支" : "折叠分支");
+    }
+    const detachButton = chrome.querySelector('[data-action="mind-detach-branch"]');
+    if (detachButton instanceof HTMLButtonElement) {
+      const canDetach = Boolean(selectedItem.parentId);
+      detachButton.disabled = !canDetach;
+      detachButton.setAttribute("aria-disabled", canDetach ? "false" : "true");
+      detachButton.setAttribute("title", canDetach ? "拆分为独立分支" : "根节点无法拆分");
+    }
+    const linkButton = chrome.querySelector('[data-action="mind-manage-links"]');
+    if (linkButton instanceof HTMLButtonElement) {
+      const hasLinks = linkCount > 0;
+      linkButton.classList.toggle("has-links", hasLinks);
+      linkButton.setAttribute("title", "节点链接");
+      linkButton.setAttribute("aria-label", "节点链接");
+      linkButton.style.opacity = hasLinks || mindNodeChromePointerInside || state.hoverId === selectedItem.id ? "1" : "0.86";
+    }
+    syncMindNodeLinkPanel();
   }
 
   function syncTableEditorSelectionUI() {
@@ -13249,6 +13887,8 @@ function syncRichToolbarEnhancements(toolbar) {
       selectedIds: [],
       hoverId: null,
       selectionRect: null,
+      mindMapDropTargetId: null,
+      mindMapDropHint: "",
       draftElement: null,
       editingId: null,
       imageEditState: null,
@@ -13407,6 +14047,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     pushItems([item], { reason: "插入截图", statusText: "截图已插入画布" });
     state.lastSelectionSource = "click";
+    void refreshCanvasImageManager({ silent: true });
     return true;
   }
 
@@ -14609,6 +15250,7 @@ function syncRichToolbarEnhancements(toolbar) {
     state.hoverId = null;
     state.hoverHandle = null;
     state.hoverConnector = null;
+    clearMindMapDropFeedback();
     flowDraft = null;
     clearAlignmentSnap("clear-transient");
   }
@@ -14631,7 +15273,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function hideEditingUiForDeferredBlankExit(editingType = "") {
-    if (editingType === "text" || editingType === "flow-node") {
+    if (editingType === "text" || editingType === "flow-node" || editingType === "mind-node") {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
       refs.richToolbar?.classList.add("is-hidden");
@@ -14667,7 +15309,7 @@ function syncRichToolbarEnhancements(toolbar) {
       return false;
     }
     let committed = false;
-    if (pending.editingType === "text" || pending.editingType === "flow-node") {
+    if (pending.editingType === "text" || pending.editingType === "flow-node" || pending.editingType === "mind-node") {
       committed = commitRichEdit();
     } else if (pending.editingType === "code-block") {
       committed = commitCodeBlockEdit();
@@ -14713,7 +15355,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function shouldDeferBlankPointerExit(event) {
-    if (pendingCanvasLinkBinding) {
+    if (resolvePendingCanvasLinkBindingMode()) {
       return "";
     }
     if (!state.editingType || !(event?.target instanceof Element) || event.button !== 0) {
@@ -14761,6 +15403,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (state.tool !== "text") {
       cancelTextEdit();
       cancelFlowNodeEdit();
+      cancelMindNodeEdit();
       cancelTableEdit();
       cancelFileMemoEdit();
       cancelImageMemoEdit();
@@ -14775,6 +15418,7 @@ function syncRichToolbarEnhancements(toolbar) {
       clearTransientState();
       cancelTextEdit();
       cancelFlowNodeEdit();
+      cancelMindNodeEdit();
       cancelTableEdit();
       cancelFileMemoEdit();
       cancelImageMemoEdit();
@@ -15637,11 +16281,573 @@ function syncRichToolbarEnhancements(toolbar) {
   function createMindNode(anchorPoint) {
     const before = takeHistorySnapshot(state);
     const item = createMindNodeElement(anchorPoint, "节点");
+    item.rootId = item.id;
+    item.branchSide = MIND_BRANCH_RIGHT;
     state.board.items.push(item);
     state.board.selectedIds = [item.id];
     commitHistory(before, "创建节点");
     setStatus("已添加节点");
+    refs.canvas?.focus?.();
     return true;
+  }
+
+  function normalizeMindNodeLinks(links = []) {
+    if (!Array.isArray(links)) {
+      return [];
+    }
+    const seen = new Set();
+    return links
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const targetId = String(entry.targetId || entry.id || "").trim();
+        if (!targetId || seen.has(targetId)) {
+          return null;
+        }
+        seen.add(targetId);
+        return {
+          id: String(entry.id || `mind-link-${targetId}-${index}`),
+          targetId,
+          targetType: String(entry.targetType || entry.type || "").trim(),
+          title: String(entry.title || entry.label || "").trim(),
+          createdAt: Number(entry.createdAt) || Date.now(),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function getMindNodeById(itemId) {
+    return sceneRegistry.getItemById(itemId, "mindNode");
+  }
+
+  function getMindNodeLinks(node = null) {
+    return normalizeMindNodeLinks(node?.links || []);
+  }
+
+  function resolvePendingCanvasLinkBindingMode() {
+    if (!pendingCanvasLinkBinding) {
+      return "";
+    }
+    if (pendingCanvasLinkBinding === true) {
+      return "rich-text";
+    }
+    if (pendingCanvasLinkBinding && typeof pendingCanvasLinkBinding === "object") {
+      return String(pendingCanvasLinkBinding.mode || "").trim().toLowerCase();
+    }
+    return "";
+  }
+
+  function beginMindNodeCanvasLinkBinding(nodeId = "") {
+    const node = getMindNodeById(nodeId);
+    if (!node) {
+      setStatus("未找到节点");
+      return false;
+    }
+    pendingCanvasLinkBinding = {
+      mode: "mind-node",
+      sourceId: node.id,
+    };
+    syncCanvasLinkBindingUi();
+    setStatus("节点链接模式：请在画布中点击目标元素（Esc 取消）");
+    return true;
+  }
+
+  function addMindNodeCanvasLink(nodeId = "", targetId = "") {
+    const node = getMindNodeById(nodeId);
+    const target = sceneRegistry.getItemById(targetId) || state.board.items.find((item) => String(item?.id || "").trim() === String(targetId || "").trim());
+    if (!node || !target) {
+      setStatus("链接目标不存在");
+      return false;
+    }
+    if (String(node.id || "") === String(target.id || "")) {
+      setStatus("不能链接到当前节点自身");
+      return false;
+    }
+    const links = getMindNodeLinks(node);
+    if (links.some((entry) => entry.targetId === target.id)) {
+      setStatus("该节点已存在此链接");
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    node.links = [
+      ...links,
+      {
+        id: `mind-link-${target.id}-${Date.now()}`,
+        targetId: String(target.id || ""),
+        targetType: String(target.type || ""),
+        title: String(target.title || target.name || target.id || "").trim(),
+        createdAt: Date.now(),
+      },
+    ];
+    state.board.selectedIds = [node.id];
+    mindNodeLinkPanelPinnedNodeId = node.id;
+    commitHistory(before, "添加节点链接");
+    setStatus("已创建节点链接");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function removeMindNodeCanvasLink(nodeId = "", targetId = "") {
+    const node = getMindNodeById(nodeId);
+    if (!node) {
+      return false;
+    }
+    const links = getMindNodeLinks(node);
+    const nextLinks = links.filter((entry) => String(entry.targetId || "").trim() !== String(targetId || "").trim());
+    if (nextLinks.length === links.length) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    node.links = nextLinks;
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "删除节点链接");
+    setStatus("已删除节点链接");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function clearMindNodeCanvasLinks(nodeId = "") {
+    const node = getMindNodeById(nodeId);
+    if (!node || !getMindNodeLinks(node).length) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    node.links = [];
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "清空节点链接");
+    setStatus("已清空节点链接");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function resolveMindNodeLinkEntries(node = null) {
+    return getMindNodeLinks(node).map((entry) => {
+      const target =
+        sceneRegistry.getItemById(entry.targetId) ||
+        state.board.items.find((item) => String(item?.id || "").trim() === String(entry.targetId || "").trim()) ||
+        null;
+      return {
+        ...entry,
+        target,
+        title: String(entry.title || target?.title || target?.name || entry.targetId || "未命名元素").trim(),
+        desc: target ? `跳转到 ${String(target.type || "item")}` : "目标元素不存在",
+      };
+    });
+  }
+
+  function getMindSubtreeNodeIds(rootId = "") {
+    const safeRootId = String(rootId || "").trim();
+    if (!safeRootId) {
+      return [];
+    }
+    const nodeIds = [];
+    const queue = [safeRootId];
+    const seen = new Set();
+    while (queue.length) {
+      const currentId = String(queue.shift() || "").trim();
+      if (!currentId || seen.has(currentId)) {
+        continue;
+      }
+      seen.add(currentId);
+      const node = getMindNodeById(currentId);
+      if (!node) {
+        continue;
+      }
+      nodeIds.push(currentId);
+      const children = Array.isArray(node.childrenIds) ? node.childrenIds : [];
+      children.forEach((childId) => {
+        const safeChildId = String(childId || "").trim();
+        if (safeChildId && !seen.has(safeChildId)) {
+          queue.push(safeChildId);
+        }
+      });
+    }
+    return nodeIds;
+  }
+
+  function appendMindChild(parent, child, options = {}) {
+    const side = normalizeMindBranchSide(options.branchSide, MIND_BRANCH_AUTO);
+    child.parentId = parent.id;
+    child.rootId = String(parent.rootId || parent.id || "");
+    child.depth = Math.max(0, Number(parent.depth || 0) + 1);
+    child.order = Array.isArray(parent.childrenIds) ? parent.childrenIds.length : 0;
+    child.branchSide = side === MIND_BRANCH_AUTO ? normalizeMindBranchSide(parent.branchSide, MIND_BRANCH_RIGHT) : side;
+    parent.childrenIds = [...(Array.isArray(parent.childrenIds) ? parent.childrenIds : []), child.id];
+    state.board.items.push(child);
+  }
+
+  function createMindChildNode(parentId, options = {}) {
+    const parent = getMindNodeById(parentId);
+    if (!parent) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const side =
+      normalizeMindBranchSide(options.branchSide, MIND_BRANCH_AUTO) === MIND_BRANCH_AUTO
+        ? (!parent.parentId
+            ? MIND_BRANCH_RIGHT
+            : normalizeMindBranchSide(parent.branchSide, MIND_BRANCH_RIGHT))
+        : normalizeMindBranchSide(options.branchSide, MIND_BRANCH_RIGHT);
+    const child = createMindNodeElement(
+      {
+        x: Number(parent.x || 0) + Number(parent.width || 220) + 88,
+        y: Number(parent.y || 0) + Number(parent.height || 96) + 24,
+      },
+      String(options.title || "")
+    );
+    appendMindChild(parent, child, { branchSide: side });
+    parent.collapsed = false;
+    relayoutMindMapFromNode(parent);
+    state.board.selectedIds = [child.id];
+    commitHistory(before, "创建思维子节点");
+    refs.canvas?.focus?.();
+    beginMindNodeEdit(child.id);
+    return true;
+  }
+
+  function createMindSiblingNode(nodeId, options = {}) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !parent) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const sibling = createMindNodeElement(
+      {
+        x: Number(node.x || 0),
+        y: Number(node.y || 0) + Number(node.height || 96) + 24,
+      },
+      String(options.title || "")
+    );
+    appendMindChild(parent, sibling, { branchSide: node.branchSide });
+    relayoutMindMapFromNode(parent);
+    state.board.selectedIds = [sibling.id];
+    commitHistory(before, "创建思维同级节点");
+    refs.canvas?.focus?.();
+    beginMindNodeEdit(sibling.id);
+    return true;
+  }
+
+  function createMindSummaryNode(nodeId, options = {}) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !parent) {
+      return false;
+    }
+    const siblingIds = Array.isArray(parent.childrenIds) ? parent.childrenIds.slice() : [];
+    const nodeIndex = siblingIds.indexOf(node.id);
+    if (nodeIndex < 0) {
+      return false;
+    }
+    const summaryTargetIds =
+      Array.isArray(options.siblingIds) && options.siblingIds.length
+        ? siblingIds.filter((id) => options.siblingIds.includes(id))
+        : siblingIds.slice(nodeIndex);
+    if (summaryTargetIds.length < 2) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const summary = createMindSummaryElement(node, {
+      label: String(options.title || ""),
+      siblingIds: summaryTargetIds,
+      summaryOwnerId: parent.id,
+      branchSide: node.branchSide,
+      rootId: node.rootId,
+      depth: node.depth,
+      order: node.order,
+    });
+    state.board.items.push(summary);
+    relayoutMindMapFromNode(parent);
+    state.board.selectedIds = [summary.id];
+    commitHistory(before, "创建思维摘要节点");
+    refs.canvas?.focus?.();
+    beginMindNodeEdit(summary.id);
+    return true;
+  }
+
+  function promoteMindNode(nodeId) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    const grandParent = parent?.parentId ? getMindNodeById(parent.parentId) : null;
+    if (!node || !parent || !grandParent) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    parent.childrenIds = (Array.isArray(parent.childrenIds) ? parent.childrenIds : []).filter((childId) => childId !== node.id);
+    const grandChildren = Array.isArray(grandParent.childrenIds) ? grandParent.childrenIds.slice() : [];
+    const parentIndex = grandChildren.indexOf(parent.id);
+    const insertIndex = parentIndex >= 0 ? parentIndex + 1 : grandChildren.length;
+    grandChildren.splice(insertIndex, 0, node.id);
+    grandParent.childrenIds = grandChildren;
+    node.parentId = grandParent.id;
+    node.rootId = String(grandParent.rootId || grandParent.id || "");
+    node.branchSide = parent.branchSide;
+    relayoutMindMapFromNode(node);
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "提升思维节点层级");
+    setStatus("已提升分支层级");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function setMindBranchSide(nodeId, side) {
+    const node = getMindNodeById(nodeId);
+    if (!node) {
+      return false;
+    }
+    const nextSide = normalizeMindBranchSide(side, MIND_BRANCH_AUTO);
+    const before = takeHistorySnapshot(state);
+    node.branchSide = nextSide;
+    relayoutMindMapFromNode(node);
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "调整分支方向");
+    setStatus(nextSide === MIND_BRANCH_LEFT ? "已切换到左侧分支" : nextSide === MIND_BRANCH_RIGHT ? "已切换到右侧分支" : "已恢复自动分支");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function relayoutMindMapByNodeId(nodeId) {
+    const node = getMindNodeById(nodeId);
+    if (!node) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    relayoutMindMapFromNode(node);
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "整理思维导图");
+    setStatus("已整理思维导图");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function toggleMindNodeCollapsed(nodeId) {
+    const node = getMindNodeById(nodeId);
+    if (!node) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    node.collapsed = !node.collapsed;
+    relayoutMindMapFromNode(node);
+    commitHistory(before, node.collapsed ? "折叠思维节点" : "展开思维节点");
+    setStatus(node.collapsed ? "已折叠分支" : "已展开分支");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function demoteMindNode(nodeId) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !parent) {
+      return false;
+    }
+    const siblings = Array.isArray(parent.childrenIds) ? parent.childrenIds.slice() : [];
+    const nodeIndex = siblings.indexOf(node.id);
+    if (nodeIndex <= 0) {
+      return false;
+    }
+    const previousSiblingId = siblings[nodeIndex - 1];
+    const previousSibling = getMindNodeById(previousSiblingId);
+    if (!previousSibling) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    siblings.splice(nodeIndex, 1);
+    parent.childrenIds = siblings;
+    previousSibling.childrenIds = [...(Array.isArray(previousSibling.childrenIds) ? previousSibling.childrenIds : []), node.id];
+    previousSibling.collapsed = false;
+    node.parentId = previousSibling.id;
+    node.rootId = String(previousSibling.rootId || previousSibling.id || "");
+    node.depth = Math.max(0, Number(previousSibling.depth || 0) + 1);
+    node.order = Math.max(0, previousSibling.childrenIds.length - 1);
+    node.branchSide = !previousSibling.parentId
+      ? normalizeMindBranchSide(node.branchSide, MIND_BRANCH_RIGHT)
+      : normalizeMindBranchSide(previousSibling.branchSide, MIND_BRANCH_RIGHT);
+    relayoutMindMapFromNode(parent);
+    relayoutMindMapFromNode(previousSibling);
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "降级思维节点层级");
+    setStatus("已降级到上一个同级节点下");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function detachMindBranch(nodeId) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !parent) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const subtreeNodeIds = getMindSubtreeNodeIds(node.id);
+    const previousDepth = Math.max(0, Number(node.depth || 0) || 0);
+    parent.childrenIds = (Array.isArray(parent.childrenIds) ? parent.childrenIds : []).filter((childId) => childId !== node.id);
+    node.parentId = "";
+    node.rootId = node.id;
+    node.depth = 0;
+    node.order = 0;
+    node.branchSide = MIND_BRANCH_RIGHT;
+    if (subtreeNodeIds.length >= 2) {
+      const nextRootId = String(node.id || "");
+      state.board.items = state.board.items.map((item) => {
+        const itemId = String(item?.id || "").trim();
+        if (!subtreeNodeIds.includes(itemId) || itemId === node.id || !isMindMapNode(item)) {
+          return item;
+        }
+        return {
+          ...item,
+          rootId: nextRootId,
+          depth: Math.max(0, Number(item.depth || 0) - previousDepth),
+        };
+      });
+    }
+    relayoutMindMapFromNode(parent);
+    relayoutMindMapFromNode(node);
+    state.board.selectedIds = [node.id];
+    commitHistory(before, "拆分思维分支");
+    setStatus("已拆分为独立分支");
+    refs.canvas?.focus?.();
+    return true;
+  }
+
+  function insertMindIntermediateNode(nodeId, options = {}) {
+    const node = getMindNodeById(nodeId);
+    const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !parent) {
+      return false;
+    }
+    const before = takeHistorySnapshot(state);
+    const bridge = createMindNodeElement(
+      {
+        x: Number(node.x || 0) - 64,
+        y: Number(node.y || 0),
+      },
+      String(options.title || "中间节点")
+    );
+    bridge.parentId = parent.id;
+    bridge.rootId = String(parent.rootId || parent.id || "");
+    bridge.depth = Math.max(0, Number(parent.depth || 0) + 1);
+    bridge.branchSide = normalizeMindBranchSide(node.branchSide, MIND_BRANCH_RIGHT);
+    bridge.childrenIds = [node.id];
+    bridge.collapsed = false;
+    const siblings = Array.isArray(parent.childrenIds) ? parent.childrenIds.slice() : [];
+    const nodeIndex = siblings.indexOf(node.id);
+    if (nodeIndex < 0) {
+      return false;
+    }
+    siblings.splice(nodeIndex, 1, bridge.id);
+    parent.childrenIds = siblings;
+    bridge.order = nodeIndex;
+    node.parentId = bridge.id;
+    node.rootId = String(bridge.rootId || bridge.id || "");
+    node.depth = Math.max(0, Number(bridge.depth || 0) + 1);
+    node.order = 0;
+    state.board.items.push(bridge);
+    relayoutMindMapFromNode(parent);
+    state.board.selectedIds = [bridge.id];
+    commitHistory(before, "插入思维中间节点");
+    refs.canvas?.focus?.();
+    beginMindNodeEdit(bridge.id);
+    return true;
+  }
+
+  function isMindNodeDescendantOf(nodeId = "", ancestorId = "") {
+    const safeNodeId = String(nodeId || "").trim();
+    const safeAncestorId = String(ancestorId || "").trim();
+    if (!safeNodeId || !safeAncestorId || safeNodeId === safeAncestorId) {
+      return false;
+    }
+    let current = getMindNodeById(safeNodeId);
+    while (current?.parentId) {
+      const parentId = String(current.parentId || "").trim();
+      if (!parentId) {
+        return false;
+      }
+      if (parentId === safeAncestorId) {
+        return true;
+      }
+      current = getMindNodeById(parentId);
+    }
+    return false;
+  }
+
+  function reparentMindNode(nodeId, nextParentId) {
+    const node = getMindNodeById(nodeId);
+    const nextParent = getMindNodeById(nextParentId);
+    const prevParent = node?.parentId ? getMindNodeById(node.parentId) : null;
+    if (!node || !nextParent) {
+      return false;
+    }
+    if (node.id === nextParent.id) {
+      return false;
+    }
+    if (String(node.parentId || "").trim() === String(nextParent.id || "").trim()) {
+      return false;
+    }
+    if (isMindNodeDescendantOf(nextParent.id, node.id)) {
+      return false;
+    }
+    if (prevParent) {
+      prevParent.childrenIds = (Array.isArray(prevParent.childrenIds) ? prevParent.childrenIds : []).filter((childId) => childId !== node.id);
+    }
+    const subtreeNodeIds = getMindSubtreeNodeIds(node.id);
+    const previousDepth = Math.max(0, Number(node.depth || 0) || 0);
+    node.parentId = nextParent.id;
+    node.rootId = String(nextParent.rootId || nextParent.id || "");
+    node.depth = Math.max(0, Number(nextParent.depth || 0) + 1);
+    node.order = Array.isArray(nextParent.childrenIds) ? nextParent.childrenIds.length : 0;
+    node.branchSide = !nextParent.parentId
+      ? normalizeMindBranchSide(node.branchSide, MIND_BRANCH_RIGHT)
+      : normalizeMindBranchSide(nextParent.branchSide, MIND_BRANCH_RIGHT);
+    nextParent.childrenIds = [...(Array.isArray(nextParent.childrenIds) ? nextParent.childrenIds : []), node.id];
+    if (subtreeNodeIds.length >= 2) {
+      const depthDelta = Math.max(0, Number(node.depth || 0) || 0) - previousDepth;
+      const nextRootId = String(node.rootId || nextParent.rootId || nextParent.id || "");
+      state.board.items = state.board.items.map((item) => {
+        const itemId = String(item?.id || "").trim();
+        if (!subtreeNodeIds.includes(itemId) || itemId === node.id || !isMindMapNode(item)) {
+          return item;
+        }
+        return {
+          ...item,
+          rootId: nextRootId,
+          depth: Math.max(0, Number(item.depth || 0) + depthDelta),
+        };
+      });
+    }
+    if (prevParent) {
+      relayoutMindMapFromNode(prevParent);
+    }
+    relayoutMindMapFromNode(nextParent);
+    state.board.selectedIds = [node.id];
+    return true;
+  }
+
+  function resolveMindMapDropTargetForPointer(nodeId, scenePoint) {
+    const movingNode = getMindNodeById(nodeId);
+    if (!movingNode || !scenePoint) {
+      return null;
+    }
+    const candidates = state.board.items.filter((item) => item?.type === "mindNode" && item.id !== movingNode.id);
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      if (!candidate || isMindNodeDescendantOf(candidate.id, movingNode.id)) {
+        continue;
+      }
+      if (String(movingNode.parentId || "").trim() === String(candidate.id || "").trim()) {
+        continue;
+      }
+      const bounds = getElementBounds(candidate);
+      if (
+        scenePoint.x >= bounds.left - MIND_MAP_REPARENT_HIT_PAD &&
+        scenePoint.x <= bounds.right + MIND_MAP_REPARENT_HIT_PAD &&
+        scenePoint.y >= bounds.top - MIND_MAP_REPARENT_HIT_PAD &&
+        scenePoint.y <= bounds.bottom + MIND_MAP_REPARENT_HIT_PAD
+      ) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   function createFlowNode(anchorPoint) {
@@ -15781,6 +16987,7 @@ function syncRichToolbarEnhancements(toolbar) {
   }
 
   function updateHover(scenePoint) {
+    let feedbackChanged = false;
     let nextHoverHandle = null;
     let nextHoverConnector = null;
     let hit = null;
@@ -15814,9 +17021,13 @@ function syncRichToolbarEnhancements(toolbar) {
           nextHoverConnector = { id: hit.id, side };
         }
       }
+      if (state.pointer?.type !== "move-selection") {
+        feedbackChanged = clearMindMapDropFeedback();
+      }
     }
     const nextHoverId = hit?.id || null;
     if (
+      feedbackChanged ||
       state.hoverId !== nextHoverId ||
       state.hoverHandle !== nextHoverHandle ||
       state.hoverConnector?.id !== nextHoverConnector?.id ||
@@ -15842,24 +17053,30 @@ function syncRichToolbarEnhancements(toolbar) {
       suppressNativeDrag = true;
     }
     refs.canvas?.focus();
+    if (globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER !== "canvas") {
+      globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER = "canvas";
+    }
     const scenePoint = toScenePoint(event.clientX, event.clientY);
     updateLastPointerPoint(scenePoint);
     clearAlignmentSnap("pointer-down");
 
-    if (pendingCanvasLinkBinding && event.button === 0) {
+    if (resolvePendingCanvasLinkBindingMode() && event.button === 0) {
       const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
       if (target && target.id) {
         event.preventDefault();
+        const bindingMode = resolvePendingCanvasLinkBindingMode();
+        const bindingContext = pendingCanvasLinkBinding;
         pendingCanvasLinkBinding = false;
         syncCanvasLinkBindingUi();
-        bindCanvasLinkToSelection(target.id);
-        richTextSession.focus();
+        if (bindingMode === "mind-node") {
+          addMindNodeCanvasLink(String(bindingContext?.sourceId || ""), target.id);
+          syncMindNodeLinkPanel();
+        } else {
+          bindCanvasLinkToSelection(target.id);
+          richTextSession.focus();
+        }
         return;
       }
-      pendingCanvasLinkBinding = false;
-      syncCanvasLinkBindingUi();
-      setStatus("已取消画布链接绑定");
-      return;
     }
 
     if (captureMode === "canvas" && event.button === 0) {
@@ -16045,6 +17262,13 @@ function syncRichToolbarEnhancements(toolbar) {
       if (isLockedItem(singleSelectedItem)) {
         return;
       }
+      if (activeHandle === "mind-link-anchor" && singleSelectedItem?.type === "mindNode") {
+        mindNodeLinkPanelPinnedNodeId = singleSelectedItem.id;
+        activeMindNodeLinkMenuTargetId = "";
+        syncMindNodeLinkPanel();
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+        return;
+      }
       if (singleSelectedItem.type === "shape" && singleSelectedItem.shapeType === "rect" && String(activeHandle).startsWith("round-")) {
         state.pointer = {
           type: "round-rect",
@@ -16159,7 +17383,9 @@ function syncRichToolbarEnhancements(toolbar) {
         pointerId: event.pointerId,
         startScene: scenePoint,
         before: takeHistorySnapshot(state),
+        baseSelectedIds: selectedIds.slice(),
         baseItems,
+        mindSubtreeRootId: target?.type === "mindNode" ? String(target.id || "").trim() : "",
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
       syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
@@ -16364,6 +17590,9 @@ function syncRichToolbarEnhancements(toolbar) {
         nextItems = nextItems.map((item) => (item.id === pairId ? moveElement(pairBase, deltaX, deltaY) : item));
       });
       state.board.items = nextItems;
+      const movedMindNode = pointer.mindSubtreeRootId ? getMindNodeById(pointer.mindSubtreeRootId) : null;
+      const dropTarget = movedMindNode ? resolveMindMapDropTargetForPointer(movedMindNode.id, scenePoint) : null;
+      setMindMapDropFeedback(dropTarget?.id || "", dropTarget ? "将成为子节点" : "");
       const movedCodeBlockIds = Array.from(movedIds).filter((itemId) => {
         const movedItem = nextItems.find((item) => item.id === itemId);
         return movedItem?.type === "codeBlock";
@@ -16616,8 +17845,33 @@ function syncRichToolbarEnhancements(toolbar) {
 
     if (pointer.type === "move-selection") {
       const moved = hasDragExceededThreshold(pointer.startScene, state.lastPointerScenePoint, 3 / Math.max(0.1, state.board.view.scale));
+      const pendingDropTargetId = String(state.mindMapDropTargetId || "").trim();
+      clearMindMapDropFeedback();
       if (moved) {
-        commitItemsPatchHistory(pointer.before, Array.from(pointer.baseItems.keys()), "移动元素", "item-transform-batch");
+        const movedIds = Array.from(pointer.baseItems.keys());
+        const movedMindNode = pointer.mindSubtreeRootId ? getMindNodeById(pointer.mindSubtreeRootId) : null;
+        const dropTarget = pendingDropTargetId
+          ? getMindNodeById(pendingDropTargetId)
+          : hitTestCanvasElement(state.lastPointerScenePoint || scenePoint, state.board.view.scale);
+        const nextParent =
+          movedMindNode &&
+          dropTarget?.type === "mindNode" &&
+          String(dropTarget.id || "").trim() !== String(movedMindNode.id || "").trim()
+            ? dropTarget
+            : null;
+      if (movedMindNode && nextParent && reparentMindNode(movedMindNode.id, nextParent.id)) {
+          commitItemsPatchHistory(pointer.before, movedIds, "调整思维导图层级", "mind-node-reparent");
+        } else {
+          commitItemsPatchHistory(pointer.before, movedIds, "移动元素", "item-transform-batch");
+        }
+        markSceneGraphDirty({ hitTest: true });
+        scheduleRender({
+          reason: "move-selection-commit",
+          sceneDirty: true,
+          interactionDirty: true,
+          overlayDirty: true,
+          fullOverlayRescan: true,
+        });
       } else {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
@@ -16779,6 +18033,10 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (target?.type === "flowNode") {
       beginFlowNodeEdit(target.id);
+      return;
+    }
+    if (target?.type === "mindNode" || target?.type === "mindSummary") {
+      beginMindNodeEdit(target.id);
       return;
     }
     if (target?.type === "table") {
@@ -17242,6 +18500,24 @@ function syncRichToolbarEnhancements(toolbar) {
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-add-child">添加子节点</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-add-sibling">添加同级节点</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-insert-intermediate">插入中间节点</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-add-summary">添加摘要节点</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-promote">提升层级</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-demote">降级层级</button>
+            <div class="canvas2d-context-submenu">
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">分支方向</button>
+              <div class="canvas2d-context-submenu-panel" role="menu" aria-label="分支方向">
+                <button type="button" class="canvas2d-context-menu-item" data-action="mind-branch-left">靠左</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="mind-branch-right">靠右</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="mind-branch-auto">自动</button>
+              </div>
+            </div>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-relayout">整理布局</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="mind-toggle-collapse">${
+              selectedItem?.collapsed ? "展开分支" : "折叠分支"
+            }</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
@@ -17409,7 +18685,106 @@ function syncRichToolbarEnhancements(toolbar) {
       hideContextMenu();
     }
     if (action === "add-node") {
-      createFlowNode(getContextMenuScenePoint());
+      createMindNode(getContextMenuScenePoint());
+      hideContextMenu();
+    }
+    if (action === "mind-add-child") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        createMindChildNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-add-sibling") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        createMindSiblingNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-quick-add-child") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        createMindChildNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-manage-links") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        mindNodeLinkPanelPinnedNodeId = targetItem.id;
+        syncMindNodeLinkPanel();
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-detach-branch") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        detachMindBranch(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-add-summary") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        createMindSummaryNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-promote") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        promoteMindNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-demote") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        demoteMindNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-insert-intermediate") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        insertMindIntermediateNode(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-branch-left") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        setMindBranchSide(targetItem.id, MIND_BRANCH_LEFT);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-branch-right") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        setMindBranchSide(targetItem.id, MIND_BRANCH_RIGHT);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-branch-auto") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        setMindBranchSide(targetItem.id, MIND_BRANCH_AUTO);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-relayout") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        relayoutMindMapByNodeId(targetItem.id);
+      }
+      hideContextMenu();
+    }
+    if (action === "mind-toggle-collapse") {
+      const targetItem = getMindNodeActionTargetItem() || getContextMenuTargetItem(["mindNode"]);
+      if (targetItem) {
+        toggleMindNodeCollapsed(targetItem.id);
+      }
       hideContextMenu();
     }
     if (action === "add-shape-rect") {
@@ -17968,6 +19343,7 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!item || !activeSession) {
       return;
     }
+    const isMindNodeEditor = item.type === "mindNode" || item.type === "mindSummary";
     if (action === "link") {
       if (state.editingType === "table" && tableCellEditState.active) {
         const url = window.prompt("输入链接地址", "");
@@ -18119,9 +19495,18 @@ function syncRichToolbarEnhancements(toolbar) {
       } else if (action === "highlight") {
         activeSession.command("highlight", "#fff4a3");
       } else if (action === "fontSize") {
+        if (isMindNodeEditor) {
+          return;
+        }
         if (color) {
           activeSession.command("fontSize", color);
         }
+      } else if (action === "align-left") {
+        activeSession.command("align", "left");
+      } else if (action === "align-center") {
+        activeSession.command("align", "center");
+      } else if (action === "align-right") {
+        activeSession.command("align", "right");
       }
       activeSession.focus();
       activeSession.captureSelection();
@@ -18134,16 +19519,14 @@ function syncRichToolbarEnhancements(toolbar) {
 
   function onGlobalPointerDown(event) {
     hideLinkMetaTooltip();
-    if (
-      pendingCanvasLinkBinding &&
-      event.target instanceof Element &&
-      !refs.canvas?.contains?.(event.target) &&
-      !refs.richToolbar?.contains?.(event.target) &&
-      !refs.richSelectionToolbar?.contains?.(event.target)
-    ) {
-      pendingCanvasLinkBinding = false;
-      syncCanvasLinkBindingUi();
-      setStatus("已取消画布链接绑定");
+    if (event.target instanceof Element) {
+      const insideMindNodeLinkUi =
+        refs.mindNodeLinkPanel?.contains(event.target) ||
+        refs.mindNodeChrome?.contains(event.target);
+      if (!insideMindNodeLinkUi && (mindNodeLinkPanelPinnedNodeId || activeMindNodeLinkMenuTargetId)) {
+        clearMindNodeLinkPanelState();
+        hideMindNodeLinkPanel();
+      }
     }
     const deferredEditingType = shouldDeferBlankPointerExit(event);
     if (deferredEditingType) {
@@ -18273,18 +19656,33 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (action === "toggle-font-size-panel") {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       toggleRichSelectionFontSizePanel();
       return;
     }
     if (action === "font-size-step-down") {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       stepRichSelectionFontSize(-1);
       return;
     }
     if (action === "font-size-step-up") {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       stepRichSelectionFontSize(1);
       return;
     }
     if (action === "font-size-preset") {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       const size = Number(target.getAttribute("data-size") || 0);
       if (size > 0) {
         applyRichSelectionFontSize(size);
@@ -18798,6 +20196,9 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     const action = target.getAttribute("data-action");
     if (action === "block-type" && target instanceof HTMLSelectElement) {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       requestAnimationFrame(() => {
         if (!richTextSession.isActive()) {
           return;
@@ -18808,6 +20209,9 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     if (action === "selection-font-size-input" && target instanceof HTMLInputElement) {
+      if (isMindNodeRichEditingActive()) {
+        return;
+      }
       if (event.type !== "change") {
         return;
       }
@@ -19537,8 +20941,9 @@ function syncRichToolbarEnhancements(toolbar) {
 
   function onRichEditorBlur(event) {
     if (
-      pendingCanvasLinkBinding ||
-      (deferredBlankEditExit && (state.editingType === "text" || state.editingType === "flow-node"))
+      resolvePendingCanvasLinkBindingMode() ||
+      (deferredBlankEditExit &&
+        (state.editingType === "text" || state.editingType === "flow-node" || isMindNodeEditingType(state.editingType)))
     ) {
       return;
     }
@@ -19553,7 +20958,11 @@ function syncRichToolbarEnhancements(toolbar) {
       return;
     }
     const item = getActiveRichEditingItem();
-    if (!item || (item.type === "text" && isLockedText(item)) || (item.type === "flowNode" && isLockedItem(item))) {
+    if (
+      !item ||
+      (item.type === "text" && isLockedText(item)) ||
+      ((item.type === "flowNode" || item.type === "mindNode") && isLockedItem(item))
+    ) {
       return;
     }
     richTextSession.handleInput(() => {
@@ -19821,6 +21230,152 @@ function syncRichToolbarEnhancements(toolbar) {
       resetTableStructureDragState();
     }
     syncTableEditorSelectionUI();
+  }
+
+  function onMindNodeChromePointerEnter() {
+    mindNodeChromePointerInside = true;
+  }
+
+  function onMindNodeChromePointerLeave() {
+    mindNodeChromePointerInside = false;
+    hideLinkMetaTooltip();
+  }
+
+  function onMindNodeChromePointerDown(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!(actionTarget instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenuClick(event);
+  }
+
+  function getMindNodeActionTargetItem() {
+    const chromeNodeId = String(refs.mindNodeChrome?.getAttribute?.("data-node-id") || "").trim();
+    if (chromeNodeId) {
+      const byChrome = getMindNodeById(chromeNodeId);
+      if (byChrome) {
+        return byChrome;
+      }
+    }
+    return getSingleSelectedItemFast()?.type === "mindNode" ? getSingleSelectedItemFast() : null;
+  }
+
+  function cancelMindNodeLinkMenuCloseTimer() {
+    if (!mindNodeLinkMenuCloseTimer) {
+      return;
+    }
+    clearTimeout(mindNodeLinkMenuCloseTimer);
+    mindNodeLinkMenuCloseTimer = 0;
+  }
+
+  function scheduleMindNodeLinkMenuClose() {
+    cancelMindNodeLinkMenuCloseTimer();
+    mindNodeLinkMenuCloseTimer = setTimeout(() => {
+      mindNodeLinkMenuCloseTimer = 0;
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
+    }, 160);
+  }
+
+  function onMindNodeLinkPanelPointerDown(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!(actionTarget instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onMindNodeLinkPanelClick(event) {
+    cancelMindNodeLinkMenuCloseTimer();
+    const actionTarget = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!(actionTarget instanceof HTMLElement) || !(refs.mindNodeLinkPanel instanceof HTMLDivElement)) {
+      return;
+    }
+    const action = String(actionTarget.getAttribute("data-action") || "").trim();
+    const nodeId = String(refs.mindNodeLinkPanel.getAttribute("data-node-id") || "").trim();
+    const targetId = String(actionTarget.getAttribute("data-target-id") || "").trim();
+    if (action === "mind-link-add") {
+      const started = beginMindNodeCanvasLinkBinding(nodeId);
+      if (!started) {
+        syncMindNodeLinkPanel();
+        return;
+      }
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
+      return;
+    }
+    if (action === "mind-link-open-menu") {
+      activeMindNodeLinkMenuTargetId = activeMindNodeLinkMenuTargetId === targetId ? "" : targetId;
+      syncMindNodeLinkPanel();
+      return;
+    }
+    if (action === "mind-link-focus") {
+      clearMindNodeLinkPanelState();
+      hideMindNodeLinkPanel();
+      scheduleFocusCanvasLinkTarget(targetId);
+      return;
+    }
+    if (action === "mind-link-remove") {
+      removeMindNodeCanvasLink(nodeId, targetId);
+      activeMindNodeLinkMenuTargetId = "";
+      const node = nodeId ? getMindNodeById(nodeId) : null;
+      if (!node || !getMindNodeLinks(node).length) {
+        clearMindNodeLinkPanelState();
+        hideMindNodeLinkPanel();
+        return;
+      }
+      syncMindNodeLinkPanel();
+    }
+  }
+
+  function onMindNodeLinkPanelPointerMove(event) {
+    cancelMindNodeLinkMenuCloseTimer();
+    const actionTarget = event.target instanceof Element
+      ? event.target.closest('[data-action="mind-link-open-menu"], [data-action="mind-link-focus"], [data-action="mind-link-remove"]')
+      : null;
+    if (!(actionTarget instanceof HTMLElement)) {
+      return;
+    }
+    const menuAction = String(actionTarget?.getAttribute?.("data-action") || "").trim();
+    const targetId =
+      menuAction === "mind-link-focus" || menuAction === "mind-link-remove"
+        ? String(actionTarget?.getAttribute?.("data-target-id") || "").trim()
+        : String(actionTarget?.getAttribute?.("data-target-id") || "").trim();
+    if (targetId === activeMindNodeLinkMenuTargetId) {
+      return;
+    }
+    activeMindNodeLinkMenuTargetId = targetId;
+    requestAnimationFrame(() => {
+      if (targetId !== activeMindNodeLinkMenuTargetId) {
+        return;
+      }
+      syncMindNodeLinkPanel();
+    });
+  }
+
+  function onMindNodeLinkPanelPointerLeave() {
+    scheduleMindNodeLinkMenuClose();
+  }
+
+  function onMindNodeChromePointerMove(event) {
+    const actionTarget = event.target instanceof Element ? event.target.closest('[data-action="mind-manage-links"]') : null;
+    const nodeId = String(refs.mindNodeChrome?.getAttribute?.("data-node-id") || "").trim();
+    if (!(actionTarget instanceof HTMLElement) || !nodeId) {
+      activeMindNodeLinkHoverId = "";
+      hideLinkMetaTooltip();
+      return;
+    }
+    const node = getMindNodeById(nodeId);
+    if (!node || !getMindNodeLinks(node).length) {
+      activeMindNodeLinkHoverId = "";
+      hideLinkMetaTooltip();
+      return;
+    }
+    activeMindNodeLinkHoverId = node.id;
+    updateMindNodeLinkTooltip(node, Number(event.clientX || 0), Number(event.clientY || 0));
   }
 
   function onTableEditorKeyDown(event) {
@@ -20515,6 +22070,9 @@ function syncRichToolbarEnhancements(toolbar) {
     if (!isInteractiveMode()) {
       return;
     }
+    if (globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") {
+      return;
+    }
     const key = String(event.key || "").toLowerCase();
     if (key === "escape" && pendingRichExternalLinkEdit) {
       event.preventDefault();
@@ -20611,6 +22169,11 @@ function syncRichToolbarEnhancements(toolbar) {
         beginFlowNodeEdit(selected.id);
         return;
       }
+      if (selected?.type === "mindNode") {
+        event.preventDefault();
+        beginMindNodeEdit(selected.id);
+        return;
+      }
       if (selected?.type === "table") {
         event.preventDefault();
         beginTableEdit(selected.id, tableEditSelection);
@@ -20626,6 +22189,36 @@ function syncRichToolbarEnhancements(toolbar) {
       event.preventDefault();
       toggleLockOnSelection();
       return;
+    }
+    if (state.board.selectedIds.length === 1 && state.tool === "select") {
+      const selected = getSingleSelectedItemFast();
+      if (selected?.type === "mindNode") {
+        if (key === "tab" && event.shiftKey) {
+          event.preventDefault();
+          promoteMindNode(selected.id);
+          return;
+        }
+        if (key === "tab" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          demoteMindNode(selected.id);
+          return;
+        }
+        if (key === "tab") {
+          event.preventDefault();
+          createMindChildNode(selected.id);
+          return;
+        }
+        if (key === " " || key === "spacebar") {
+          event.preventDefault();
+          toggleMindNodeCollapsed(selected.id);
+          return;
+        }
+        if (key === "enter" && event.shiftKey) {
+          event.preventDefault();
+          createMindSiblingNode(selected.id);
+          return;
+        }
+      }
     }
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return;
@@ -20644,7 +22237,13 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (key === "n") {
       event.preventDefault();
-      createFlowNode(getCenterScenePoint());
+      const created = createMindNode(getCenterScenePoint());
+      if (created) {
+        const selected = getSingleSelectedItemFast();
+        if (selected?.type === "mindNode") {
+          beginMindNodeEdit(selected.id);
+        }
+      }
       return;
     }
     if (key === "p") {
@@ -20680,7 +22279,7 @@ function syncRichToolbarEnhancements(toolbar) {
     }
     if (key === "escape") {
       event.preventDefault();
-      if (pendingCanvasLinkBinding) {
+      if (resolvePendingCanvasLinkBindingMode()) {
         pendingCanvasLinkBinding = false;
         syncCanvasLinkBindingUi();
         setStatus("已取消画布链接绑定");
@@ -20769,6 +22368,14 @@ function syncRichToolbarEnhancements(toolbar) {
     bind(refs.tableToolbar, "pointerenter", onTableToolbarPointerEnter);
     bind(refs.tableToolbar, "pointerleave", onTableToolbarPointerLeave);
     bind(refs.tableToolbar, "click", onTableToolbarClick);
+    bind(refs.mindNodeChrome, "pointerenter", onMindNodeChromePointerEnter);
+    bind(refs.mindNodeChrome, "pointerleave", onMindNodeChromePointerLeave);
+    bind(refs.mindNodeChrome, "pointermove", onMindNodeChromePointerMove);
+    bind(refs.mindNodeChrome, "pointerdown", onMindNodeChromePointerDown, true);
+    bind(refs.mindNodeLinkPanel, "pointerdown", onMindNodeLinkPanelPointerDown, true);
+    bind(refs.mindNodeLinkPanel, "pointermove", onMindNodeLinkPanelPointerMove);
+    bind(refs.mindNodeLinkPanel, "pointerleave", onMindNodeLinkPanelPointerLeave);
+    bind(refs.mindNodeLinkPanel, "click", onMindNodeLinkPanelClick);
     bind(refs.codeBlockEditor, "pointerdown", onCodeBlockEditorPointerDown, true);
     bind(refs.codeBlockEditor, "keydown", onCodeBlockEditorKeyDown);
     bind(refs.codeBlockToolbar, "pointerdown", onCodeBlockToolbarPointerDown, true);
@@ -21559,30 +23166,72 @@ function syncRichToolbarEnhancements(toolbar) {
     closeFileCardPreview: clearFileCardPreviewRequest,
     toggleFileCardPreviewExpanded,
     setFileCardPreviewZoom,
+    addMindMapRoot() {
+      const created = createMindNode(getCenterScenePoint());
+      if (created) {
+        const selected = getSingleSelectedItemFast();
+        if (selected?.type === "mindNode") {
+          beginMindNodeEdit(selected.id);
+        }
+      }
+      return created;
+    },
     addFlowNode() {
-      return createFlowNode(getCenterScenePoint());
+      return this.addMindMapRoot();
+    },
+    addMindChildNode(nodeId) {
+      return createMindChildNode(nodeId);
+    },
+    addMindSiblingNode(nodeId) {
+      return createMindSiblingNode(nodeId);
+    },
+    addMindSummaryNode(nodeId, options) {
+      return createMindSummaryNode(nodeId, options);
+    },
+    promoteMindNode(nodeId) {
+      return promoteMindNode(nodeId);
+    },
+    demoteMindNode(nodeId) {
+      return demoteMindNode(nodeId);
+    },
+    insertMindIntermediateNode(nodeId) {
+      return insertMindIntermediateNode(nodeId);
+    },
+    setMindBranchSide(nodeId, side) {
+      return setMindBranchSide(nodeId, side);
+    },
+    relayoutMindMapByNodeId(nodeId) {
+      return relayoutMindMapByNodeId(nodeId);
+    },
+    toggleMindNodeCollapsed(nodeId) {
+      return toggleMindNodeCollapsed(nodeId);
     },
     addTable,
     addCodeBlock,
     newBoard,
     openBoard,
     openBoardAtPath,
+    repairBoardAtPath,
     ensureTutorialBoard,
     saveBoard,
     saveBoardAs,
-    renameBoard,
-    renameBoardAtPath,
-    deleteBoardAtPath,
-    revealBoardInFolder,
-    revealBoardPathInFolder,
+    renameBoard: workspaceManager.renameBoard,
+    renameBoardAtPath: workspaceManager.renameBoardAtPath,
+    deleteBoardAtPath: workspaceManager.deleteBoardAtPath,
+    revealBoardInFolder: workspaceManager.revealBoardInFolder,
+    revealBoardPathInFolder: workspaceManager.revealBoardPathInFolder,
     openExternalUrl,
-    pickCanvasBoardSavePath,
-    getCanvasBoardWorkspace,
-    pickCanvasWorkspaceFolder,
-    listCanvasBoards,
-    createBoardInWorkspace,
-    revealCanvasImageSavePath,
-    pickCanvasImageSavePath,
+    pickCanvasBoardSavePath: workspaceManager.pickCanvasBoardSavePath,
+    getCanvasBoardWorkspace: workspaceManager.getCanvasBoardWorkspace,
+    pickCanvasWorkspaceFolder: workspaceManager.pickCanvasWorkspaceFolder,
+    listCanvasBoards: workspaceManager.listCanvasBoards,
+    createBoardInWorkspace: workspaceManager.createBoardInWorkspace,
+    revealCanvasImageSavePath: workspaceManager.revealCanvasImageSavePath,
+    pickCanvasImageSavePath: workspaceManager.pickCanvasImageSavePath,
+    refreshCanvasImageManager,
+    insertManagedCanvasImage,
+    importCanvasImagesFromClipboard,
+    captureCanvasImageToManager,
     setBoardBackgroundPattern,
     toggleAutosave() {
       setAutosaveEnabled(!state.boardAutosaveEnabled);

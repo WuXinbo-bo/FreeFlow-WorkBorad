@@ -860,7 +860,580 @@ async function runUndoPatchCheck(browser) {
     });
     assert(session.getErrors().length === 0, "undo patch check produced page errors", session.getErrors());
     assert(result?.canUndo === true, "addFlowNode did not produce undo entry", result);
+    assert(
+      Array.isArray(result?.board?.items) && result.board.items.some((item) => item.type === "mindNode"),
+      "addFlowNode should now create a mindNode root",
+      result
+    );
     return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapBasicCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      window.__canvas2dEngine.addFlowNode();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode") || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const items = Array.isArray(snapshot?.board?.items) ? snapshot.board.items : [];
+      const rootAfter = items.find((item) => item.id === root.id) || null;
+      const children = items.filter((item) => item.parentId === root.id);
+      const childBranchSides = children.map((item) => item.branchSide || "");
+      window.__canvas2dEngine.toggleMindNodeCollapsed(root.id);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const collapsedSnapshot = window.__canvas2dEngine.getSnapshot();
+      const collapsedRoot = collapsedSnapshot?.board?.items?.find?.((item) => item.id === root.id) || null;
+      return {
+        rootExists: true,
+        rootId: root.id,
+        childCount: children.length,
+        childParentId: children[0]?.parentId || "",
+        rootChildrenIds: rootAfter?.childrenIds || [],
+        childBranchSides,
+        collapsed: Boolean(collapsedRoot?.collapsed),
+        canUndo: Boolean(collapsedSnapshot?.canUndo),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map basic check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map root was not created", result);
+    assert(result.childCount >= 2, "mind map root children were not created via keyboard flow", result);
+    assert(result.childParentId === result.rootId, "mind map child did not bind to root", result);
+    assert(Array.isArray(result.rootChildrenIds) && result.rootChildrenIds.length >= 1, "root childrenIds not updated", result);
+    assert(
+      Array.isArray(result.childBranchSides) && result.childBranchSides.every((side) => side === "right"),
+      "mind map root children should default to the right branch",
+      result
+    );
+    assert(result.collapsed === true, "mind map collapse toggle did not persist", result);
+    assert(result.canUndo === true, "mind map actions did not enter undo history", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapDragConnectionCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode") || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const child = snapshot?.board?.items?.find?.((item) => item.parentId === root.id) || null;
+      if (!child) {
+        return { rootExists: true, childExists: false };
+      }
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const view = snapshot.board.view;
+      const startX = (Number(child.x || 0) + Number(child.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0);
+      const startY = (Number(child.y || 0) + Number(child.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0);
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: startX, clientY: startY, button: 0, buttons: 1, pointerId: 1 }));
+      canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: startX + 120, clientY: startY + 12, button: 0, buttons: 1, pointerId: 1 }));
+      await waitFrame();
+      const duringDragStats = canvas.__ffRenderStats || null;
+      canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: startX + 120, clientY: startY + 12, button: 0, buttons: 0, pointerId: 1 }));
+      await waitFrame();
+      return {
+        rootExists: true,
+        childExists: true,
+        renderedItems: Number(duringDragStats?.renderedItems || 0),
+        dynamicRenderedItems: Number(duringDragStats?.dynamicRenderedItems || 0),
+        staticRenderedItems: Number(duringDragStats?.staticRenderedItems || 0),
+        mindMapConnectionsDrawn: Number(duringDragStats?.mindMapConnectionsDrawn || 0),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map drag connection check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map drag check root was not created", result);
+    assert(result.childExists === true, "mind map drag check child was not created", result);
+    assert(result.renderedItems >= 2, "mind map drag check rendered item count is invalid", result);
+    assert(result.dynamicRenderedItems >= 1, "mind map drag check missing dynamic node render", result);
+    assert(result.staticRenderedItems >= 1, "mind map drag check missing static node render", result);
+    assert(result.mindMapConnectionsDrawn >= 1, "mind map connection disappeared during drag", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapReparentCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const children = snapshot.board.items.filter((item) => item.parentId === root.id);
+      const source = children[0] || null;
+      const target = children[1] || null;
+      if (!source || !target) {
+        return { rootExists: true, childPairExists: false };
+      }
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const view = snapshot.board.view;
+      const sourceX = (Number(source.x || 0) + Number(source.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0);
+      const sourceY = (Number(source.y || 0) + Number(source.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0);
+      const targetX = (Number(target.x || 0) + Number(target.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0);
+      const targetY = (Number(target.y || 0) + Number(target.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0);
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: sourceX, clientY: sourceY, button: 0, buttons: 1, pointerId: 2 }));
+      canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: targetX, clientY: targetY, button: 0, buttons: 1, pointerId: 2 }));
+      await waitFrame();
+      canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: targetX, clientY: targetY, button: 0, buttons: 0, pointerId: 2 }));
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const movedSource = snapshot.board.items.find((item) => item.id === source.id) || null;
+      const movedTarget = snapshot.board.items.find((item) => item.id === target.id) || null;
+      return {
+        rootExists: true,
+        childPairExists: true,
+        sourceParentId: movedSource?.parentId || "",
+        targetId: movedTarget?.id || "",
+        canUndo: Boolean(snapshot?.canUndo),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map reparent check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map reparent check root was not created", result);
+    assert(result.childPairExists === true, "mind map reparent check child pair missing", result);
+    assert(result.sourceParentId === result.targetId, "mind map node did not reparent onto drop target", result);
+    assert(result.canUndo === true, "mind map reparent action did not enter undo history", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapDropFeedbackCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const children = snapshot.board.items.filter((item) => item.parentId === root.id);
+      const source = children[0] || null;
+      const target = children[1] || null;
+      if (!source || !target) {
+        return { rootExists: true, childPairExists: false };
+      }
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const rect = canvas.getBoundingClientRect();
+      const view = snapshot.board.view;
+      return {
+        rootExists: true,
+        childPairExists: true,
+        sourceId: source.id,
+        targetId: target.id,
+        sourceX: rect.left + (Number(source.x || 0) + Number(source.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        sourceY: rect.top + (Number(source.y || 0) + Number(source.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
+        targetX: rect.left + (Number(target.x || 0) + Number(target.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        targetY: rect.top + (Number(target.y || 0) + Number(target.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map drop feedback check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map drop feedback root missing", result);
+    assert(result.childPairExists === true, "mind map drop feedback child pair missing", result);
+    await session.page.mouse.move(result.sourceX, result.sourceY);
+    await session.page.mouse.down();
+    await session.page.mouse.move(result.targetX, result.targetY, { steps: 14 });
+    await session.page.waitForTimeout(120);
+    const duringDrag = await session.page.evaluate(() => window.__canvas2dEngine.getSnapshot());
+    await session.page.mouse.up();
+    await session.page.waitForTimeout(120);
+    const afterDrop = await session.page.evaluate((sourceId) => {
+      const snapshot = window.__canvas2dEngine.getSnapshot();
+      return {
+        dropTargetId: snapshot?.mindMapDropTargetId || "",
+        dropHint: snapshot?.mindMapDropHint || "",
+        movedParentId: snapshot?.board?.items?.find?.((item) => item.id === sourceId)?.parentId || "",
+      };
+    }, result.sourceId);
+    const finalResult = {
+      ...result,
+      dropTargetIdDuringDrag: duringDrag?.mindMapDropTargetId || "",
+      dropHintDuringDrag: duringDrag?.mindMapDropHint || "",
+      dropTargetCleared: !afterDrop?.dropTargetId && !afterDrop?.dropHint,
+      movedParentId: afterDrop?.movedParentId || "",
+    };
+    assert(Boolean(finalResult.dropTargetIdDuringDrag), "mind map drag target feedback did not appear", finalResult);
+    assert(finalResult.dropHintDuringDrag === "将成为子节点", "mind map drag hint text is missing", finalResult);
+    assert(finalResult.dropTargetCleared === true, "mind map drag target feedback was not cleared after drop", finalResult);
+    assert(finalResult.movedParentId === finalResult.targetId, "mind map drag feedback check did not reparent onto target", finalResult);
+    return finalResult;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapStructureActionsCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const siblings = snapshot.board.items.filter((item) => item.parentId === root.id);
+      const first = siblings[0] || null;
+      const second = siblings[1] || null;
+      if (!first || !second) {
+        return { rootExists: true, childPairExists: false };
+      }
+      window.__canvas2dEngine.demoteMindNode(second.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const demoted = snapshot.board.items.find((item) => item.id === second.id) || null;
+      const demotedParent = snapshot.board.items.find((item) => item.id === first.id) || null;
+      window.__canvas2dEngine.insertMindIntermediateNode(second.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const movedSecond = snapshot.board.items.find((item) => item.id === second.id) || null;
+      const bridge = snapshot.board.items.find((item) => item.type === "mindNode" && item.parentId === first.id && Array.isArray(item.childrenIds) && item.childrenIds.includes(second.id) && item.id !== second.id) || null;
+      return {
+        rootExists: true,
+        childPairExists: true,
+        demotedParentId: demoted?.parentId || "",
+        expectedDemotedParentId: first.id,
+        secondNodeId: second.id,
+        demotedParentChildren: demotedParent?.childrenIds || [],
+        bridgeExists: Boolean(bridge),
+        bridgeId: bridge?.id || "",
+        bridgeParentId: bridge?.parentId || "",
+        bridgeChildIds: bridge?.childrenIds || [],
+        movedSecondParentId: movedSecond?.parentId || "",
+        canUndo: Boolean(snapshot?.canUndo),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map structure actions check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map structure actions root missing", result);
+    assert(result.childPairExists === true, "mind map structure actions child pair missing", result);
+    assert(result.demotedParentId === result.expectedDemotedParentId, "mind map demote did not move node under previous sibling", result);
+    assert(Array.isArray(result.demotedParentChildren) && result.demotedParentChildren.length >= 1, "mind map demote did not update parent children", result);
+    assert(result.bridgeExists === true, "mind map intermediate node was not inserted", result);
+    assert(Array.isArray(result.bridgeChildIds) && result.bridgeChildIds.length === 1, "mind map intermediate node children are invalid", result);
+    assert(result.bridgeChildIds[0] === result.secondNodeId, "mind map intermediate node did not capture the original node", result);
+    assert(result.movedSecondParentId === result.bridgeId, "mind map intermediate node did not become the new parent", result);
+    assert(result.canUndo === true, "mind map structure actions did not enter undo history", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapAncestorReparentCheck(browser) {
+  const board = createBoard([], [], { scale: 1, offsetX: 0, offsetY: 0 });
+  const session = await createPage(browser, { board });
+  try {
+    await session.page.setViewportSize({ width: 1900, height: 960 });
+    await waitForStableCanvas(session.page);
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const child = snapshot?.board?.items?.find?.((item) => item.parentId === root.id) || null;
+      if (!child) {
+        return { rootExists: true, childExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(child.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const grandchild = snapshot?.board?.items?.find?.((item) => item.parentId === child.id) || null;
+      if (!grandchild) {
+        return { rootExists: true, childExists: true, grandchildExists: false };
+      }
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const rect = canvas.getBoundingClientRect();
+      const view = snapshot.board.view;
+      const toScreen = (item) => ({
+        x: rect.left + (Number(item.x || 0) + Number(item.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        y: rect.top + (Number(item.y || 0) + Number(item.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
+      });
+      return {
+        rootExists: true,
+        childExists: true,
+        grandchildExists: true,
+        rootId: root.id,
+        grandchildId: grandchild.id,
+        rootPoint: toScreen(root),
+        grandchildPoint: toScreen(grandchild),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map ancestor reparent setup produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map ancestor reparent root missing", result);
+    assert(result.childExists === true, "mind map ancestor reparent child missing", result);
+    assert(result.grandchildExists === true, "mind map ancestor reparent grandchild missing", result);
+    await session.page.mouse.move(result.grandchildPoint.x, result.grandchildPoint.y);
+    await session.page.mouse.down();
+    await session.page.mouse.move(result.rootPoint.x, result.rootPoint.y, { steps: 16 });
+    await session.page.waitForTimeout(120);
+    const duringDrag = await session.page.evaluate(() => window.__canvas2dEngine.getSnapshot());
+    await session.page.mouse.up();
+    await session.page.waitForTimeout(120);
+    const afterDrop = await session.page.evaluate((grandchildId) => {
+      const snapshot = window.__canvas2dEngine.getSnapshot();
+      return {
+        movedParentId: snapshot?.board?.items?.find?.((item) => item.id === grandchildId)?.parentId || "",
+        dropTargetId: snapshot?.mindMapDropTargetId || "",
+        dropHint: snapshot?.mindMapDropHint || "",
+      };
+    }, result.grandchildId);
+    const finalResult = {
+      ...result,
+      dropTargetIdDuringDrag: duringDrag?.mindMapDropTargetId || "",
+      dropHintDuringDrag: duringDrag?.mindMapDropHint || "",
+      movedParentId: afterDrop?.movedParentId || "",
+      dropTargetCleared: !afterDrop?.dropTargetId && !afterDrop?.dropHint,
+    };
+    assert(finalResult.dropTargetIdDuringDrag === finalResult.rootId, "mind map ancestor reparent did not target ancestor during drag", finalResult);
+    assert(finalResult.dropHintDuringDrag === "将成为子节点", "mind map ancestor reparent hint missing", finalResult);
+    assert(finalResult.movedParentId === finalResult.rootId, "mind map descendant did not merge into ancestor", finalResult);
+    assert(finalResult.dropTargetCleared === true, "mind map ancestor reparent feedback was not cleared", finalResult);
+    return finalResult;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapSummaryCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const children = snapshot.board.items.filter((item) => item.parentId === root.id);
+      const anchor = children[0] || null;
+      if (!anchor || children.length < 2) {
+        return { rootExists: true, childrenReady: false };
+      }
+      window.__canvas2dEngine.addMindSummaryNode(anchor.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const summary = snapshot.board.items.find((item) => item.type === "mindSummary") || null;
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const stats = canvas?.__ffRenderStats || null;
+      return {
+        rootExists: true,
+        childrenReady: true,
+        summaryExists: Boolean(summary),
+        summarySiblingIds: summary?.siblingIds || [],
+        summaryOwnerId: summary?.summaryOwnerId || "",
+        summaryX: Number(summary?.x || 0),
+        childrenMaxX: Math.max(...children.map((item) => Number(item.x || 0) + Number(item.width || 0))),
+        connectionsDrawn: Number(stats?.mindMapConnectionsDrawn || 0),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map summary check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map summary root missing", result);
+    assert(result.childrenReady === true, "mind map summary children missing", result);
+    assert(result.summaryExists === true, "mind map summary node was not created", result);
+    assert(Array.isArray(result.summarySiblingIds) && result.summarySiblingIds.length >= 2, "mind map summary sibling binding missing", result);
+    assert(Boolean(result.summaryOwnerId), "mind map summary owner missing", result);
+    assert(result.summaryX > result.childrenMaxX, "mind map summary should be placed outside sibling group", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapRelationshipCheck(browser) {
+  const board = createBoard([]);
+  const session = await createPage(browser, { board });
+  try {
+    const result = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const children = snapshot.board.items.filter((item) => item.parentId === root.id);
+      if (children.length < 2) {
+        return { rootExists: true, childrenReady: false };
+      }
+      window.__canvas2dEngine.addMindRelationship(children[0].id, children[1].id, { label: "依赖" });
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const relationship = snapshot.board.items.find((item) => item.type === "mindRelationship") || null;
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const stats = canvas?.__ffRenderStats || null;
+      return {
+        rootExists: true,
+        childrenReady: true,
+        relationshipExists: Boolean(relationship),
+        fromId: relationship?.fromId || "",
+        toId: relationship?.toId || "",
+        label: relationship?.label || "",
+        connectionsDrawn: Number(stats?.mindMapConnectionsDrawn || 0),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map relationship check produced page errors", session.getErrors());
+    assert(result.rootExists === true, "mind map relationship root missing", result);
+    assert(result.childrenReady === true, "mind map relationship children missing", result);
+    assert(result.relationshipExists === true, "mind map relationship was not created", result);
+    assert(Boolean(result.fromId) && Boolean(result.toId), "mind map relationship endpoints missing", result);
+    assert(result.label === "依赖", "mind map relationship label missing", result);
+    assert(result.connectionsDrawn >= 2, "mind map relationship should contribute to connection layer rendering", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runMindMapSubtreeReparentCheck(browser) {
+  const board = createBoard([], [], { scale: 1, offsetX: 0, offsetY: 0 });
+  const session = await createPage(browser, { board });
+  try {
+    await session.page.setViewportSize({ width: 1900, height: 960 });
+    await waitForStableCanvas(session.page);
+    const setup = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.__canvas2dEngine.addFlowNode();
+      await waitFrame();
+      let snapshot = window.__canvas2dEngine.getSnapshot();
+      const root = snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      if (!root) {
+        return { rootExists: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      window.__canvas2dEngine.addMindChildNode(root.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const siblings = snapshot.board.items.filter((item) => item.parentId === root.id);
+      const source = siblings[0] || null;
+      const target = siblings[1] || null;
+      if (!source || !target) {
+        return { rootExists: true, siblingsReady: false };
+      }
+      window.__canvas2dEngine.addMindChildNode(source.id);
+      await waitFrame();
+      snapshot = window.__canvas2dEngine.getSnapshot();
+      const child = snapshot.board.items.find((item) => item.parentId === source.id) || null;
+      if (!child) {
+        return { rootExists: true, siblingsReady: true, subtreeReady: false };
+      }
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const rect = canvas.getBoundingClientRect();
+      const view = snapshot.board.view;
+      const toScreen = (item) => ({
+        x: rect.left + (Number(item.x || 0) + Number(item.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        y: rect.top + (Number(item.y || 0) + Number(item.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
+      });
+      return {
+        rootExists: true,
+        siblingsReady: true,
+        subtreeReady: true,
+        sourceId: source.id,
+        targetId: target.id,
+        childId: child.id,
+        sourcePoint: toScreen(source),
+        targetPoint: toScreen(target),
+      };
+    });
+    assert(session.getErrors().length === 0, "mind map subtree reparent setup produced page errors", session.getErrors());
+    assert(setup.rootExists === true, "mind map subtree reparent root missing", setup);
+    assert(setup.siblingsReady === true, "mind map subtree reparent siblings missing", setup);
+    assert(setup.subtreeReady === true, "mind map subtree reparent subtree missing", setup);
+    await session.page.mouse.move(setup.sourcePoint.x, setup.sourcePoint.y);
+    await session.page.mouse.down();
+    await session.page.mouse.move(setup.targetPoint.x, setup.targetPoint.y, { steps: 16 });
+    await session.page.waitForTimeout(120);
+    await session.page.mouse.up();
+    await session.page.waitForTimeout(120);
+    const result = await session.page.evaluate(({ sourceId, targetId, childId }) => {
+      const snapshot = window.__canvas2dEngine.getSnapshot();
+      const source = snapshot?.board?.items?.find?.((item) => item.id === sourceId) || null;
+      const child = snapshot?.board?.items?.find?.((item) => item.id === childId) || null;
+      return {
+        sourceParentId: source?.parentId || "",
+        targetId,
+        childParentId: child?.parentId || "",
+        sourceChildrenIds: source?.childrenIds || [],
+      };
+    }, setup);
+    assert(result.sourceParentId === result.targetId, "mind map subtree root did not reparent onto target", result);
+    assert(result.childParentId === setup.sourceId, "mind map subtree child did not stay attached to moved subtree", result);
+    assert(Array.isArray(result.sourceChildrenIds) && result.sourceChildrenIds.includes(setup.childId), "mind map subtree childrenIds were not preserved", result);
+    return { ...setup, ...result };
   } finally {
     await session.page.close();
   }
@@ -1179,6 +1752,15 @@ async function main() {
     report.checks.localizedTileInvalidation = await runLocalizedTileInvalidationCheck(browser);
     report.checks.backgroundLayerReuse = await runBackgroundLayerReuseCheck(browser);
     report.checks.undoPatch = await runUndoPatchCheck(browser);
+    report.checks.mindMapBasic = await runMindMapBasicCheck(browser);
+    report.checks.mindMapDragConnection = await runMindMapDragConnectionCheck(browser);
+    report.checks.mindMapReparent = await runMindMapReparentCheck(browser);
+    report.checks.mindMapDropFeedback = await runMindMapDropFeedbackCheck(browser);
+    report.checks.mindMapStructureActions = await runMindMapStructureActionsCheck(browser);
+    report.checks.mindMapAncestorReparent = await runMindMapAncestorReparentCheck(browser);
+    report.checks.mindMapSummary = await runMindMapSummaryCheck(browser);
+    report.checks.mindMapRelationship = await runMindMapRelationshipCheck(browser);
+    report.checks.mindMapSubtreeReparent = await runMindMapSubtreeReparentCheck(browser);
     report.checks.lowZoomOverlaySummary = await runLowZoomOverlaySummaryCheck(browser);
     report.checks.textSummaryStability = await runTextSummaryStabilityCheck(browser);
     report.checks.fileCardLodThreshold = await runFileCardLodThresholdCheck(browser);

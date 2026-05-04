@@ -74,6 +74,7 @@ function createUnsupportedManager() {
     syncEmbeddedWindowBounds: error,
     setEmbeddedWindowMinimized: () => ({ ok: true, active: false, minimized: false }),
     focusEmbeddedWindow: () => ({ ok: true, active: false }),
+    blurEmbeddedWindow: () => ({ ok: true, active: false }),
     clearEmbeddedWindow: () => ({ ok: true, active: false }),
   };
 }
@@ -98,8 +99,21 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     bottom: "long",
   });
   const LPRECT = koffi.pointer("LPRECT", RECT);
+  const GUITHREADINFO = koffi.struct("GUITHREADINFO", {
+    cbSize: "uint",
+    flags: "uint",
+    hwndActive: "uintptr",
+    hwndFocus: "uintptr",
+    hwndCapture: "uintptr",
+    hwndMenuOwner: "uintptr",
+    hwndMoveSize: "uintptr",
+    hwndCaret: "uintptr",
+    rcCaret: RECT,
+  });
+  const LPGUITHREADINFO = koffi.pointer("LPGUITHREADINFO", GUITHREADINFO);
 
   const user32 = koffi.load("user32.dll");
+  const kernel32 = koffi.load("kernel32.dll");
   const GetParent = user32.func("__stdcall", "GetParent", "uintptr", ["uintptr"]);
   const SetParent = user32.func("__stdcall", "SetParent", "uintptr", ["uintptr", "uintptr"]);
   const GetWindowLongPtrW = user32.func("__stdcall", "GetWindowLongPtrW", "intptr", ["uintptr", "int"]);
@@ -116,7 +130,12 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
   const ShowWindow = user32.func("__stdcall", "ShowWindow", "bool", ["uintptr", "int"]);
   const BringWindowToTop = user32.func("__stdcall", "BringWindowToTop", "bool", ["uintptr"]);
   const SetForegroundWindow = user32.func("__stdcall", "SetForegroundWindow", "bool", ["uintptr"]);
+  const SetActiveWindow = user32.func("__stdcall", "SetActiveWindow", "uintptr", ["uintptr"]);
   const SetFocus = user32.func("__stdcall", "SetFocus", "uintptr", ["uintptr"]);
+  const GetGUIThreadInfo = user32.func("__stdcall", "GetGUIThreadInfo", "bool", ["uint", koffi.out(LPGUITHREADINFO)]);
+  const GetWindowThreadProcessId = user32.func("__stdcall", "GetWindowThreadProcessId", "uint", ["uintptr", "uintptr"]);
+  const AttachThreadInput = user32.func("__stdcall", "AttachThreadInput", "bool", ["uint", "uint", "bool"]);
+  const GetCurrentThreadId = kernel32.func("__stdcall", "GetCurrentThreadId", "uint", []);
   const SetWindowPos = user32.func(
     "__stdcall",
     "SetWindowPos",
@@ -141,6 +160,105 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     }
   }
 
+  function getWindowThreadId(hwnd) {
+    if (!hwnd || hwnd === ZERO_HANDLE || !IsWindow(hwnd)) {
+      return 0;
+    }
+    try {
+      return Number(GetWindowThreadProcessId(hwnd, ZERO_HANDLE) || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  function withAttachedInputQueues(threadIds = [], callback = () => {}) {
+    const currentThreadId = Number(GetCurrentThreadId() || 0);
+    const uniqueThreadIds = [...new Set([currentThreadId, ...threadIds.map((id) => Number(id) || 0).filter(Boolean)])];
+    const attachedPairs = [];
+
+    try {
+      for (let index = 0; index < uniqueThreadIds.length; index += 1) {
+        for (let pairIndex = index + 1; pairIndex < uniqueThreadIds.length; pairIndex += 1) {
+          const first = uniqueThreadIds[index];
+          const second = uniqueThreadIds[pairIndex];
+          if (!first || !second || first === second) {
+            continue;
+          }
+          try {
+            if (AttachThreadInput(first, second, true)) {
+              attachedPairs.push([first, second]);
+            }
+          } catch {
+            // Ignore queue-attach failures and continue with best-effort focus transfer.
+          }
+        }
+      }
+
+      return callback(currentThreadId);
+    } finally {
+      for (let index = attachedPairs.length - 1; index >= 0; index -= 1) {
+        const [first, second] = attachedPairs[index];
+        try {
+          AttachThreadInput(first, second, false);
+        } catch {
+          // Ignore queue-detach failures during cleanup.
+        }
+      }
+    }
+  }
+
+  function readThreadFocusHandle(hwnd) {
+    const threadId = getWindowThreadId(hwnd);
+    if (!threadId) {
+      return ZERO_HANDLE;
+    }
+    const info = {
+      cbSize: Number(koffi.sizeof(GUITHREADINFO)),
+    };
+    try {
+      if (!GetGUIThreadInfo(threadId, info)) {
+        return ZERO_HANDLE;
+      }
+      const focusHwnd = BigInt(info.hwndFocus || ZERO_HANDLE);
+      return focusHwnd && focusHwnd !== ZERO_HANDLE && IsWindow(focusHwnd) ? focusHwnd : ZERO_HANDLE;
+    } catch {
+      return ZERO_HANDLE;
+    }
+  }
+
+  function transferWindowFocus(targetHwnd, sourceHwnd = ZERO_HANDLE, focusHwnd = targetHwnd) {
+    if (!targetHwnd || targetHwnd === ZERO_HANDLE) {
+      return false;
+    }
+
+    const targetThreadId = getWindowThreadId(targetHwnd);
+    const sourceThreadId = getWindowThreadId(sourceHwnd);
+
+    return withAttachedInputQueues([targetThreadId, sourceThreadId], () => {
+      try {
+        BringWindowToTop(targetHwnd);
+      } catch {
+        // Ignore z-order failures.
+      }
+      try {
+        SetForegroundWindow(targetHwnd);
+      } catch {
+        // Ignore foreground failures.
+      }
+      try {
+        SetActiveWindow(targetHwnd);
+      } catch {
+        // Ignore active-window failures.
+      }
+      try {
+        SetFocus(focusHwnd && focusHwnd !== ZERO_HANDLE ? focusHwnd : targetHwnd);
+      } catch {
+        // Ignore focus failures.
+      }
+      return true;
+    });
+  }
+
   function getMainWindowHandle() {
     return bufferToUintPtr(getMainWindow().getNativeWindowHandle());
   }
@@ -161,6 +279,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       minimized: Boolean(embeddedWindow.minimized),
       visible: !Boolean(embeddedWindow.hidden),
       fitMode: embeddedWindow.fitMode || "contain",
+      interactive: Boolean(embeddedWindow.interactive),
     };
   }
 
@@ -384,41 +503,59 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     const clientRect = computeEmbeddedClientRect(target, host.rect, target.fitMode);
     moveEmbeddedWindow(target.hwnd, clientRect);
     ShowWindow(target.hwnd, SW_SHOW);
-    focusEmbeddedWindow(target);
+    setEmbeddedWindowInteractive(false, { target, restoreRendererFocus: false });
     target.hostHwnd = host.hwnd;
     target.hidden = false;
     target.minimized = false;
     target.lastClientRect = clientRect;
   }
 
-  function focusEmbeddedWindow(target = embeddedWindow) {
+  function setEmbeddedWindowInteractive(interactive, { target = embeddedWindow, restoreRendererFocus = true } = {}) {
     if (!target) {
       return {
         ok: true,
         active: false,
+        interactive: false,
       };
     }
 
     ensureValidHandle(target.hwnd);
-    try {
-      ShowWindow(target.hwnd, SW_RESTORE);
-    } catch {
-      // Ignore restore failures.
+    const nextInteractive = Boolean(interactive) && !Boolean(target.hidden) && !Boolean(target.minimized);
+    const previousInteractive = Boolean(target.interactive);
+
+    if (!nextInteractive && restoreRendererFocus && previousInteractive) {
+      try {
+        const focusedChild = readThreadFocusHandle(target.hwnd);
+        if (focusedChild && focusedChild !== ZERO_HANDLE) {
+          target.lastFocusedHwnd = focusedChild;
+        }
+      } catch {
+        // Ignore focused-child snapshot failures before returning to renderer.
+      }
+      try {
+        transferWindowFocus(getMainWindowHandle(), target.hwnd);
+      } catch {
+        // Ignore focus-transfer failures while returning focus to the renderer.
+      }
     }
-    try {
-      BringWindowToTop(target.hwnd);
-    } catch {
-      // Ignore z-order failures.
-    }
-    try {
-      SetForegroundWindow(target.hwnd);
-    } catch {
-      // Ignore foreground failures.
-    }
-    try {
-      SetFocus(target.hwnd);
-    } catch {
-      // Ignore focus failures.
+
+    target.interactive = nextInteractive;
+
+    if (nextInteractive) {
+      try {
+        ShowWindow(target.hwnd, SW_RESTORE);
+      } catch {
+        // Ignore restore failures.
+      }
+      try {
+        const preferredFocusHwnd =
+          target.lastFocusedHwnd && target.lastFocusedHwnd !== ZERO_HANDLE && IsWindow(target.lastFocusedHwnd)
+            ? target.lastFocusedHwnd
+            : readThreadFocusHandle(target.hwnd) || target.hwnd;
+        transferWindowFocus(target.hwnd, getMainWindowHandle(), preferredFocusHwnd);
+      } catch {
+        // Ignore focus-transfer failures.
+      }
     }
 
     return {
@@ -429,7 +566,22 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       visible: !Boolean(target.hidden),
       minimized: Boolean(target.minimized),
       fitMode: target.fitMode || "contain",
+      interactive: Boolean(target.interactive),
     };
+  }
+
+  function focusEmbeddedWindow(target = embeddedWindow) {
+    return setEmbeddedWindowInteractive(true, {
+      target,
+      restoreRendererFocus: false,
+    });
+  }
+
+  function blurEmbeddedWindow(target = embeddedWindow) {
+    return setEmbeddedWindowInteractive(false, {
+      target,
+      restoreRendererFocus: true,
+    });
   }
 
   function setEmbeddedWindowVisibility(visible) {
@@ -443,6 +595,12 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
 
     ensureValidHandle(embeddedWindow.hwnd);
     const nextVisible = Boolean(visible);
+    if (!nextVisible) {
+      setEmbeddedWindowInteractive(false, {
+        target: embeddedWindow,
+        restoreRendererFocus: false,
+      });
+    }
     embeddedWindow.hidden = !nextVisible;
 
     if (!embeddedWindow.minimized) {
@@ -450,9 +608,6 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         ShowWindow(hostWindow.hwnd, nextVisible ? SW_SHOW : SW_HIDE);
       }
       ShowWindow(embeddedWindow.hwnd, nextVisible ? SW_SHOW : SW_HIDE);
-      if (nextVisible) {
-        focusEmbeddedWindow(embeddedWindow);
-      }
     }
 
     return {
@@ -463,6 +618,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       minimized: Boolean(embeddedWindow.minimized),
       visible: nextVisible,
       fitMode: embeddedWindow.fitMode || "contain",
+      interactive: Boolean(embeddedWindow.interactive),
     };
   }
 
@@ -480,6 +636,10 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     embeddedWindow.minimized = nextMinimized;
 
     if (nextMinimized) {
+      setEmbeddedWindowInteractive(false, {
+        target: embeddedWindow,
+        restoreRendererFocus: false,
+      });
       detachEmbeddedWindowToOriginalParent(embeddedWindow);
       destroyHostWindow();
       ShowWindow(embeddedWindow.hwnd, SW_MINIMIZE);
@@ -491,6 +651,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         minimized: true,
         visible: false,
         fitMode: embeddedWindow.fitMode || "contain",
+        interactive: false,
       };
     }
 
@@ -507,6 +668,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       minimized: false,
       visible: true,
       fitMode: embeddedWindow.fitMode || "contain",
+      interactive: Boolean(embeddedWindow.interactive),
     };
   }
 
@@ -587,6 +749,8 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         fitMode: normalizeFitMode(layout?.fitMode),
         hidden: false,
         minimized: false,
+        interactive: false,
+        lastFocusedHwnd: ZERO_HANDLE,
       };
     }
 
@@ -641,9 +805,6 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       }
       ShowWindow(embeddedWindow.hwnd, SW_HIDE);
     }
-    if (!embeddedWindow.hidden) {
-      focusEmbeddedWindow(embeddedWindow);
-    }
 
     return {
       ok: true,
@@ -653,6 +814,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       minimized: false,
       visible: !Boolean(embeddedWindow.hidden),
       fitMode: embeddedWindow.fitMode,
+      interactive: Boolean(embeddedWindow.interactive),
       hostBounds: host.rect,
       clientBounds: clientRect,
     };
@@ -665,7 +827,9 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     syncEmbeddedWindowBounds,
     setEmbeddedWindowVisibility,
     setEmbeddedWindowMinimized,
+    setEmbeddedWindowInteractive,
     focusEmbeddedWindow,
+    blurEmbeddedWindow,
     clearEmbeddedWindow,
   };
 }

@@ -485,9 +485,10 @@ function createPersistenceController(deps) {
       }
     },
 
-    async getCanvasBoard(_req, res) {
+    async getCanvasBoard(req, res) {
       try {
-        const store = await canvasBoardService.readCanvasBoard();
+        const explicitPath = String(req.query?.filePath || "").trim();
+        const store = await canvasBoardService.readCanvasBoard(explicitPath);
         res.json({
           ok: true,
           ...store,
@@ -513,6 +514,21 @@ function createPersistenceController(deps) {
           ok: false,
           error: "Failed to write canvas board file",
           details: error.message,
+        });
+      }
+    },
+
+    async repairCanvasBoard(req, res) {
+      try {
+        const filePath = String(req.body?.filePath || "").trim();
+        const info = await canvasBoardService.repairCanvasBoardFile(filePath);
+        res.json(info);
+      } catch (error) {
+        res.status(error.statusCode || 500).json({
+          ok: false,
+          error: error.message || "Failed to repair canvas board file",
+          code: error.code || "",
+          details: error.statusCode ? undefined : error.message,
         });
       }
     },

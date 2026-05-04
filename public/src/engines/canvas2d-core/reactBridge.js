@@ -51,8 +51,35 @@ export function createCanvas2DReactBridge(engine) {
     setFileCardPreviewZoom(requestId, zoom) {
       return engine?.setFileCardPreviewZoom?.(requestId, zoom);
     },
+    addMindMapRoot() {
+      return engine?.addMindMapRoot?.();
+    },
     addFlowNode() {
-      engine?.addFlowNode?.();
+      return engine?.addFlowNode?.();
+    },
+    addMindChildNode(nodeId) {
+      return engine?.addMindChildNode?.(nodeId);
+    },
+    addMindSiblingNode(nodeId) {
+      return engine?.addMindSiblingNode?.(nodeId);
+    },
+    promoteMindNode(nodeId) {
+      return engine?.promoteMindNode?.(nodeId);
+    },
+    demoteMindNode(nodeId) {
+      return engine?.demoteMindNode?.(nodeId);
+    },
+    insertMindIntermediateNode(nodeId) {
+      return engine?.insertMindIntermediateNode?.(nodeId);
+    },
+    setMindBranchSide(nodeId, side) {
+      return engine?.setMindBranchSide?.(nodeId, side);
+    },
+    relayoutMindMapByNodeId(nodeId) {
+      return engine?.relayoutMindMapByNodeId?.(nodeId);
+    },
+    toggleMindNodeCollapsed(nodeId) {
+      return engine?.toggleMindNodeCollapsed?.(nodeId);
     },
     addTable(options) {
       return engine?.addTable?.(options);
@@ -68,6 +95,9 @@ export function createCanvas2DReactBridge(engine) {
     },
     openBoardAtPath(filePath, options) {
       return engine?.openBoardAtPath?.(filePath, options);
+    },
+    repairBoardAtPath(filePath) {
+      return engine?.repairBoardAtPath?.(filePath);
     },
     ensureTutorialBoard() {
       return engine?.ensureTutorialBoard?.();
@@ -116,6 +146,18 @@ export function createCanvas2DReactBridge(engine) {
     },
     pickCanvasImageSavePath() {
       return engine?.pickCanvasImageSavePath?.();
+    },
+    refreshCanvasImageManager() {
+      return engine?.refreshCanvasImageManager?.();
+    },
+    insertManagedCanvasImage(filePath, options) {
+      return engine?.insertManagedCanvasImage?.(filePath, options);
+    },
+    importCanvasImagesFromClipboard(anchorPoint) {
+      return engine?.importCanvasImagesFromClipboard?.(anchorPoint);
+    },
+    captureCanvasImageToManager(anchorPoint) {
+      return engine?.captureCanvasImageToManager?.(anchorPoint);
     },
     setBoardBackgroundPattern(pattern) {
       return engine?.setBoardBackgroundPattern?.(pattern);

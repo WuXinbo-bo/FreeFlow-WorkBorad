@@ -42,12 +42,15 @@ import {
   createWindowShapeSyncScheduler,
 } from "./layout/windowShapeSyncManager.js";
 import { mountGlobalTutorialHost } from "./tutorial-system/index.js";
+import { createUiSettingsRuntimeBridge } from "./settings/createUiSettingsRuntimeBridge.js";
+import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js";
 
 const state = createInitialState();
 const APP_CLIPBOARD_TTL_MS = 120000;
 const CANVAS_MODE_LEGACY = "legacy";
 const SCREEN_SOURCE_EMBED_FIT_MODES = Object.freeze(["contain", "cover", "fill"]);
 const SCREEN_SOURCE_RENDER_MODES = Object.freeze(["win32", "webcontentsview"]);
+const DEFAULT_SCREEN_SOURCE_RENDER_MODE = "webcontentsview";
 const DEFAULT_SCREEN_SOURCE_EMBED_POLICY = Object.freeze({
   fitMode: "fill",
 });
@@ -66,7 +69,7 @@ function normalizeScreenSourceFitMode(value) {
 
 function normalizeScreenSourceRenderMode(value) {
   const mode = String(value || "").trim().toLowerCase();
-  return SCREEN_SOURCE_RENDER_MODES.includes(mode) ? mode : "win32";
+  return SCREEN_SOURCE_RENDER_MODES.includes(mode) ? mode : DEFAULT_SCREEN_SOURCE_RENDER_MODE;
 }
 
 function normalizeScreenSourceEmbedPolicy(policy = {}) {
@@ -109,7 +112,7 @@ function loadScreenSourceRenderMode() {
   try {
     return normalizeScreenSourceRenderMode(localStorage.getItem(CONFIG.screenSourceRenderModeKey));
   } catch {
-    return "win32";
+    return DEFAULT_SCREEN_SOURCE_RENDER_MODE;
   }
 }
 
@@ -168,10 +171,9 @@ const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
 });
 const PANEL_LAYOUT_MIN_HEIGHT = 320;
 const PANEL_LAYOUT_EDGE_OFFSET = 0;
+const PANEL_LAYOUT_CENTER_SAFE_GAP = 0;
 const PANEL_RESIZER_SIZE = 34;
 const PANEL_RESIZER_CORNER_OFFSET = 24;
-let startupContextPromise = null;
-let startupTutorialIntroPersistSeq = 0;
 
 function normalizeShortcutAcceleratorToken(token = "") {
   const value = String(token || "").trim();
@@ -1478,9 +1480,49 @@ let conversationShellMenuLayoutFrame = 0;
 let panelTransformDependentSyncFrame = 0;
 let activeClipboardZone = "";
 let embeddedWindowOverlayHidden = false;
+let screenSourceActivationOverlayEl = null;
+
+function ensureScreenSourceActivationOverlay() {
+  if (!screenSourcePreviewShellEl) {
+    return null;
+  }
+  if (screenSourceActivationOverlayEl?.isConnected) {
+    return screenSourceActivationOverlayEl;
+  }
+  const overlay = document.createElement("button");
+  overlay.type = "button";
+  overlay.className = "screen-source-activation-overlay is-hidden";
+  overlay.setAttribute("aria-label", "激活 AI 镜像输入");
+  overlay.innerHTML = '<span class="screen-source-activation-overlay-pill">点击激活镜像输入</span>';
+  overlay.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveClipboardZone("screen");
+    void focusEmbeddedScreenSourceWindow();
+  });
+  screenSourcePreviewShellEl.appendChild(overlay);
+  screenSourceActivationOverlayEl = overlay;
+  return overlay;
+}
+
+function syncScreenSourceActivationOverlay() {
+  const overlay = ensureScreenSourceActivationOverlay();
+  if (!overlay) {
+    return;
+  }
+  const hasEmbeddedWindow = isEmbeddedScreenSourceActive();
+  const hiddenForUi = embeddedWindowOverlayHidden || state.activeRightPanelView !== "screen";
+  const aiMirrorActive = state.desktopShellState.keyboardFocusOwner === "ai-mirror";
+  const shouldShow = hasEmbeddedWindow && !hiddenForUi && !aiMirrorActive;
+  overlay.classList.toggle("is-hidden", !shouldShow);
+  overlay.disabled = !shouldShow;
+  overlay.setAttribute("aria-hidden", String(!shouldShow));
+}
 let embeddedWindowOverlaySyncPromise = Promise.resolve();
 let drawerResumeScreenSourceTargetId = "";
 let shellMenuResumeScreenSourceTargetId = "";
+let clickThroughResumeScreenSourceTargetId = "";
+let clickThroughResumeScreenSourceEnabled = false;
 let canvasTitleRenameInFlight = false;
 let canvasPointerAnchorPoint = null;
 let canvasContextMenuAnchorPoint = null;
@@ -1956,7 +1998,8 @@ function shouldHideEmbeddedWindowForOverlay() {
       !conversationShellMenuEl?.classList.contains("is-hidden") ||
       screenSourceHeaderMenuEl?.hasAttribute("open") ||
       screenSourceOverflowMenuEl?.hasAttribute("open") ||
-      isLeftStageOccludingRightPanel()
+      isLeftStageOccludingRightPanel() ||
+      isLeftStageOccludingEmbeddedPreview()
   );
 }
 
@@ -1976,6 +2019,26 @@ function isLeftStageOccludingRightPanel() {
 
   const overlapWidth = Math.min(leftRect.right, rightRect.right) - Math.max(leftRect.left, rightRect.left);
   const overlapHeight = Math.min(leftRect.bottom, rightRect.bottom) - Math.max(leftRect.top, rightRect.top);
+  return overlapWidth > 24 && overlapHeight > 64;
+}
+
+function isLeftStageOccludingEmbeddedPreview() {
+  if (!isEmbeddedScreenSourceActive()) return false;
+  const leftPanel = state.panelLayout?.left;
+  const rightPanel = state.panelLayout?.right;
+  if (!leftPanel || !rightPanel) return false;
+  if (leftPanel.hidden || leftPanel.collapsed || rightPanel.hidden || rightPanel.collapsed) return false;
+
+  const leftZ = Number(desktopClearStageEl?.style?.zIndex || window.getComputedStyle(desktopClearStageEl || document.body).zIndex) || 0;
+  const rightZ = Number(conversationPanel?.style?.zIndex || window.getComputedStyle(conversationPanel || document.body).zIndex) || 0;
+  if (leftZ <= rightZ) return false;
+
+  const leftRect = desktopClearStageEl?.getBoundingClientRect?.();
+  const previewRect = screenSourcePreviewShellEl?.getBoundingClientRect?.();
+  if (!leftRect || !previewRect) return false;
+
+  const overlapWidth = Math.min(leftRect.right, previewRect.right) - Math.max(leftRect.left, previewRect.left);
+  const overlapHeight = Math.min(leftRect.bottom, previewRect.bottom) - Math.max(leftRect.top, previewRect.top);
   return overlapWidth > 24 && overlapHeight > 64;
 }
 
@@ -2010,7 +2073,6 @@ function syncEmbeddedWindowOverlayVisibility() {
     .then(() => {
       if (!shouldHide) {
         scheduleEmbeddedScreenSourceSync();
-        focusEmbeddedScreenSourceWindow();
       }
     })
     .catch(() => {});
@@ -2111,6 +2173,53 @@ async function resumeScreenSourceAfterShellMenuClose() {
     await ensureScreenSourceCapture();
   } catch {
     // Keep shell menu closing resilient; status will be updated by ensureScreenSourceCapture.
+  }
+}
+
+async function suspendScreenSourceForClickThrough() {
+  if (!IS_DESKTOP_APP || state.desktopShellState.fullClickThrough) {
+    return;
+  }
+  if (state.activeRightPanelView !== "screen") {
+    clickThroughResumeScreenSourceTargetId = "";
+    clickThroughResumeScreenSourceEnabled = false;
+    return;
+  }
+  if (!isEmbeddedScreenSourceActive() && !state.screenSource.stream) {
+    clickThroughResumeScreenSourceTargetId = "";
+    clickThroughResumeScreenSourceEnabled = false;
+    return;
+  }
+
+  clickThroughResumeScreenSourceTargetId = String(
+    state.screenSource.activeTargetId || state.screenSource.selectedSourceId || ""
+  ).trim();
+  clickThroughResumeScreenSourceEnabled = Boolean(clickThroughResumeScreenSourceTargetId);
+
+  await stopScreenSourceCapture({
+    announce: false,
+    statusText: "AI镜像已因完全穿透临时关闭",
+  });
+}
+
+async function resumeScreenSourceAfterClickThrough() {
+  const targetId = String(clickThroughResumeScreenSourceTargetId || "").trim();
+  const shouldResume = Boolean(clickThroughResumeScreenSourceEnabled && targetId);
+  clickThroughResumeScreenSourceTargetId = "";
+  clickThroughResumeScreenSourceEnabled = false;
+
+  if (!shouldResume || state.activeRightPanelView !== "screen" || state.drawerOpen) {
+    return;
+  }
+
+  state.screenSource.selectedSourceId = targetId;
+  const selected = state.screenSource.availableSources.find((item) => item.id === targetId) || null;
+  state.screenSource.selectedSourceLabel = selected?.label || selected?.name || "";
+
+  try {
+    await ensureScreenSourceCapture();
+  } catch {
+    // Keep full-click-through recovery resilient; status will be updated by ensureScreenSourceCapture.
   }
 }
 
@@ -2475,6 +2584,7 @@ function renderScreenSourceState() {
       Boolean(state.screenSource.startPromise) ||
       (!canUseWin32EmbeddedScreenSource() && !canUseWebContentsViewScreenSource());
   }
+  syncScreenSourceActivationOverlay();
   scheduleScreenSourceToolbarLayoutSync();
 }
 
@@ -2603,7 +2713,6 @@ function scheduleEmbeddedScreenSourceSync() {
   screenSourceEmbedSyncFrame = window.requestAnimationFrame(() => {
     screenSourceEmbedSyncFrame = 0;
     syncEmbeddedScreenSourceBounds()
-      .then(() => focusEmbeddedScreenSourceWindow())
       .catch(() => {});
   });
 }
@@ -2760,7 +2869,6 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       syncScreenSourceVideo();
       scheduleEmbeddedScreenSourceSync();
       syncEmbeddedWindowOverlayVisibility();
-      focusEmbeddedScreenSourceWindow();
       return {
         mode: "embedded",
         result: response,
@@ -2795,7 +2903,6 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       syncScreenSourceVideo();
       scheduleEmbeddedScreenSourceSync();
       syncEmbeddedWindowOverlayVisibility();
-      focusEmbeddedScreenSourceWindow();
       return {
         mode: "embedded",
         result: response,
@@ -2924,8 +3031,8 @@ function renderRightPanelView() {
   renderScreenSourceState();
   if (activeView === "screen") {
     waitForScreenSourceLayoutStability().then(() => {
+      syncEmbeddedWindowOverlayVisibility();
       scheduleEmbeddedScreenSourceSync();
-      focusEmbeddedScreenSourceWindow();
     });
   }
   syncComposerOffset();
@@ -3167,6 +3274,70 @@ function applyUiSettings() {
   }
 }
 
+const uiSettingsRuntimeBridge = createUiSettingsRuntimeBridge({
+  state,
+  CONFIG,
+  DESKTOP_SHELL,
+  API_ROUTES,
+  readJsonResponse,
+  normalizeUiSettings,
+  pickWorkbenchPreferences,
+  buildUiSettingsPayload,
+  applyUiSettings,
+  setStatus,
+});
+
+const canvasStorageBridge = createCanvasStorageBridge({
+  state,
+  CONFIG,
+  DESKTOP_SHELL,
+  setStatus,
+  getStartupContext: uiSettingsRuntimeBridge.getStartupContext,
+  writeUiSettingsCache: uiSettingsRuntimeBridge.writeUiSettingsCache,
+  writeStartupContextUiSettings: uiSettingsRuntimeBridge.writeStartupContextUiSettings,
+  normalizeUiSettings,
+  canvasProjectFile,
+  normalizeCanvasBoard,
+  applyCanvasBoardStorageInfo,
+  canvasBoardPathBrowseBtn,
+  drawerCanvasBoardPathBrowseBtn,
+  canvasBoardPathOpenBtn,
+  drawerCanvasBoardPathOpenBtn,
+  canvasImagePathBrowseBtn,
+  drawerCanvasImagePathBrowseBtn,
+  canvasImagePathOpenBtn,
+  drawerCanvasImagePathOpenBtn,
+});
+
+const {
+  readUiSettingsCache,
+  loadStartupContext,
+  getStartupContext,
+  writeUiSettingsCache,
+  writeStartupContextUiSettings,
+  getStartupTutorialIntroVersion,
+  shouldAutoShowStartupTutorialIntro,
+  persistStartupTutorialIntroSettings,
+  loadUiSettings,
+} = uiSettingsRuntimeBridge;
+
+const {
+  getCanvasBoardSavePath,
+  getCanvasLastOpenedBoardPath,
+  getCanvasImageSavePath,
+  normalizeCanvasBoardSavePathValue,
+  normalizeCanvasLastOpenedBoardPathValue,
+  normalizeCanvasImageSavePathValue,
+  emitCanvasBoardPathChanged,
+  syncCanvasPathActionButtons,
+  syncCanvasImagePathActionButtons,
+  syncCanvasLastOpenedBoardPathState,
+  loadCanvasBoard,
+  queueCanvasBoardPersist,
+  saveCanvasBoardToStorage,
+  loadCanvasBoardFromStorage,
+} = canvasStorageBridge;
+
 function normalizeClipboardStore(payload = {}) {
   const maxItems = Math.min(Math.max(Number(payload?.maxItems) || CONFIG.clipboardMaxItems, 5), 100);
   const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -3184,157 +3355,6 @@ function normalizeClipboardStore(payload = {}) {
       .filter((item) => item.id && item.content.trim())
       .slice(0, maxItems),
   };
-}
-
-function readUiSettingsCache() {
-  try {
-    const raw = localStorage.getItem(CONFIG.uiSettingsCacheKey);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-async function loadStartupContext() {
-  if (startupContextPromise) {
-    return startupContextPromise;
-  }
-  startupContextPromise = (async () => {
-    if (!DESKTOP_SHELL?.getStartupContext) {
-      return null;
-    }
-    const context = await DESKTOP_SHELL.getStartupContext().catch(() => null);
-    if (context?.ok) {
-      globalThis.__FREEFLOW_STARTUP_CONTEXT = context;
-      return context;
-    }
-    return null;
-  })();
-  return startupContextPromise;
-}
-
-function getStartupContext() {
-  const context = globalThis.__FREEFLOW_STARTUP_CONTEXT;
-  return context && typeof context === "object" && context.ok ? context : null;
-}
-
-function writeUiSettingsCache(payload = {}) {
-  try {
-    localStorage.setItem(CONFIG.uiSettingsCacheKey, JSON.stringify(normalizeUiSettings(payload)));
-  } catch {
-    // Ignore local cache failures.
-  }
-}
-
-function writeStartupContextUiSettings(nextUiSettings = {}) {
-  const context = getStartupContext();
-  if (!context) {
-    return;
-  }
-  const nextNormalizedUiSettings = normalizeUiSettings({
-    ...(context.uiSettings || {}),
-    ...nextUiSettings,
-  });
-  const nextStartup = {
-    ...(context.startup || {}),
-  };
-  if (typeof nextUiSettings.canvasBoardSavePath === "string") {
-    nextStartup.boardSavePath = nextNormalizedUiSettings.canvasBoardSavePath;
-  }
-  if (typeof nextUiSettings.canvasImageSavePath === "string") {
-    nextStartup.canvasImageSavePath = nextNormalizedUiSettings.canvasImageSavePath;
-  }
-  if (typeof nextUiSettings.canvasLastOpenedBoardPath === "string") {
-    nextStartup.lastOpenedBoardPath = nextNormalizedUiSettings.canvasLastOpenedBoardPath;
-    nextStartup.initialBoardPath = nextNormalizedUiSettings.canvasLastOpenedBoardPath;
-  }
-  globalThis.__FREEFLOW_STARTUP_CONTEXT = {
-    ...context,
-    uiSettings: nextNormalizedUiSettings,
-    workbenchPreferences: pickWorkbenchPreferences(nextNormalizedUiSettings),
-    startup: nextStartup,
-  };
-}
-
-function getStartupTutorialIntroVersion() {
-  return String(CONFIG.startupTutorialIntroVersion || "").trim();
-}
-
-function shouldAutoShowStartupTutorialIntro() {
-  const introVersion = getStartupTutorialIntroVersion();
-  if (!introVersion) {
-    return false;
-  }
-  const startup = getStartupContext()?.startup || {};
-  const shouldOpenStartupTutorial = Boolean(startup?.shouldOpenStartupTutorial);
-  const hasShownStartupTutorial = Boolean(state.uiSettings?.hasShownStartupTutorial);
-  const lastIntroVersion = String(state.uiSettings?.lastTutorialIntroVersion || "").trim();
-  const dismissedIntroVersion = String(state.uiSettings?.dismissedTutorialIntroVersion || "").trim();
-
-  if (dismissedIntroVersion === introVersion) {
-    return false;
-  }
-  if (shouldOpenStartupTutorial) {
-    return true;
-  }
-  if (!hasShownStartupTutorial) {
-    return true;
-  }
-  return lastIntroVersion !== introVersion;
-}
-
-async function persistStartupTutorialIntroSettings(overrides = {}) {
-  const persistSeq = ++startupTutorialIntroPersistSeq;
-  const introVersion = getStartupTutorialIntroVersion();
-  const payload = buildUiSettingsPayload({
-    hasShownStartupTutorial: true,
-    lastTutorialIntroVersion: overrides.lastTutorialIntroVersion ?? introVersion,
-    dismissedTutorialIntroVersion:
-      overrides.dismissedTutorialIntroVersion ?? state.uiSettings?.dismissedTutorialIntroVersion ?? "",
-  });
-  writeUiSettingsCache(payload);
-
-  try {
-    const response = await fetch(API_ROUTES.uiSettings, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await readJsonResponse(response, "界面设置");
-    if (!response.ok || !data.ok) {
-      throw new Error(data.details || data.error || "保存界面设置失败");
-    }
-    if (persistSeq !== startupTutorialIntroPersistSeq) {
-      return;
-    }
-    state.uiSettings = normalizeUiSettings({
-      ...payload,
-      ...data,
-    });
-    writeUiSettingsCache(state.uiSettings);
-    applyUiSettings();
-  } catch {
-    if (persistSeq !== startupTutorialIntroPersistSeq) {
-      return;
-    }
-    state.uiSettings = normalizeUiSettings(payload);
-    writeUiSettingsCache(state.uiSettings);
-  }
-}
-
-function syncCanvasLastOpenedBoardPathState(nextPath) {
-  const cleanPath = normalizeCanvasLastOpenedBoardPathValue(nextPath);
-  if (!cleanPath || cleanPath === getCanvasLastOpenedBoardPath()) {
-    return;
-  }
-  state.uiSettings = normalizeUiSettings({
-    ...state.uiSettings,
-    canvasLastOpenedBoardPath: cleanPath,
-  });
-  writeUiSettingsCache(state.uiSettings);
-  writeStartupContextUiSettings({
-    canvasLastOpenedBoardPath: cleanPath,
-  });
 }
 
 function renderClipboardStore() {
@@ -3459,125 +3479,6 @@ function applyCanvasBoardStorageInfo(data) {
     fileSizeBytes: Number(data.fileSizeBytes) || 0,
     updatedAt: data.updatedAt ? Number(data.updatedAt) : state.canvasBoardStorageInfo.updatedAt,
   };
-}
-
-function getCanvasBoardSavePath() {
-  return String(state.uiSettings?.canvasBoardSavePath || "").trim();
-}
-
-function getCanvasLastOpenedBoardPath() {
-  return String(state.uiSettings?.canvasLastOpenedBoardPath || "").trim();
-}
-
-function getCanvasImageSavePath() {
-  return String(state.uiSettings?.canvasImageSavePath || "").trim();
-}
-
-function normalizeCanvasBoardSavePathValue(value = "") {
-  const clean = String(value || "").trim();
-  if (!clean) {
-    return "";
-  }
-  const trimmed = clean.replace(/[\\/]+$/, "");
-  const segments = trimmed.split(/[\\/]/).filter(Boolean);
-  const last = segments[segments.length - 1] || "";
-  if (/\.(?:freeflow|json)$/i.test(last)) {
-    return segments.slice(0, -1).join(clean.includes("\\") ? "\\" : "/");
-  }
-  return trimmed;
-}
-
-function normalizeCanvasLastOpenedBoardPathValue(value = "") {
-  return String(value || "").trim().replace(/[\\/]+$/, "");
-}
-
-function normalizeCanvasImageSavePathValue(value = "") {
-  const clean = String(value || "").trim();
-  if (!clean) {
-    return "";
-  }
-  return clean.replace(/[\\/]+$/, "");
-}
-
-function emitCanvasBoardPathChanged(pathValue = getCanvasBoardSavePath()) {
-  const cleanPath = String(pathValue || "").trim();
-  if (!cleanPath) return;
-  window.dispatchEvent(
-    new CustomEvent("canvas-board-path-changed", {
-      detail: { canvasBoardSavePath: cleanPath },
-    })
-  );
-}
-
-function syncCanvasPathActionButtons(pathValue = getCanvasBoardSavePath()) {
-  const hasPath = Boolean(String(pathValue || "").trim());
-  if (canvasBoardPathBrowseBtn) {
-    canvasBoardPathBrowseBtn.disabled = !DESKTOP_SHELL?.pickCanvasBoardPath;
-  }
-  if (drawerCanvasBoardPathBrowseBtn) {
-    drawerCanvasBoardPathBrowseBtn.disabled = !DESKTOP_SHELL?.pickCanvasBoardPath;
-  }
-  if (canvasBoardPathOpenBtn) {
-    canvasBoardPathOpenBtn.disabled = !DESKTOP_SHELL?.revealPath || !hasPath;
-  }
-  if (drawerCanvasBoardPathOpenBtn) {
-    drawerCanvasBoardPathOpenBtn.disabled = !DESKTOP_SHELL?.revealPath || !hasPath;
-  }
-}
-
-function syncCanvasImagePathActionButtons(pathValue = getCanvasImageSavePath()) {
-  const hasPath = Boolean(String(pathValue || "").trim());
-  if (canvasImagePathBrowseBtn) {
-    canvasImagePathBrowseBtn.disabled = !DESKTOP_SHELL?.pickDirectory;
-  }
-  if (drawerCanvasImagePathBrowseBtn) {
-    drawerCanvasImagePathBrowseBtn.disabled = !DESKTOP_SHELL?.pickDirectory;
-  }
-  if (canvasImagePathOpenBtn) {
-    canvasImagePathOpenBtn.disabled = !DESKTOP_SHELL?.revealPath || !hasPath;
-  }
-  if (drawerCanvasImagePathOpenBtn) {
-    drawerCanvasImagePathOpenBtn.disabled = !DESKTOP_SHELL?.revealPath || !hasPath;
-  }
-}
-
-async function loadCanvasBoard() {
-  return canvasProjectFile.load();
-}
-
-function queueCanvasBoardPersist(immediate = false) {
-  return canvasProjectFile.save(state.canvasBoard, immediate);
-}
-
-function saveCanvasBoardToStorage() {
-  return canvasProjectFile.save(state.canvasBoard);
-}
-
-async function loadCanvasBoardFromStorage() {
-  const startupInitialBoardPath = String(getStartupContext()?.startup?.initialBoardPath || "").trim();
-  if (!startupInitialBoardPath || !DESKTOP_SHELL?.readFile) {
-    await canvasProjectFile.load();
-    return;
-  }
-
-  try {
-    const readResult = await DESKTOP_SHELL.readFile(startupInitialBoardPath);
-    if (!readResult?.ok) {
-      throw new Error(readResult?.error || "无法读取启动画布");
-    }
-    const parsedRaw = JSON.parse(String(readResult.text || "{}").replace(/^\uFEFF/, ""));
-    const payload = parsedRaw?.kind === "freeflow.canvas.board" ? parsedRaw.payload || {} : parsedRaw;
-    const parsed = payload?.kind === "structured-host-board" ? payload.board || {} : payload;
-    state.canvasBoard = normalizeCanvasBoard(parsed);
-    applyCanvasBoardStorageInfo({
-      file: startupInitialBoardPath,
-      fileSizeBytes: new Blob([readResult.text || ""]).size,
-      updatedAt: Date.now(),
-    });
-  } catch (error) {
-    setStatus(`启动画布读取失败，已回退到默认路径：${error.message}`, "warning");
-    await canvasProjectFile.load();
-  }
 }
 
 function setCanvasStatus(text) {
@@ -3778,6 +3679,98 @@ function getActiveAppClipboardPayload() {
 
 function setActiveClipboardZone(zone = "") {
   activeClipboardZone = ["canvas", "assistant", "screen"].includes(zone) ? zone : "";
+}
+
+function normalizeDesktopKeyboardFocusOwner(owner = "") {
+  const value = String(owner || "").trim().toLowerCase();
+  return ["", "canvas", "assistant", "screen", "ai-mirror"].includes(value) ? value : "";
+}
+
+function publishDesktopKeyboardFocusOwner(owner = "", meta = {}) {
+  const nextOwner = normalizeDesktopKeyboardFocusOwner(owner);
+  globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER = nextOwner;
+  globalThis.__FREEFLOW_KEYBOARD_FOCUS_META = nextOwner
+    ? {
+        owner: nextOwner,
+        sourceId: String(meta?.sourceId || "").trim(),
+        targetId: String(meta?.targetId || "").trim(),
+      }
+    : {
+        owner: "",
+        sourceId: "",
+        targetId: "",
+      };
+}
+
+async function syncDesktopKeyboardFocusOwner(owner = "", meta = {}) {
+  const nextOwner = normalizeDesktopKeyboardFocusOwner(owner);
+  const nextSourceId = String(meta?.sourceId || "").trim();
+  const nextTargetId = String(meta?.targetId || "").trim();
+  const currentState = state.desktopShellState || {};
+
+  publishDesktopKeyboardFocusOwner(nextOwner, {
+    sourceId: nextSourceId,
+    targetId: nextTargetId,
+  });
+
+  if (
+    currentState.keyboardFocusOwner === nextOwner &&
+    String(currentState.keyboardFocusSourceId || "") === nextSourceId &&
+    String(currentState.keyboardFocusTargetId || "") === nextTargetId
+  ) {
+    return currentState;
+  }
+
+  if (!IS_DESKTOP_APP || typeof DESKTOP_SHELL?.setKeyboardFocusOwner !== "function") {
+    state.desktopShellState = {
+      ...currentState,
+      keyboardFocusOwner: nextOwner,
+      keyboardFocusSourceId: nextOwner ? nextSourceId : "",
+      keyboardFocusTargetId: nextOwner ? nextTargetId : "",
+    };
+    return state.desktopShellState;
+  }
+
+  try {
+    const nextState = await DESKTOP_SHELL.setKeyboardFocusOwner({
+      owner: nextOwner,
+      sourceId: nextSourceId,
+      targetId: nextTargetId,
+    });
+    syncDesktopShellState(nextState);
+    return state.desktopShellState;
+  } catch {
+    state.desktopShellState = {
+      ...currentState,
+      keyboardFocusOwner: nextOwner,
+      keyboardFocusSourceId: nextOwner ? nextSourceId : "",
+      keyboardFocusTargetId: nextOwner ? nextTargetId : "",
+    };
+    return state.desktopShellState;
+  }
+}
+
+async function focusRendererSurface(owner = "", meta = {}) {
+  const nextOwner = normalizeDesktopKeyboardFocusOwner(owner);
+  const payload = {
+    owner: nextOwner,
+    sourceId: String(meta?.sourceId || "").trim(),
+    targetId: String(meta?.targetId || "").trim(),
+  };
+
+  publishDesktopKeyboardFocusOwner(nextOwner, payload);
+
+  if (!IS_DESKTOP_APP || typeof DESKTOP_SHELL?.focusRendererSurface !== "function") {
+    return syncDesktopKeyboardFocusOwner(nextOwner, payload);
+  }
+
+  try {
+    const nextState = await DESKTOP_SHELL.focusRendererSurface(payload);
+    syncDesktopShellState(nextState);
+    return state.desktopShellState;
+  } catch {
+    return syncDesktopKeyboardFocusOwner(nextOwner, payload);
+  }
 }
 
 function setCanvasPointerAnchorPoint(clientX, clientY) {
@@ -4592,41 +4585,6 @@ function startClipboardPolling() {
   }, CONFIG.clipboardPollIntervalMs);
 }
 
-async function loadUiSettings() {
-  const cached = readUiSettingsCache();
-  const startupContext = await loadStartupContext();
-  const startupUiSettings = startupContext?.uiSettings || {};
-  const startupWorkbenchPreferences = startupContext?.workbenchPreferences || {};
-  try {
-    const response = await fetch(API_ROUTES.uiSettings);
-    const data = await readJsonResponse(response, "界面设置");
-
-    if (!response.ok || !data.ok) {
-      throw new Error(data.details || data.error || "无法读取界面设置");
-    }
-
-    state.uiSettings = normalizeUiSettings({
-      ...startupUiSettings,
-      ...startupWorkbenchPreferences,
-      ...data,
-    });
-  } catch (error) {
-    state.uiSettings = normalizeUiSettings({
-      ...startupUiSettings,
-      ...startupWorkbenchPreferences,
-      ...cached,
-    });
-    setStatus(`界面设置读取失败：${error.message}`, "warning");
-  }
-
-  state.workbenchPreferences = pickWorkbenchPreferences({
-    ...state.uiSettings,
-    ...startupWorkbenchPreferences,
-  });
-  writeUiSettingsCache(state.uiSettings);
-  applyUiSettings();
-}
-
 function buildUiSettingsPayload(overrides = {}) {
   const cached = readUiSettingsCache();
   return normalizeUiSettings({
@@ -5255,7 +5213,7 @@ function clampPanelLayoutSideToWorkspace(side) {
 
   const maxInitialX = Math.max(
     PANEL_LAYOUT_EDGE_OFFSET,
-    workspaceWidth - requestedWidthForClamp - PANEL_LAYOUT_EDGE_OFFSET
+    workspaceWidth - requestedWidthForClamp - PANEL_LAYOUT_EDGE_OFFSET - (side === "right" ? PANEL_LAYOUT_CENTER_SAFE_GAP : 0)
   );
   const maxInitialY = Math.max(
     PANEL_LAYOUT_EDGE_OFFSET,
@@ -5279,7 +5237,15 @@ function clampPanelLayoutSideToWorkspace(side) {
     minHeight,
     maxHeight
   );
-  panel.x = Math.round(Math.min(Math.max(Number(panel.x) || 0, PANEL_LAYOUT_EDGE_OFFSET), Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceWidth - panel.width - PANEL_LAYOUT_EDGE_OFFSET)));
+  panel.x = Math.round(
+    Math.min(
+      Math.max(Number(panel.x) || 0, PANEL_LAYOUT_EDGE_OFFSET),
+      Math.max(
+        PANEL_LAYOUT_EDGE_OFFSET,
+        workspaceWidth - panel.width - PANEL_LAYOUT_EDGE_OFFSET
+      )
+    )
+  );
   panel.y = Math.round(Math.min(Math.max(Number(panel.y) || 0, PANEL_LAYOUT_EDGE_OFFSET), Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceHeight - panel.height - PANEL_LAYOUT_EDGE_OFFSET)));
   panel.zIndex = Math.max(1, Number(panel.zIndex) || (side === "left" ? 10 : 14));
 }
@@ -5476,15 +5442,17 @@ function clampPaneWidth(value, min, max) {
 
 function resolveResponsivePaneWidths(left, right) {
   const workspaceWidth = workspaceEl?.clientWidth || Math.max(0, window.innerWidth - 40);
-  let leftWidth = clampPaneWidth(left, CONFIG.leftPanelMinWidth, Math.min(CONFIG.leftPanelMaxWidth, workspaceWidth));
-  let rightWidth = clampPaneWidth(right, CONFIG.rightPanelMinWidth, Math.min(CONFIG.rightPanelMaxWidth, workspaceWidth));
+  const leftMinWidth = Math.max(280, CONFIG.leftPanelMinWidth);
+  const rightMinWidth = Math.max(280, CONFIG.rightPanelMinWidth);
+  let leftWidth = clampPaneWidth(left, leftMinWidth, Math.min(CONFIG.leftPanelMaxWidth, workspaceWidth));
+  let rightWidth = clampPaneWidth(right, rightMinWidth, Math.min(CONFIG.rightPanelMaxWidth, workspaceWidth));
 
-  const maxCombined = Math.max(0, workspaceWidth);
+  const maxCombined = Math.max(0, workspaceWidth - PANEL_LAYOUT_CENTER_SAFE_GAP);
 
   let overflow = leftWidth + rightWidth - maxCombined;
   if (overflow > 0) {
-    const leftReducible = Math.max(0, leftWidth - CONFIG.leftPanelMinWidth);
-    const rightReducible = Math.max(0, rightWidth - CONFIG.rightPanelMinWidth);
+    const leftReducible = Math.max(0, leftWidth - leftMinWidth);
+    const rightReducible = Math.max(0, rightWidth - rightMinWidth);
     const totalReducible = leftReducible + rightReducible;
     if (totalReducible > 0) {
       const leftShare = leftReducible / totalReducible;
@@ -5494,8 +5462,8 @@ function resolveResponsivePaneWidths(left, right) {
       const rightReduce = Math.min(rightReducible, overflow);
       rightWidth -= rightReduce;
       overflow -= rightReduce;
-      if (overflow > 0 && leftWidth > CONFIG.leftPanelMinWidth) {
-        leftWidth -= Math.min(leftWidth - CONFIG.leftPanelMinWidth, overflow);
+      if (overflow > 0 && leftWidth > leftMinWidth) {
+        leftWidth -= Math.min(leftWidth - leftMinWidth, overflow);
       }
     }
   }
@@ -5633,6 +5601,8 @@ function renderPanelLayoutSide(side) {
   } else {
     element.style.removeProperty("display");
   }
+  element.style.removeProperty("right");
+  element.style.removeProperty("bottom");
   element.style.left = `${Math.round(Number(panelState.x) || 0)}px`;
   element.style.top = `${Math.round(Number(panelState.y) || 0)}px`;
   element.style.width = `${Math.round(Math.max(0, Number(panelState.width) || 0))}px`;
@@ -5981,7 +5951,12 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
   const minWidth = Math.max(320, side === "left" ? CONFIG.leftPanelMinWidth : CONFIG.rightPanelMinWidth);
   const sideMaxWidth = side === "left" ? CONFIG.leftPanelMaxWidth : CONFIG.rightPanelMaxWidth;
-  const maxWidth = Math.min(sideMaxWidth, Math.max(minWidth, workspaceWidth - panel.x));
+  const maxWidth = Math.min(
+    sideMaxWidth,
+    dockSide === "right"
+      ? Math.max(minWidth, initialRight - PANEL_LAYOUT_EDGE_OFFSET)
+      : Math.max(minWidth, workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET)
+  );
   const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(PANEL_LAYOUT_MIN_HEIGHT, workspaceHeight));
   const maxHeight = Math.max(minHeight, workspaceHeight - panel.y);
 
@@ -5989,7 +5964,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
     const deltaX = event.clientX - startX;
     const deltaY = event.clientY - startY;
     if (dockSide === "right") {
-      const proposedWidth = clampPaneWidth(initialWidth - deltaX, minWidth, Math.min(sideMaxWidth, Math.max(minWidth, initialRight)));
+      const proposedWidth = clampPaneWidth(initialWidth - deltaX, minWidth, maxWidth);
       panel.width = proposedWidth;
       panel.x = Math.round(initialRight - proposedWidth);
     } else {
@@ -6122,10 +6097,20 @@ function syncDesktopShellState(nextState = {}) {
   const clickThrough = Boolean(nextState?.clickThrough);
   const nextFullClickThrough = clickThrough;
   const previousFullscreen = Boolean(state.desktopShellState.fullscreen);
+  const keyboardFocusOwner = normalizeDesktopKeyboardFocusOwner(nextState?.keyboardFocusOwner);
+  const keyboardFocusSourceId = String(nextState?.keyboardFocusSourceId || "").trim();
+  const keyboardFocusTargetId = String(nextState?.keyboardFocusTargetId || "").trim();
 
   state.desktopShellState.pinned = Boolean(nextState?.pinned);
   state.desktopShellState.fullscreen = Boolean(nextState?.fullscreen);
   state.desktopShellState.clickThrough = clickThrough;
+  state.desktopShellState.keyboardFocusOwner = keyboardFocusOwner;
+  state.desktopShellState.keyboardFocusSourceId = keyboardFocusOwner ? keyboardFocusSourceId : "";
+  state.desktopShellState.keyboardFocusTargetId = keyboardFocusOwner ? keyboardFocusTargetId : "";
+  publishDesktopKeyboardFocusOwner(keyboardFocusOwner, {
+    sourceId: state.desktopShellState.keyboardFocusSourceId,
+    targetId: state.desktopShellState.keyboardFocusTargetId,
+  });
 
   if (state.desktopShellState.fullClickThrough !== nextFullClickThrough) {
     state.desktopShellState.fullClickThrough = nextFullClickThrough;
@@ -6135,6 +6120,7 @@ function syncDesktopShellState(nextState = {}) {
   desktopPinBtn?.classList.toggle("is-active", state.desktopShellState.pinned);
   desktopFullscreenBtn?.classList.toggle("is-active", state.desktopShellState.fullscreen);
   desktopClickThroughBtn?.classList.toggle("is-active", state.desktopShellState.fullClickThrough);
+  syncScreenSourceActivationOverlay();
 
   if (desktopPinBtn) {
     desktopPinBtn.textContent = state.desktopShellState.pinned ? "取消固定" : "固定";
@@ -6280,7 +6266,11 @@ async function refreshDesktopShellState() {
       fullscreen: false,
       clickThrough: false,
       fullClickThrough: false,
+      keyboardFocusOwner: "",
+      keyboardFocusSourceId: "",
+      keyboardFocusTargetId: "",
     };
+    publishDesktopKeyboardFocusOwner("", {});
     applyFullClickThroughUiState(false);
     if (desktopPinBtn) {
       desktopPinBtn.textContent = "固定";
@@ -6309,8 +6299,15 @@ async function setDesktopClickThrough(enabled) {
   desktopSurfaceSyncPromise = desktopSurfaceSyncPromise
     .catch(() => {})
     .then(async () => {
+      if (enabled) {
+        await suspendScreenSourceForClickThrough();
+      }
       const nextState = await DESKTOP_SHELL.setClickThrough(enabled);
       syncDesktopShellState(nextState);
+      if (!enabled) {
+        await resumeScreenSourceAfterClickThrough();
+        await syncEmbeddedWindowOverlayVisibility();
+      }
     });
 
   return desktopSurfaceSyncPromise;
@@ -6952,10 +6949,7 @@ desktopClickThroughBtn?.addEventListener("click", async () => {
 
   try {
     const nextEnabled = !state.desktopShellState.fullClickThrough;
-    state.desktopShellState.fullClickThrough = nextEnabled;
-    applyFullClickThroughUiState(nextEnabled);
-    const nextState = await DESKTOP_SHELL.setClickThrough(nextEnabled);
-    syncDesktopShellState(nextState);
+    await setDesktopClickThrough(nextEnabled);
     await refreshDesktopShellState();
     setDesktopMenuOpen(false);
     setStatus(
@@ -6965,8 +6959,9 @@ desktopClickThroughBtn?.addEventListener("click", async () => {
       "success"
     );
   } catch (error) {
-    state.desktopShellState.fullClickThrough = false;
-    applyFullClickThroughUiState(false);
+    clickThroughResumeScreenSourceTargetId = "";
+    clickThroughResumeScreenSourceEnabled = false;
+    await refreshDesktopShellState().catch(() => {});
     setStatus(`切换穿透模式失败：${error.message}`, "warning");
   }
 });
@@ -7871,6 +7866,9 @@ promptInput.addEventListener("input", autoresize);
 promptInput.addEventListener("input", syncConversationEmptyStateVisibility);
 promptInput.addEventListener("focus", () => {
   setActiveClipboardZone("assistant");
+  void syncDesktopKeyboardFocusOwner("assistant", {
+    sourceId: "renderer:prompt-input",
+  });
 });
 promptInput.addEventListener("paste", async (event) => {
   if (event.defaultPrevented) {
@@ -7939,6 +7937,13 @@ canvasViewportEl?.addEventListener("mouseenter", (event) => {
   setCanvasStageInteractionState({ hovered: true, dragging: false });
 });
 
+canvasViewportEl?.addEventListener("pointerdown", () => {
+  setActiveClipboardZone("canvas");
+  void focusRendererSurface("canvas", {
+    sourceId: "renderer:canvas-viewport",
+  });
+});
+
 canvasViewportEl?.addEventListener("mouseleave", () => {
   setCanvasStageInteractionState({ hovered: false, dragging: false });
 });
@@ -7948,6 +7953,9 @@ canvasViewportEl?.addEventListener(
   (event) => {
     if (getClipboardZoneFromTarget(event.target) === "canvas") {
       setActiveClipboardZone("canvas");
+      void syncDesktopKeyboardFocusOwner("canvas", {
+        sourceId: "renderer:canvas-viewport",
+      });
     }
   },
   true
@@ -7957,12 +7965,33 @@ threadViewport?.addEventListener("mouseenter", () => {
   setActiveClipboardZone("assistant");
 });
 
+threadViewport?.addEventListener("pointerdown", () => {
+  setActiveClipboardZone("assistant");
+  void focusRendererSurface("assistant", {
+    sourceId: "renderer:thread-viewport",
+  });
+});
+
 chatForm?.addEventListener("mouseenter", () => {
   setActiveClipboardZone("assistant");
 });
 
+chatForm?.addEventListener("pointerdown", () => {
+  setActiveClipboardZone("assistant");
+  void focusRendererSurface("assistant", {
+    sourceId: "renderer:chat-form",
+  });
+});
+
 chatLog?.addEventListener("mouseenter", () => {
   setActiveClipboardZone("assistant");
+});
+
+chatLog?.addEventListener("pointerdown", () => {
+  setActiveClipboardZone("assistant");
+  void focusRendererSurface("assistant", {
+    sourceId: "renderer:chat-log",
+  });
 });
 
 threadViewport?.addEventListener(
@@ -7970,6 +7999,9 @@ threadViewport?.addEventListener(
   (event) => {
     if (getClipboardZoneFromTarget(event.target) === "assistant") {
       setActiveClipboardZone("assistant");
+      void syncDesktopKeyboardFocusOwner("assistant", {
+        sourceId: "renderer:thread-viewport",
+      });
     }
   },
   true
@@ -7980,6 +8012,9 @@ chatForm?.addEventListener(
   (event) => {
     if (getClipboardZoneFromTarget(event.target) === "assistant") {
       setActiveClipboardZone("assistant");
+      void syncDesktopKeyboardFocusOwner("assistant", {
+        sourceId: "renderer:chat-form",
+      });
     }
   },
   true
@@ -7991,6 +8026,7 @@ screenSourcePanelEl?.addEventListener("mouseenter", () => {
 
 screenSourcePanelEl?.addEventListener("pointerdown", () => {
   setActiveClipboardZone("screen");
+  void focusEmbeddedScreenSourceWindow();
 });
 
 screenSourceHeaderSlotEl?.addEventListener("mouseenter", () => {
@@ -8000,8 +8036,14 @@ screenSourceHeaderSlotEl?.addEventListener("mouseenter", () => {
 screenSourcePanelEl?.addEventListener(
   "focusin",
   (event) => {
+    if (isEmbeddedScreenSourceActive()) {
+      return;
+    }
     if (getClipboardZoneFromTarget(event.target) === "screen") {
       setActiveClipboardZone("screen");
+      void syncDesktopKeyboardFocusOwner("screen", {
+        sourceId: "renderer:screen-panel",
+      });
     }
   },
   true
@@ -8010,14 +8052,24 @@ screenSourcePanelEl?.addEventListener(
 screenSourceHeaderSlotEl?.addEventListener(
   "focusin",
   (event) => {
+    if (isEmbeddedScreenSourceActive()) {
+      return;
+    }
     if (getClipboardZoneFromTarget(event.target) === "screen") {
       setActiveClipboardZone("screen");
+      void syncDesktopKeyboardFocusOwner("screen", {
+        sourceId: "renderer:screen-header-slot",
+      });
     }
   },
   true
 );
 
 document.addEventListener("keydown", (event) => {
+  if (state.desktopShellState.keyboardFocusOwner === "ai-mirror") {
+    return;
+  }
+
   if (event.key === "Escape" && canvasImageLightboxEl && !canvasImageLightboxEl.classList.contains("is-hidden")) {
     closeCanvasImageLightbox();
     return;

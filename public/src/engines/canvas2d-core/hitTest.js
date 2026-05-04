@@ -3,6 +3,7 @@ import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
 import { invalidateHitTestSpatialIndex, queryHitTestSpatialIndex, resolveHitTestSpatialIndex } from "./hitTestSpatialIndex.js";
+import { getMindNodeLinkAnchorScreenBounds } from "./renderer.js";
 
 function pointInBounds(point, bounds, padding = 0) {
   return (
@@ -88,6 +89,20 @@ export function hitTestHandle(item, point, scale = 1) {
     return null;
   }
   const tolerance = Math.max(8, 12 / Math.max(0.1, scale));
+  if (item.type === "mindNode") {
+    const pseudoView = { scale, offsetX: 0, offsetY: 0 };
+    const anchorBounds = getMindNodeLinkAnchorScreenBounds(item, pseudoView, {
+      left: Number(item.x || 0),
+      top: Number(item.y || 0),
+      width: Number(item.width || 0),
+      height: Number(item.height || 0),
+      right: Number(item.x || 0) + Number(item.width || 0),
+      bottom: Number(item.y || 0) + Number(item.height || 0),
+    });
+    if (anchorBounds && pointInBounds(point, anchorBounds, Math.max(2, tolerance * 0.22))) {
+      return "mind-link-anchor";
+    }
+  }
   if (item.type === "shape" && item.shapeType === "rect") {
     const bounds = getElementBounds(item);
     const inset = Math.max(6, 10 / Math.max(0.1, scale));

@@ -69,9 +69,16 @@ let desktopShortcutRegistered = false;
 let lastClickThroughToggleAt = 0;
 let mainWindowRendererReadyTimer = null;
 let mainWindowBootShapeLocked = true;
+let desktopKeyboardFocusOwner = "";
+let desktopKeyboardFocusSourceId = "";
+let desktopKeyboardFocusTargetId = "";
 const externalWindowEmbedManager = createExternalWindowEmbedManager(() => mainWindow);
 const aiMirrorTargetManager = createAiMirrorTargetManager();
-const webContentsViewEmbedManager = createWebContentsViewEmbedManager(() => mainWindow, AI_MIRROR_TARGETS);
+const webContentsViewEmbedManager = createWebContentsViewEmbedManager(() => mainWindow, AI_MIRROR_TARGETS, {
+  onFocusChanged: (payload = {}) => {
+    setDesktopKeyboardFocusOwner(payload?.owner, payload);
+  },
+});
 let everythingCliPath = null;
 let desktopEmbedCleanupPromise = Promise.resolve();
 let mainWindowCloseInFlight = false;
@@ -929,6 +936,78 @@ function normalizeWindowBounds(bounds) {
   };
 }
 
+function normalizeDesktopKeyboardFocusOwner(owner = "") {
+  const value = String(owner || "").trim().toLowerCase();
+  return ["", "canvas", "assistant", "screen", "ai-mirror"].includes(value) ? value : "";
+}
+
+function setDesktopKeyboardFocusOwner(owner = "", meta = {}) {
+  const nextOwner = normalizeDesktopKeyboardFocusOwner(owner);
+  const nextSourceId = String(meta?.sourceId || "").trim();
+  const nextTargetId = String(meta?.targetId || "").trim();
+
+  if (!nextOwner && nextSourceId && desktopKeyboardFocusSourceId && desktopKeyboardFocusSourceId !== nextSourceId) {
+    return getDesktopShellState();
+  }
+
+  if (
+    desktopKeyboardFocusOwner === nextOwner &&
+    desktopKeyboardFocusSourceId === nextSourceId &&
+    desktopKeyboardFocusTargetId === nextTargetId
+  ) {
+    return getDesktopShellState();
+  }
+
+  desktopKeyboardFocusOwner = nextOwner;
+  desktopKeyboardFocusSourceId = nextOwner ? nextSourceId : "";
+  desktopKeyboardFocusTargetId = nextOwner ? nextTargetId : "";
+
+  try {
+    if (nextOwner === "ai-mirror") {
+      externalWindowEmbedManager.setEmbeddedWindowInteractive?.(true);
+    } else {
+      externalWindowEmbedManager.setEmbeddedWindowInteractive?.(false);
+    }
+  } catch {
+    // Ignore native interaction-gating failures and keep desktop shell state consistent.
+  }
+
+  broadcastDesktopShellState();
+  return getDesktopShellState();
+}
+
+function focusRendererSurface(payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return getDesktopShellState();
+  }
+
+  try {
+    externalWindowEmbedManager.blurEmbeddedWindow?.();
+  } catch {
+    // Ignore native embedded-window blur failures and continue restoring renderer focus.
+  }
+
+  try {
+    webContentsViewEmbedManager.blurTarget?.();
+  } catch {
+    // Ignore embedded view blur failures and continue restoring renderer focus.
+  }
+
+  try {
+    mainWindow.focus();
+  } catch {
+    // Ignore native focus failures and continue.
+  }
+
+  try {
+    mainWindow.webContents.focus();
+  } catch {
+    // Ignore renderer focus failures and continue.
+  }
+
+  return setDesktopKeyboardFocusOwner(payload?.owner, payload || {});
+}
+
 function getDesktopShellState() {
   const fullscreen = Boolean(
     desktopShellFullscreenEnabled ||
@@ -940,6 +1019,9 @@ function getDesktopShellState() {
     pinned: pinnedEnabled,
     fullscreen,
     clickThrough: clickThroughEnabled,
+    keyboardFocusOwner: desktopKeyboardFocusOwner,
+    keyboardFocusSourceId: desktopKeyboardFocusSourceId,
+    keyboardFocusTargetId: desktopKeyboardFocusTargetId,
     externalWindowEmbed: externalWindowEmbedManager.getState(),
     webContentsViewEmbed: webContentsViewEmbedManager.getState(),
   };
@@ -980,6 +1062,10 @@ function cleanupDesktopEmbeddedSurfaces(reason = "unknown") {
       } catch {
         // Ignore view destroy failures during shutdown.
       }
+      setDesktopKeyboardFocusOwner("", {
+        sourceId: desktopKeyboardFocusSourceId,
+        targetId: desktopKeyboardFocusTargetId,
+      });
 
       await aiMirrorTargetManager.dispose().catch(() => {});
     });
@@ -992,13 +1078,17 @@ function applyClickThrough(enabled) {
   clickThroughEnabled = nextEnabled;
 
   try {
-    externalWindowEmbedManager.setEmbeddedWindowMinimized(nextEnabled);
+    if (nextEnabled) {
+      externalWindowEmbedManager.setEmbeddedWindowMinimized(true);
+    }
   } catch (error) {
     console.warn(`Failed to sync embedded window minimized state: ${error.message}`);
   }
 
   try {
-    webContentsViewEmbedManager.setVisibility(!nextEnabled);
+    if (nextEnabled) {
+      webContentsViewEmbedManager.setVisibility(false);
+    }
   } catch (error) {
     console.warn(`Failed to sync WebContentsView visibility state: ${error.message}`);
   }
@@ -1012,11 +1102,6 @@ function applyClickThrough(enabled) {
   if (!clickThroughEnabled) {
     applyWindowShape();
     mainWindow.focus();
-    try {
-      webContentsViewEmbedManager.focusTarget();
-    } catch {
-      // Ignore view focus restoration failures.
-    }
   }
 
   broadcastDesktopShellState();
@@ -1715,6 +1800,30 @@ ipcMain.handle("desktop-shell:get-state", () => ({
   ...getDesktopShellState(),
 }));
 
+ipcMain.handle("desktop-shell:set-keyboard-focus-owner", (_event, payload) => {
+  try {
+    return setDesktopKeyboardFocusOwner(payload?.owner, payload || {});
+  } catch (error) {
+    return {
+      ...getDesktopShellState(),
+      ok: false,
+      error: error.message || "Failed to update desktop keyboard focus owner",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:focus-renderer-surface", (_event, payload) => {
+  try {
+    return focusRendererSurface(payload || {});
+  } catch (error) {
+    return {
+      ...getDesktopShellState(),
+      ok: false,
+      error: error.message || "Failed to focus renderer surface",
+    };
+  }
+});
+
 ipcMain.on("desktop-shell:renderer-ready", (event) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     return;
@@ -1751,6 +1860,23 @@ ipcMain.handle("desktop-shell:read-clipboard-text", () => {
       ok: false,
       error: error.message || "Failed to read clipboard",
       text: "",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:read-clipboard-image-data-url", () => {
+  try {
+    const dataUrl = getClipboardImageDataUrl();
+    return {
+      ok: Boolean(dataUrl),
+      dataUrl,
+      error: dataUrl ? "" : "剪贴板中没有图片",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      dataUrl: "",
+      error: error.message || "读取剪贴板图片失败",
     };
   }
 });
@@ -1857,12 +1983,28 @@ ipcMain.handle("desktop-shell:clear-external-window", (_event, payload) => {
 
 ipcMain.handle("desktop-shell:focus-embedded-window", (_event, payload) => {
   try {
+    setDesktopKeyboardFocusOwner("ai-mirror", {
+      sourceId: String(payload?.sourceId || "native-embed:ai-mirror").trim(),
+      targetId: String(payload?.activeTargetId || payload?.targetId || "").trim(),
+    });
     return externalWindowEmbedManager.focusEmbeddedWindow(payload || {});
   } catch (error) {
     return {
       ok: false,
       active: false,
       error: error.message || "Failed to focus embedded window",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:set-embedded-window-interactive", (_event, payload) => {
+  try {
+    return externalWindowEmbedManager.setEmbeddedWindowInteractive(Boolean(payload?.interactive));
+  } catch (error) {
+    return {
+      ok: false,
+      active: false,
+      error: error.message || "Failed to update embedded window interaction state",
     };
   }
 });
@@ -1905,7 +2047,12 @@ ipcMain.handle("desktop-shell:set-ai-mirror-webcontents-view-visibility", (_even
 
 ipcMain.handle("desktop-shell:clear-ai-mirror-webcontents-view", () => {
   try {
-    return webContentsViewEmbedManager.clearTarget();
+    const response = webContentsViewEmbedManager.clearTarget();
+    setDesktopKeyboardFocusOwner("", {
+      sourceId: desktopKeyboardFocusSourceId,
+      targetId: desktopKeyboardFocusTargetId,
+    });
+    return response;
   } catch (error) {
     return {
       ok: false,
@@ -1923,6 +2070,18 @@ ipcMain.handle("desktop-shell:focus-ai-mirror-webcontents-view", () => {
       ok: false,
       active: false,
       error: error.message || "Failed to focus AI mirror WebContentsView",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:blur-ai-mirror-webcontents-view", () => {
+  try {
+    return webContentsViewEmbedManager.blurTarget();
+  } catch (error) {
+    return {
+      ok: false,
+      active: false,
+      error: error.message || "Failed to blur AI mirror WebContentsView",
     };
   }
 });
@@ -2198,6 +2357,51 @@ ipcMain.handle("desktop-shell:list-canvas-boards", async (_event, payload) => {
       error: error.message || "读取画布工作区失败",
       folderPath,
       boards: [],
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:list-canvas-images", async (_event, payload) => {
+  const folderPath = String(payload?.folderPath || "").trim();
+  if (!folderPath) {
+    return { ok: false, error: "图片目录不能为空", folderPath: "", images: [] };
+  }
+  try {
+    const resolvedFolder = path.resolve(folderPath);
+    const entries = await fs.promises.readdir(resolvedFolder, { withFileTypes: true });
+    const supportedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"]);
+    const images = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const ext = path.extname(entry.name || "").toLowerCase();
+      if (!supportedExtensions.has(ext)) {
+        continue;
+      }
+      const filePath = path.join(resolvedFolder, entry.name);
+      let stat = null;
+      try {
+        stat = await fs.promises.stat(filePath);
+      } catch {
+        continue;
+      }
+      images.push({
+        name: entry.name,
+        filePath,
+        size: Number(stat.size || 0) || 0,
+        modifiedAt: Number(stat.mtimeMs || 0) || 0,
+        extension: ext.replace(/^\./, ""),
+      });
+    }
+    images.sort((a, b) => Number(b.modifiedAt || 0) - Number(a.modifiedAt || 0));
+    return { ok: true, error: "", folderPath: resolvedFolder, images };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message || "读取图片目录失败",
+      folderPath,
+      images: [],
     };
   }
 });

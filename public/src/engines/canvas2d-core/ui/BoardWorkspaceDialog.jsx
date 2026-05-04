@@ -25,6 +25,15 @@ function formatBoardDisplayName(name = "") {
   return value.replace(/\.(?:freeflow|json)$/i, "");
 }
 
+function formatBoardExtensionLabel(name = "", filePath = "") {
+  const raw = String(name || filePath || "").trim();
+  const match = raw.match(/(\.[^.\\/]+)$/);
+  if (!match) {
+    return ".freeflow";
+  }
+  return match[1].toLowerCase();
+}
+
 function formatFileSize(size) {
   const value = Number(size || 0);
   if (!Number.isFinite(value) || value <= 0) {
@@ -110,6 +119,10 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
   const [busyAction, setBusyAction] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [sortKey, setSortKey] = useState("modified-desc");
+  const [failedOpenPath, setFailedOpenPath] = useState("");
+  const [repairResult, setRepairResult] = useState(null);
+  const [openResultPath, setOpenResultPath] = useState("");
+  const [saveResultPath, setSaveResultPath] = useState("");
   const renameInputRef = useRef(null);
   const createInputRef = useRef(null);
 
@@ -234,6 +247,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
     setBusy(true);
     setBusyAction(action);
     setError("");
+    setFeedback("");
     try {
       await task();
     } catch (taskError) {
@@ -271,6 +285,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       }
       setNewBoardName("");
       setCreateOpen(false);
+      setOpenResultPath("");
+      setSaveResultPath("");
       await refreshBoards(targetFolder);
       setSelectedPath(result.filePath || "");
       setFeedback("新画布已建立");
@@ -282,13 +298,36 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       if (!targetPath) {
         return;
       }
+      setRepairResult(null);
+      setOpenResultPath("");
       const loaded = await bridge.openBoardAtPath(targetPath);
       if (!loaded) {
-        throw new Error("画布打开失败");
+        setFailedOpenPath(targetPath);
+        throw new Error("画布打开失败，可使用下方修复功能生成可打开副本");
       }
+      setFailedOpenPath("");
+      setOpenResultPath(targetPath);
+      setSaveResultPath("");
       await refreshBoards(folderPath);
-      setFeedback("画布已打开");
     }, "open");
+
+  const handleRepairSelected = () =>
+    runBusy(async () => {
+      const targetPath = selectedFilePath || failedOpenPath || "";
+      if (!targetPath) {
+        throw new Error("未选中损坏画布");
+      }
+      const result = await bridge.repairBoardAtPath?.(targetPath);
+      if (!result?.ok) {
+        throw new Error(result?.error || "画布修复失败");
+      }
+      setRepairResult(result);
+      setOpenResultPath("");
+      setSaveResultPath("");
+      await refreshBoards(folderPath);
+      setSelectedPath(result.repairedFile || targetPath);
+      setFeedback(`已生成修复副本，恢复 ${Number(result.recoveredItemCount || 0)} 个节点`);
+    }, "repair");
 
   const handleSave = () =>
     runBusy(async () => {
@@ -296,8 +335,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       if (!saved) {
         throw new Error("画布保存失败");
       }
+      setSaveResultPath(selectedFilePath || currentPath || "");
       await refreshBoards(folderPath);
-      setFeedback("画布已保存");
     }, "save");
 
   const handleSaveAs = () =>
@@ -306,6 +345,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
       if (!saved) {
         return;
       }
+      setOpenResultPath("");
+      setSaveResultPath("");
       const workspace = String((await bridge.getCanvasBoardWorkspace()) || folderPath).trim();
       setFolderPath(workspace);
       await refreshBoards(workspace);
@@ -338,6 +379,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         throw new Error("画布重命名失败");
       }
       setRenameEditing(false);
+      setOpenResultPath("");
+      setSaveResultPath("");
       await refreshBoards(folderPath);
       setSelectedPath(renamed.filePath || selectedFilePath);
       setFeedback("名称已更新");
@@ -353,6 +396,8 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
         throw new Error(result?.error || "删除画布失败");
       }
       setDeleteConfirmOpen(false);
+      setOpenResultPath("");
+      setSaveResultPath("");
       await refreshBoards(folderPath);
       setFeedback("画布已删除");
     }, "delete");
@@ -381,6 +426,22 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
   const selectedPathLabel = selectedFilePath ? formatPathLabel(selectedFilePath, "未选择") : "未选择";
   const workspaceBadgeLabel = loading ? "同步中" : "本地工作区";
   const listHintLabel = folderPath ? "双击直接打开" : "先连接工作区";
+  const failedRepairPath = failedOpenPath || "";
+  const canRepairSelected =
+    Boolean(failedRepairPath) &&
+    (selectedFilePath === failedRepairPath || !selectedFilePath || selectedPath === failedRepairPath);
+  const isOpeningSelected = busyAction === "open";
+  const isOpenedSelected =
+    !isOpeningSelected &&
+    Boolean(selectedFilePath) &&
+    (selectedFilePath === currentPath || selectedFilePath === openResultPath);
+  const openButtonLabel = isOpeningSelected ? "画布加载中" : isOpenedSelected ? "已打开" : "打开";
+  const isSavingSelected = busyAction === "save";
+  const isSavedSelected =
+    !isSavingSelected &&
+    Boolean(selectedFilePath) &&
+    (selectedFilePath === currentPath || selectedFilePath === saveResultPath);
+  const saveButtonLabel = isSavingSelected ? "保存中" : isSavedSelected ? "已保存" : "保存";
 
   return (
     <div className="canvas2d-board-workspace-overlay" role="dialog" aria-modal="true" aria-label="画布工作区">
@@ -477,7 +538,9 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
                         <strong>{formatBoardDisplayName(board.name)}</strong>
                         {isActive ? <span className="canvas2d-board-workspace-active-pill">当前</span> : null}
                       </span>
-                      <span>{formatPathLabel(board.filePath)}</span>
+                      <span className="canvas2d-board-workspace-item-path">
+                        {formatBoardExtensionLabel(board.name, board.filePath)}
+                      </span>
                     </span>
                     <span className="canvas2d-board-workspace-item-meta">
                       <small>{formatTime(board.modifiedAt)}</small>
@@ -559,24 +622,32 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
               <small>{selectedMetaTime}</small>
               <small>{selectedMetaSize}</small>
             </div>
-            <div className="canvas2d-board-workspace-current-path" title={selectedFilePath || "未选择画布"}>
-              {selectedPathLabel}
-            </div>
             {feedback ? <div className="canvas2d-board-workspace-feedback">{feedback}</div> : null}
           </div>
 
-          <div className="canvas2d-board-workspace-action-grid">
-            <button type="button" onClick={() => handleOpenSelected()} disabled={busy || !selectedFilePath}>
-              打开
-            </button>
-            <button type="button" onClick={handleSave} disabled={busy}>
-              保存
+          <div className="canvas2d-board-workspace-action-stack">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={(busy && busyAction !== "save") || !selectedFilePath}
+              className={isSavedSelected ? "canvas2d-board-workspace-save-action is-saved" : ""}
+            >
+              {saveButtonLabel}
             </button>
             <button type="button" onClick={handleSaveAs} disabled={busy}>
               另存为
             </button>
             <button type="button" onClick={handleReveal} disabled={!selectedFilePath}>
               打开位置
+            </button>
+            <button
+              type="button"
+              className={`canvas2d-board-workspace-repair-action${canRepairSelected ? " is-visible" : ""}`}
+              onClick={handleRepairSelected}
+              disabled={busy || !canRepairSelected}
+              title={canRepairSelected ? "为当前打不开的画布生成修复副本" : "打开失败后可在这里修复"}
+            >
+              {busyAction === "repair" ? "修复中" : "修复画布"}
             </button>
             <button
               type="button"
@@ -589,13 +660,26 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
             </button>
           </div>
 
-          <div className="canvas2d-board-workspace-note">
-            <strong>格式兼容</strong>
-            <span>默认保存为 `.freeflow`，打开旧版 JSON 时自动生成升级副本。</span>
-            {!canDeleteSelected && isSelectedActive ? <span>当前已打开的画布不能直接删除，先切换到其他画布。</span> : null}
-          </div>
-
-          {error ? <div className="canvas2d-board-workspace-error">{error}</div> : null}
+          {repairResult?.ok ? (
+            <div className="canvas2d-board-workspace-feedback">
+              已生成修复副本：{formatPathLabel(repairResult.repairedFile, repairResult.repairedFile)}
+            </div>
+          ) : null}
+          {error ? (
+            <div className="canvas2d-board-workspace-error">
+              <span>{error}</span>
+              {canRepairSelected ? (
+                <button
+                  type="button"
+                  className="canvas2d-board-workspace-inline-repair"
+                  onClick={handleRepairSelected}
+                  disabled={busy}
+                >
+                  {busyAction === "repair" ? "修复中" : "修复画布"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className={`canvas2d-board-workspace-create-dock${createOpen ? " is-open" : ""}`}>
             {createOpen ? (
@@ -636,11 +720,26 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
                   {createButtonLabel}
                 </button>
               </>
-            ) : (
-              <button type="button" className="canvas2d-board-workspace-create-trigger" onClick={() => setCreateOpen(true)} disabled={busy}>
-                + 新建画布
-              </button>
-            )}
+            ) : null}
+          </div>
+
+          <div className="canvas2d-board-workspace-bottom-actions">
+            <button
+              type="button"
+              onClick={() => handleOpenSelected()}
+              disabled={(busy && busyAction !== "open") || !selectedFilePath || isOpenedSelected}
+              className={isOpenedSelected ? "canvas2d-board-workspace-open-action is-opened" : ""}
+            >
+              {openButtonLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              disabled={busy}
+              className="canvas2d-board-workspace-create-inline-action"
+            >
+              新建画布
+            </button>
           </div>
         </aside>
       </div>
