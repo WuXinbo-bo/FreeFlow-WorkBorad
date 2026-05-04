@@ -14256,9 +14256,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       type: "image/png",
     };
     const item = imageModule.createElement(file, point, raw, dimensions);
-    item.source = "blob";
-    item.dataUrl = raw;
-    item.sourcePath = "";
+    const persistedSourcePath = String(options.sourcePath || "").trim();
+    item.source = persistedSourcePath ? "path" : "blob";
+    item.dataUrl = persistedSourcePath ? "" : raw;
+    item.sourcePath = persistedSourcePath;
     item.fileId = "";
     item.locked = false;
     item.memoVisible = false;
@@ -15313,6 +15314,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     captureMode = "canvas";
+    state.captureModeActive = true;
+    state.captureModeDragging = false;
     state.selectionRect = null;
     setStatus("拖动框选分享区域，单击直接分享当前画布");
     scheduleRender();
@@ -15381,6 +15384,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         const inserted = await insertImageFromDataUrl(dataUrl, {
           name: "画布截图",
           anchorPoint,
+          sourcePath: result.path || "",
           persistToImportFolder: false,
         });
         if (!inserted) {
@@ -15398,6 +15402,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     } finally {
       state.selectionRect = null;
       captureMode = null;
+      state.captureModeActive = false;
+      state.captureModeDragging = false;
       scheduleRender();
     }
   }
@@ -17333,6 +17339,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     if (captureMode === "canvas" && event.button === 0) {
       event.preventDefault();
+      state.captureModeActive = true;
+      state.captureModeDragging = false;
       state.pointer = {
         type: "capture",
         startScenePoint: scenePoint,
@@ -17686,6 +17694,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const pointer = state.pointer;
     if (pointer?.type === "capture") {
       pointer.currentScenePoint = scenePoint;
+      state.captureModeDragging = hasDragExceededThreshold(pointer.startScenePoint, scenePoint, 6);
       state.selectionRect = { start: pointer.startScenePoint, current: scenePoint };
       scheduleRender();
       return;
@@ -19498,11 +19507,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "image-reveal") {
-      if (state.board.selectedIds.length === 1) {
-        const selected = getSingleSelectedItemFast("image");
+      const selected = alignSelectionWithContextMenuTarget(["image"]) || getSingleSelectedItemFast("image");
+      if (selected) {
         const path = String(selected?.sourcePath || "").trim();
         if (!path) {
-          setStatus("图片路径为空");
+          setStatus("该图片尚未保存到本地位置");
         } else if (typeof globalThis?.desktopShell?.revealPath === "function") {
           void globalThis.desktopShell.revealPath(path);
         } else {
@@ -22387,6 +22396,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (key === "escape" && captureMode === "canvas") {
       event.preventDefault();
       captureMode = null;
+      state.captureModeActive = false;
+      state.captureModeDragging = false;
       state.selectionRect = null;
       setStatus("已取消截图");
       scheduleRender();

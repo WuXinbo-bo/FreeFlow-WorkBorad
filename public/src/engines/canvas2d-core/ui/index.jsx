@@ -930,6 +930,8 @@ function Canvas2DControls({ engine }) {
   }, [pdfExportBusy, snapshot?.statusText]);
 
   const activeTool = snapshot?.tool || "select";
+  const captureModeActive = Boolean(snapshot?.captureModeActive);
+  const captureModeDragging = Boolean(snapshot?.captureModeDragging);
   const viewScale = Number(snapshot?.board?.view?.scale || 1);
   const zoomPercent = Math.round(viewScale * 100);
   const overlayScale = clamp((uiViewport.width - 72) / 940, 0.76, 1);
@@ -2253,6 +2255,21 @@ function Canvas2DControls({ engine }) {
               </div>
             </div>
             <div className="canvas2d-pdf-export-meta">完成后将继续进入文件保存界面</div>
+          </div>
+        </div>
+      ) : null}
+
+      {captureModeActive ? (
+        <div className="canvas2d-capture-hint-overlay" role="status" aria-live="polite" aria-label="正在分享画布">
+          <div className="canvas2d-capture-hint-dialog">
+            <div className="canvas2d-capture-hint-dot" aria-hidden="true" />
+            <div className="canvas2d-capture-hint-copy">
+              <div className="canvas2d-capture-hint-title">正在分享画布</div>
+              <div className="canvas2d-capture-hint-text">
+                {captureModeDragging ? "松开鼠标后生成选区截图" : "按住左键拖动选择截图区域"}
+                <span>Esc 取消</span>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

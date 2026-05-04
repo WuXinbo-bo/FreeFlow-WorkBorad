@@ -13319,6 +13319,69 @@ body.is-office-embedded #right-pane-resizer {
   line-height: 1.5;
 }
 
+.canvas2d-capture-hint-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 57;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 82px;
+  pointer-events: none;
+}
+
+.canvas2d-capture-hint-dialog {
+  width: min(360px, calc(100vw - 40px));
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.86);
+  box-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(16px);
+}
+
+.canvas2d-capture-hint-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.16);
+}
+
+.canvas2d-capture-hint-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.canvas2d-capture-hint-title {
+  color: #f8fafc;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.canvas2d-capture-hint-text {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.canvas2d-capture-hint-text span {
+  color: rgba(186, 230, 253, 0.96);
+  font-weight: 600;
+}
+
 @keyframes canvas2d-pdf-export-spin {
   from {
     transform: rotate(0deg);

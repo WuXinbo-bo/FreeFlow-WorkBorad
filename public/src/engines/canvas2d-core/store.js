@@ -166,6 +166,8 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
       lastSelectionSource: state.lastSelectionSource,
       statusText: state.statusText,
       statusTone: state.statusTone,
+      captureModeActive: state.captureModeActive === true,
+      captureModeDragging: state.captureModeDragging === true,
       boardFilePath: state.boardFilePath,
       boardFileName: state.boardFileName,
       canvasImageSavePath: state.canvasImageSavePath,
