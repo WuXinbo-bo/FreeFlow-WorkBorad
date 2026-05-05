@@ -12593,6 +12593,16 @@ body.is-office-embedded #right-pane-resizer {
   transform: translateX(-10px);
 }
 
+.canvas2d-engine-tool-group .canvas2d-engine-menu.canvas2d-engine-menu-image {
+  transform: translateX(-10px);
+}
+
+.canvas2d-engine-tool-group .canvas2d-engine-menu.canvas2d-engine-menu-share {
+  left: 50%;
+  right: auto;
+  transform: translateX(-61%);
+}
+
 .canvas2d-engine-menu-wide {
   min-width: 240px;
   right: 0;
@@ -12712,6 +12722,10 @@ body.is-office-embedded #right-pane-resizer {
   min-width: 226px;
 }
 
+.canvas2d-engine-tool-group .canvas2d-engine-menu.canvas2d-engine-insert-menu {
+  transform: translateX(-88px);
+}
+
 .canvas2d-engine-insert-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -12804,6 +12818,11 @@ body.is-office-embedded #right-pane-resizer {
   margin-top: -2px;
   padding: 0 2px 4px 12px;
   border-left: 1px solid rgba(191, 219, 254, 0.62);
+}
+
+.canvas2d-engine-menu-image,
+.canvas2d-engine-menu-share {
+  min-width: 208px;
 }
 
 .canvas2d-engine-menu-item-toggle {
@@ -14093,6 +14112,163 @@ body.is-office-embedded #right-pane-resizer {
 .conversation-panel.screen-view-active .screen-source-preview-shell {
   height: 100%;
   min-height: 0;
+}
+
+/* Dual floating workspaces */
+body.desktop-mode .workspace {
+  position: relative;
+  display: block;
+  height: calc(100vh - 82px);
+  min-height: 0;
+  overflow: visible;
+}
+
+body.desktop-mode .desktop-clear-stage,
+body.desktop-mode .conversation-panel {
+  position: absolute;
+  overflow: hidden;
+  will-change: left, top, width, height;
+}
+
+body.desktop-mode .desktop-clear-stage {
+  min-width: 420px;
+  min-height: 280px;
+  overflow: visible;
+}
+
+body.desktop-mode .conversation-panel {
+  min-width: 360px;
+  min-height: 260px;
+}
+
+body.desktop-mode .desktop-clear-stage.is-workspace-maximized,
+body.desktop-mode .conversation-panel.is-workspace-maximized {
+  border-radius: 24px;
+}
+
+body.desktop-mode .desktop-clear-stage.is-workspace-half,
+body.desktop-mode .conversation-panel.is-workspace-half {
+  border-radius: 24px;
+}
+
+body.desktop-mode .stage-panel-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(12, 14, 20, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.desktop-clear-stage .workspace-drag-band,
+.conversation-panel .workspace-drag-band {
+  position: absolute;
+  z-index: 18;
+  pointer-events: auto;
+  background: transparent;
+  cursor: grab;
+}
+
+.desktop-clear-stage .workspace-drag-band:active,
+.conversation-panel .workspace-drag-band:active {
+  cursor: grabbing;
+}
+
+.desktop-clear-stage .workspace-drag-band.is-top,
+.conversation-panel .workspace-drag-band.is-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+}
+
+.desktop-clear-stage .workspace-drag-band.is-right,
+.conversation-panel .workspace-drag-band.is-right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+}
+
+.desktop-clear-stage .workspace-drag-band.is-bottom,
+.conversation-panel .workspace-drag-band.is-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 18px;
+}
+
+.desktop-clear-stage .workspace-drag-band.is-left,
+.conversation-panel .workspace-drag-band.is-left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 18px;
+}
+
+.desktop-clear-stage .workspace-drag-band.is-bottom {
+  right: 48px;
+}
+
+.conversation-panel .workspace-drag-band.is-bottom {
+  left: 48px;
+}
+
+body.desktop-mode .stage-panel-orb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 999px;
+  padding: 0;
+  cursor: pointer;
+}
+
+body.desktop-mode .stage-panel-close {
+  background: #fb7185;
+}
+
+body.desktop-mode .stage-panel-drag {
+  background: #fbbf24;
+  cursor: grab;
+}
+
+body.desktop-mode .stage-panel-drag:active {
+  cursor: grabbing;
+}
+
+body.desktop-mode .stage-panel-reset {
+  background: #34d399;
+}
+
+body.desktop-mode .pane-edge-y-resizer {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+body.desktop-mode .pane-edge-y-resizer.is-hidden {
+  display: none !important;
+}
+
+body.desktop-mode .pane-resizer {
+  position: absolute;
+  z-index: 31;
+}
+
+body.desktop-mode .pane-resizer::before {
+  opacity: 0.92;
+}
+
+body.desktop-mode .workspace.left-collapsed,
+body.desktop-mode .workspace.right-collapsed,
+body.desktop-mode .workspace.left-collapsed.right-collapsed {
+  display: block;
 }
 
 .screen-source-preview-shell {

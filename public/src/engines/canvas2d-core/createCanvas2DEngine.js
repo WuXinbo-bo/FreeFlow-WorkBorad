@@ -6311,12 +6311,18 @@ let tablePointerSelectionState = {
   }
 
   async function captureCanvasImageToManager(anchorPoint = getCenterScenePoint()) {
-    if (typeof globalThis?.desktopShell?.captureScreenImage !== "function") {
+    const captureFn =
+      typeof globalThis?.__FREEFLOW_DESKTOP_RUNTIME?.captureScreenImageWithTemporaryClickThrough === "function"
+        ? globalThis.__FREEFLOW_DESKTOP_RUNTIME.captureScreenImageWithTemporaryClickThrough
+        : typeof globalThis?.desktopShell?.captureScreenImage === "function"
+          ? () => globalThis.desktopShell.captureScreenImage()
+          : null;
+    if (!captureFn) {
       setStatus("当前环境不支持系统截图", "warning");
       return false;
     }
-    setStatus("等待系统截图完成...");
-    const result = await globalThis.desktopShell.captureScreenImage();
+    setStatus("正在隐藏窗口并等待系统截图完成...");
+    const result = await captureFn();
     const dataUrl = String(result?.dataUrl || "").trim();
     if (!result?.ok || !dataUrl) {
       setStatus(result?.error || "截图失败", "warning");

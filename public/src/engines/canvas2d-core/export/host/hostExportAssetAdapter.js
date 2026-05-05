@@ -49,6 +49,17 @@ function isDataUrlSource(source = "") {
   return /^data:/i.test(String(source || "").trim());
 }
 
+function buildExportImageFallbackItem(item, reason = "missing") {
+  return {
+    ...item,
+    dataUrl: "",
+    sourcePath: "",
+    source: "missing",
+    exportFallbackPlaceholder: true,
+    exportFallbackReason: String(reason || "missing").trim() || "missing",
+  };
+}
+
 async function blobToDataUrl(blob) {
   if (!blob) {
     return "";
@@ -111,6 +122,7 @@ export function createHostExportAssetAdapter({
 } = {}) {
   const resolveAllowLocalFileAccess =
     typeof allowLocalFileAccess === "function" ? allowLocalFileAccess : () => Boolean(allowLocalFileAccess);
+
   async function hydrateImageItems(items = []) {
     const list = Array.isArray(items) ? items : [];
     const readCache = new Map();
@@ -132,13 +144,7 @@ export function createHostExportAssetAdapter({
           (await readFilePathAsDataUrl(sourcePath, readCache, readFileBase64)) ||
           (await fetchSourceAsDataUrl(resolvedSource));
         if (!isDataUrlSource(nextDataUrl)) {
-          return {
-            ...item,
-            dataUrl: "",
-            sourcePath: "",
-            source: "missing",
-            exportFallbackPlaceholder: true,
-          };
+          return buildExportImageFallbackItem(item, resolvedSource ? "unresolved-source" : "missing-source");
         }
         return {
           ...item,
@@ -151,23 +157,50 @@ export function createHostExportAssetAdapter({
   }
 
   async function preloadImagesForItems(items = []) {
-    const sources = new Set();
-    (Array.isArray(items) ? items : []).forEach((item) => {
-      if (item?.type !== "image") {
-        return;
-      }
-      const source = resolveImageSource(item.dataUrl, item.sourcePath, {
-        allowLocalFileAccess: Boolean(resolveAllowLocalFileAccess()),
-      });
-      if (source) {
-        sources.add(source);
-      }
-    });
-    if (!sources.size) {
-      return true;
-    }
-    await Promise.all(Array.from(sources, (source) => preloadImageSource(source)));
-    return true;
+    const list = Array.isArray(items) ? items : [];
+    const sourceStatusCache = new Map();
+    const results = await mapWithConcurrency(
+      list,
+      async (item) => {
+        if (!item || item.type !== "image") {
+          return { item, loaded: true, source: "", fallbackApplied: false };
+        }
+        if (item.exportFallbackPlaceholder) {
+          return { item, loaded: false, source: "", fallbackApplied: true };
+        }
+        const source = resolveImageSource(item.dataUrl, item.sourcePath, {
+          allowLocalFileAccess: Boolean(resolveAllowLocalFileAccess()),
+        });
+        if (!source) {
+          return {
+            item: buildExportImageFallbackItem(item, "missing-source"),
+            loaded: false,
+            source: "",
+            fallbackApplied: true,
+          };
+        }
+        if (!sourceStatusCache.has(source)) {
+          sourceStatusCache.set(source, preloadImageSource(source));
+        }
+        const loaded = await sourceStatusCache.get(source);
+        if (loaded) {
+          return { item, loaded: true, source, fallbackApplied: false };
+        }
+        return {
+          item: buildExportImageFallbackItem(item, "preload-failed"),
+          loaded: false,
+          source,
+          fallbackApplied: true,
+        };
+      },
+      4
+    );
+    return {
+      ok: true,
+      items: results.map((entry) => entry?.item || null),
+      failedCount: results.filter((entry) => entry && entry.loaded === false).length,
+      fallbackCount: results.filter((entry) => entry && entry.fallbackApplied).length,
+    };
   }
 
   return {

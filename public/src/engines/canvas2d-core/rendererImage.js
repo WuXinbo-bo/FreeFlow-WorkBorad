@@ -410,6 +410,23 @@ function drawImageLodPlaceholder(ctx, width, height) {
   });
 }
 
+function drawExportFallbackPlaceholder(ctx, item, width, height, scale) {
+  drawImageLodPlaceholder(ctx, width, height);
+  ctx.save();
+  const title = String(item?.name || item?.title || item?.fileName || "图片").trim() || "图片";
+  const reason = String(item?.exportFallbackReason || "").trim();
+  const label = reason === "preload-failed" ? "图片导出降级" : "图片占位导出";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+  ctx.font = `600 ${Math.max(10, 14 * Math.max(0.72, Math.min(scale, 1.4)))}px "Segoe UI", "PingFang SC", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, width / 2, Math.max(18, height * 0.46));
+  ctx.fillStyle = "rgba(71, 85, 105, 0.86)";
+  ctx.font = `500 ${Math.max(9, 11 * Math.max(0.72, Math.min(scale, 1.4)))}px "Segoe UI", "PingFang SC", sans-serif`;
+  ctx.fillText(title.slice(0, 24), width / 2, Math.max(36, height * 0.6));
+  ctx.restore();
+}
+
 export function createImageRenderer() {
   const imageCache = new Map();
 
@@ -439,6 +456,16 @@ export function createImageRenderer() {
     const source = resolveImageSource(item.dataUrl, item.sourcePath, {
       allowLocalFileAccess: helpers?.allowLocalFileAccess,
     });
+    if (item?.exportFallbackPlaceholder) {
+      drawExportFallbackPlaceholder(ctx, item, width, height, scale);
+      ctx.restore();
+      helpers?.drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
+      if (selected) {
+        helpers?.drawHandles?.(ctx, item, view);
+        drawRotateHandle(ctx, x, y, width, height);
+      }
+      return { handled: true, lodSimplified: false };
+    }
     const cacheKey = source || item.id;
     let entry = imageCache.get(cacheKey);
     if (!entry && source) {

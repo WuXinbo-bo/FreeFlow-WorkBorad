@@ -703,7 +703,7 @@ function getExportHistoryActionLabel(entry = null) {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.1.0" },
+  { label: "版本号", value: "v1.1.1" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },
@@ -772,6 +772,7 @@ function Canvas2DControls({ engine }) {
   const [snapshot, setSnapshot] = useState(() => bridge.getSnapshot());
   const [tutorialSnapshot, setTutorialSnapshot] = useState(() => tutorialRuntime.getSnapshot());
   const [drawMenuOpen, setDrawMenuOpen] = useState(false);
+  const [imageMenuOpen, setImageMenuOpen] = useState(false);
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false);
   const [capturePdfMenuOpen, setCapturePdfMenuOpen] = useState(false);
   const [capturePngMenuOpen, setCapturePngMenuOpen] = useState(false);
@@ -805,6 +806,7 @@ function Canvas2DControls({ engine }) {
   const infoPanelRef = useRef(null);
   const topbarStackRef = useRef(null);
   const drawMenuRef = useRef(null);
+  const imageMenuRef = useRef(null);
   const insertMenuRef = useRef(null);
   const captureMenuRef = useRef(null);
   const menuRef = useRef(null);
@@ -881,6 +883,9 @@ function Canvas2DControls({ engine }) {
       if (captureMenuRef.current && captureMenuRef.current.contains(event.target)) {
         return;
       }
+      if (imageMenuRef.current && imageMenuRef.current.contains(event.target)) {
+        return;
+      }
       if (insertMenuRef.current && insertMenuRef.current.contains(event.target)) {
         return;
       }
@@ -897,6 +902,7 @@ function Canvas2DControls({ engine }) {
         return;
       }
       setDrawMenuOpen(false);
+      setImageMenuOpen(false);
       setInsertMenuOpen(false);
       setCaptureMenuOpen(false);
       setCapturePdfMenuOpen(false);
@@ -1404,7 +1410,7 @@ function Canvas2DControls({ engine }) {
       <div className="canvas2d-engine-topbar-stack" ref={topbarStackRef}>
       <div
         className={`canvas2d-engine-toolbar-wrap${
-          drawMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
+          drawMenuOpen || imageMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
         }`}
         aria-label="工作白板工具栏"
       >
@@ -1512,17 +1518,67 @@ function Canvas2DControls({ engine }) {
             }}
           />
 
-          <button
-            type="button"
-            className="canvas2d-engine-tool"
-            onClick={() => imageInputRef.current?.click()}
-            title="图片工具"
-          >
-            <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <ImageIcon />
-            </span>
-            <span className="canvas2d-engine-tool-shortcut">I</span>
-          </button>
+          <div className="canvas2d-engine-tool-group" ref={imageMenuRef}>
+            <button
+              type="button"
+              className={`canvas2d-engine-tool${imageMenuOpen ? " is-active" : ""}`}
+              onClick={() =>
+                setImageMenuOpen((value) => {
+                  const next = !value;
+                  setDrawMenuOpen(false);
+                  setInsertMenuOpen(false);
+                  setCaptureMenuOpen(false);
+                  setCapturePdfMenuOpen(false);
+                  setCapturePngMenuOpen(false);
+                  setMenuOpen(false);
+                  setExportMenuOpen(false);
+                  setAlignmentSnapMenuOpen(false);
+                  setBackgroundMenuOpen(false);
+                  setAboutMenuOpen(false);
+                  setSearchOpen(false);
+                  setExportHistoryOpen(false);
+                  return next;
+                })
+              }
+              aria-haspopup="menu"
+              aria-expanded={imageMenuOpen}
+              title="图片工具"
+            >
+              <span className="canvas2d-engine-tool-icon" aria-hidden="true">
+                <ImageIcon />
+              </span>
+              <span className="canvas2d-engine-tool-shortcut">I</span>
+            </button>
+            {imageMenuOpen ? (
+              <div className="canvas2d-engine-menu canvas2d-engine-menu-image" role="menu">
+                <div className="canvas2d-engine-menu-section">
+                  <div className="canvas2d-engine-menu-title">图片</div>
+                  <button
+                    type="button"
+                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                    role="menuitem"
+                    onClick={() => {
+                      imageInputRef.current?.click();
+                      setImageMenuOpen(false);
+                    }}
+                  >
+                    <span>从文件中导入</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                    role="menuitem"
+                    onClick={() => {
+                      void bridge.captureCanvasImageToManager();
+                      setImageMenuOpen(false);
+                    }}
+                  >
+                    <span>系统截屏</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <input
             ref={imageInputRef}
             className="canvas2d-file-input"
@@ -1559,6 +1615,7 @@ function Canvas2DControls({ engine }) {
                 setInsertMenuOpen((value) => {
                   const next = !value;
                   setDrawMenuOpen(false);
+                  setImageMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
@@ -1618,6 +1675,7 @@ function Canvas2DControls({ engine }) {
               className={`canvas2d-engine-tool${captureMenuOpen ? " is-active" : ""}`}
               onClick={() => {
                 setDrawMenuOpen(false);
+                setImageMenuOpen(false);
                 setInsertMenuOpen(false);
                 setMenuOpen(false);
                 setExportMenuOpen(false);
@@ -1645,102 +1703,105 @@ function Canvas2DControls({ engine }) {
               <span className="canvas2d-engine-tool-shortcut">P</span>
             </button>
             {captureMenuOpen ? (
-              <div className="canvas2d-engine-menu" role="menu">
-                <button
-                  type="button"
-                  className={`canvas2d-engine-menu-item${captureIncludeBackground ? " is-active" : ""}`}
-                  role="menuitemcheckbox"
-                  aria-checked={captureIncludeBackground}
-                  onClick={() => setCaptureIncludeBackground((value) => !value)}
-                >
-                  <span>导出时带背景</span>
-                  <span className="canvas2d-engine-menu-meta">{captureIncludeBackground ? "开" : "关"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="canvas2d-engine-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    void bridge.startCanvasCapture();
-                    setCaptureMenuOpen(false);
-                    setCapturePdfMenuOpen(false);
-                    setCapturePngMenuOpen(false);
-                  }}
-                >
-                  <span>分享当前画布</span>
-                </button>
-                <button
-                  type="button"
-                  className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePdfMenuOpen ? " is-active" : ""}`}
-                  role="menuitem"
-                  onClick={() => {
-                    setCapturePngMenuOpen(false);
-                    setCapturePdfMenuOpen((value) => !value);
-                  }}
-                >
-                  <span>导出 PDF</span>
-                  <ChevronIcon open={capturePdfMenuOpen} />
-                </button>
-                {capturePdfMenuOpen ? (
-                  <div className="canvas2d-engine-menu-group">
-                    <button
-                      type="button"
-                      className="canvas2d-engine-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        void handlePdfExport(2);
-                      }}
-                    >
-                      <span>标准</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="canvas2d-engine-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        void handlePdfExport(3);
-                      }}
-                    >
-                      <span>高清</span>
-                    </button>
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePngMenuOpen ? " is-active" : ""}`}
-                  role="menuitem"
-                  onClick={() => {
-                    setCapturePdfMenuOpen(false);
-                    setCapturePngMenuOpen((value) => !value);
-                  }}
-                >
-                  <span>导出 PNG</span>
-                  <ChevronIcon open={capturePngMenuOpen} />
-                </button>
-                {capturePngMenuOpen ? (
-                  <div className="canvas2d-engine-menu-group">
-                    <button
-                      type="button"
-                      className="canvas2d-engine-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        void handlePngExport(2);
-                      }}
-                    >
-                      <span>标准</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="canvas2d-engine-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        void handlePngExport(3);
-                      }}
-                    >
-                      <span>高清</span>
-                    </button>
-                  </div>
-                ) : null}
+              <div className="canvas2d-engine-menu canvas2d-engine-menu-share" role="menu">
+                <div className="canvas2d-engine-menu-section">
+                  <div className="canvas2d-engine-menu-title">分享</div>
+                  <button
+                    type="button"
+                    className={`canvas2d-engine-menu-item${captureIncludeBackground ? " is-active" : ""}`}
+                    role="menuitemcheckbox"
+                    aria-checked={captureIncludeBackground}
+                    onClick={() => setCaptureIncludeBackground((value) => !value)}
+                  >
+                    <span>导出时带背景</span>
+                    <span className="canvas2d-engine-menu-meta">{captureIncludeBackground ? "开" : "关"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                    role="menuitem"
+                    onClick={() => {
+                      void bridge.startCanvasCapture();
+                      setCaptureMenuOpen(false);
+                      setCapturePdfMenuOpen(false);
+                      setCapturePngMenuOpen(false);
+                    }}
+                  >
+                    <span>分享当前画布</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePdfMenuOpen ? " is-active" : ""}`}
+                    role="menuitem"
+                    onClick={() => {
+                      setCapturePngMenuOpen(false);
+                      setCapturePdfMenuOpen((value) => !value);
+                    }}
+                  >
+                    <span>导出 PDF</span>
+                    <ChevronIcon open={capturePdfMenuOpen} />
+                  </button>
+                  {capturePdfMenuOpen ? (
+                    <div className="canvas2d-engine-menu-group">
+                      <button
+                        type="button"
+                        className="canvas2d-engine-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void handlePdfExport(2);
+                        }}
+                      >
+                        <span>标准</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="canvas2d-engine-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void handlePdfExport(3);
+                        }}
+                      >
+                        <span>高清</span>
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${capturePngMenuOpen ? " is-active" : ""}`}
+                    role="menuitem"
+                    onClick={() => {
+                      setCapturePdfMenuOpen(false);
+                      setCapturePngMenuOpen((value) => !value);
+                    }}
+                  >
+                    <span>导出 PNG</span>
+                    <ChevronIcon open={capturePngMenuOpen} />
+                  </button>
+                  {capturePngMenuOpen ? (
+                    <div className="canvas2d-engine-menu-group">
+                      <button
+                        type="button"
+                        className="canvas2d-engine-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void handlePngExport(2);
+                        }}
+                      >
+                        <span>标准</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="canvas2d-engine-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void handlePngExport(3);
+                        }}
+                      >
+                        <span>高清</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>
@@ -1756,6 +1817,7 @@ function Canvas2DControls({ engine }) {
                 setMenuOpen((value) => {
                   const next = !value;
                   setDrawMenuOpen(false);
+                  setImageMenuOpen(false);
                   setInsertMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);

@@ -247,8 +247,8 @@ async function main() {
       hasShownStartupTutorial:
         scenarioName === "legacy-user-template-refresh" ||
         scenarioName === "current-version-intro-dismissed",
-      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.0" : "",
-      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.0" : "",
+      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.1" : "",
+      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.1" : "",
     });
     console.log(JSON.stringify(result));
     return;

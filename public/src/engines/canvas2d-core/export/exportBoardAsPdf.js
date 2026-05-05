@@ -16,7 +16,12 @@ async function canvasToPngBytes(canvas) {
   if (!canvas || typeof canvas.toBlob !== "function") {
     return null;
   }
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  let blob = null;
+  try {
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  } catch {
+    blob = null;
+  }
   if (!blob) {
     return null;
   }
@@ -47,6 +52,14 @@ function fitImageToPage(imageWidth, imageHeight, pageWidth, pageHeight, padding 
     x: (pageWidth - width) / 2,
     y: (pageHeight - height) / 2,
   };
+}
+
+function buildExportFallbackSummary(fallbackCount = 0) {
+  const count = Math.max(0, Number(fallbackCount) || 0);
+  if (!count) {
+    return "";
+  }
+  return `，其中 ${count} 张图片已按占位形式导出`;
 }
 
 export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults = {}) {
@@ -161,7 +174,7 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
       ok: false,
       canceled: false,
       code: "PDF_EXPORT_CANVAS_TAINTED",
-      message: "导出失败：存在无法捕获的图片内容",
+      message: "导出失败：离屏画布仍被图片资源污染，未能完成安全捕获",
       fileName: "",
       filePath: "",
       bytes: 0,
@@ -194,10 +207,11 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
     ...saveResult,
     message:
       saveResult?.ok && renderResult?.downgraded
-        ? `PDF 已导出（已自动降级为 ${renderResult.scaleApplied}x 清晰度）`
-        : saveResult?.message || "",
+        ? `PDF 已导出（已自动降级为 ${renderResult.scaleApplied}x 清晰度）${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`
+        : `${saveResult?.message || "PDF 已导出"}${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`,
     pageWidth: pageSize.width,
     pageHeight: pageSize.height,
     scaleApplied: renderResult.scaleApplied || options.scale,
+    exportImageFallbackCount: Math.max(0, Number(renderResult?.exportImageFallbackCount || 0) || 0),
   };
 }

@@ -88,6 +88,47 @@ async function main() {
     assert.equal(hydrated[3].exportFallbackPlaceholder, true, "missing image should mark export placeholder fallback");
     assert.deepEqual(fetchCalls, ["https://example.com/image.png", "/api/local-file?path=C%3A%5Ctemp%5Cmissing-image.png"]);
 
+    const originalImage = globalThis.Image;
+    globalThis.Image = class FakeImage {
+      constructor() {
+        this.complete = false;
+        this.naturalWidth = 0;
+        this.onload = null;
+        this.onerror = null;
+      }
+
+      set src(value) {
+        const target = String(value || "");
+        if (target === String(hydrated[1].dataUrl || "")) {
+          this.complete = false;
+          setTimeout(() => {
+            if (typeof this.onerror === "function") {
+              this.onerror(new Error("load failed"));
+            }
+          }, 0);
+          return;
+        }
+        this.complete = true;
+        this.naturalWidth = 64;
+        setTimeout(() => {
+          if (typeof this.onload === "function") {
+            this.onload();
+          }
+        }, 0);
+      }
+    };
+
+    try {
+      const preloadResult = await adapter.preloadImagesForItems(hydrated);
+      assert.equal(preloadResult.ok, true, "preload result should be ok");
+      assert.equal(preloadResult.fallbackCount, 2, "remote preload failure plus missing source should both fallback");
+      assert.equal(preloadResult.items[1].exportFallbackPlaceholder, true, "failed remote preload should fallback");
+      assert.equal(preloadResult.items[1].exportFallbackReason, "preload-failed", "failed remote preload should mark reason");
+      assert.equal(preloadResult.items[3].exportFallbackPlaceholder, true, "missing source should remain fallback");
+    } finally {
+      globalThis.Image = originalImage;
+    }
+
     console.log(
       JSON.stringify(
         {

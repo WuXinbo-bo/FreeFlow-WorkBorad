@@ -11,6 +11,8 @@ function createDefaultPanelLayoutSide(side, { viewportHeight = 0 } = {}) {
     collapsed: false,
     hidden: false,
     zIndex: isLeft ? 10 : 14,
+    mode: "normal",
+    lastNormalFrame: null,
   };
 }
 
@@ -29,6 +31,15 @@ function normalizeDockSide(value, fallback) {
 function normalizePanelLayoutSide(side, input = {}, fallback) {
   const normalizedFallback = fallback || createDefaultPanelLayoutSide(side);
   const fallbackWidth = Number(normalizedFallback.width) || (side === "left" ? CONFIG.leftPanelDefaultWidth : CONFIG.rightPanelDefaultWidth);
+  const lastNormalFrame = input?.lastNormalFrame && typeof input.lastNormalFrame === "object"
+    ? {
+        x: Number.isFinite(Number(input.lastNormalFrame.x)) ? Number(input.lastNormalFrame.x) : normalizedFallback.x,
+        y: Number.isFinite(Number(input.lastNormalFrame.y)) ? Number(input.lastNormalFrame.y) : normalizedFallback.y,
+        width: Number.isFinite(Number(input.lastNormalFrame.width)) ? Number(input.lastNormalFrame.width) : fallbackWidth,
+        height: Number.isFinite(Number(input.lastNormalFrame.height)) ? Number(input.lastNormalFrame.height) : normalizedFallback.height,
+      }
+    : normalizedFallback.lastNormalFrame || null;
+  const mode = typeof input?.mode === "string" ? String(input.mode) : normalizedFallback.mode;
   return {
     dockSide: normalizeDockSide(input?.dockSide, normalizedFallback.dockSide),
     x: Number.isFinite(Number(input?.x)) ? Number(input.x) : normalizedFallback.x,
@@ -38,6 +49,8 @@ function normalizePanelLayoutSide(side, input = {}, fallback) {
     collapsed: Boolean(input?.collapsed ?? normalizedFallback.collapsed),
     hidden: Boolean(input?.hidden ?? normalizedFallback.hidden),
     zIndex: Number.isFinite(Number(input?.zIndex)) ? Number(input.zIndex) : normalizedFallback.zIndex,
+    mode: ["normal", "half-left", "half-right", "maximized"].includes(mode) ? mode : "normal",
+    lastNormalFrame,
   };
 }
 
@@ -86,9 +99,22 @@ export function loadPanelLayout(storage, { migrateLegacy, ...options } = {}) {
   }
 
   try {
-    const raw = storage.getItem(CONFIG.panelLayoutKey);
-    if (raw) {
-      return normalizePanelLayout(JSON.parse(raw), options);
+    const candidateKeys = [CONFIG.panelLayoutKey, ...(Array.isArray(CONFIG.panelLayoutLegacyKeys) ? CONFIG.panelLayoutLegacyKeys : [])];
+    for (const key of candidateKeys) {
+      const raw = storage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const normalized = normalizePanelLayout(parsed, options);
+        if (key !== CONFIG.panelLayoutKey || Number(parsed?.version) !== Number(CONFIG.panelLayoutVersion)) {
+          normalized.left.hidden = false;
+          normalized.left.collapsed = false;
+          normalized.left.mode = "normal";
+          normalized.right.hidden = false;
+          normalized.right.collapsed = false;
+          normalized.right.mode = "normal";
+        }
+        return normalized;
+      }
     }
   } catch {
     // Ignore invalid local persistence and fall back to legacy migration/defaults.

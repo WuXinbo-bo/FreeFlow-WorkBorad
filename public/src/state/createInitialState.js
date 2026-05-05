@@ -167,6 +167,8 @@ export function createInitialState() {
         collapsed: false,
         hidden: false,
         zIndex: 10,
+        mode: "normal",
+        lastNormalFrame: null,
       },
       right: {
         dockSide: "right",
@@ -177,6 +179,8 @@ export function createInitialState() {
         collapsed: false,
         hidden: false,
         zIndex: 14,
+        mode: "normal",
+        lastNormalFrame: null,
       },
     },
   };

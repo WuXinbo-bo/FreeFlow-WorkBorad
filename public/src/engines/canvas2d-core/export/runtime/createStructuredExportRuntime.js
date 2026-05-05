@@ -47,6 +47,14 @@ function createEmptyBinaryExportResult(code, message = "") {
   };
 }
 
+function buildExportFallbackSummary(fallbackCount = 0) {
+  const count = Math.max(0, Number(fallbackCount) || 0);
+  if (!count) {
+    return "";
+  }
+  return `，其中 ${count} 张图片已按占位形式导出`;
+}
+
 function escapeHtml(value = "") {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -218,10 +226,16 @@ export function createStructuredExportRuntime({
     const hydratedItems = typeof assetAdapter?.hydrateImageItems === "function"
       ? await assetAdapter.hydrateImageItems(sourceItems)
       : sourceItems;
+    let exportItems = hydratedItems;
+    let imageFallbackCount = 0;
     if (typeof assetAdapter?.preloadImagesForItems === "function") {
-      await assetAdapter.preloadImagesForItems(hydratedItems);
+      const preloadResult = await assetAdapter.preloadImagesForItems(hydratedItems);
+      if (preloadResult?.items && Array.isArray(preloadResult.items)) {
+        exportItems = preloadResult.items;
+      }
+      imageFallbackCount = Math.max(0, Number(preloadResult?.fallbackCount || 0) || 0);
     }
-    return renderExportBoardToCanvas(hydratedItems, {
+    const renderResult = renderExportBoardToCanvas(exportItems, {
       renderer,
       getElementBounds,
       getFlowEdgeBounds,
@@ -235,6 +249,10 @@ export function createStructuredExportRuntime({
       exportBounds: snapshot?.bounds || null,
       allowUnsafeSize: Boolean(options.allowUnsafeSize),
     });
+    if (renderResult && typeof renderResult === "object") {
+      renderResult.exportImageFallbackCount = imageFallbackCount;
+    }
+    return renderResult;
   }
 
   async function renderBoardToCanvas(board, options = {}) {
@@ -291,7 +309,7 @@ export function createStructuredExportRuntime({
     }
     const dataUrl = safeCanvasToDataUrl(renderResult?.canvas);
     if (!dataUrl) {
-      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "PNG 导出失败：存在无法捕获的图片内容");
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "PNG 导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
       defaultName: options.defaultName || resolveDefaultFileName(),
@@ -306,10 +324,11 @@ export function createStructuredExportRuntime({
       ok: true,
       canceled: false,
       code: "PNG_EXPORT_OK",
-      message: saveResult.message || "PNG 已导出",
+      message: `${saveResult.message || "PNG 已导出"}${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`,
       fileName: `${resolveDefaultFileName()}.png`,
       filePath: String(saveResult.path || "").trim(),
       bytes: Number(saveResult.size) || 0,
+      exportImageFallbackCount: Math.max(0, Number(renderResult?.exportImageFallbackCount || 0) || 0),
     };
   }
 
@@ -355,7 +374,7 @@ export function createStructuredExportRuntime({
     }
     const dataUrl = safeCanvasToDataUrl(renderResult.canvas);
     if (!dataUrl) {
-      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "导出失败：存在无法捕获的图片内容");
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
       defaultName: options.defaultName || "freeflow-export",
@@ -370,10 +389,11 @@ export function createStructuredExportRuntime({
       ok: true,
       canceled: false,
       code: "PNG_EXPORT_OK",
-      message: saveResult.message || "图片已导出",
+      message: `${saveResult.message || "图片已导出"}${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`,
       fileName: `${String(options.defaultName || "freeflow-export").trim() || "freeflow-export"}.png`,
       filePath: String(saveResult.path || "").trim(),
       bytes: Number(saveResult.size) || 0,
+      exportImageFallbackCount: Math.max(0, Number(renderResult?.exportImageFallbackCount || 0) || 0),
     };
   }
 

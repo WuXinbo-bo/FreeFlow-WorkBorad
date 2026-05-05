@@ -1383,6 +1383,28 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
 
+  function resetCachedSurfaces() {
+    staticTileLayer.clear();
+    layerStore.clear();
+    lastStaticExclusionSignature = "";
+    lastTileStats = {
+      tileCount: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      invalidatedTiles: 0,
+      reusedVisibleTiles: 0,
+      rerasterizedDirtyTiles: 0,
+      coldRenderedTiles: 0,
+      dirtyVisibleTiles: 0,
+      cacheSize: 0,
+    };
+    lastDynamicStats = { customRendererHandledCount: 0, lodSimplifiedCount: 0 };
+    lastMindMapConnectionCount = 0;
+    lastDynamicVisualSignature = "";
+    lastInteractionVisualSignature = "";
+    lastViewVisualSignature = "";
+  }
+
   return {
     render({
       ctx,
@@ -1412,11 +1434,15 @@ export function createRenderer({ customRenderers = [] } = {}) {
       sceneKey = "",
       dirtyState = null,
       layerState = null,
+      forceFreshSurfaces = false,
     }) {
       const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
       const frameStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (forceFreshSurfaces) {
+        resetCachedSurfaces();
+      }
       const layerDirty = layerState?.dirty || {
         background: true,
         staticScene: true,

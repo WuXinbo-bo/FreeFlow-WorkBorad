@@ -26,8 +26,9 @@ export const CONFIG = {
   canvasBoardKey: "ai_worker_canvas_board_v1",
   canvasModeKey: "ai_worker_canvas_mode_v1",
   stagePanelsKey: "ai_worker_stage_panels_v2",
-  panelLayoutKey: "ai_worker_panel_layout_v1",
-  panelLayoutVersion: 1,
+  panelLayoutKey: "ai_worker_panel_layout_v3",
+  panelLayoutLegacyKeys: ["ai_worker_panel_layout_v2", "ai_worker_panel_layout_v1"],
+  panelLayoutVersion: 3,
   maxTitleLength: 26,
   leftPanelDefaultWidth: 762,
   rightPanelDefaultWidth: 667,
@@ -49,7 +50,7 @@ export const CONFIG = {
   canvasTextBoxDefaultFontSize: 18,
   canvasTextBoxMinFontSize: 14,
   canvasTextBoxMaxFontSize: 72,
-  startupTutorialIntroVersion: "1.1.0",
+  startupTutorialIntroVersion: "1.1.1",
 };
 
 const browserWindow = typeof window === "undefined" ? null : window;

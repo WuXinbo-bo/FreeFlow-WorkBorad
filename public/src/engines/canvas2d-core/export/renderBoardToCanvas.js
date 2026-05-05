@@ -164,6 +164,7 @@ export function renderBoardToCanvas(items = [], options = {}) {
     },
     renderTextInCanvas: Boolean(renderTextInCanvas),
     pixelRatio: dpr,
+    forceFreshSurfaces: true,
   });
 
   return {

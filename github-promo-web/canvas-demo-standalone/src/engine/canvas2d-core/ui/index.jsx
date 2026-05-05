@@ -704,7 +704,7 @@ function getExportHistoryActionLabel(entry = null) {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.1.0" },
+  { label: "版本号", value: "v1.1.1" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },

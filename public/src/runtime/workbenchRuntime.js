@@ -174,6 +174,7 @@ const PANEL_LAYOUT_EDGE_OFFSET = 0;
 const PANEL_LAYOUT_CENTER_SAFE_GAP = 0;
 const PANEL_RESIZER_SIZE = 34;
 const PANEL_RESIZER_CORNER_OFFSET = 24;
+const PANEL_LAYOUT_SNAP_DISTANCE = 28;
 
 function normalizeShortcutAcceleratorToken(token = "") {
   const value = String(token || "").trim();
@@ -1253,6 +1254,7 @@ async function rewriteAgentTask(task, session, preferredModel = "") {
 const threadViewport = document.querySelector("#thread-viewport");
 const sidePanelEl = document.querySelector(".side-panel");
 const sidePanelScrollEl = document.querySelector(".side-panel-scroll");
+const conversationHeaderEl = document.querySelector(".conversation-header");
 const conversationHeaderToplineEl = document.querySelector(".conversation-header-topline");
 const rightPanelWindowControlsEl = document.querySelector(".right-panel-window-controls");
 const {
@@ -1370,6 +1372,7 @@ const rightPaneYResizerEl = document.querySelector("#right-pane-y-resizer");
 const stageRestoreDockEl = document.querySelector("#stage-restore-dock");
 const stageRestoreBtn = document.querySelector("#stage-restore-btn");
 const stagePanelDragEls = Array.from(document.querySelectorAll("[data-stage-panel-drag]"));
+const stagePanelFrameEls = Array.from(document.querySelectorAll("[data-stage-panel-frame]"));
 const stagePanelActionEls = Array.from(document.querySelectorAll("[data-stage-panel-action]"));
 const desktopShellControlsEl = document.querySelector("#desktop-shell-controls");
 const desktopWindowBarEl = document.querySelector("#desktop-window-bar");
@@ -3171,6 +3174,7 @@ conversationAssistantChrome = createConversationAssistantChrome({
     refreshBtn: desktopRefreshBtn,
   },
 });
+syncGlobalDesktopRuntimeBridge();
 
 function applyThemeAppearance() {
   applyThemeCssVariables(document.documentElement, state.uiSettings);
@@ -5086,7 +5090,8 @@ function initializePaneLayout() {
   if (!workspaceEl) return;
 
   state.historyExpanded = localStorage.getItem(CONFIG.historyExpandedKey) === "true";
-  applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+  normalizeInitialPanelLayoutForCurrentArchitecture();
+  applyPanelLayoutState({ persist: true, syncShape: false });
 }
 
 function setDesktopMenuOpen(open) {
@@ -5197,6 +5202,38 @@ function getDockedPaneResizeBoundary(side, dockSide) {
   return Math.max(PANEL_LAYOUT_EDGE_OFFSET, Math.round(otherX + otherWidth));
 }
 
+function getPanelMovementBounds(side, width, height) {
+  const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
+  const panelWidth = Math.max(0, Number(width) || 0);
+  const panelHeight = Math.max(0, Number(height) || 0);
+  return {
+    minX: PANEL_LAYOUT_EDGE_OFFSET,
+    maxX: Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceWidth - panelWidth - PANEL_LAYOUT_EDGE_OFFSET),
+    minY: PANEL_LAYOUT_EDGE_OFFSET,
+    maxY: Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceHeight - panelHeight - PANEL_LAYOUT_EDGE_OFFSET),
+  };
+}
+
+function applyPanelEdgeSnap(side, x, y, width, height) {
+  const bounds = getPanelMovementBounds(side, width, height);
+  let nextX = Math.min(Math.max(Math.round(x), bounds.minX), bounds.maxX);
+  let nextY = Math.min(Math.max(Math.round(y), bounds.minY), bounds.maxY);
+
+  if (Math.abs(nextX - bounds.minX) <= PANEL_LAYOUT_SNAP_DISTANCE) {
+    nextX = bounds.minX;
+  } else if (Math.abs(nextX - bounds.maxX) <= PANEL_LAYOUT_SNAP_DISTANCE) {
+    nextX = bounds.maxX;
+  }
+
+  if (Math.abs(nextY - bounds.minY) <= PANEL_LAYOUT_SNAP_DISTANCE) {
+    nextY = bounds.minY;
+  } else if (Math.abs(nextY - bounds.maxY) <= PANEL_LAYOUT_SNAP_DISTANCE) {
+    nextY = bounds.maxY;
+  }
+
+  return { x: nextX, y: nextY };
+}
+
 function clampPanelLayoutSideToWorkspace(side) {
   const panel = state.panelLayout?.[side];
   if (!panel) return;
@@ -5209,12 +5246,7 @@ function clampPanelLayoutSideToWorkspace(side) {
   const requestedHeight = Number(panel.height);
   const minHeight = Math.max(160, Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(160, workspaceHeight)));
 
-  const shouldRestoreDockPosition =
-    panel.dockSide === "right" &&
-    Math.round(Number(panel.x) || 0) === 0 &&
-    Math.round(Number(panel.y) || 0) === 0;
-
-  if (!Number.isFinite(Number(panel.x)) || shouldRestoreDockPosition) {
+  if (!Number.isFinite(Number(panel.x))) {
     panel.x = defaultFrame.x;
   }
   if (!Number.isFinite(Number(panel.y))) {
@@ -5232,22 +5264,29 @@ function clampPanelLayoutSideToWorkspace(side) {
     Math.max(minHeight, workspaceHeight - PANEL_LAYOUT_EDGE_OFFSET)
   );
 
-  const maxInitialX = Math.max(
-    PANEL_LAYOUT_EDGE_OFFSET,
-    workspaceWidth - requestedWidthForClamp - PANEL_LAYOUT_EDGE_OFFSET - (side === "right" ? PANEL_LAYOUT_CENTER_SAFE_GAP : 0)
+  panel.width = clampPaneWidth(
+    Number.isFinite(requestedWidth) && requestedWidth > 0 ? requestedWidth : defaultFrame.width,
+    minWidth,
+    Math.min(maxSideWidth, Math.max(minWidth, workspaceWidth - PANEL_LAYOUT_EDGE_OFFSET * 2))
   );
-  const maxInitialY = Math.max(
-    PANEL_LAYOUT_EDGE_OFFSET,
-    workspaceHeight - requestedHeightForClamp - PANEL_LAYOUT_EDGE_OFFSET
+  panel.height = clampPaneWidth(
+    Number.isFinite(requestedHeight) && requestedHeight > 0 ? requestedHeight : defaultFrame.height,
+    minHeight,
+    Math.max(minHeight, workspaceHeight - PANEL_LAYOUT_EDGE_OFFSET * 2)
   );
-  panel.x = Math.round(Math.min(Math.max(Number(panel.x) || 0, PANEL_LAYOUT_EDGE_OFFSET), maxInitialX));
-  panel.y = Math.round(Math.min(Math.max(Number(panel.y) || 0, PANEL_LAYOUT_EDGE_OFFSET), maxInitialY));
 
-  const maxWidth = Math.min(
-    maxSideWidth,
-    Math.max(minWidth, workspaceWidth - panel.x - PANEL_LAYOUT_EDGE_OFFSET)
+  const clampedPosition = applyPanelEdgeSnap(
+    side,
+    Number(panel.x) || 0,
+    Number(panel.y) || 0,
+    panel.width,
+    panel.height
   );
-  const maxHeight = Math.max(minHeight, workspaceHeight - panel.y - PANEL_LAYOUT_EDGE_OFFSET);
+  panel.x = clampedPosition.x;
+  panel.y = clampedPosition.y;
+
+  const maxWidth = Math.min(maxSideWidth, Math.max(minWidth, workspaceWidth - PANEL_LAYOUT_EDGE_OFFSET * 2));
+  const maxHeight = Math.max(minHeight, workspaceHeight - PANEL_LAYOUT_EDGE_OFFSET * 2);
   panel.width = clampPaneWidth(
     Number.isFinite(requestedWidth) && requestedWidth > 0 ? requestedWidth : defaultFrame.width,
     minWidth,
@@ -5258,16 +5297,15 @@ function clampPanelLayoutSideToWorkspace(side) {
     minHeight,
     maxHeight
   );
-  panel.x = Math.round(
-    Math.min(
-      Math.max(Number(panel.x) || 0, PANEL_LAYOUT_EDGE_OFFSET),
-      Math.max(
-        PANEL_LAYOUT_EDGE_OFFSET,
-        workspaceWidth - panel.width - PANEL_LAYOUT_EDGE_OFFSET
-      )
-    )
+  const reclampedPosition = applyPanelEdgeSnap(
+    side,
+    Number(panel.x) || 0,
+    Number(panel.y) || 0,
+    panel.width,
+    panel.height
   );
-  panel.y = Math.round(Math.min(Math.max(Number(panel.y) || 0, PANEL_LAYOUT_EDGE_OFFSET), Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceHeight - panel.height - PANEL_LAYOUT_EDGE_OFFSET)));
+  panel.x = reclampedPosition.x;
+  panel.y = reclampedPosition.y;
   panel.zIndex = Math.max(1, Number(panel.zIndex) || (side === "left" ? 10 : 14));
 }
 
@@ -5318,6 +5356,39 @@ function panelLayoutSideDiffersFromDefault(side) {
   );
 }
 
+function capturePanelNormalFrame(side) {
+  const panel = state.panelLayout?.[side];
+  if (!panel || panel.hidden || panel.collapsed) return;
+  panel.lastNormalFrame = {
+    x: Math.round(Number(panel.x) || 0),
+    y: Math.round(Number(panel.y) || 0),
+    width: Math.round(Math.max(0, Number(panel.width) || 0)),
+    height: Math.round(Math.max(0, Number(panel.height) || 0)),
+  };
+}
+
+function restorePanelNormalFrame(side, { fallbackToDefault = true } = {}) {
+  const panel = state.panelLayout?.[side];
+  if (!panel) return false;
+  const source = panel.lastNormalFrame;
+  if (source) {
+    panel.x = source.x;
+    panel.y = source.y;
+    panel.width = source.width;
+    panel.height = source.height;
+    return true;
+  }
+  if (fallbackToDefault) {
+    const defaultFrame = getDefaultPanelFrame(side, panel);
+    panel.x = defaultFrame.x;
+    panel.y = defaultFrame.y;
+    panel.width = defaultFrame.width;
+    panel.height = defaultFrame.height;
+    return true;
+  }
+  return false;
+}
+
 function resetPanelLayoutSideToDefault(side) {
   const panel = state.panelLayout?.[side];
   if (!panel) return;
@@ -5328,6 +5399,8 @@ function resetPanelLayoutSideToDefault(side) {
   panel.height = defaultFrame.height;
   panel.hidden = false;
   panel.collapsed = false;
+  panel.mode = "normal";
+  capturePanelNormalFrame(side);
 }
 
 function readLegacyStagePanelsFromStorage() {
@@ -5356,6 +5429,12 @@ function syncLegacyStateFromPanelLayout() {
       hidden: Boolean(nextLayout.right.hidden || nextLayout.right.collapsed),
     },
   };
+  if (!nextLayout.left.lastNormalFrame) {
+    capturePanelNormalFrame("left");
+  }
+  if (!nextLayout.right.lastNormalFrame) {
+    capturePanelNormalFrame("right");
+  }
 }
 
 function buildSafeLegacyPanelLayout() {
@@ -5415,6 +5494,32 @@ function loadPanelLayoutState() {
       migrateLegacy: buildSafeLegacyPanelLayout,
     })
   );
+  for (const side of ["left", "right"]) {
+    const panel = state.panelLayout?.[side];
+    if (!panel) continue;
+    const hasNormalSnapshot =
+      panel.lastNormalFrame &&
+      Number.isFinite(Number(panel.lastNormalFrame.width)) &&
+      Number(panel.lastNormalFrame.width) > 0 &&
+      Number.isFinite(Number(panel.lastNormalFrame.height)) &&
+      Number(panel.lastNormalFrame.height) > 0;
+    if ((panel.collapsed || panel.hidden) && !hasNormalSnapshot) {
+      panel.collapsed = false;
+      panel.hidden = false;
+      panel.mode = "normal";
+      const defaultFrame = getDefaultPanelFrame(side, panel);
+      panel.x = defaultFrame.x;
+      panel.y = defaultFrame.y;
+      panel.width = defaultFrame.width;
+      panel.height = defaultFrame.height;
+      panel.lastNormalFrame = {
+        x: defaultFrame.x,
+        y: defaultFrame.y,
+        width: defaultFrame.width,
+        height: defaultFrame.height,
+      };
+    }
+  }
   syncLegacyStateFromPanelLayout();
 }
 
@@ -5450,6 +5555,12 @@ function buildPanelLayoutFromWorkbenchPreferences(preferences = getWorkbenchPref
     nextLayout[side].y = frame.y;
     nextLayout[side].width = frame.width;
     nextLayout[side].height = frame.height;
+    nextLayout[side].lastNormalFrame = {
+      x: frame.x,
+      y: frame.y,
+      width: frame.width,
+      height: frame.height,
+    };
   }
   nextLayout.left.collapsed = !nextPreferences.defaultCanvasPanelVisible;
   nextLayout.right.collapsed = !nextPreferences.defaultChatPanelVisible;
@@ -5458,6 +5569,60 @@ function buildPanelLayoutFromWorkbenchPreferences(preferences = getWorkbenchPref
   nextLayout.left.zIndex = nextPreferences.defaultCanvasPanelSide === "right" ? 14 : 10;
   nextLayout.right.zIndex = nextPreferences.defaultChatPanelSide === "right" ? 14 : 10;
   return normalizePanelLayout(nextLayout, getPanelLayoutViewportOptions());
+}
+
+function buildCompatibilityStartupPanelLayout() {
+  const preferences = normalizeWorkbenchPreferences(getWorkbenchPreferencesFromState());
+  const baseLayout = buildPanelLayoutFromWorkbenchPreferences(preferences);
+  const persistedLayout = ensureUsablePanelLayout(
+    loadPanelLayout(localStorage, {
+      ...getPanelLayoutViewportOptions(),
+      migrateLegacy: buildSafeLegacyPanelLayout,
+    })
+  );
+  const resolveCompatibleWidth = (side, fallbackWidth) => {
+    const sideLayout = persistedLayout?.[side];
+    const frameWidth = Number(sideLayout?.lastNormalFrame?.width);
+    const width = Number(sideLayout?.width);
+    if (Number.isFinite(frameWidth) && frameWidth > 0) {
+      return frameWidth;
+    }
+    if (Number.isFinite(width) && width > 0) {
+      return width;
+    }
+    const legacyWidthKey = side === "left" ? CONFIG.leftPanelWidthKey : CONFIG.rightPanelWidthKey;
+    return readPaneWidth(legacyWidthKey, fallbackWidth);
+  };
+
+  baseLayout.left.width = resolveCompatibleWidth("left", baseLayout.left.width);
+  baseLayout.right.width = resolveCompatibleWidth("right", baseLayout.right.width);
+  baseLayout.left.collapsed = !preferences.defaultCanvasPanelVisible;
+  baseLayout.left.hidden = false;
+  baseLayout.left.mode = "normal";
+  baseLayout.right.collapsed = !preferences.defaultChatPanelVisible;
+  baseLayout.right.hidden = false;
+  baseLayout.right.mode = "normal";
+
+  const viewport = getWorkspaceViewport();
+  for (const side of ["left", "right"]) {
+    const frame = getDefaultPanelFrameForViewport(side, baseLayout[side], viewport);
+    baseLayout[side].x = frame.x;
+    baseLayout[side].y = frame.y;
+    baseLayout[side].width = side === "left" ? baseLayout.left.width : baseLayout.right.width;
+    baseLayout[side].height = frame.height;
+    baseLayout[side].lastNormalFrame = {
+      x: frame.x,
+      y: frame.y,
+      width: side === "left" ? baseLayout.left.width : baseLayout.right.width,
+      height: frame.height,
+    };
+  }
+  return normalizePanelLayout(baseLayout, getPanelLayoutViewportOptions());
+}
+
+function normalizeInitialPanelLayoutForCurrentArchitecture() {
+  state.panelLayout = buildCompatibilityStartupPanelLayout();
+  syncLegacyStateFromPanelLayout();
 }
 
 function applyWorkbenchPreferencesToPanelLayout({ persist = true, announce = false } = {}) {
@@ -5535,12 +5700,18 @@ function normalizeStagePanelState(input = {}) {
 }
 
 function saveStagePanelsState() {
-  state.panelLayout.left.x = Number(state.stagePanels.left?.x) || 0;
-  state.panelLayout.left.y = Number(state.stagePanels.left?.y) || 0;
-  state.panelLayout.left.hidden = Boolean(state.stagePanels.left?.hidden);
-  state.panelLayout.right.x = Number(state.stagePanels.right?.x) || 0;
-  state.panelLayout.right.y = Number(state.stagePanels.right?.y) || 0;
-  state.panelLayout.right.hidden = Boolean(state.stagePanels.right?.hidden);
+  state.stagePanels = normalizeStagePanelState({
+    left: {
+      x: Number(state.panelLayout.left?.x) || 0,
+      y: Number(state.panelLayout.left?.y) || 0,
+      hidden: Boolean(state.panelLayout.left?.hidden || state.panelLayout.left?.collapsed),
+    },
+    right: {
+      x: Number(state.panelLayout.right?.x) || 0,
+      y: Number(state.panelLayout.right?.y) || 0,
+      hidden: Boolean(state.panelLayout.right?.hidden || state.panelLayout.right?.collapsed),
+    },
+  });
   savePanelLayoutState();
 }
 
@@ -5584,18 +5755,17 @@ function getStagePanelYResizer(side) {
 }
 
 function shouldShowPaneVerticalHandle(side) {
-  const panel = state.panelLayout?.[side];
-  if (!panel) return false;
-  if (panel.hidden || panel.collapsed) return false;
-  if (state.desktopShellState?.fullClickThrough) return false;
-  const { height: workspaceHeight } = getWorkspaceViewport();
-  const panelHeight = Math.max(0, Number(panel.height) || getDefaultPanelFrame(side, panel).height);
-  return panelHeight < Math.max(0, workspaceHeight - PANEL_LAYOUT_EDGE_OFFSET * 2 - 4);
+  void side;
+  return false;
 }
 
 function getPanelKeyByDockSide(dockSide) {
   const targetDockSide = dockSide === "right" ? "right" : "left";
   return state.panelLayout.left.dockSide === targetDockSide ? "left" : "right";
+}
+
+function getWorkspaceModeLabel(side) {
+  return side === "left" ? "画布工作区" : "对话工作区";
 }
 
 function setStagePanelFront(side) {
@@ -5642,17 +5812,17 @@ function renderPanelLayoutSide(side) {
   element.style.zIndex = String(Math.max(1, Number(panelState.zIndex) || (side === "left" ? 10 : 14)));
   element.classList.toggle("is-stage-hidden", isHidden);
   element.classList.toggle("is-pane-collapsed", Boolean(panelState.collapsed));
+  element.classList.toggle("is-workspace-maximized", panelState.mode === "maximized");
+  element.classList.toggle("is-workspace-half", panelState.mode === "half-left" || panelState.mode === "half-right");
+  element.dataset.workspaceMode = String(panelState.mode || "normal");
 
   if (resizer) {
-    const resizerLeft = dockSide === "right"
-      ? Math.round(Number(panelState.x) || 0) - (PANEL_RESIZER_SIZE - PANEL_RESIZER_CORNER_OFFSET)
-      : Math.round((Number(panelState.x) || 0) + (Number(panelState.width) || 0) - PANEL_RESIZER_CORNER_OFFSET);
+    const resizerLeft = Math.round((Number(panelState.x) || 0) + (Number(panelState.width) || 0) - PANEL_RESIZER_CORNER_OFFSET);
     resizer.style.left = `${resizerLeft}px`;
     resizer.style.top = `${Math.round((Number(panelState.y) || 0) + (Number(panelState.height) || 0) - PANEL_RESIZER_CORNER_OFFSET)}px`;
     resizer.style.width = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.height = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.zIndex = String(Math.max(2, Number(panelState.zIndex) || 2) + 1);
-    resizer.classList.toggle("is-left-corner", dockSide === "right");
     resizer.classList.toggle("is-hidden", isHidden);
   }
 
@@ -5768,42 +5938,57 @@ function resetStagePanelPosition(side) {
 function beginStagePanelMove(side, event) {
   const element = getStagePanelElement(side);
   const panelState = state.panelLayout[side];
-  if (!element || !panelState || panelState.hidden || panelState.collapsed || state.desktopShellState.pinned) return;
+  if (!element || !panelState || panelState.hidden || panelState.collapsed) return;
   const dragHandle = event.currentTarget instanceof Element ? event.currentTarget : null;
 
   event.preventDefault();
   event.stopPropagation();
   bringPanelToFront(side);
+  renderPanelLayoutSide(side);
+  syncPaneVisibility({ syncShape: false });
+  if (panelState.mode !== "normal") {
+    restorePanelNormalFrame(side);
+    panelState.mode = "normal";
+    clampPanelLayoutSideToWorkspace(side);
+    renderPanelLayoutSide(side);
+  }
+  capturePanelNormalFrame(side);
 
   const initialX = panelState.x;
   const initialY = panelState.y;
   const startX = event.clientX;
   const startY = event.clientY;
-  const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
+  let latestClientX = startX;
+  let latestClientY = startY;
+  let moveFrame = 0;
 
-  const handleMove = (moveEvent) => {
-    const deltaX = moveEvent.clientX - startX;
-    const deltaY = moveEvent.clientY - startY;
-    panelState.x = Math.round(
-      Math.min(
-        Math.max(PANEL_LAYOUT_EDGE_OFFSET, initialX + deltaX),
-        Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceWidth - panelState.width - PANEL_LAYOUT_EDGE_OFFSET)
-      )
-    );
-    panelState.y = Math.round(
-      Math.min(
-        Math.max(PANEL_LAYOUT_EDGE_OFFSET, initialY + deltaY),
-        Math.max(PANEL_LAYOUT_EDGE_OFFSET, workspaceHeight - panelState.height - PANEL_LAYOUT_EDGE_OFFSET)
-      )
-    );
+  const flushMove = () => {
+    moveFrame = 0;
+    const deltaX = latestClientX - startX;
+    const deltaY = latestClientY - startY;
+    panelState.x = Math.round(initialX + deltaX);
+    panelState.y = Math.round(initialY + deltaY);
+    panelState.mode = "normal";
     clampPanelLayoutSideToWorkspace(side);
     renderPanelLayoutSide(side);
-    schedulePanelDependentUiSync(side, { syncShape: true });
+    schedulePanelDependentUiSync(side, { syncShape: false });
+  };
+
+  const handleMove = (moveEvent) => {
+    latestClientX = moveEvent.clientX;
+    latestClientY = moveEvent.clientY;
+    if (!moveFrame) {
+      moveFrame = window.requestAnimationFrame(flushMove);
+    }
   };
 
   const handleUp = () => {
     document.removeEventListener("pointermove", handleMove);
     document.removeEventListener("pointerup", handleUp);
+    if (moveFrame) {
+      window.cancelAnimationFrame(moveFrame);
+      flushMove();
+    }
     dragHandle?.releasePointerCapture?.(event.pointerId);
     document.body.classList.remove("is-resizing");
     document.body.classList.remove("is-stage-dragging");
@@ -5816,6 +6001,53 @@ function beginStagePanelMove(side, event) {
   document.body.classList.add("is-resizing");
   document.addEventListener("pointermove", handleMove);
   document.addEventListener("pointerup", handleUp, { once: true });
+}
+
+function shouldStartWorkspaceShellMove(side, event) {
+  if (!(event.target instanceof Element)) return false;
+  if (event.button !== 0) return false;
+  return Boolean(event.target.closest(`[data-stage-panel-frame="${side}"]`));
+}
+
+function shouldStartRightHeaderPanelMove(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target || event.button !== 0) return false;
+  if (
+    target.closest(
+      [
+        "[data-stage-panel-action]",
+        "[data-stage-panel-drag]",
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+        "option",
+        "summary",
+        "details",
+        "label",
+        "[role='tab']",
+        "[role='button']",
+        "#screen-source-header-menu",
+        ".screen-source-header-panel",
+        "#screen-source-select-menu",
+        ".chat-utility-menu"
+      ].join(", ")
+    )
+  ) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      [
+        ".conversation-header-topline",
+        ".right-panel-window-controls",
+        ".conversation-heading",
+        ".conversation-title-stack",
+        ".conversation-header"
+      ].join(", ")
+    )
+  );
 }
 
 function syncPaneVisibility({ syncShape = true } = {}) {
@@ -5842,11 +6074,11 @@ function syncPaneVisibility({ syncShape = true } = {}) {
   restoreLeftPaneBtn?.classList.toggle("is-hidden", !state.leftPanelCollapsed);
   restoreRightPaneBtn?.classList.toggle("is-hidden", !state.rightPanelCollapsed);
   if (restoreLeftPaneBtn) {
-    restoreLeftPaneBtn.textContent = "抽出画板";
+    restoreLeftPaneBtn.textContent = "恢复画布工作区";
     restoreLeftPaneBtn.classList.toggle("pane-restore-btn-right", state.panelLayout.left.dockSide === "right");
   }
   if (restoreRightPaneBtn) {
-    restoreRightPaneBtn.textContent = "抽出对话";
+    restoreRightPaneBtn.textContent = "恢复对话工作区";
     restoreRightPaneBtn.classList.toggle("pane-restore-btn-right", state.panelLayout.right.dockSide === "right");
   }
 
@@ -5866,9 +6098,14 @@ function setPaneCollapsed(side, collapsed) {
   const next = Boolean(collapsed);
   const panel = state.panelLayout?.[side];
   if (!panel) return;
+  if (next && !panel.hidden && !panel.collapsed) {
+    capturePanelNormalFrame(side);
+  }
   panel.collapsed = next;
   panel.hidden = false;
   if (!next) {
+    restorePanelNormalFrame(side);
+    panel.mode = "normal";
     if (!Number.isFinite(Number(panel.width)) || Number(panel.width) <= 0) {
       panel.width = getDefaultPanelFrame(side, panel).width;
     }
@@ -5889,13 +6126,18 @@ function resizePaneToHalfScreen(side) {
   if (!workspaceWidth || !workspaceHeight) return;
   const panel = state.panelLayout?.[side];
   if (!panel) return;
+  if (panel.mode === "normal") {
+    capturePanelNormalFrame(side);
+  }
   const targetWidth = Math.max(320, Math.round(workspaceWidth / 2));
   panel.hidden = false;
   panel.collapsed = false;
   panel.width = targetWidth;
   panel.height = workspaceHeight;
-  panel.x = panel.dockSide === "right" ? Math.max(0, workspaceWidth - targetWidth) : 0;
+  const targetMode = side === "left" ? "half-left" : "half-right";
+  panel.x = targetMode === "half-right" ? Math.max(0, workspaceWidth - targetWidth) : 0;
   panel.y = 0;
+  panel.mode = targetMode;
   bringPanelToFront(side);
   applyPanelLayoutState();
 }
@@ -5908,16 +6150,49 @@ function expandPaneToFullscreen(side) {
   const otherSide = side === "left" ? "right" : "left";
   if (!panel || !state.panelLayout?.[otherSide]) return;
 
+  if (panel.mode === "normal") {
+    capturePanelNormalFrame(side);
+  }
   panel.hidden = false;
   panel.collapsed = false;
   panel.x = 0;
   panel.y = 0;
   panel.width = workspaceWidth;
   panel.height = workspaceHeight;
-  state.panelLayout[otherSide].collapsed = true;
+  panel.mode = "maximized";
   state.panelLayout[otherSide].hidden = false;
   bringPanelToFront(side);
   applyPanelLayoutState();
+}
+
+function restorePanelFromFloatingMode(side, { announce = false } = {}) {
+  const panel = state.panelLayout?.[side];
+  if (!panel) return;
+  panel.hidden = false;
+  panel.collapsed = false;
+  restorePanelNormalFrame(side);
+  panel.mode = "normal";
+  bringPanelToFront(side);
+  applyPanelLayoutState();
+  if (announce) {
+    setStatus(`${getWorkspaceModeLabel(side)}已恢复`, "success");
+  }
+}
+
+function cycleWorkspacePresentationMode(side) {
+  const panel = state.panelLayout?.[side];
+  if (!panel) return;
+  if (panel.mode === "normal") {
+    resizePaneToHalfScreen(side);
+    setStatus(`${getWorkspaceModeLabel(side)}已切换为半屏`, "success");
+    return;
+  }
+  if (panel.mode === "half-left" || panel.mode === "half-right") {
+    expandPaneToFullscreen(side);
+    setStatus(`${getWorkspaceModeLabel(side)}已切换为全屏`, "success");
+    return;
+  }
+  restorePanelFromFloatingMode(side, { announce: true });
 }
 
 async function swapMainPanels() {
@@ -5946,23 +6221,24 @@ function syncStagePanelOrbLabels() {
     const side = actionEl.dataset.stagePanelSide;
     const action = actionEl.dataset.stagePanelAction;
     if (!side || !action) return;
-    const sideLabel = side === "left" ? "左侧" : "右侧";
+    const sideLabel = getWorkspaceModeLabel(side);
     if (action === "close") {
-      actionEl.title = `收回${sideLabel}界面`;
-      actionEl.setAttribute("aria-label", `收回${sideLabel}界面`);
+      actionEl.title = `收起${sideLabel}`;
+      actionEl.setAttribute("aria-label", `收起${sideLabel}`);
       return;
     }
     if (action === "reset") {
-      actionEl.title = `${sideLabel}界面全屏显示`;
-      actionEl.setAttribute("aria-label", `${sideLabel}界面全屏显示`);
+      actionEl.title = `${sideLabel}切换显示模式`;
+      actionEl.setAttribute("aria-label", `${sideLabel}切换显示模式`);
     }
   });
 
   stagePanelDragEls.forEach((triggerEl) => {
     const side = triggerEl.dataset.stagePanelDrag;
     if (!side) return;
-    triggerEl.title = "左右界面换位";
-    triggerEl.setAttribute("aria-label", "左右界面换位");
+    const sideLabel = getWorkspaceModeLabel(side);
+    triggerEl.title = `拖拽${sideLabel}`;
+    triggerEl.setAttribute("aria-label", `拖拽${sideLabel}`);
   });
 }
 
@@ -5973,25 +6249,22 @@ function beginPaneResize(side, startX, startY, pointerId) {
   if (panel.collapsed || panel.hidden) {
     setPaneCollapsed(side, false);
   }
+  if (panel.mode !== "normal") {
+    restorePanelNormalFrame(side);
+    panel.mode = "normal";
+  }
+  capturePanelNormalFrame(side);
   bringPanelToFront(side);
 
-  const dockSide = panel.dockSide === "right" ? "right" : "left";
   const initialWidth = Number(panel.width) || getDefaultPanelFrame(side, panel).width;
   const initialHeight = Number(panel.height) || getDefaultPanelFrame(side, panel).height;
   const initialX = Number(panel.x) || 0;
   const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
-  const rightDockResizeEdge = Math.max(
-    PANEL_LAYOUT_EDGE_OFFSET,
-    workspaceWidth - PANEL_LAYOUT_EDGE_OFFSET
-  );
-  const rightDockResizeBoundary = getDockedPaneResizeBoundary(side, dockSide);
   const minWidth = Math.max(320, side === "left" ? CONFIG.leftPanelMinWidth : CONFIG.rightPanelMinWidth);
   const sideMaxWidth = side === "left" ? CONFIG.leftPanelMaxWidth : CONFIG.rightPanelMaxWidth;
   const maxWidth = Math.min(
     sideMaxWidth,
-    dockSide === "right"
-      ? Math.max(minWidth, rightDockResizeEdge - rightDockResizeBoundary)
-      : Math.max(minWidth, workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET)
+    Math.max(minWidth, workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET)
   );
   const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(PANEL_LAYOUT_MIN_HEIGHT, workspaceHeight));
   const maxHeight = Math.max(minHeight, workspaceHeight - panel.y);
@@ -5999,16 +6272,11 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const handleMove = (event) => {
     const deltaX = event.clientX - startX;
     const deltaY = event.clientY - startY;
-    if (dockSide === "right") {
-      const proposedWidth = clampPaneWidth(initialWidth - deltaX, minWidth, maxWidth);
-      panel.width = proposedWidth;
-      panel.x = Math.round(rightDockResizeEdge - proposedWidth);
-    } else {
-      panel.width = clampPaneWidth(initialWidth + deltaX, minWidth, maxWidth);
-    }
+    panel.width = clampPaneWidth(initialWidth + deltaX, minWidth, maxWidth);
     panel.height = clampPaneWidth(initialHeight + deltaY, minHeight, maxHeight);
     panel.collapsed = false;
     panel.hidden = false;
+    panel.mode = "normal";
     clampPanelLayoutSideToWorkspace(side);
     renderPanelLayoutSide(side);
     schedulePanelDependentUiSync(side, { syncShape: true });
@@ -6041,6 +6309,11 @@ function beginPaneVerticalMove(side, startY, pointerId) {
   }
   const activePanelState = state.panelLayout?.[side];
   if (!activePanelState) return;
+  if (activePanelState.mode !== "normal") {
+    restorePanelNormalFrame(side);
+    activePanelState.mode = "normal";
+  }
+  capturePanelNormalFrame(side);
   bringPanelToFront(side);
 
   const initialY = Number(activePanelState.y) || 0;
@@ -6055,6 +6328,7 @@ function beginPaneVerticalMove(side, startY, pointerId) {
     activePanelState.y = nextY;
     activePanelState.collapsed = false;
     activePanelState.hidden = false;
+    activePanelState.mode = "normal";
     element.style.top = `${nextY}px`;
     schedulePanelDependentUiSync(side, { syncShape: true });
   };
@@ -6191,7 +6465,7 @@ function syncDesktopShellState(nextState = {}) {
   syncDesktopPassThroughHintLayout();
 
   if (!previousFullscreen && state.desktopShellState.fullscreen) {
-    applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    applyPanelLayoutState({ persist: true, syncShape: true });
   }
 }
 
@@ -6357,6 +6631,41 @@ async function setDesktopClickThrough(enabled) {
     });
 
   return desktopSurfaceSyncPromise;
+}
+
+async function captureScreenImageWithTemporaryClickThrough() {
+  if (typeof globalThis?.desktopShell?.captureScreenImage !== "function") {
+    return { ok: false, error: "当前环境不支持系统截图" };
+  }
+  if (!IS_DESKTOP_APP || !DESKTOP_SHELL?.setClickThrough) {
+    return globalThis.desktopShell.captureScreenImage();
+  }
+
+  const shouldRestoreInteraction = !state.desktopShellState.fullClickThrough;
+
+  try {
+    if (shouldRestoreInteraction) {
+      await setDesktopClickThrough(true);
+      await refreshDesktopShellState().catch(() => {});
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+    }
+    return await globalThis.desktopShell.captureScreenImage();
+  } finally {
+    if (shouldRestoreInteraction) {
+      try {
+        await setDesktopClickThrough(false);
+        await refreshDesktopShellState();
+      } catch {
+        // Keep capture flow resilient; desktop shell state will self-heal on next sync.
+      }
+    }
+  }
+}
+
+function syncGlobalDesktopRuntimeBridge() {
+  globalThis.__FREEFLOW_DESKTOP_RUNTIME = {
+    captureScreenImageWithTemporaryClickThrough,
+  };
 }
 
 async function exitDesktopClickThroughFromShortcut() {
@@ -6836,18 +7145,6 @@ rightPaneResizerEl?.addEventListener("pointerdown", (event) => {
   beginPaneResize("right", event.clientX, event.clientY, event.pointerId);
 });
 
-leftPaneYResizerEl?.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  beginPaneVerticalMove("left", event.clientY, event.pointerId);
-});
-
-rightPaneYResizerEl?.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  beginPaneVerticalMove("right", event.clientY, event.pointerId);
-});
-
 leftPaneResizerEl?.addEventListener("dblclick", () => {
   const panel = state.panelLayout?.left;
   if (!panel) return;
@@ -6873,12 +7170,46 @@ rightPaneResizerEl?.addEventListener("dblclick", () => {
 syncStagePanelOrbLabels();
 
 stagePanelDragEls.forEach((triggerEl) => {
-  triggerEl.addEventListener("click", async (event) => {
+  triggerEl.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    await swapMainPanels();
+    const side = triggerEl.dataset.stagePanelDrag;
+    if (!side) return;
+    beginStagePanelMove(side, event);
   });
 });
+
+stagePanelFrameEls.forEach((frameEl) => {
+  frameEl.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const side = frameEl.dataset.stagePanelFrame;
+    if (!side) return;
+    beginStagePanelMove(side, event);
+  });
+});
+
+conversationHeaderToplineEl?.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!shouldStartRightHeaderPanelMove(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    beginStagePanelMove("right", event);
+  },
+  true
+);
+
+conversationHeaderEl?.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!shouldStartRightHeaderPanelMove(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    beginStagePanelMove("right", event);
+  },
+  true
+);
 
 stagePanelActionEls.forEach((actionEl) => {
   actionEl.addEventListener("click", async (event) => {
@@ -6889,12 +7220,11 @@ stagePanelActionEls.forEach((actionEl) => {
     if (!side || !action) return;
     if (action === "close") {
       setPaneCollapsed(side, true);
-      setStatus(`${side === "left" ? "左侧" : "右侧"}界面已收回`, "success");
+      setStatus(`${getWorkspaceModeLabel(side)}已收起`, "success");
       return;
     }
     if (action === "reset") {
-      expandPaneToFullscreen(side);
-      setStatus(`${side === "left" ? "左侧" : "右侧"}界面已全屏显示`, "success");
+      cycleWorkspacePresentationMode(side);
     }
   });
 });
@@ -6938,11 +7268,11 @@ canvasTitleInputEl?.addEventListener("blur", async () => {
 conversationAssistantChrome?.bindEvents();
 
 restoreLeftPaneBtn?.addEventListener("click", () => {
-  setPaneCollapsed("left", false);
+  restorePanelFromFloatingMode("left", { announce: true });
 });
 
 restoreRightPaneBtn?.addEventListener("click", () => {
-  setPaneCollapsed("right", false);
+  restorePanelFromFloatingMode("right", { announce: true });
 });
 
 desktopRefreshBtn?.addEventListener("click", async () => {
