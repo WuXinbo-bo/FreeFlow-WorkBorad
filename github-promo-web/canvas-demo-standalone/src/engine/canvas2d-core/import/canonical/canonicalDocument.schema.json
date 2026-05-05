@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freeflow.local/schemas/canonical-document-v1.json",
+  "title": "FreeFlow Canonical Document v1",
+  "type": "object",
+  "required": ["version", "type", "attrs", "content", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "1.0.0" },
+    "type": { "const": "doc" },
+    "attrs": { "type": "object" },
+    "meta": { "$ref": "#/$defs/documentMeta" },
+    "content": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "mark": {
+      "type": "object",
+      "required": ["type", "attrs"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "bold",
+            "italic",
+            "underline",
+            "strike",
+            "highlight",
+            "textColor",
+            "backgroundColor",
+            "code",
+            "link"
+          ]
+        },
+        "attrs": {
+          "type": "object"
+        }
+      }
+    },
+    "sourceMeta": {
+      "type": "object",
+      "required": ["kind", "channel", "parserId", "descriptorId"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "channel": { "type": "string" },
+        "parserId": { "type": "string" },
+        "descriptorId": { "type": "string" }
+      }
+    },
+    "compatMeta": {
+      "type": "object",
+      "required": ["minReaderVersion", "featureFlags", "legacyAliases"],
+      "additionalProperties": false,
+      "properties": {
+        "minReaderVersion": { "type": "string" },
+        "featureFlags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "legacyAliases": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "documentMeta": {
+      "type": "object",
+      "required": ["source", "compat", "tags", "labels"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/sourceMeta" },
+        "compat": { "$ref": "#/$defs/compatMeta" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "nodeMeta": {
+      "type": "object",
+      "required": ["source", "compat", "originId", "legacyType"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/sourceMeta" },
+        "compat": { "$ref": "#/$defs/compatMeta" },
+        "originId": { "type": "string" },
+        "legacyType": { "type": "string" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["type", "attrs", "content", "text", "marks", "meta"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "paragraph",
+            "heading",
+            "blockquote",
+            "horizontalRule",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "taskList",
+            "taskItem",
+            "table",
+            "tableRow",
+            "tableCell",
+            "codeBlock",
+            "mathBlock",
+            "image",
+            "footnote",
+            "text",
+            "hardBreak",
+            "link",
+            "inlineCode",
+            "mathInline",
+            "footnoteRef"
+          ]
+        },
+        "attrs": { "type": "object" },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "text": { "type": "string" },
+        "marks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mark" }
+        },
+        "meta": { "$ref": "#/$defs/nodeMeta" }
+      }
+    }
+  }
+}
