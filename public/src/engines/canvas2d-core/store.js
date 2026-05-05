@@ -1,16 +1,16 @@
-import { DEFAULT_VIEW, LEGACY_STORAGE_KEYS, STORAGE_KEY } from "./constants.js";
+import { DEFAULT_VIEW, DEFAULT_STORAGE_KEY, LEGACY_STORAGE_KEYS, STORAGE_KEY } from "./constants.js";
 import { normalizeBoard } from "./elements/index.js";
 import { createHistoryState } from "./history.js";
 import { clone } from "./utils.js";
 
 const DEFAULT_PERSIST_DEBOUNCE_MS = 320;
 
-function loadBoard(disableLocalStorage = false) {
+function loadBoard(disableLocalStorage = false, storageKey = DEFAULT_STORAGE_KEY) {
   if (disableLocalStorage) {
     return normalizeBoard({});
   }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey || DEFAULT_STORAGE_KEY);
     if (raw) {
       return normalizeBoard(JSON.parse(raw));
     }
@@ -28,16 +28,24 @@ export function clearLegacyBoardStorage() {
   }
 }
 
-export function persistBoard(board) {
+export function persistBoard(board, storageKey = DEFAULT_STORAGE_KEY) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(board));
+    localStorage.setItem(storageKey || DEFAULT_STORAGE_KEY, JSON.stringify(board));
   } catch {
     // Ignore local persistence failures.
   }
 }
 
-export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage = false, initialBoard, onPersist } = {}) {
+export function createCanvas2DStore({
+  onStateChange,
+  theme,
+  disableLocalStorage = false,
+  initialBoard,
+  onPersist,
+  storageKey = DEFAULT_STORAGE_KEY,
+} = {}) {
   const subscribers = new Set();
+  const resolvedStorageKey = String(storageKey || DEFAULT_STORAGE_KEY).trim() || DEFAULT_STORAGE_KEY;
   const persistHandler =
     typeof onPersist === "function"
       ? onPersist
@@ -45,10 +53,10 @@ export function createCanvas2DStore({ onStateChange, theme, disableLocalStorage 
           if (disableLocalStorage) {
             return;
           }
-          persistBoard(board);
+          persistBoard(board, resolvedStorageKey);
         };
   const state = {
-    board: initialBoard ? normalizeBoard(initialBoard) : loadBoard(disableLocalStorage),
+    board: initialBoard ? normalizeBoard(initialBoard) : loadBoard(disableLocalStorage, resolvedStorageKey),
     boardRevision: 1,
     tool: "select",
     mode: "canvas2d",

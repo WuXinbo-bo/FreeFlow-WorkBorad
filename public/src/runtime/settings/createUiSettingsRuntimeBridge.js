@@ -42,6 +42,21 @@ export function createUiSettingsRuntimeBridge(deps) {
     return startupContextPromise;
   }
 
+  async function refreshStartupContext() {
+    if (!DESKTOP_SHELL?.refreshStartupContext) {
+      startupContextPromise = null;
+      return loadStartupContext();
+    }
+    const context = await DESKTOP_SHELL.refreshStartupContext().catch(() => null);
+    if (context?.ok) {
+      globalThis.__FREEFLOW_STARTUP_CONTEXT = context;
+      startupContextPromise = Promise.resolve(context);
+      return context;
+    }
+    startupContextPromise = null;
+    return loadStartupContext();
+  }
+
   function getStartupContext() {
     const context = globalThis.__FREEFLOW_STARTUP_CONTEXT;
     return context && typeof context === "object" && context.ok ? context : null;
@@ -189,6 +204,7 @@ export function createUiSettingsRuntimeBridge(deps) {
   return {
     readUiSettingsCache,
     loadStartupContext,
+    refreshStartupContext,
     getStartupContext,
     writeUiSettingsCache,
     writeStartupContextUiSettings,

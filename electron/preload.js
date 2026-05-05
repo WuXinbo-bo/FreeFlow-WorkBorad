@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   pathExists: (targetPath) => ipcRenderer.invoke("desktop-shell:path-exists", targetPath),
   ensureTutorialBoard: () => ipcRenderer.invoke("desktop-shell:ensure-tutorial-board"),
   getStartupContext: () => ipcRenderer.invoke("desktop-shell:get-startup-context"),
+  refreshStartupContext: () => ipcRenderer.invoke("desktop-shell:refresh-startup-context"),
   openPath: (targetPath) => ipcRenderer.invoke("desktop-shell:open-path", targetPath),
   revealPath: (targetPath) => ipcRenderer.invoke("desktop-shell:reveal-path", targetPath),
   pickCanvasBoardPath: (payload) => ipcRenderer.invoke("desktop-shell:pick-canvas-board-path", payload),

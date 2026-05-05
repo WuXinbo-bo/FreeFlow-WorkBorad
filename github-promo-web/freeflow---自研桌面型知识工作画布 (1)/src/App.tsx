@@ -29,16 +29,78 @@ import {
   Download,
   Github
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import freeflowLogo from "./freeflow-logo.svg";
+import { Showcase } from "./Showcase";
+import { downloadChannels, siteLinks } from "./siteConfig";
 
-const RELEASES_URL = "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases";
-const DOWNLOAD_URL = `${RELEASES_URL}/latest/download/FreeFlow-Setup-x64.exe`;
-const PROMO_DEMO_ASSET_BASE = `${String(import.meta.env.BASE_URL || "/").replace(/\/?$/, "/")}canvas-demo-standalone/`;
-const InlineCanvasDemo = lazy(async () => {
-  globalThis.__FREEFLOW_DEMO_ASSET_BASE__ = PROMO_DEMO_ASSET_BASE;
-  return import("./PromoCanvasDemo.jsx");
-});
+const RELEASES_URL = siteLinks.githubReleasesUrl;
+const DOWNLOAD_URL = siteLinks.githubDownloadUrl;
+const LIVE_DEMO_URL = siteLinks.liveDemoUrl;
+
+const DownloadChannelMenu = ({
+  triggerClassName,
+  triggerLabel,
+  panelAlign = "right",
+}: {
+  triggerClassName: string;
+  triggerLabel: string;
+  panelAlign?: "left" | "right";
+}) => {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const handlePointerDown = () => setOpen(false);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  const panelPositionClass = panelAlign === "left" ? "left-0" : "right-0";
+
+  return (
+    <div
+      className="relative"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={triggerClassName}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {triggerLabel}
+      </button>
+      {open ? (
+        <div
+          className={`absolute ${panelPositionClass} top-full z-30 mt-3 min-w-[190px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.12)]`}
+          role="menu"
+        >
+          <div className="px-3 pb-2 pt-1 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+            下载渠道
+          </div>
+          {downloadChannels.map((channel) => (
+            <a
+              key={channel.id}
+              href={channel.href}
+              target="_blank"
+              rel="noreferrer"
+              className="block rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-900"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+            >
+              {channel.label}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -73,15 +135,12 @@ const Navbar = () => {
           <a href="#home" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">首页</a>
           <a href="#workflow" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">特色功能</a>
           <a href="#features" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">技术架构</a>
+          <a href="#showcase" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">产品演示</a>
           <a href="#cta-section" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">立即体验</a>
-          <a
-            href={DOWNLOAD_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="bg-brand-accent text-white px-6 py-2.5 rounded-full text-sm font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-brand-accent/20"
-          >
-            立即下载
-          </a>
+          <DownloadChannelMenu
+            triggerLabel="立即下载"
+            triggerClassName="bg-brand-accent text-white px-6 py-2.5 rounded-full text-sm font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-brand-accent/20"
+          />
         </div>
 
         <button className="md:hidden" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
@@ -99,76 +158,26 @@ const Navbar = () => {
           <a href="#home" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>首页</a>
           <a href="#workflow" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>特色功能</a>
           <a href="#features" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>技术架构</a>
+          <a href="#showcase" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>产品演示</a>
           <a href="#cta-section" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>立即体验</a>
-          <a
-            href={DOWNLOAD_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="bg-brand-accent text-white py-4 rounded-xl font-bold text-center"
-          >
-            立即下载
-          </a>
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">下载渠道</div>
+            {downloadChannels.map((channel) => (
+              <a
+                key={channel.id}
+                href={channel.href}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-brand-accent text-white py-4 rounded-xl font-bold text-center"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                {channel.label}
+              </a>
+            ))}
+          </div>
         </motion.div>
       )}
     </nav>
-  );
-};
-
-const DemoOverlay = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, onClose]);
-
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-[100] bg-transparent">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative z-10 h-full w-full p-3 md:p-5">
-        <div className="demo-overlay-native relative h-full w-full overflow-hidden rounded-[2rem] border border-slate-200/70 bg-white shadow-[0_40px_120px_-20px_rgba(15,23,42,0.18)]">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-5 top-5 z-20 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/85 px-4 py-2 text-sm font-bold text-slate-500 shadow-lg shadow-slate-950/10 backdrop-blur transition-colors hover:border-slate-300 hover:text-slate-900"
-          >
-            <X size={16} />
-            关闭体验
-          </button>
-          <Suspense
-            fallback={
-              <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(126,171,255,0.22),transparent_28%),linear-gradient(180deg,#f7faff,#eef3fb_50%,#f4f7fb)]">
-                <div className="rounded-[1.75rem] border border-white/70 bg-white/85 px-8 py-6 text-center shadow-[0_24px_60px_rgba(27,48,99,0.12)] backdrop-blur">
-                  <div className="text-base font-black text-slate-900">正在载入 FreeFlow Demo</div>
-                  <div className="mt-2 text-sm font-semibold text-slate-400">结构化接入与画布引擎正在初始化</div>
-                </div>
-              </div>
-            }
-          >
-            <div className="promo-canvas-demo-host h-full w-full">
-              <InlineCanvasDemo />
-            </div>
-          </Suspense>
-        </div>
-      </div>
-    </div>
   );
 };
 
@@ -235,14 +244,11 @@ const Hero = () => {
             </div>
 
             <div className="hero-actions flex flex-col sm:flex-row gap-5 lg:gap-6">
-              <a
-                href={DOWNLOAD_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="bg-slate-900 text-white px-10 py-5 rounded-2xl text-lg font-bold hover:bg-slate-800 transition-all shadow-xl hover:-translate-y-1 active:translate-y-0 inline-flex items-center justify-center"
-              >
-                立即下载桌面版
-              </a>
+              <DownloadChannelMenu
+                triggerLabel="立即下载桌面版"
+                panelAlign="left"
+                triggerClassName="bg-slate-900 text-white px-10 py-5 rounded-2xl text-lg font-bold hover:bg-slate-800 transition-all shadow-xl hover:-translate-y-1 active:translate-y-0 inline-flex items-center justify-center"
+              />
               <a
                 href={RELEASES_URL}
                 target="_blank"
@@ -562,7 +568,11 @@ const Workflow = () => {
                 <span className="text-xs font-black text-brand-accent uppercase tracking-[0.3em]">Module Ecosystem</span>
               </div>
               <h2 className="text-5xl md:text-7xl font-extrabold mb-10 tracking-tighter leading-[1.1] text-slate-900">
-                为知识与工作<span className="text-brand-accent">落地</span>而生。
+                <span className="whitespace-nowrap">
+                  为知识与工作<span className="text-brand-accent">落地</span>
+                </span>
+                <br />
+                <span>而生</span>
               </h2>
             </motion.div>
 
@@ -742,7 +752,7 @@ const Workflow = () => {
   );
 };
 
-const CTA = ({ onOpenDemo }: { onOpenDemo: () => void }) => (
+const CTA = () => (
   <section id="cta-section" className="py-40 bg-slate-50/50 relative overflow-hidden">
     <div className="max-w-7xl mx-auto px-12 relative z-10">
       <motion.div 
@@ -841,13 +851,15 @@ const CTA = ({ onOpenDemo }: { onOpenDemo: () => void }) => (
               完整功能版请下载本地桌面端
             </motion.p>
             
-            <motion.button 
+            <motion.a
               variants={{
                 initial: { opacity: 0, y: 20 },
                 animate: { opacity: 1, y: 0 }
               }}
               transition={{ delay: 0.3 }}
-              onClick={onOpenDemo}
+              href={LIVE_DEMO_URL}
+              target="_blank"
+              rel="noreferrer"
               className="mt-6 bg-brand-accent text-white px-16 py-6 rounded-2xl font-black text-xl hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_-10px_rgba(37,99,235,0.3)] flex items-center gap-4 group overflow-hidden relative"
             >
               <span className="relative z-10 flex items-center gap-4">
@@ -860,7 +872,7 @@ const CTA = ({ onOpenDemo }: { onOpenDemo: () => void }) => (
                 transition={{ duration: 3, repeat: Infinity, repeatDelay: 1 }}
                 className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12 z-0"
               />
-            </motion.button>
+            </motion.a>
           </motion.div>
         </div>
       </motion.div>
@@ -911,6 +923,8 @@ const Footer = () => (
       <div className="pt-12 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-8 text-[11px] text-slate-400 font-bold tracking-wide">
         <p>Copyright © 2026 WuXinbo. All rights reserved.</p>
         <div className="flex items-center gap-3 text-[10px] font-black tracking-[0.24em] uppercase">
+          <span className="text-slate-400 tracking-[0.14em] normal-case">License: MIT-NC</span>
+          <span className="text-slate-300">/</span>
           <span className="text-slate-400">联系方式</span>
           <span className="text-slate-300">/</span>
           <span className="text-slate-500 tracking-[0.12em] normal-case">QQ: 1806598228</span>
@@ -921,8 +935,6 @@ const Footer = () => (
 );
 
 export default function App() {
-  const [demoOpen, setDemoOpen] = useState(false);
-
   return (
     <div className="font-sans selection:bg-brand-accent/10 selection:text-brand-accent">
       <Navbar />
@@ -930,9 +942,9 @@ export default function App() {
       <BrandSocialProof />
       <Workflow />
       <Features />
-      <CTA onOpenDemo={() => setDemoOpen(true)} />
+      <Showcase />
+      <CTA />
       <Footer />
-      <DemoOverlay open={demoOpen} onClose={() => setDemoOpen(false)} />
     </div>
   );
 }

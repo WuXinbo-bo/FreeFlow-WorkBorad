@@ -7,6 +7,7 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 const ALLOWED_EXTRA_RESOURCE_SOURCES = new Set([
   "data/FreeFlow教程画布.json",
   "public/assets/tutorial-group.png",
+  "build/freeflow-selection-word.docx",
   "build/README.md",
 ]);
 const SENSITIVE_DATA_PATTERNS = [
@@ -49,10 +50,15 @@ function validateTutorialBoardTemplate() {
   }
 
   const imageItems = Array.isArray(board?.items) ? board.items.filter((item) => item?.type === "image") : [];
+  const fileCardItems = Array.isArray(board?.items) ? board.items.filter((item) => item?.type === "fileCard") : [];
   if (!imageItems.length) {
     console.error("[check-desktop-packaging] 教程画布模板缺少图片项");
     hasError = true;
     return;
+  }
+  if (!fileCardItems.length) {
+    console.error("[check-desktop-packaging] 教程画布模板缺少文件卡示例项");
+    hasError = true;
   }
 
   for (const item of imageItems) {
@@ -78,6 +84,21 @@ function validateTutorialBoardTemplate() {
       console.error(`[check-desktop-packaging] 教程图片 ${itemId} 不应保留 fileId`);
       hasError = true;
     }
+  }
+
+  const tutorialDocItem = fileCardItems.find((item) => String(item?.fileName || item?.name || "").trim().toLowerCase() === "freeflow-selection-word.docx");
+  if (!tutorialDocItem) {
+    console.error("[check-desktop-packaging] 教程画布缺少 freeflow-selection-word.docx 文件卡");
+    hasError = true;
+    return;
+  }
+  if (String(tutorialDocItem?.ext || "").trim().toLowerCase() !== "docx") {
+    console.error("[check-desktop-packaging] 教程文件卡 ext 不是 docx");
+    hasError = true;
+  }
+  if (String(tutorialDocItem?.mime || "").trim().toLowerCase() !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    console.error("[check-desktop-packaging] 教程文件卡 mime 不正确");
+    hasError = true;
   }
 }
 

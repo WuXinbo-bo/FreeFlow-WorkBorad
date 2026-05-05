@@ -1876,7 +1876,7 @@ body.is-resizing * {
 }
 
 .freeflow-logo-loader-shell {
-  --freeflow-logo-mask: var(--freeflow-demo-logo-mask, url("/assets/brand/FreeFlow_logo.svg"));
+  --freeflow-logo-mask: var(--freeflow-demo-logo-mask);
   --freeflow-logo-shine: rgba(255, 255, 255, 0.88);
   --freeflow-logo-angle: 120deg;
   position: relative;

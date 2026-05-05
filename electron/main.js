@@ -15,6 +15,10 @@ const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbe
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
 const {
+  FREEFLOW_BOARD_FILE_KIND,
+  wrapFreeFlowBoardPayload,
+} = require("../src/backend/models/canvasBoardFileFormat");
+const {
   DATA_DIR,
   CANVAS_BOARD_DIR,
   TEMP_DRAG_DIR,
@@ -40,6 +44,7 @@ const SERVER_PORT = Number(process.env.PORT || 3000);
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
+const TUTORIAL_BOARD_RUNTIME_NAME = "FreeFlow教程画布.freeflow";
 const FREEFLOW_BOARD_EXTENSION = ".freeflow";
 const LEGACY_BOARD_EXTENSION = ".json";
 const DEFAULT_CANVAS_BOARD_FILE_NAME = `canvas-board${FREEFLOW_BOARD_EXTENSION}`;
@@ -48,7 +53,7 @@ function isCanvasBoardFileName(fileName = "") {
   const value = String(fileName || "").trim().toLowerCase();
   return value.endsWith(FREEFLOW_BOARD_EXTENSION) || value.endsWith(LEGACY_BOARD_EXTENSION);
 }
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.0.9-rc";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.1.0";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
@@ -551,11 +556,11 @@ function resolveTutorialAssetTemplatePaths() {
   const candidates = app.isPackaged
     ? {
         image: path.join(process.resourcesPath, "presets", "tutorial-assets", "tutorial-group.png"),
-        file: path.join(process.resourcesPath, "presets", "tutorial-assets", "README.md"),
+        file: path.join(process.resourcesPath, "presets", "tutorial-assets", "freeflow-selection-word.docx"),
       }
     : {
         image: path.join(app.getAppPath(), "public", "assets", "tutorial-group.png"),
-        file: path.join(app.getAppPath(), "build", "README.md"),
+        file: path.join(app.getAppPath(), "build", "freeflow-selection-word.docx"),
       };
 
   return {
@@ -572,6 +577,58 @@ function getMimeFromAssetPath(filePath = "") {
   if (ext === ".bmp") return "image/bmp";
   if (ext === ".svg") return "image/svg+xml";
   return "image/png";
+}
+
+function resolveTutorialBoardPayloadRoot(document = {}) {
+  if (!document || typeof document !== "object") {
+    return null;
+  }
+  if (document.kind === FREEFLOW_BOARD_FILE_KIND && document.payload && typeof document.payload === "object") {
+    return document.payload;
+  }
+  return document;
+}
+
+function resolveTutorialBoardRoot(document = {}) {
+  const payloadRoot = resolveTutorialBoardPayloadRoot(document);
+  if (!payloadRoot || typeof payloadRoot !== "object") {
+    return null;
+  }
+  if (Array.isArray(payloadRoot.items)) {
+    return payloadRoot;
+  }
+  if (payloadRoot.board && typeof payloadRoot.board === "object" && Array.isArray(payloadRoot.board.items)) {
+    return payloadRoot.board;
+  }
+  return null;
+}
+
+function createTutorialBoardEnvelope(boardPayload = {}, targetPath = "") {
+  const now = Date.now();
+  const board =
+    boardPayload && typeof boardPayload === "object" ? JSON.parse(JSON.stringify(boardPayload)) : { items: [] };
+  const hostPayload = {
+    kind: "structured-host-board",
+    version: "1.0.0",
+    createdAt: Number(board.createdAt) || now,
+    meta: {
+      boardFilePath: String(targetPath || "").trim(),
+    },
+    board,
+  };
+  return wrapFreeFlowBoardPayload(hostPayload, {
+    createdAt: Number(board.createdAt) || now,
+    updatedAt: Number(board.updatedAt) || now,
+  });
+}
+
+function parseTutorialBoardTemplateDocument(rawText = "", targetPath = "") {
+  const parsed = JSON.parse(String(rawText || "").replace(/^\uFEFF/, "") || "{}");
+  const boardRoot = resolveTutorialBoardRoot(parsed);
+  if (!boardRoot || !Array.isArray(boardRoot.items)) {
+    throw new Error("教程画布模板缺少可用的 items");
+  }
+  return createTutorialBoardEnvelope(boardRoot, targetPath);
 }
 
 async function readTutorialAssetDataUrls(assetTargets = {}) {
@@ -629,7 +686,7 @@ async function ensureTutorialAssetTargets(targetDir) {
   const imageDir = path.join(targetDir, "importImage");
   const fileDir = path.join(targetDir, TUTORIAL_ASSET_DIR_NAME);
   const imageTargetPath = path.join(imageDir, "tutorial-group.png");
-  const fileTargetPath = path.join(fileDir, "README.md");
+  const fileTargetPath = path.join(fileDir, "freeflow-selection-word.docx");
 
   if (templates.image) {
     await fs.promises.mkdir(imageDir, { recursive: true });
@@ -661,10 +718,14 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
   }
 
   let changed = false;
-  let board = null;
+  let document = null;
   try {
-    board = JSON.parse(raw);
+    document = JSON.parse(raw);
   } catch {
+    return;
+  }
+  const board = resolveTutorialBoardRoot(document);
+  if (!board) {
     return;
   }
   const assetDataUrls = await readTutorialAssetDataUrls(assetTargets);
@@ -708,14 +769,41 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
       }
     }
 
-    if (item.type === "fileCard" && String(item.fileName || item.name || "").trim().toLowerCase() === "readme.md" && assetTargets.file) {
-      if (item.sourcePath !== assetTargets.file) {
-        item.sourcePath = assetTargets.file;
-        changed = true;
-      }
-      if (item.fileId) {
-        item.fileId = "";
-        changed = true;
+    if (item.type === "fileCard") {
+      const normalizedFileName = String(item.fileName || item.name || "").trim().toLowerCase();
+      const sourceBaseName = path.basename(String(item.sourcePath || "")).trim().toLowerCase();
+      const shouldRewriteTutorialFile =
+        normalizedFileName === "freeflow-selection-word.docx" ||
+        sourceBaseName === "freeflow-selection-word.docx";
+      if (shouldRewriteTutorialFile && assetTargets.file) {
+        if (item.name !== "freeflow-selection-word.docx") {
+          item.name = "freeflow-selection-word.docx";
+          changed = true;
+        }
+        if (item.fileName !== "freeflow-selection-word.docx") {
+          item.fileName = "freeflow-selection-word.docx";
+          changed = true;
+        }
+        if (item.title !== "freeflow-selection-word") {
+          item.title = "freeflow-selection-word";
+          changed = true;
+        }
+        if (item.ext !== "docx") {
+          item.ext = "docx";
+          changed = true;
+        }
+        if (item.mime !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+          item.mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          changed = true;
+        }
+        if (item.sourcePath !== assetTargets.file) {
+          item.sourcePath = assetTargets.file;
+          changed = true;
+        }
+        if (item.fileId) {
+          item.fileId = "";
+          changed = true;
+        }
       }
     }
   }
@@ -724,25 +812,50 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
     return;
   }
 
-  await fs.promises.writeFile(targetPath, JSON.stringify(board, null, 2), "utf8");
+  await fs.promises.writeFile(targetPath, JSON.stringify(document, null, 2), "utf8");
 }
 
 async function ensureTutorialBoardFile() {
   const templatePath = resolveTutorialBoardTemplatePath();
   const targetDir = CANVAS_BOARD_DIR;
-  const targetPath = path.join(targetDir, DEFAULT_TUTORIAL_BOARD_NAME);
+  const legacyTargetPath = path.join(targetDir, DEFAULT_TUTORIAL_BOARD_NAME);
+  const targetPath = path.join(targetDir, TUTORIAL_BOARD_RUNTIME_NAME);
   let created = false;
   let updated = false;
 
   await fs.promises.mkdir(targetDir, { recursive: true });
   const marker = await readTutorialBoardVersionMarker();
   const tutorialBoardExists = fs.existsSync(targetPath);
-  const shouldRefreshTutorialBoard = !tutorialBoardExists || marker.version !== TUTORIAL_BOARD_TEMPLATE_VERSION;
+  const legacyTutorialBoardExists = fs.existsSync(legacyTargetPath);
+  let runtimeBoardMissingDocxCard = false;
+  if (tutorialBoardExists) {
+    try {
+      const runtimeRaw = await fs.promises.readFile(targetPath, "utf8");
+      const runtimeDocument = JSON.parse(String(runtimeRaw || "").replace(/^\uFEFF/, "") || "{}");
+      const runtimeBoard = resolveTutorialBoardRoot(runtimeDocument);
+      const runtimeItems = Array.isArray(runtimeBoard?.items) ? runtimeBoard.items : [];
+      runtimeBoardMissingDocxCard = !runtimeItems.some((item) => {
+        if (!item || item.type !== "fileCard") {
+          return false;
+        }
+        const fileName = String(item.fileName || item.name || "").trim().toLowerCase();
+        return fileName === "freeflow-selection-word.docx";
+      });
+    } catch {
+      runtimeBoardMissingDocxCard = true;
+    }
+  }
+  const shouldRefreshTutorialBoard =
+    !tutorialBoardExists ||
+    marker.version !== TUTORIAL_BOARD_TEMPLATE_VERSION ||
+    runtimeBoardMissingDocxCard;
 
   if (shouldRefreshTutorialBoard) {
-    created = !tutorialBoardExists;
-    updated = tutorialBoardExists;
-    await fs.promises.copyFile(templatePath, targetPath);
+    created = !tutorialBoardExists && !legacyTutorialBoardExists;
+    updated = tutorialBoardExists || legacyTutorialBoardExists;
+    const templateRaw = await fs.promises.readFile(templatePath, "utf8");
+    const templateDocument = parseTutorialBoardTemplateDocument(templateRaw, targetPath);
+    await fs.promises.writeFile(targetPath, JSON.stringify(templateDocument, null, 2), "utf8");
   }
 
   const assetTargets = await ensureTutorialAssetTargets(targetDir);
@@ -2159,6 +2272,17 @@ ipcMain.handle("desktop-shell:get-startup-context", async () => {
     return {
       ok: false,
       error: error.message || "初始化启动上下文失败",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:refresh-startup-context", async () => {
+  try {
+    return await ensureDesktopStartupContext({ force: true });
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message || "刷新启动上下文失败",
     };
   }
 });

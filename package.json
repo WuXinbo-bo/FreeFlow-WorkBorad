@@ -1,6 +1,6 @@
 {
   "name": "freeflow-workboard",
-  "version": "1.0.9-rc",
+  "version": "1.1.0",
   "productName": "FreeFlow",
   "description": "一站式打造属于你的专属办公白板",
   "main": "electron/main.js",
@@ -9,6 +9,7 @@
     "start:web": "node server.js",
     "start:desktop": "set \"ELECTRON_RUN_AS_NODE=\" && electron .",
     "build:canvas-office": "node scripts/build-canvas-office.js",
+    "build:canvas-demo": "node scripts/build-canvas-demo.js",
     "build:canvas2d-ui": "node scripts/build-canvas2d-ui.js",
     "build:icons": "node scripts/generate-app-icons.js",
     "prepare:desktop-build": "node scripts/prepare-desktop-build.js",
@@ -29,22 +30,8 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "commonjs",
   "dependencies": {
-    "@codemirror/lang-cpp": "^6.0.3",
-    "@codemirror/lang-css": "^6.3.1",
-    "@codemirror/lang-html": "^6.4.11",
-    "@codemirror/lang-java": "^6.0.2",
-    "@codemirror/lang-javascript": "^6.2.5",
-    "@codemirror/lang-json": "^6.0.2",
-    "@codemirror/lang-markdown": "^6.5.0",
-    "@codemirror/lang-python": "^6.2.1",
-    "@codemirror/lang-sql": "^6.10.0",
-    "@codemirror/lang-xml": "^6.1.0",
-    "codemirror": "^6.0.2",
     "docx": "^9.5.1",
-    "docx-pdf": "^0.0.1",
     "express": "^5.2.1",
-    "file-type": "^22.0.0",
-    "highlight.js": "^11.11.1",
     "html-to-docx": "^1.8.0",
     "katex": "^0.16.45",
     "koffi": "^2.15.2",
@@ -54,12 +41,6 @@
     "prismjs": "^1.30.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "remark-parse": "^11.0.0",
-    "unified": "^11.0.5",
     "xlsx": "^0.18.5",
     "yauzl": "^3.2.0"
   },
@@ -106,6 +87,10 @@
       {
         "from": "public/assets/tutorial-group.png",
         "to": "presets/tutorial-assets/tutorial-group.png"
+      },
+      {
+        "from": "build/freeflow-selection-word.docx",
+        "to": "presets/tutorial-assets/freeflow-selection-word.docx"
       },
       {
         "from": "build/README.md",

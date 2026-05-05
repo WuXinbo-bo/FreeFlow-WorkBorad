@@ -39,7 +39,8 @@ function isTutorialBoardPath(filePath = "") {
   if (!normalizedPath) {
     return false;
   }
-  return path.basename(normalizedPath).toLowerCase() === "freeflow教程画布.json".toLowerCase();
+  const baseName = path.basename(normalizedPath).toLowerCase();
+  return baseName === "freeflow教程画布.json".toLowerCase() || baseName === "freeflow教程画布.freeflow".toLowerCase();
 }
 
 async function resolveExistingBoardPath(filePath = "") {

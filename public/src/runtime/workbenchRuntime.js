@@ -3312,6 +3312,7 @@ const canvasStorageBridge = createCanvasStorageBridge({
 const {
   readUiSettingsCache,
   loadStartupContext,
+  refreshStartupContext,
   getStartupContext,
   writeUiSettingsCache,
   writeStartupContextUiSettings,
@@ -4746,6 +4747,7 @@ async function saveWorkbenchPreferences(preferences = {}) {
   state.workbenchPreferences = pickWorkbenchPreferences(data.preferences || nextUiSettings);
   writeUiSettingsCache(nextUiSettings);
   writeStartupContextUiSettings(nextUiSettings);
+  await refreshStartupContext();
   applyUiSettings();
   return state.workbenchPreferences;
 }
@@ -5425,6 +5427,17 @@ function getWorkbenchPreferencesFromState() {
   return pickWorkbenchPreferences(state.workbenchPreferences || state.uiSettings || {});
 }
 
+function commitWorkbenchPreferencesToState(preferences = {}) {
+  state.workbenchPreferences = pickWorkbenchPreferences(preferences);
+  state.uiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    ...state.workbenchPreferences,
+  });
+  writeUiSettingsCache(state.uiSettings);
+  writeStartupContextUiSettings(state.uiSettings);
+  return state.workbenchPreferences;
+}
+
 function buildPanelLayoutFromWorkbenchPreferences(preferences = getWorkbenchPreferencesFromState()) {
   const nextPreferences = normalizeWorkbenchPreferences(preferences);
   const nextLayout = createDefaultPanelLayout(getPanelLayoutViewportOptions());
@@ -6087,6 +6100,19 @@ async function initializeDesktopShell() {
   scheduleDesktopWindowShapeSync();
 }
 
+async function applyWorkbenchFullscreenPreference(preferences = getWorkbenchPreferencesFromState()) {
+  if (!IS_DESKTOP_APP || !DESKTOP_SHELL?.toggleFullscreen) {
+    return;
+  }
+  const shouldFullscreen = Boolean(normalizeWorkbenchPreferences(preferences).defaultLaunchFullscreen);
+  await refreshDesktopShellState();
+  if (Boolean(state.desktopShellState.fullscreen) === shouldFullscreen) {
+    return;
+  }
+  await DESKTOP_SHELL.toggleFullscreen();
+  await refreshDesktopShellState();
+}
+
 function applyFullClickThroughUiState(enabled) {
   document.body.classList.toggle("desktop-full-pass-through", Boolean(enabled));
 
@@ -6218,8 +6244,10 @@ function getWorkbenchHabitDraft() {
   });
 }
 
-function renderWorkbenchHabitSettings() {
-  const preferences = getWorkbenchPreferencesFromState();
+function renderWorkbenchHabitSettings(preferencesOverride = null) {
+  const preferences = preferencesOverride
+    ? pickWorkbenchPreferences(preferencesOverride)
+    : getWorkbenchPreferencesFromState();
   const canvasSideLabel = preferences.defaultCanvasPanelSide === "right" ? "画布在右" : "画布在左";
   const visibleLabels = [
     preferences.defaultCanvasPanelVisible ? "画布默认展开" : "画布默认收起",
@@ -6248,12 +6276,7 @@ function renderWorkbenchHabitSettings() {
 
 function previewWorkbenchHabitDraft() {
   const preferences = getWorkbenchHabitDraft();
-  state.workbenchPreferences = pickWorkbenchPreferences(preferences);
-  state.uiSettings = normalizeUiSettings({
-    ...state.uiSettings,
-    ...state.workbenchPreferences,
-  });
-  renderWorkbenchHabitSettings();
+  renderWorkbenchHabitSettings(preferences);
   requestPanelLayoutFinalShapeSync();
 }
 
@@ -7090,6 +7113,7 @@ workbenchHabitSaveBtn?.addEventListener("click", async () => {
     await saveWorkbenchPreferences(preferences);
     clearStagePanelsState();
     applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    await applyWorkbenchFullscreenPreference(preferences);
     renderWorkbenchHabitSettings();
     if (workbenchHabitStatusEl) {
       const savedPreferences = getWorkbenchPreferencesFromState();
@@ -7117,22 +7141,22 @@ workbenchHabitSaveBtn?.addEventListener("click", async () => {
 
 workbenchHabitApplyBtn?.addEventListener("click", () => {
   const preferences = getWorkbenchHabitDraft();
-  state.workbenchPreferences = pickWorkbenchPreferences(preferences);
-  state.uiSettings = normalizeUiSettings({
-    ...state.uiSettings,
-    ...state.workbenchPreferences,
-  });
-  writeUiSettingsCache(state.uiSettings);
+  commitWorkbenchPreferencesToState(preferences);
   clearStagePanelsState();
   renderWorkbenchHabitSettings();
   applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: true });
+  void applyWorkbenchFullscreenPreference(preferences).catch((error) => {
+    setStatus(`应用全屏习惯失败：${error.message}`, "warning");
+  });
 });
 
 workbenchHabitResetBtn?.addEventListener("click", async () => {
   try {
-    await saveWorkbenchPreferences({ ...DEFAULT_WORKBENCH_PREFERENCES });
+    const preferences = { ...DEFAULT_WORKBENCH_PREFERENCES };
+    await saveWorkbenchPreferences(preferences);
     clearStagePanelsState();
     applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    await applyWorkbenchFullscreenPreference(preferences);
     renderWorkbenchHabitSettings();
     setStatus("已恢复默认习惯设置", "success");
   } catch (error) {

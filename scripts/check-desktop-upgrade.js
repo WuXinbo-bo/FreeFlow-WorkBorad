@@ -61,7 +61,7 @@ async function runScenario({
   const homeDir = path.join(tempRoot, "FreeFlow");
   const appDataDir = path.join(homeDir, "AppData");
   const boardDir = path.join(homeDir, "CanvasBoards");
-  const tutorialBoardPath = path.join(boardDir, "FreeFlow教程画布.json");
+  const tutorialBoardPath = path.join(boardDir, "FreeFlow教程画布.freeflow");
   const recentBoardPath = path.join(boardDir, "我的旧画布.json");
 
   await fsp.mkdir(appDataDir, { recursive: true });
@@ -247,8 +247,8 @@ async function main() {
       hasShownStartupTutorial:
         scenarioName === "legacy-user-template-refresh" ||
         scenarioName === "current-version-intro-dismissed",
-      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.0.9-rc" : "",
-      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.0.9-rc" : "",
+      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.0" : "",
+      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.0" : "",
     });
     console.log(JSON.stringify(result));
     return;

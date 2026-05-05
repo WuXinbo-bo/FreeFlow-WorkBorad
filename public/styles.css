@@ -9853,18 +9853,12 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-engine-topbar {
   --canvas2d-topbar-gap: 18px;
-  --canvas2d-topbar-right-width: min(648px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
   position: absolute;
   top: 18px;
   left: 18px;
   right: 18px;
   z-index: 85;
-  display: grid;
-  grid-template-columns: var(--canvas2d-topbar-left-reserved-width) minmax(0, var(--canvas2d-topbar-right-width));
-  align-items: start;
-  justify-content: space-between;
-  gap: var(--canvas2d-topbar-gap);
-  width: auto;
+  height: 0;
   pointer-events: none;
 }
 
@@ -9874,7 +9868,7 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-engine-topbar .canvas2d-engine-corner-top-left,
 .canvas2d-engine-topbar .canvas2d-engine-toolbar-wrap {
-  position: relative;
+  position: absolute;
   top: auto;
   right: auto;
   left: auto;
@@ -9886,13 +9880,16 @@ body.is-office-embedded #right-pane-resizer {
   width: auto;
   max-width: 100%;
   z-index: 2;
+  position: relative;
 }
 
 .canvas2d-engine-topbar .canvas2d-engine-corner-top-left {
+  position: absolute;
+  left: 0;
+  top: 0;
   z-index: 1;
   display: flex;
   align-items: flex-start;
-  align-self: flex-start;
   width: auto;
   min-width: 0;
 }
@@ -9902,13 +9899,14 @@ body.is-office-embedded #right-pane-resizer {
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-start;
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
   z-index: 1;
-  width: var(--canvas2d-topbar-right-width);
-  max-width: var(--canvas2d-topbar-right-width);
+  width: auto;
+  max-width: calc(100vw - 36px);
   min-width: 0;
   gap: 6px;
-  margin-left: auto;
 }
 
 .canvas2d-engine-search-wrap {
@@ -13820,10 +13818,8 @@ body.is-office-embedded #right-pane-resizer {
 @media (max-width: 1024px) {
   .canvas2d-engine-topbar {
     --canvas2d-topbar-gap: 11px;
-    --canvas2d-topbar-right-width: min(560px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
     left: 14px;
     right: 14px;
-    align-items: start;
   }
 
   .canvas2d-engine-toolbar-wrap {
@@ -13839,8 +13835,8 @@ body.is-office-embedded #right-pane-resizer {
 
   .canvas2d-engine-topbar-stack {
     gap: 8px;
-    width: var(--canvas2d-topbar-right-width);
-    max-width: var(--canvas2d-topbar-right-width);
+    width: auto;
+    max-width: calc(100vw - 28px);
     min-width: 0;
   }
 
@@ -13911,7 +13907,6 @@ body.is-office-embedded #right-pane-resizer {
 
 @media (max-width: 720px) {
   .canvas2d-engine-topbar {
-    --canvas2d-topbar-right-width: min(360px, max(0px, calc(100% - var(--canvas2d-topbar-left-reserved-width) - var(--canvas2d-topbar-gap))));
     --canvas2d-topbar-gap: 8px;
   }
 

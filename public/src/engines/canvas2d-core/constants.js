@@ -1,4 +1,5 @@
 export const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
+export const DEFAULT_STORAGE_KEY = STORAGE_KEY;
 export const LEGACY_STORAGE_KEYS = ["ai_worker_canvas_office_board_v2", "ai_worker_canvas_office_board_v1"];
 export const HISTORY_LIMIT = 80;
 

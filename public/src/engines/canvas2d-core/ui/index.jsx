@@ -703,7 +703,7 @@ function getExportHistoryActionLabel(entry = null) {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.0.9-rc" },
+  { label: "版本号", value: "v1.1.0" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
   { label: "授权邮箱", value: "w1806598228@163.com" },
@@ -803,6 +803,7 @@ function Canvas2DControls({ engine }) {
   const rootRef = useRef(null);
   const toolbarRef = useRef(null);
   const infoPanelRef = useRef(null);
+  const topbarStackRef = useRef(null);
   const drawMenuRef = useRef(null);
   const insertMenuRef = useRef(null);
   const captureMenuRef = useRef(null);
@@ -1055,50 +1056,33 @@ function Canvas2DControls({ engine }) {
       if (frameId) {
         cancelAnimationFrame(frameId);
       }
-      frameId = requestAnimationFrame(() => {
-        frameId = 0;
-        const infoRect = infoElement.getBoundingClientRect();
-        const topbarRect =
-          rootElement.querySelector(".canvas2d-engine-topbar") instanceof HTMLElement
-            ? rootElement.querySelector(".canvas2d-engine-topbar").getBoundingClientRect()
-            : null;
-        const topbarStackRect =
-          rootElement.querySelector(".canvas2d-engine-topbar-stack") instanceof HTMLElement
-            ? rootElement.querySelector(".canvas2d-engine-topbar-stack").getBoundingClientRect()
-            : null;
-        const searchRect = searchRef.current instanceof HTMLElement ? searchRef.current.getBoundingClientRect() : null;
-        const exportRect =
-          exportHistoryRef.current instanceof HTMLElement ? exportHistoryRef.current.getBoundingClientRect() : null;
-        const layoutGap = topbarRect && topbarStackRect ? Math.max(0, topbarStackRect.left - topbarRect.left) : 0;
-        const expandedInfoWidth = infoPanelCollapsed || infoPanelAutoCollapsed ? 186 : infoRect.width;
-        const collapsedInfoWidth = 78;
-        const panelSafetyGap = 20;
-        const collapseGap = 10;
-        const releaseGap = 42;
-        const occupiedLeft = Math.min(
-          searchRect ? searchRect.left : Number.POSITIVE_INFINITY,
-          exportRect ? exportRect.left : Number.POSITIVE_INFINITY
-        );
-        const infoLeft = infoRect.left;
-        const expandedInfoRight = infoLeft + expandedInfoWidth + Math.max(0, layoutGap);
-        const collapsedInfoRight = infoLeft + collapsedInfoWidth + Math.max(0, layoutGap);
-        const now = performance.now();
-        setInfoPanelAutoCollapsed((current) => {
-          if (!Number.isFinite(occupiedLeft)) {
-            return false;
-          }
-          if (current && now < infoPanelAutoCollapseLockUntilRef.current) {
-            return true;
-          }
-          if (current) {
-            return occupiedLeft <= collapsedInfoRight + releaseGap + panelSafetyGap;
-          }
-          const shouldCollapse = occupiedLeft <= expandedInfoRight + collapseGap;
-          if (shouldCollapse) {
-            infoPanelAutoCollapseLockUntilRef.current = now + 220;
-          }
-          return shouldCollapse;
-        });
+        frameId = requestAnimationFrame(() => {
+          frameId = 0;
+          const infoRect = infoElement.getBoundingClientRect();
+          const stackRect =
+            topbarStackRef.current instanceof HTMLElement ? topbarStackRef.current.getBoundingClientRect() : null;
+          const expandedInfoWidth = infoPanelCollapsed || infoPanelAutoCollapsed ? 186 : infoRect.width;
+          const collapseGap = 8;
+          const releaseGap = 44;
+          const occupiedLeft = stackRect ? stackRect.left : Number.POSITIVE_INFINITY;
+          const expandedInfoRight = infoRect.left + expandedInfoWidth;
+          const now = performance.now();
+          setInfoPanelAutoCollapsed((current) => {
+            if (!Number.isFinite(occupiedLeft)) {
+              return false;
+            }
+            if (current && now < infoPanelAutoCollapseLockUntilRef.current) {
+              return true;
+            }
+            if (current) {
+              return occupiedLeft <= expandedInfoRight + releaseGap;
+            }
+            const shouldCollapse = occupiedLeft <= expandedInfoRight + collapseGap;
+            if (shouldCollapse) {
+              infoPanelAutoCollapseLockUntilRef.current = now + 220;
+            }
+            return shouldCollapse;
+          });
       });
     };
 
@@ -1116,6 +1100,9 @@ function Canvas2DControls({ engine }) {
     }
     if (exportHistoryRef.current instanceof HTMLElement) {
       resizeObserver?.observe(exportHistoryRef.current);
+    }
+    if (topbarStackRef.current instanceof HTMLElement) {
+      resizeObserver?.observe(topbarStackRef.current);
     }
     window.addEventListener("resize", scheduleUpdate);
     return () => {
@@ -1414,7 +1401,7 @@ function Canvas2DControls({ engine }) {
         </div>
       </div>
 
-      <div className="canvas2d-engine-topbar-stack">
+      <div className="canvas2d-engine-topbar-stack" ref={topbarStackRef}>
       <div
         className={`canvas2d-engine-toolbar-wrap${
           drawMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen ? " is-overlay-active" : ""
