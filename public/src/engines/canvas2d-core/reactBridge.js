@@ -126,6 +126,9 @@ export function createCanvas2DReactBridge(engine) {
     openExternalUrl(url) {
       return engine?.openExternalUrl?.(url);
     },
+    checkForAppUpdate(options) {
+      return engine?.checkForAppUpdate?.(options);
+    },
     pickCanvasBoardSavePath() {
       return engine?.pickCanvasBoardSavePath?.();
     },

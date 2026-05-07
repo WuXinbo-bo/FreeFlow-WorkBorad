@@ -1882,6 +1882,17 @@ function Canvas2DControls({ engine }) {
                   </button>
                   <button
                     type="button"
+                    className="canvas2d-engine-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      closeMenu();
+                      void bridge.checkForAppUpdate?.({ manual: true });
+                    }}
+                  >
+                    <span>检查更新</span>
+                  </button>
+                  <button
+                    type="button"
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${alignmentSnapMenuOpen ? " is-active" : ""}`}
                     role="menuitem"
                     aria-expanded={alignmentSnapMenuOpen}

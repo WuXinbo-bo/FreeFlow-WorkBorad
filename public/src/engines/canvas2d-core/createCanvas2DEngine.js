@@ -23770,6 +23770,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     revealBoardInFolder: workspaceManager.revealBoardInFolder,
     revealBoardPathInFolder: workspaceManager.revealBoardPathInFolder,
     openExternalUrl,
+    checkForAppUpdate(options = {}) {
+      if (typeof globalThis?.__FREEFLOW_RUN_APP_UPDATE_CHECK === "function") {
+        return globalThis.__FREEFLOW_RUN_APP_UPDATE_CHECK(options);
+      }
+      return null;
+    },
     pickCanvasBoardSavePath: workspaceManager.pickCanvasBoardSavePath,
     getCanvasBoardWorkspace: workspaceManager.getCanvasBoardWorkspace,
     pickCanvasWorkspaceFolder: workspaceManager.pickCanvasWorkspaceFolder,

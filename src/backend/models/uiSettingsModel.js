@@ -51,6 +51,9 @@ function getDefaultUiSettings() {
     canvasBoardSavePath: CANVAS_BOARD_DIR,
     canvasWorkspaceFolderPath: "",
     canvasLastOpenedBoardPath: "",
+    updateCheckEnabled: true,
+    dismissedUpdateVersion: "",
+    updateDownloadPageUrl: "https://wuxinbo-bo.github.io/",
     hasShownStartupTutorial: false,
     lastTutorialIntroVersion: "",
     dismissedTutorialIntroVersion: "",
@@ -91,6 +94,15 @@ function normalizeUiSettings(payload = {}) {
       typeof payload.canvasLastOpenedBoardPath === "string" && payload.canvasLastOpenedBoardPath.trim()
         ? payload.canvasLastOpenedBoardPath.trim().slice(0, 400)
         : defaults.canvasLastOpenedBoardPath,
+    updateCheckEnabled: payload.updateCheckEnabled !== false,
+    dismissedUpdateVersion:
+      typeof payload.dismissedUpdateVersion === "string" && payload.dismissedUpdateVersion.trim()
+        ? payload.dismissedUpdateVersion.trim().slice(0, 80)
+        : defaults.dismissedUpdateVersion,
+    updateDownloadPageUrl:
+      typeof payload.updateDownloadPageUrl === "string" && payload.updateDownloadPageUrl.trim()
+        ? payload.updateDownloadPageUrl.trim().slice(0, 400)
+        : defaults.updateDownloadPageUrl,
     hasShownStartupTutorial: Boolean(payload.hasShownStartupTutorial),
     lastTutorialIntroVersion:
       typeof payload.lastTutorialIntroVersion === "string" && payload.lastTutorialIntroVersion.trim()

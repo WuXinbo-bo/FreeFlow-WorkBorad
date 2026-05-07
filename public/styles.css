@@ -2003,6 +2003,10 @@ body.is-resizing * {
   -webkit-app-region: no-drag;
 }
 
+.screen-source-header-menu.is-open > summary {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .screen-source-header-menu > summary {
   list-style: none;
   cursor: pointer;
@@ -3619,6 +3623,144 @@ body.desktop-full-pass-through::before,
 body.desktop-full-pass-through .ambient {
   opacity: 0 !important;
   visibility: hidden !important;
+}
+
+.freeflow-update-notice {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 3200;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: auto;
+  isolation: isolate;
+}
+
+.freeflow-update-notice.is-hidden {
+  display: none;
+}
+
+.freeflow-update-notice-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px 16px 14px;
+  border: 1px solid rgb(var(--app-accent-rgb) / 0.16);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgb(var(--app-accent-rgb) / 0.1), rgba(255, 255, 255, 0.018)),
+    rgb(var(--theme-control-surface-strong-rgb) / 0.82);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+}
+
+.freeflow-update-notice-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-0);
+}
+
+.freeflow-update-notice-head strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+.freeflow-update-notice-sub {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.freeflow-update-notice-close {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgb(var(--app-accent-rgb) / 0.12);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    rgb(var(--theme-control-surface-rgb) / 0.46);
+  color: var(--text-1);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.freeflow-update-notice-close:hover {
+  transform: translateY(-1px);
+  border-color: rgb(var(--app-accent-rgb) / 0.22);
+  background:
+    linear-gradient(180deg, rgb(var(--app-accent-rgb) / 0.12), rgba(255, 255, 255, 0.03)),
+    rgb(var(--theme-control-surface-rgb) / 0.58);
+}
+
+.freeflow-update-notice-body {
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.freeflow-update-notice-notes {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.freeflow-update-notice-notes li + li {
+  margin-top: 4px;
+}
+
+.freeflow-update-notice-empty {
+  color: var(--text-2);
+}
+
+.freeflow-update-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.freeflow-update-notice-btn {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgb(var(--app-accent-rgb) / 0.14);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.018)),
+    rgb(var(--theme-control-surface-rgb) / 0.44);
+  color: var(--text-0);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.freeflow-update-notice-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgb(var(--app-accent-rgb) / 0.22);
+  background:
+    linear-gradient(180deg, rgb(var(--app-accent-rgb) / 0.1), rgba(255, 255, 255, 0.03)),
+    rgb(var(--theme-control-surface-rgb) / 0.56);
+}
+
+.freeflow-update-notice-btn.is-primary {
+  border-color: rgb(var(--app-accent-rgb) / 0.24);
+  background:
+    linear-gradient(135deg, rgb(var(--app-accent-rgb) / 0.92), rgb(var(--app-accent-rgb) / 0.74)),
+    rgb(var(--theme-control-surface-rgb) / 0.62);
+  color: #f8fbff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 10px 24px rgb(var(--app-accent-rgb) / 0.22);
+}
+
+.freeflow-update-notice-btn.is-primary:hover {
+  background:
+    linear-gradient(135deg, rgb(var(--app-accent-rgb) / 1), rgb(var(--app-accent-rgb) / 0.82)),
+    rgb(var(--theme-control-surface-rgb) / 0.68);
 }
 
 @media (max-width: 1360px) {

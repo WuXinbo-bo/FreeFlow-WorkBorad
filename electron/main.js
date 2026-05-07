@@ -10,10 +10,12 @@ const os = require("os");
 const HTMLtoDOCX = require("html-to-docx");
 const { compileWordExportAstToDocxBuffer } = require("./wordDocxCompiler");
 const { ensureDoubaoWindow, chatWithDoubao, cancelDoubaoChat, prepareDoubaoPrompt } = require("./doubao-web");
+const { checkForAppUpdate, normalizeVersion, DEFAULT_UPDATE_CONFIG } = require("./updateService");
 const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTargetManager");
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
+const { writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
   FREEFLOW_BOARD_FILE_KIND,
   wrapFreeFlowBoardPayload,
@@ -89,6 +91,11 @@ let desktopEmbedCleanupPromise = Promise.resolve();
 let mainWindowCloseInFlight = false;
 let desktopShortcutSettings = { ...DEFAULT_SHORTCUT_SETTINGS };
 let startupContextCache = null;
+
+function getConfiguredUpdateWebsiteUrl() {
+  const configured = String(startupContextCache?.uiSettings?.updateDownloadPageUrl || "").trim();
+  return configured || DEFAULT_UPDATE_CONFIG.websiteUrl;
+}
 
 const { startServer, stopServer, registerDesktopBridge } = require("../server");
 
@@ -2284,6 +2291,117 @@ ipcMain.handle("desktop-shell:refresh-startup-context", async () => {
       ok: false,
       error: error.message || "刷新启动上下文失败",
     };
+  }
+});
+
+ipcMain.handle("desktop-shell:check-for-app-update", async (_event, payload) => {
+  try {
+    const mockMode = Boolean(payload?.mockMode);
+    const mockRelease = mockMode
+      ? {
+          tag_name: "v1.1.2",
+          name: "FreeFlow v1.1.2",
+          body: "- 临时测试版本提醒\n- 用于验证更新检查与提示链路",
+          published_at: "2026-05-08T08:00:00Z",
+          html_url: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v1.1.2",
+          assets: [
+            {
+              name: "FreeFlow-v1.1.2-x64.exe",
+              browser_download_url:
+                "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/v1.1.2/FreeFlow-v1.1.2-x64.exe",
+              size: 125829120,
+            },
+          ],
+        }
+      : null;
+    const result = await checkForAppUpdate({
+      currentVersion: app.getVersion(),
+      mockRelease,
+      config: {
+        ...DEFAULT_UPDATE_CONFIG,
+        websiteUrl: getConfiguredUpdateWebsiteUrl(),
+      },
+    });
+    const dismissedVersion = normalizeVersion(String(startupContextCache?.uiSettings?.dismissedUpdateVersion || "").trim());
+    return {
+      ...result,
+      dismissed: Boolean(dismissedVersion && dismissedVersion === normalizeVersion(result.latestVersion)),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      hasUpdate: false,
+      currentVersion: normalizeVersion(app.getVersion()),
+      latestVersion: "",
+      latestVersionRaw: "",
+      dismissed: false,
+      isLatest: false,
+      releaseName: "",
+      releaseNotes: "",
+      publishedAt: "",
+      releasePageUrl: DEFAULT_UPDATE_CONFIG.releasesPageUrl,
+      websiteUrl: getConfiguredUpdateWebsiteUrl(),
+      downloadUrl: "",
+      downloadAssetName: "",
+      downloadAssetSize: 0,
+      versionValid: false,
+      errorCode: String(error?.code || "NETWORK_ERROR"),
+      errorMessage: String(error?.message || "检查更新失败"),
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:dismiss-app-update-version", async (_event, version) => {
+  try {
+    const nextVersion = normalizeVersion(String(version || "").trim());
+    const next = await writeUiSettingsStore({
+      dismissedUpdateVersion: nextVersion,
+    });
+    if (startupContextCache?.ok) {
+      startupContextCache = {
+        ...startupContextCache,
+        uiSettings: {
+          ...(startupContextCache.uiSettings || {}),
+          dismissedUpdateVersion: next.dismissedUpdateVersion,
+        },
+      };
+    }
+    return { ok: true, dismissedUpdateVersion: next.dismissedUpdateVersion };
+  } catch (error) {
+    return { ok: false, error: error?.message || "忽略版本失败" };
+  }
+});
+
+ipcMain.handle("desktop-shell:clear-dismissed-app-update-version", async () => {
+  try {
+    const next = await writeUiSettingsStore({
+      dismissedUpdateVersion: "",
+    });
+    if (startupContextCache?.ok) {
+      startupContextCache = {
+        ...startupContextCache,
+        uiSettings: {
+          ...(startupContextCache.uiSettings || {}),
+          dismissedUpdateVersion: "",
+        },
+      };
+    }
+    return { ok: true, dismissedUpdateVersion: next.dismissedUpdateVersion };
+  } catch (error) {
+    return { ok: false, error: error?.message || "清除忽略版本失败" };
+  }
+});
+
+ipcMain.handle("desktop-shell:open-app-update-target", async (_event, url) => {
+  const target = String(url || "").trim() || getConfiguredUpdateWebsiteUrl();
+  if (!target) {
+    return { ok: false, error: "更新地址为空" };
+  }
+  try {
+    await shell.openExternal(target);
+    return { ok: true, url: target };
+  } catch (error) {
+    return { ok: false, error: error?.message || "打开更新地址失败", url: target };
   }
 });
 
