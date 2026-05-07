@@ -100,8 +100,30 @@ export function createEntryFromMimeType({
     return createInternalPayloadEntry(parseJsonSafely(safeValue), entryId, safeMimeType);
   }
   if (safeMimeType === "text/html") {
+    const htmlText = htmlToPlainText(safeValue);
+    const extractedMathMarkdown = extractMathMarkdownFromHtml(safeValue, htmlText);
+    if (extractedMathMarkdown) {
+      return createTypedTextEntry(
+        entryId,
+        safeMimeType,
+        INPUT_ENTRY_KINDS.MARKDOWN,
+        extractedMathMarkdown,
+        {
+          markdown: extractedMathMarkdown,
+          text: htmlText,
+          html: safeValue,
+        },
+        {
+          type: DETECTED_TEXT_TYPES.MATH,
+          confidence: "high",
+          matchedRule: "strong-html-math-signal",
+          entryKind: INPUT_ENTRY_KINDS.MARKDOWN,
+          sourceKind: INPUT_SOURCE_KINDS.MARKDOWN,
+        }
+      );
+    }
     return createTypedTextEntry(entryId, safeMimeType, INPUT_ENTRY_KINDS.HTML, safeValue, {
-      text: htmlToPlainText(safeValue),
+      text: htmlText,
       html: safeValue,
     });
   }
@@ -533,6 +555,91 @@ function containsMarkdownMathSyntax(value = "") {
     /^\s*\\\[\s*$/m.test(source) ||
     /^\s*\$\$[\s\S]+?\$\$\s*$/m.test(source) ||
     /^\s*\\\[[\s\S]+?\\\]\s*$/m.test(source)
+  );
+}
+
+function extractMathMarkdownFromHtml(html = "", fallbackText = "") {
+  const source = String(html || "").trim();
+  if (!source) {
+    return "";
+  }
+  const mathBlocks = [];
+  const blockPattern = /<(?:div|p|section|article|span)[^>]*data-role=(?:"|')math-block(?:"|')[^>]*>([\s\S]*?)<\/(?:div|p|section|article|span)>/gi;
+  let blockMatch = blockPattern.exec(source);
+  while (blockMatch) {
+    const formula = htmlToPlainText(String(blockMatch[1] || "")).trim();
+    if (formula) {
+      mathBlocks.push(["$$", formula, "$$"].join("\n"));
+    }
+    blockMatch = blockPattern.exec(source);
+  }
+  if (mathBlocks.length) {
+    return mathBlocks.join("\n\n");
+  }
+
+  const inlineFormulas = [];
+  const inlinePattern = /<(?:span|code)[^>]*data-role=(?:"|')math-inline(?:"|')[^>]*>([\s\S]*?)<\/(?:span|code)>/gi;
+  let inlineMatch = inlinePattern.exec(source);
+  while (inlineMatch) {
+    const formula = htmlToPlainText(String(inlineMatch[1] || "")).trim();
+    if (formula) {
+      inlineFormulas.push(`$${formula}$`);
+    }
+    inlineMatch = inlinePattern.exec(source);
+  }
+  if (inlineFormulas.length) {
+    return inlineFormulas.join(" ");
+  }
+
+  const katexAnnotations = [];
+  const katexAnnotationPattern = /<annotation[^>]*encoding=(?:"|')application\/x-tex(?:"|')[^>]*>([\s\S]*?)<\/annotation>/gi;
+  let annotationMatch = katexAnnotationPattern.exec(source);
+  while (annotationMatch) {
+    const formula = htmlToPlainText(String(annotationMatch[1] || "")).trim();
+    if (formula) {
+      katexAnnotations.push(formula);
+    }
+    annotationMatch = katexAnnotationPattern.exec(source);
+  }
+  if (katexAnnotations.length) {
+    return katexAnnotations.length === 1
+      ? `$$\n${katexAnnotations[0]}\n$$`
+      : katexAnnotations.map((formula) => ["$$", formula, "$$"].join("\n")).join("\n\n");
+  }
+
+  const mathMlBlocks = [];
+  const mathMlPattern = /<math\b[\s\S]*?>([\s\S]*?)<\/math>/gi;
+  let mathMlMatch = mathMlPattern.exec(source);
+  while (mathMlMatch) {
+    const formula = htmlToPlainText(String(mathMlMatch[1] || "")).trim();
+    if (formula && looksLikeMathPlainText(formula)) {
+      mathMlBlocks.push(formula);
+    }
+    mathMlMatch = mathMlPattern.exec(source);
+  }
+  if (mathMlBlocks.length) {
+    return mathMlBlocks.length === 1
+      ? `$$\n${mathMlBlocks[0]}\n$$`
+      : mathMlBlocks.map((formula) => ["$$", formula, "$$"].join("\n")).join("\n\n");
+  }
+
+  const text = String(fallbackText || htmlToPlainText(source) || "").trim();
+  if (containsMarkdownMathSyntax(text)) {
+    return text;
+  }
+  return "";
+}
+
+function looksLikeMathPlainText(value = "") {
+  const source = String(value || "").trim();
+  if (!source) {
+    return false;
+  }
+  return (
+    /\\[a-zA-Z]+/.test(source) ||
+    /[_^{}]/.test(source) ||
+    /[∑∫√∞≈≠≤≥±÷×]/.test(source) ||
+    /(?:^|[\s(])[a-zA-Z]\s*=\s*[^=\s]/.test(source)
   );
 }
 

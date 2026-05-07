@@ -430,6 +430,28 @@ export function downgradeExternalHtmlToCanvasTextSemantics(value = "", baseFontS
       return;
     }
     const tag = String(node.tagName || "").toLowerCase();
+    const dataRole = String(node.getAttribute("data-role") || "").trim().toLowerCase();
+    if (dataRole === "math-inline" || dataRole === "math-block") {
+      Array.from(node.attributes).forEach((attr) => {
+        if (attr.name === "data-role") {
+          return;
+        }
+        node.removeAttribute(attr.name);
+      });
+      return;
+    }
+    if (tag === "math") {
+      const formula = sanitizeText(htmlToPlainText(node.outerHTML || node.textContent || "")).trim();
+      if (formula) {
+        const replacement = document.createElement("div");
+        replacement.setAttribute("data-role", "math-block");
+        replacement.textContent = formula;
+        node.replaceWith(replacement);
+      } else {
+        unwrapExternalHtmlElement(node);
+      }
+      return;
+    }
     if (tag === "img") {
       replaceExternalHtmlElementWithText(node, String(node.getAttribute("alt") || "").trim());
       return;

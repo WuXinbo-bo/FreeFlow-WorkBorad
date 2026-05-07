@@ -1,6 +1,7 @@
-const DEFAULT_GITHUB_RELEASES_URL = "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases";
-const DEFAULT_GITHUB_DOWNLOAD_URL = `${DEFAULT_GITHUB_RELEASES_URL}/latest/download/FreeFlow-Setup-x64.exe`;
-const DEFAULT_QUARK_DOWNLOAD_URL = "https://pan.quark.cn/s/7caece083436";
+const DEFAULT_GITHUB_RELEASES_URL = "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v1.1.1";
+const DEFAULT_GITHUB_DOWNLOAD_URL =
+  "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/v1.1.1/FreeFlow-v1.1.1-x64.exe";
+const DEFAULT_QUARK_DOWNLOAD_URL = "https://pan.quark.cn/s/f07b5df056b6";
 const DEFAULT_LIVE_DEMO_URL = "https://wuxinbo-bo.github.io/canvas-demo-standalone/";
 
 const trimString = (value: unknown) => String(value || "").trim();
@@ -10,7 +11,7 @@ const githubReleasesUrl =
 
 const githubDownloadUrl =
   trimString(import.meta.env.VITE_FREEFLOW_GITHUB_DOWNLOAD_URL) ||
-  `${githubReleasesUrl.replace(/\/$/, "")}/latest/download/FreeFlow-Setup-x64.exe`;
+  DEFAULT_GITHUB_DOWNLOAD_URL;
 
 const quarkDownloadUrl =
   trimString(import.meta.env.VITE_FREEFLOW_QUARK_DOWNLOAD_URL) || DEFAULT_QUARK_DOWNLOAD_URL;

@@ -482,6 +482,24 @@ function convertBlockNode(node, context) {
     return [];
   }
   const tag = node.tagName;
+  const dataRole = String(node.attrs?.["data-role"] || "").trim().toLowerCase();
+  if (dataRole === "math-block") {
+    const formula = extractTextContent(node, { preserveWhitespace: true }).trim();
+    if (!formula) {
+      return [];
+    }
+    return [
+      createCanonicalNode({
+        type: "mathBlock",
+        attrs: {
+          sourceFormat: "latex",
+          displayMode: true,
+        },
+        text: formula,
+        meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, "math-block"),
+      }),
+    ];
+  }
   if ((tag === "div" || tag === "section" || tag === "article") && containsDirectBlockNode(node)) {
     const inheritedMarks = deriveMarksFromElement(node);
     const childBlocks = convertChildrenToBlocks(node.children, {
@@ -802,8 +820,25 @@ function convertNodesToInline(nodes, context, inheritedMarks = []) {
     }
 
     const tag = node.tagName;
+    const dataRole = String(node.attrs?.["data-role"] || "").trim().toLowerCase();
     if (tag === "br") {
       result.push(createCanonicalNode({ type: "hardBreak" }));
+      return;
+    }
+    if (dataRole === "math-inline") {
+      const formula = extractTextContent(node, { preserveWhitespace: true }).trim();
+      if (formula) {
+        result.push(
+          createCanonicalNode({
+            type: "mathInline",
+            attrs: {
+              sourceFormat: "latex",
+              displayMode: false,
+            },
+            text: formula,
+          })
+        );
+      }
       return;
     }
     if (tag === "a") {

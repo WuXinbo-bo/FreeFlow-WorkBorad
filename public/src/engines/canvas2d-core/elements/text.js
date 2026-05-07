@@ -265,12 +265,45 @@ export function createTextElement(point, text = "", html = "") {
   };
 }
 
-export function normalizeTextElement(element = {}) {
-  const base = createTextElement(
-    { x: Number(element.x) || 0, y: Number(element.y) || 0 },
-    element.text || element.plainText || "",
-    element.html || ""
-  );
+export function normalizeTextElement(element = {}, options = {}) {
+  const skipMetrics = Boolean(options.skipMetrics);
+  const hasReusableGeometry =
+    skipMetrics &&
+    Number.isFinite(Number(element.width)) &&
+    Number.isFinite(Number(element.height)) &&
+    Number(element.width) > 0 &&
+    Number(element.height) > 0;
+  const base = hasReusableGeometry
+    ? {
+        id: String(element.id || createId("text")),
+        type: "text",
+        text: sanitizeText(element.text || element.plainText || htmlToPlainText(element.html || "")),
+        html: normalizeRichHtmlInlineFontSizes(element.html || ""),
+        plainText: sanitizeText(element.plainText || element.text || htmlToPlainText(element.html || "")),
+        richTextDocument: element.richTextDocument || null,
+        linkTokens: Array.isArray(element.linkTokens) ? element.linkTokens : [],
+        urlMetaCache: element.urlMetaCache && typeof element.urlMetaCache === "object" ? element.urlMetaCache : {},
+        wrapMode: normalizeTextWrapMode(element.wrapMode),
+        textBoxLayoutMode: coerceInteractiveTextBoxLayoutMode(
+          normalizeTextBoxLayoutMode(element.textBoxLayoutMode, element.textResizeMode, element.wrapMode)
+        ),
+        textResizeMode: normalizeTextResizeMode(element.textResizeMode, element.wrapMode),
+        title: buildTextTitle(element.title || element.text || element.plainText || element.html || "文本"),
+        x: Number(element.x) || 0,
+        y: Number(element.y) || 0,
+        width: Math.max(80, Number(element.width) || 80),
+        height: Math.max(40, Number(element.height) || 40),
+        fontSize: normalizeTextFontSize(element.fontSize, 20),
+        color: String(element.color || "#0f172a"),
+        locked: Boolean(element.locked),
+        createdAt: Number(element.createdAt) || Date.now(),
+        structuredImport: normalizeStructuredTextImportMeta(element.structuredImport),
+      }
+    : createTextElement(
+        { x: Number(element.x) || 0, y: Number(element.y) || 0 },
+        element.text || element.plainText || "",
+        element.html || ""
+      );
   const content = normalizeTextContentModel(
     {
       ...element,
@@ -327,23 +360,28 @@ export function normalizeTextElement(element = {}) {
   const textBoxLayoutMode = coerceInteractiveTextBoxLayoutMode(
     normalizeTextBoxLayoutMode(element.textBoxLayoutMode, textResizeMode, element.wrapMode)
   );
-  const metrics = getTextMinSize(
-    {
-      ...element,
-      html: content.html,
-      plainText: nextText,
-      text: nextText,
-      richTextDocument,
-      fontSize: nextFontSize,
-      textBoxLayoutMode,
-      textResizeMode,
-    },
-    {
-      widthHint: Number(element.width ?? 0) || undefined,
-      heightHint: Number(element.height ?? 0) || undefined,
-      fontSize: nextFontSize,
-    }
-  );
+  const metrics = skipMetrics && hasReusableGeometry
+    ? {
+        width: Math.max(80, Number(element.width ?? 0) || 80),
+        height: Math.max(40, Number(element.height ?? 0) || 40),
+      }
+    : getTextMinSize(
+        {
+          ...element,
+          html: content.html,
+          plainText: nextText,
+          text: nextText,
+          richTextDocument,
+          fontSize: nextFontSize,
+          textBoxLayoutMode,
+          textResizeMode,
+        },
+        {
+          widthHint: Number(element.width ?? 0) || undefined,
+          heightHint: Number(element.height ?? 0) || undefined,
+          fontSize: nextFontSize,
+        }
+      );
   const nextWidth =
     textBoxLayoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
       ? Math.max(80, Number(element.width ?? 0) || metrics.width)

@@ -126,7 +126,7 @@ const Navbar = () => {
               FreeFlow
             </span>
             <span className="text-sm font-bold tracking-[0.18em] text-slate-400 leading-none">
-              无限画布工作台
+              无限画布工作台 V1.1.1
             </span>
           </div>
         </div>
@@ -136,7 +136,7 @@ const Navbar = () => {
           <a href="#workflow" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">特色功能</a>
           <a href="#features" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">技术架构</a>
           <a href="#showcase" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">产品演示</a>
-          <a href="#cta-section" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">立即体验</a>
+          <a href="#cta-section" className="text-sm font-semibold text-slate-500 hover:text-brand-accent transition-colors">体验 Demo</a>
           <DownloadChannelMenu
             triggerLabel="立即下载"
             triggerClassName="bg-brand-accent text-white px-6 py-2.5 rounded-full text-sm font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-brand-accent/20"
@@ -159,7 +159,7 @@ const Navbar = () => {
           <a href="#workflow" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>特色功能</a>
           <a href="#features" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>技术架构</a>
           <a href="#showcase" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>产品演示</a>
-          <a href="#cta-section" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>立即体验</a>
+          <a href="#cta-section" className="text-lg font-bold" onClick={() => setMobileMenuOpen(false)}>体验 Demo</a>
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
             <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">下载渠道</div>
             {downloadChannels.map((channel) => (
@@ -245,7 +245,7 @@ const Hero = () => {
 
             <div className="hero-actions flex flex-col sm:flex-row gap-5 lg:gap-6">
               <DownloadChannelMenu
-                triggerLabel="立即下载桌面版"
+                triggerLabel="下载桌面端"
                 panelAlign="left"
                 triggerClassName="bg-slate-900 text-white px-10 py-5 rounded-2xl text-lg font-bold hover:bg-slate-800 transition-all shadow-xl hover:-translate-y-1 active:translate-y-0 inline-flex items-center justify-center"
               />

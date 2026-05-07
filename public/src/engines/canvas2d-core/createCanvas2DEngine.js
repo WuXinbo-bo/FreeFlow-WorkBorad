@@ -3449,6 +3449,8 @@ let tablePointerSelectionState = {
   let pendingRichColorPreview = "";
   let richColorPreviewFrame = 0;
   let richColorPreviewCommitTimer = 0;
+  let pendingRichEditorHideFrame = 0;
+  let pendingRichEditorHideToken = 0;
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
   let pendingCanvasLinkBinding = false;
@@ -7811,6 +7813,7 @@ let tablePointerSelectionState = {
   function syncEditorLayout() {
     const hasEditing = Boolean(state.editingId);
     if (!hasEditing) {
+      const preservePendingRichEditor = hasPendingRichEditorHide() && richTextSession.isActive();
       if (richColorPreviewFrame) {
         cancelAnimationFrame(richColorPreviewFrame);
         richColorPreviewFrame = 0;
@@ -7828,14 +7831,16 @@ let tablePointerSelectionState = {
       clearMindNodeLinkPanelState();
       hideMindNodeLinkPanel();
       refs.editor?.classList.add("is-hidden");
-      refs.richEditor?.classList.add("is-hidden");
       refs.codeBlockEditor?.classList.add("is-hidden");
-      refs.richSelectionToolbar?.classList.add("is-hidden");
       refs.fileMemoEditor?.classList.add("is-hidden");
       refs.imageMemoEditor?.classList.add("is-hidden");
       refs.tableEditor?.classList.add("is-hidden");
       refs.tableToolbar?.classList.add("is-hidden");
       refs.codeBlockToolbar?.classList.add("is-hidden");
+      if (!preservePendingRichEditor) {
+        refs.richEditor?.classList.add("is-hidden");
+        refs.richSelectionToolbar?.classList.add("is-hidden");
+      }
       lastEditorItemId = null;
       lastFileMemoItemId = null;
       lastImageMemoItemId = null;
@@ -7844,7 +7849,9 @@ let tablePointerSelectionState = {
       tableEditFrame = null;
       lastCodeBlockEditItemId = null;
       lightImageEditor.finishEdit();
-      richTextSession.clear({ destroyAdapter: false });
+      if (!preservePendingRichEditor) {
+        richTextSession.clear({ destroyAdapter: false });
+      }
       codeBlockEditor.clear();
       return;
     }
@@ -10266,6 +10273,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     finishImageEdit();
     cancelFlowNodeEdit();
+    cancelPendingRichEditorHide();
     if (!editBaselineSnapshot) {
       editBaselineSnapshot = takeHistorySnapshot(state);
     }
@@ -10306,6 +10314,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     finishImageEdit();
     cancelFileMemoEdit();
     cancelImageMemoEdit();
+    cancelPendingRichEditorHide();
     if (!editBaselineSnapshot) {
       editBaselineSnapshot = takeHistorySnapshot(state);
     }
@@ -10346,6 +10355,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     finishImageEdit();
     cancelFileMemoEdit();
     cancelImageMemoEdit();
+    cancelPendingRichEditorHide();
     const initialContent = normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true });
     applyMindNodeTextContent(item, initialContent);
     if (!editBaselineSnapshot) {
@@ -10568,30 +10578,34 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       { ...content, html: canonicalHtml },
       item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
     );
-    const normalizedItem = normalizeTextElement({
-      ...item,
-      html: canonicalHtml,
-      plainText,
-      text: plainText,
-      richTextDocument: richTextDocumentWithMeta,
-      linkTokens: refreshedLinkSemantics.linkTokens,
-      urlMetaCache: refreshedLinkSemantics.urlMetaCache,
-      textBoxLayoutMode: finalLayoutConfig.layoutMode,
-      textResizeMode: finalLayoutConfig.resizeMode,
-      title: buildTextTitle(plainText || "文本"),
-      width:
-        finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
-          ? Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || currentWidth) || currentWidth))
-          : currentWidth,
-      height: currentHeight,
-    });
+    const normalizedItem = normalizeTextElement(
+      {
+        ...item,
+        html: canonicalHtml,
+        plainText,
+        text: plainText,
+        richTextDocument: richTextDocumentWithMeta,
+        linkTokens: refreshedLinkSemantics.linkTokens,
+        urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+        textBoxLayoutMode: finalLayoutConfig.layoutMode,
+        textResizeMode: finalLayoutConfig.resizeMode,
+        title: buildTextTitle(plainText || "文本"),
+        width:
+          finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
+            ? Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || currentWidth) || currentWidth))
+            : currentWidth,
+        height: currentHeight,
+      },
+      {
+        skipMetrics: true,
+      }
+    );
     Object.assign(item, normalizedItem);
     scheduleUrlMetaHydrationForItem(item);
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
-    refs.richEditor.classList.add("is-hidden");
-    richTextSession.clear({ destroyAdapter: false });
+    scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新文本", "text-edit");
     if (!changed) {
@@ -10664,8 +10678,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
-    refs.richEditor.classList.add("is-hidden");
-    richTextSession.clear({ destroyAdapter: false });
+    scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新节点", "flow-node-edit");
     if (!changed) {
@@ -10762,8 +10775,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
-    refs.richEditor.classList.add("is-hidden");
-    richTextSession.clear({ destroyAdapter: false });
+    scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新思维节点", "mind-node-edit");
     if (!changed) {
@@ -15333,6 +15345,42 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     scheduleRender();
   }
 
+  function cancelPendingRichEditorHide() {
+    pendingRichEditorHideToken += 1;
+    if (pendingRichEditorHideFrame) {
+      cancelAnimationFrame(pendingRichEditorHideFrame);
+      pendingRichEditorHideFrame = 0;
+    }
+  }
+
+  function hideRichEditingChromeImmediately() {
+    refs.richToolbar?.classList.add("is-hidden");
+    refs.richSelectionToolbar?.classList.add("is-hidden");
+    refs.richEditor?.classList.add("is-hidden");
+  }
+
+  function hasPendingRichEditorHide() {
+    return pendingRichEditorHideFrame !== 0;
+  }
+
+  function scheduleRichEditorHideAfterNextPaint({ clearSession = true } = {}) {
+    cancelPendingRichEditorHide();
+    const token = pendingRichEditorHideToken;
+    const finalizeHide = () => {
+      if (token !== pendingRichEditorHideToken) {
+        return;
+      }
+      pendingRichEditorHideFrame = 0;
+      hideRichEditingChromeImmediately();
+      if (clearSession) {
+        richTextSession.clear({ destroyAdapter: false });
+      }
+    };
+    pendingRichEditorHideFrame = requestAnimationFrame(() => {
+      pendingRichEditorHideFrame = requestAnimationFrame(finalizeHide);
+    });
+  }
+
   async function runCanvasCapture(pointer) {
     try {
       const start = pointer?.startScenePoint;
@@ -16441,6 +16489,36 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return null;
     }
     const text = String(dataTransfer?.getData?.("text/plain") || dataTransfer?.getData?.("text") || "");
+    const htmlHasRenderableMath = htmlContainsRenderableMath(html);
+    const textHasMathSyntax = hasMarkdownMathSyntax(text);
+    let derivedMarkdownMath = "";
+    if (htmlHasRenderableMath) {
+      if (/<(?:div|p|section|article|span)[^>]*data-role=(?:"|')math-block(?:"|')[^>]*>/i.test(html)) {
+        const formulas = [];
+        const blockPattern = /<(?:div|p|section|article|span)[^>]*data-role=(?:"|')math-block(?:"|')[^>]*>([\s\S]*?)<\/(?:div|p|section|article|span)>/gi;
+        let match = blockPattern.exec(html);
+        while (match) {
+          const formula = sanitizeText(htmlToPlainText(String(match[1] || ""))).trim();
+          if (formula) {
+            formulas.push(["$$", formula, "$$"].join("\n"));
+          }
+          match = blockPattern.exec(html);
+        }
+        derivedMarkdownMath = formulas.join("\n\n");
+      } else if (/<(?:span|code)[^>]*data-role=(?:"|')math-inline(?:"|')[^>]*>/i.test(html)) {
+        const formulas = [];
+        const inlinePattern = /<(?:span|code)[^>]*data-role=(?:"|')math-inline(?:"|')[^>]*>([\s\S]*?)<\/(?:span|code)>/gi;
+        let match = inlinePattern.exec(html);
+        while (match) {
+          const formula = sanitizeText(htmlToPlainText(String(match[1] || ""))).trim();
+          if (formula) {
+            formulas.push(`$${formula}$`);
+          }
+          match = inlinePattern.exec(html);
+        }
+        derivedMarkdownMath = formulas.join(" ");
+      }
+    }
     const entries = [
       {
         entryId: "drag-html-0",
@@ -16458,10 +16536,32 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         meta: {},
       },
     ];
+    if (derivedMarkdownMath.trim()) {
+      entries.unshift({
+        entryId: "drag-html-math-0",
+        kind: INPUT_ENTRY_KINDS.MARKDOWN,
+        status: "ready",
+        errorCode: "none",
+        mimeType: "text/markdown",
+        name: "",
+        size: derivedMarkdownMath.length,
+        charset: "utf-8",
+        raw: {
+          markdown: derivedMarkdownMath,
+          text: text || htmlToPlainText(html),
+          html,
+        },
+        meta: {
+          detectedType: "math",
+          detectedConfidence: "high",
+          detectedRule: "drag-html-renderable-math",
+        },
+      });
+    }
     if (text.trim()) {
       entries.push({
-        entryId: "drag-html-text-1",
-        kind: INPUT_ENTRY_KINDS.TEXT,
+        entryId: derivedMarkdownMath.trim() ? "drag-html-text-2" : "drag-html-text-1",
+        kind: textHasMathSyntax && !htmlHasRenderableMath ? INPUT_ENTRY_KINDS.MARKDOWN : INPUT_ENTRY_KINDS.TEXT,
         status: "ready",
         errorCode: "none",
         mimeType: "text/plain",
@@ -16469,19 +16569,38 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         size: text.length,
         charset: "utf-8",
         raw: {
+          ...(textHasMathSyntax && !htmlHasRenderableMath ? { markdown: text } : null),
           text,
         },
-        meta: {},
+        meta: textHasMathSyntax && !htmlHasRenderableMath
+          ? {
+              detectedType: "math",
+              detectedConfidence: "high",
+              detectedRule: "drag-html-plain-text-math-fallback",
+            }
+          : {},
       });
     }
     return createInputDescriptor({
       descriptorId: `drag-html-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       channel: INPUT_CHANNELS.DRAG_DROP,
-      sourceKind: INPUT_SOURCE_KINDS.HTML,
+      sourceKind:
+        derivedMarkdownMath.trim() || (textHasMathSyntax && !htmlHasRenderableMath)
+          ? INPUT_SOURCE_KINDS.MIXED
+          : INPUT_SOURCE_KINDS.HTML,
       status: "ready",
       errorCode: "none",
-      mimeTypes: ["text/html", ...(text.trim() ? ["text/plain"] : [])],
-      tags: ["drag-drop", "contains-html", "rich-html"],
+      mimeTypes: [
+        ...(derivedMarkdownMath.trim() ? ["text/markdown"] : []),
+        "text/html",
+        ...(text.trim() ? ["text/plain"] : []),
+      ],
+      tags: [
+        "drag-drop",
+        "contains-html",
+        "rich-html",
+        ...(htmlHasRenderableMath || textHasMathSyntax ? ["contains-math"] : []),
+      ],
       context: buildStructuredImportContext(anchorPoint, {
         origin: "engine-drop-html",
       }),
@@ -22785,6 +22904,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelAnimationFrame(deferredBlankEditExitFrame);
       deferredBlankEditExitFrame = 0;
     }
+    cancelPendingRichEditorHide();
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
     richTextSession.destroy();
