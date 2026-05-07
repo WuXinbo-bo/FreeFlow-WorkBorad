@@ -719,6 +719,49 @@ function repairMisclassifiedCodeBlocksOnBoard(board, fontSizeFallback = DEFAULT_
   return board;
 }
 
+function getNowTimestamp() {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function createBoardLoadMetrics(filePath = "") {
+  const startedAt = getNowTimestamp();
+  const metrics = {
+    filePath: String(filePath || "").trim(),
+    startedAt,
+    stages: [],
+  };
+
+  return {
+    mark(label = "") {
+      metrics.stages.push({
+        label: String(label || "").trim() || "unknown",
+        at: getNowTimestamp(),
+      });
+    },
+    flush({ log = true } = {}) {
+      const completedAt = getNowTimestamp();
+      const stages = metrics.stages.map((entry, index) => {
+        const previousAt = index > 0 ? metrics.stages[index - 1].at : startedAt;
+        return {
+          label: entry.label,
+          elapsedMs: Math.max(0, entry.at - previousAt),
+        };
+      });
+      const summary = {
+        filePath: metrics.filePath,
+        totalMs: Math.max(0, completedAt - startedAt),
+        stages,
+      };
+      if (log && typeof console !== "undefined" && typeof console.info === "function") {
+        console.info("[FreeFlow] board load metrics", summary);
+      }
+      return summary;
+    },
+  };
+}
+
 const AUTOSAVE_INTERVAL_MS = 30000;
 const AUTOSAVE_ENABLED_KEY = "ai_worker_canvas2d_autosave_v1";
 const DEFAULT_NEW_BOARD_BASE = "FreeFlowBoard";
@@ -5224,6 +5267,9 @@ let tablePointerSelectionState = {
     if (typeof patch.canvasBoardSavePath === "string") {
       nextStartup.boardSavePath = patch.canvasBoardSavePath;
     }
+    if (typeof patch.canvasWorkspaceFolderPath === "string") {
+      nextStartup.workspaceFolderPath = patch.canvasWorkspaceFolderPath;
+    }
     if (typeof patch.canvasImageSavePath === "string") {
       nextStartup.canvasImageSavePath = patch.canvasImageSavePath;
     }
@@ -5265,6 +5311,29 @@ let tablePointerSelectionState = {
     const startup = readStartupUiSettings();
     if (startup?.canvasBoardSavePath) {
       const raw = String(startup.canvasBoardSavePath || "").trim();
+      return resolveBoardFolderPath(raw) || raw;
+    }
+    return "";
+  }
+
+  async function resolveCanvasWorkspaceFolderPath() {
+    const remote = await fetchUiSettings();
+    if (remote?.canvasWorkspaceFolderPath) {
+      const raw = String(remote.canvasWorkspaceFolderPath || "").trim();
+      return resolveBoardFolderPath(raw) || raw;
+    }
+    const cached = readUiSettingsCache();
+    if (cached?.canvasWorkspaceFolderPath) {
+      const raw = String(cached.canvasWorkspaceFolderPath || "").trim();
+      return resolveBoardFolderPath(raw) || raw;
+    }
+    const startup = readStartupContext();
+    if (startup?.startup?.workspaceFolderPath) {
+      const raw = String(startup.startup.workspaceFolderPath || "").trim();
+      return resolveBoardFolderPath(raw) || raw;
+    }
+    if (startup?.uiSettings?.canvasWorkspaceFolderPath) {
+      const raw = String(startup.uiSettings.canvasWorkspaceFolderPath || "").trim();
       return resolveBoardFolderPath(raw) || raw;
     }
     return "";
@@ -5384,6 +5453,14 @@ let tablePointerSelectionState = {
     );
   }
 
+  function notifyCanvasWorkspaceFolderPathChange(nextPath) {
+    window.dispatchEvent(
+      new CustomEvent("canvas-workspace-folder-path-changed", {
+        detail: { canvasWorkspaceFolderPath: resolveBoardFolderPath(nextPath) || String(nextPath || "").trim() },
+      })
+    );
+  }
+
   function notifyCanvasLastOpenedBoardPathChange(nextPath) {
     const cleanPath = String(nextPath || "").trim();
     if (!cleanPath) {
@@ -5424,6 +5501,35 @@ let tablePointerSelectionState = {
       // Ignore ui settings persistence failures.
     }
     notifyCanvasImagePathChange(cleanPath);
+  }
+
+  async function updateCanvasWorkspaceFolderSetting(nextPath) {
+    const cleanPath = resolveBoardFolderPath(nextPath) || String(nextPath || "").trim();
+    const cached = readUiSettingsCache();
+    const remote = await fetchUiSettings();
+    const base = remote || cached || {};
+    const payload = { ...base, canvasWorkspaceFolderPath: cleanPath };
+    try {
+      const response = await fetch(API_ROUTES.uiSettings, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await readJsonResponse(response, "界面设置");
+      if (response.ok && data?.ok) {
+        const nextCache = { ...payload, ...data, updatedAt: data.updatedAt || Date.now() };
+        writeUiSettingsCache(nextCache);
+        updateStartupContextUiSettings({
+          canvasWorkspaceFolderPath: String(nextCache.canvasWorkspaceFolderPath || cleanPath).trim(),
+        });
+      }
+    } catch {
+      writeUiSettingsCache({ ...payload, updatedAt: Date.now() });
+      updateStartupContextUiSettings({
+        canvasWorkspaceFolderPath: cleanPath,
+      });
+    }
+    notifyCanvasWorkspaceFolderPathChange(cleanPath);
   }
 
   async function persistBoardSelectionSetting(nextPath) {
@@ -5826,10 +5932,12 @@ let tablePointerSelectionState = {
       return boardLoadInFlight;
     }
     boardLoadInFlight = (async () => {
+      const loadMetrics = createBoardLoadMetrics(targetPath);
       const hasDesktopReadBridge = typeof globalThis?.desktopShell?.readFile === "function";
       const hasDesktopExistsBridge = typeof globalThis?.desktopShell?.pathExists === "function";
       if (hasDesktopExistsBridge) {
         const exists = await globalThis.desktopShell.pathExists(targetPath);
+        loadMetrics.mark("path-exists");
         if (!exists) {
           if (!silent) {
             setStatus("画布文件不存在", "warning");
@@ -5841,6 +5949,7 @@ let tablePointerSelectionState = {
       let boardPayload = null;
       if (hasDesktopReadBridge) {
         const readResult = await globalThis.desktopShell.readFile(targetPath);
+        loadMetrics.mark("read-file");
         if (!readResult?.ok) {
           if (!silent) {
             setStatus(readResult?.error || "画布读取失败", "warning");
@@ -5850,6 +5959,7 @@ let tablePointerSelectionState = {
         try {
           parsed = parseBoardFileText(readResult?.text || "");
           boardPayload = parsed.payload;
+          loadMetrics.mark("parse-board-file");
         } catch (error) {
           if (!silent) {
             setStatus(getBoardParseErrorMessage(error), "warning");
@@ -5861,6 +5971,7 @@ let tablePointerSelectionState = {
           const requestUrl = `${API_ROUTES.canvasBoard}?filePath=${encodeURIComponent(targetPath)}`;
           const response = await fetch(requestUrl, { method: "GET" });
           const data = await readJsonResponse(response, "画布读取");
+          loadMetrics.mark("fetch-board-file");
           if (!response.ok || !data?.ok) {
             if (!silent) {
               setStatus(data?.error || "画布读取失败", "warning");
@@ -5891,6 +6002,7 @@ let tablePointerSelectionState = {
             format: String(data?.format || "backend-api").trim() || "backend-api",
             envelope: null,
           };
+          loadMetrics.mark("parse-backend-payload");
         } catch (error) {
           if (!silent) {
             setStatus(error?.message || "画布读取失败", "warning");
@@ -5899,35 +6011,44 @@ let tablePointerSelectionState = {
         }
       }
       suppressDirtyTracking = true;
-      const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
-      state.board = normalizeBoard(
-        repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE)
-      );
-      state.board.selectedIds = [];
-      state.history = createHistoryState();
-      markHistoryBaseline(state.history, takeHistorySnapshot(state));
-      cancelTextEdit();
-      cancelFlowNodeEdit();
-      cancelFileMemoEdit();
-      cancelImageMemoEdit();
-      finishImageEdit();
-      syncBoard({ persist: false, emit: true, markDirty: false });
-      suppressDirtyTracking = false;
-      let canonicalPath = targetPath;
-      if (parsed.legacy || isLegacyJsonBoardFileName(targetPath)) {
-        const migratedPath = await migrateLegacyBoardFileIfNeeded(targetPath, boardPayload);
-        if (migratedPath) {
-          canonicalPath = migratedPath;
+      try {
+        const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
+        loadMetrics.mark("deserialize-board");
+        state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
+        loadMetrics.mark("repair-board");
+        state.board.selectedIds = [];
+        state.history = createHistoryState();
+        markHistoryBaseline(state.history, takeHistorySnapshot(state));
+        loadMetrics.mark("reset-history");
+        cancelTextEdit();
+        cancelFlowNodeEdit();
+        cancelFileMemoEdit();
+        cancelImageMemoEdit();
+        finishImageEdit();
+        syncBoard({ persist: false, emit: true, markDirty: false });
+        loadMetrics.mark("sync-board");
+        let canonicalPath = targetPath;
+        if (parsed.legacy || isLegacyJsonBoardFileName(targetPath)) {
+          const migratedPath = await migrateLegacyBoardFileIfNeeded(targetPath, boardPayload);
+          loadMetrics.mark("migrate-legacy");
+          if (migratedPath) {
+            canonicalPath = migratedPath;
+          }
         }
+        await setBoardFilePath(canonicalPath, { emit: false, updateSettings });
+        loadMetrics.mark("set-board-path");
+        setBoardDirty(false, { emit: false });
+        store.emit();
+        loadMetrics.mark("emit-store");
+        void resolveFileCardSources();
+        if (!silent) {
+          setStatus(canonicalPath !== targetPath ? "旧画布已升级为 FreeFlow 格式" : "画布已加载");
+        }
+        loadMetrics.flush();
+        return true;
+      } finally {
+        suppressDirtyTracking = false;
       }
-      await setBoardFilePath(canonicalPath, { emit: false, updateSettings });
-      setBoardDirty(false, { emit: false });
-      store.emit();
-      void resolveFileCardSources();
-      if (!silent) {
-        setStatus(canonicalPath !== targetPath ? "旧画布已升级为 FreeFlow 格式" : "画布已加载");
-      }
-      return true;
     })()
       .catch((error) => {
         if (!silent) {
@@ -6355,7 +6476,9 @@ let tablePointerSelectionState = {
         setBoardDirty,
         setCanvasImageSavePath,
         resolveCanvasBoardSavePath,
+        resolveCanvasWorkspaceFolderPath,
         resolveCanvasImageSavePath,
+        updateCanvasWorkspaceFolderSetting,
         ensureBoardFileExtension,
         normalizeCanvasImageSavePathValue,
         resolveBoardFolderPath,

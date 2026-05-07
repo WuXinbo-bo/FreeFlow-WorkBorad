@@ -32,7 +32,7 @@ export function migrateHostBoardPayload(raw) {
     return {
       ...raw,
       version: HOST_PERSISTENCE_VERSION,
-      board: normalizeBoard(raw.board || {}),
+      board: raw.board && typeof raw.board === "object" ? { ...raw.board } : {},
     };
   }
   return {
@@ -42,7 +42,7 @@ export function migrateHostBoardPayload(raw) {
     meta: {
       migratedFromLegacy: true,
     },
-    board: normalizeBoard(raw),
+    board: raw,
   };
 }
 

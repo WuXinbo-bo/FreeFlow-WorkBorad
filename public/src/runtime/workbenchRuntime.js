@@ -343,6 +343,10 @@ function normalizeUiSettings(payload = {}) {
     typeof payload.canvasBoardSavePath === "string" && payload.canvasBoardSavePath.trim()
       ? payload.canvasBoardSavePath.trim()
       : "";
+  const canvasWorkspaceFolderPath =
+    typeof payload.canvasWorkspaceFolderPath === "string" && payload.canvasWorkspaceFolderPath.trim()
+      ? payload.canvasWorkspaceFolderPath.trim()
+      : "";
   const canvasLastOpenedBoardPath =
     typeof payload.canvasLastOpenedBoardPath === "string" && payload.canvasLastOpenedBoardPath.trim()
       ? payload.canvasLastOpenedBoardPath.trim()
@@ -368,6 +372,7 @@ function normalizeUiSettings(payload = {}) {
     appSubtitle: appSubtitle.slice(0, 80),
     canvasTitle: canvasTitle.slice(0, 60),
     canvasBoardSavePath: normalizeCanvasBoardSavePathValue(canvasBoardSavePath).slice(0, 400),
+    canvasWorkspaceFolderPath: normalizeCanvasBoardSavePathValue(canvasWorkspaceFolderPath).slice(0, 400),
     canvasLastOpenedBoardPath: normalizeCanvasLastOpenedBoardPathValue(canvasLastOpenedBoardPath).slice(0, 400),
     hasShownStartupTutorial,
     lastTutorialIntroVersion: lastTutorialIntroVersion.slice(0, 80),
@@ -4601,6 +4606,10 @@ function buildUiSettingsPayload(overrides = {}) {
       canvasBoardPathInputEl?.value ??
       state.uiSettings?.canvasBoardSavePath ??
       cached.canvasBoardSavePath,
+    canvasWorkspaceFolderPath:
+      overrides.canvasWorkspaceFolderPath ??
+      state.uiSettings?.canvasWorkspaceFolderPath ??
+      cached.canvasWorkspaceFolderPath,
     canvasLastOpenedBoardPath:
       overrides.canvasLastOpenedBoardPath ??
       state.uiSettings?.canvasLastOpenedBoardPath ??
@@ -5533,8 +5542,10 @@ function getWorkbenchPreferencesFromState() {
 }
 
 function commitWorkbenchPreferencesToState(preferences = {}) {
+  const cached = readUiSettingsCache();
   state.workbenchPreferences = pickWorkbenchPreferences(preferences);
   state.uiSettings = normalizeUiSettings({
+    ...cached,
     ...state.uiSettings,
     ...state.workbenchPreferences,
   });
@@ -7745,6 +7756,21 @@ desktopCloseBtn?.addEventListener("click", async () => {
 
   window.addEventListener("canvas-last-opened-board-path-changed", (event) => {
     syncCanvasLastOpenedBoardPathState(event?.detail?.canvasLastOpenedBoardPath || "");
+  });
+
+  window.addEventListener("canvas-workspace-folder-path-changed", (event) => {
+    const nextValue = normalizeCanvasBoardSavePathValue(event?.detail?.canvasWorkspaceFolderPath || "");
+    if (nextValue === normalizeCanvasBoardSavePathValue(state.uiSettings?.canvasWorkspaceFolderPath || "")) {
+      return;
+    }
+    state.uiSettings = normalizeUiSettings({
+      ...state.uiSettings,
+      canvasWorkspaceFolderPath: nextValue,
+    });
+    writeUiSettingsCache(state.uiSettings);
+    writeStartupContextUiSettings({
+      canvasWorkspaceFolderPath: nextValue,
+    });
   });
 
 canvasModeLegacyBtn?.addEventListener("click", () => {

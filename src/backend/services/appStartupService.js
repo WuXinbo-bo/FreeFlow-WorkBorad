@@ -115,6 +115,7 @@ async function ensureAppStartupState(options = {}) {
   const nextSettings = {
     ...currentSettings,
     canvasBoardSavePath: normalizeDirPath(currentSettings.canvasBoardSavePath) || CANVAS_BOARD_DIR,
+    canvasWorkspaceFolderPath: normalizeDirPath(currentSettings.canvasWorkspaceFolderPath),
     canvasImageSavePath: normalizeDirPath(currentSettings.canvasImageSavePath),
     canvasLastOpenedBoardPath: normalizeFilePath(currentSettings.canvasLastOpenedBoardPath),
     hasShownStartupTutorial: Boolean(currentSettings.hasShownStartupTutorial),
@@ -122,6 +123,7 @@ async function ensureAppStartupState(options = {}) {
 
   let settingsChanged =
     nextSettings.canvasBoardSavePath !== currentSettings.canvasBoardSavePath ||
+    nextSettings.canvasWorkspaceFolderPath !== currentSettings.canvasWorkspaceFolderPath ||
     nextSettings.canvasImageSavePath !== currentSettings.canvasImageSavePath ||
     nextSettings.canvasLastOpenedBoardPath !== currentSettings.canvasLastOpenedBoardPath ||
     nextSettings.hasShownStartupTutorial !== currentSettings.hasShownStartupTutorial;
@@ -188,6 +190,7 @@ async function ensureAppStartupState(options = {}) {
       schemaVersion: migrationInfo.currentVersion,
       migrations: migrationInfo.applied,
       boardSavePath: persistedSettings.canvasBoardSavePath,
+      workspaceFolderPath: persistedSettings.canvasWorkspaceFolderPath,
       canvasImageSavePath: persistedSettings.canvasImageSavePath,
       lastOpenedBoardPath: persistedSettings.canvasLastOpenedBoardPath,
       initialBoardPath,

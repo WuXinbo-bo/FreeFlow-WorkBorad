@@ -20,7 +20,9 @@ export function createCanvasWorkspaceManager(deps) {
     setBoardDirty,
     setCanvasImageSavePath,
     resolveCanvasBoardSavePath,
+    resolveCanvasWorkspaceFolderPath,
     resolveCanvasImageSavePath,
+    updateCanvasWorkspaceFolderSetting,
     ensureBoardFileExtension,
     normalizeCanvasImageSavePathValue,
     resolveBoardFolderPath,
@@ -204,12 +206,15 @@ export function createCanvasWorkspaceManager(deps) {
   }
 
   async function getCanvasBoardWorkspace() {
-    const currentFolder = resolveBoardFolderPath(state.boardFilePath);
-    if (currentFolder) {
-      return currentFolder;
+    const workspaceFolder = await resolveCanvasWorkspaceFolderPath();
+    if (workspaceFolder) {
+      return resolveBoardFolderPath(workspaceFolder) || workspaceFolder;
     }
     const settingsPath = await resolveCanvasBoardSavePath();
-    return resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
+    if (settingsPath) {
+      return resolveBoardFolderPath(settingsPath) || String(settingsPath || "").trim();
+    }
+    return resolveBoardFolderPath(state.boardFilePath);
   }
 
   async function pickCanvasWorkspaceFolder() {
@@ -226,6 +231,7 @@ export function createCanvasWorkspaceManager(deps) {
     if (!nextFolder) {
       return "";
     }
+    await updateCanvasWorkspaceFolderSetting(nextFolder);
     await ensureDirectoryIfSupported(nextFolder);
     const currentName = isBoardFileName(getFileName(state.boardFilePath)) ? getFileName(state.boardFilePath) : DEFAULT_BOARD_FILE_NAME;
     let nextFilePath = joinPath(nextFolder, currentName);
@@ -287,6 +293,7 @@ export function createCanvasWorkspaceManager(deps) {
       setStatus("请先选择画布工作区", "warning");
       return { ok: false, filePath: "", error: "请先选择画布工作区" };
     }
+    await updateCanvasWorkspaceFolderSetting(targetFolder);
     const ensured = await ensureDirectoryIfSupported(targetFolder);
     if (ensured && !ensured.ok) {
       const error = ensured.error || "工作区创建失败";

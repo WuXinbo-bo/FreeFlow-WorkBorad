@@ -49,6 +49,7 @@ function getDefaultUiSettings() {
     appSubtitle: "自由画布与 AI 工作台",
     canvasTitle: "FreeFlow 工作白板",
     canvasBoardSavePath: CANVAS_BOARD_DIR,
+    canvasWorkspaceFolderPath: "",
     canvasLastOpenedBoardPath: "",
     hasShownStartupTutorial: false,
     lastTutorialIntroVersion: "",
@@ -82,6 +83,10 @@ function normalizeUiSettings(payload = {}) {
       typeof payload.canvasBoardSavePath === "string" && payload.canvasBoardSavePath.trim()
         ? payload.canvasBoardSavePath.trim().slice(0, 400)
         : defaults.canvasBoardSavePath,
+    canvasWorkspaceFolderPath:
+      typeof payload.canvasWorkspaceFolderPath === "string" && payload.canvasWorkspaceFolderPath.trim()
+        ? payload.canvasWorkspaceFolderPath.trim().slice(0, 400)
+        : defaults.canvasWorkspaceFolderPath,
     canvasLastOpenedBoardPath:
       typeof payload.canvasLastOpenedBoardPath === "string" && payload.canvasLastOpenedBoardPath.trim()
         ? payload.canvasLastOpenedBoardPath.trim().slice(0, 400)

@@ -17,6 +17,10 @@ export function createCanvasStorageBridge(deps) {
     return String(state.uiSettings?.canvasBoardSavePath || "").trim();
   }
 
+  function getCanvasWorkspaceFolderPath() {
+    return String(state.uiSettings?.canvasWorkspaceFolderPath || "").trim();
+  }
+
   function getCanvasLastOpenedBoardPath() {
     return String(state.uiSettings?.canvasLastOpenedBoardPath || "").trim();
   }
@@ -57,6 +61,15 @@ export function createCanvasStorageBridge(deps) {
     window.dispatchEvent(
       new CustomEvent("canvas-board-path-changed", {
         detail: { canvasBoardSavePath: cleanPath },
+      })
+    );
+  }
+
+  function emitCanvasWorkspaceFolderPathChanged(pathValue = getCanvasWorkspaceFolderPath()) {
+    const cleanPath = normalizeCanvasBoardSavePathValue(pathValue);
+    window.dispatchEvent(
+      new CustomEvent("canvas-workspace-folder-path-changed", {
+        detail: { canvasWorkspaceFolderPath: cleanPath },
       })
     );
   }
@@ -108,6 +121,21 @@ export function createCanvasStorageBridge(deps) {
     });
   }
 
+  function syncCanvasWorkspaceFolderPathState(nextPath) {
+    const cleanPath = normalizeCanvasBoardSavePathValue(nextPath);
+    if (cleanPath === getCanvasWorkspaceFolderPath()) {
+      return;
+    }
+    state.uiSettings = normalizeUiSettings({
+      ...state.uiSettings,
+      canvasWorkspaceFolderPath: cleanPath,
+    });
+    writeUiSettingsCache(state.uiSettings);
+    writeStartupContextUiSettings({
+      canvasWorkspaceFolderPath: cleanPath,
+    });
+  }
+
   async function loadCanvasBoard() {
     return canvasProjectFile.load();
   }
@@ -149,15 +177,18 @@ export function createCanvasStorageBridge(deps) {
 
   return {
     getCanvasBoardSavePath,
+    getCanvasWorkspaceFolderPath,
     getCanvasLastOpenedBoardPath,
     getCanvasImageSavePath,
     normalizeCanvasBoardSavePathValue,
     normalizeCanvasLastOpenedBoardPathValue,
     normalizeCanvasImageSavePathValue,
     emitCanvasBoardPathChanged,
+    emitCanvasWorkspaceFolderPathChanged,
     syncCanvasPathActionButtons,
     syncCanvasImagePathActionButtons,
     syncCanvasLastOpenedBoardPathState,
+    syncCanvasWorkspaceFolderPathState,
     loadCanvasBoard,
     queueCanvasBoardPersist,
     saveCanvasBoardToStorage,

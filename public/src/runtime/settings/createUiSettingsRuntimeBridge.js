@@ -85,6 +85,9 @@ export function createUiSettingsRuntimeBridge(deps) {
     if (typeof nextUiSettings.canvasBoardSavePath === "string") {
       nextStartup.boardSavePath = nextNormalizedUiSettings.canvasBoardSavePath;
     }
+    if (typeof nextUiSettings.canvasWorkspaceFolderPath === "string") {
+      nextStartup.workspaceFolderPath = nextNormalizedUiSettings.canvasWorkspaceFolderPath;
+    }
     if (typeof nextUiSettings.canvasImageSavePath === "string") {
       nextStartup.canvasImageSavePath = nextNormalizedUiSettings.canvasImageSavePath;
     }

@@ -71,6 +71,7 @@ export function createInitialState() {
       appSubtitle: "自由画布与 AI 工作台",
       canvasTitle: "FreeFlow 工作白板",
       canvasBoardSavePath: "",
+      canvasWorkspaceFolderPath: "",
       canvasLastOpenedBoardPath: "",
       hasShownStartupTutorial: false,
       lastTutorialIntroVersion: "",
