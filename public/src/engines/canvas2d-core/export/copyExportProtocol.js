@@ -81,6 +81,12 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
     copyFormats: Object.freeze([
       Object.freeze({ format: "plain", action: "table-copy-text-plain", menuLabel: "纯文本表格", statusLabel: "纯文本表格" }),
       Object.freeze({ format: "markdown", action: "table-copy-text-markdown", menuLabel: "Markdown 表格", statusLabel: "Markdown 表格" }),
+      Object.freeze({
+        format: "html",
+        action: "table-copy-text-html",
+        menuLabel: "HTML 表格（DOCX，Word 直达）",
+        statusLabel: "HTML 表格（DOCX，Word 直达）",
+      }),
       Object.freeze({ format: "tsv", action: "table-copy-text-tsv", menuLabel: "TSV 表格（Excel 直达）", statusLabel: "TSV 表格" }),
     ]),
     exportFormats: Object.freeze([

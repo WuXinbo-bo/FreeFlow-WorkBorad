@@ -15324,10 +15324,37 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!Array.isArray(matrix) || !matrix.length) {
       return null;
     }
+    const directCopyPayload = buildDirectClipboardPayloadForItems([item]);
     return {
       plain: serializeTableMatrixToPlainText(matrix, { hasHeader: item.table?.hasHeader !== false }),
       markdown: serializeTableMatrixToMarkdown(matrix),
       tsv: serializeTableMatrixToTsv(matrix),
+      html: String(directCopyPayload?.html || "").trim(),
+      directPlainText: String(directCopyPayload?.text || "").trim(),
+    };
+  }
+
+  function buildDirectClipboardPayloadForItems(items = []) {
+    const normalizedItems = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!normalizedItems.length) {
+      return null;
+    }
+    const baseClipboardPayload = clipboardBroker.buildPayloadFromItems(normalizedItems);
+    const flowback = shouldBuildStructuredFlowback(normalizedItems)
+      ? structuredImportRuntime.buildFlowbackPayload(normalizedItems)
+      : null;
+    const externalOutput = flowback?.externalOutput || {};
+    return {
+      ...baseClipboardPayload,
+      text: String(externalOutput.text || baseClipboardPayload?.text || ""),
+      html: String(externalOutput.html || baseClipboardPayload?.html || ""),
+      filePaths:
+        Array.isArray(externalOutput.filePaths) && externalOutput.filePaths.length
+          ? externalOutput.filePaths.slice()
+          : Array.isArray(baseClipboardPayload?.filePaths)
+            ? baseClipboardPayload.filePaths.slice()
+            : [],
+      structuredFlowback: flowback,
     };
   }
 
@@ -15441,13 +15468,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("仅表格元素支持此操作");
       return false;
     }
-    const text =
-      meta.format === "markdown"
-        ? payload.markdown
-        : meta.format === "tsv"
-          ? payload.tsv
-          : payload.plain;
-    const copied = await writeClipboardTextAndHtml({ text });
+    const copied =
+      meta.format === "html"
+        ? await writeClipboardTextAndHtml({
+            text: payload.directPlainText || payload.plain,
+            html: payload.html,
+          })
+        : await writeClipboardTextAndHtml({
+            text:
+              meta.format === "markdown"
+                ? payload.markdown
+                : meta.format === "tsv"
+                  ? payload.tsv
+                  : payload.plain,
+          });
     if (!copied) {
       setStatus("复制失败");
       return false;
@@ -15920,25 +15954,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         });
       }
     }
-    const baseClipboardPayload = clipboardBroker.buildPayloadFromItems(items);
-    const flowback = shouldBuildStructuredFlowback(items)
-      ? structuredImportRuntime.buildFlowbackPayload(items)
-      : null;
-    const externalOutput = flowback?.externalOutput || {};
-    const nextClipboard = baseClipboardPayload
-      ? {
-          ...baseClipboardPayload,
-          text: String(externalOutput.text || baseClipboardPayload.text || ""),
-          html: String(externalOutput.html || baseClipboardPayload.html || ""),
-          filePaths:
-            Array.isArray(externalOutput.filePaths) && externalOutput.filePaths.length
-              ? externalOutput.filePaths.slice()
-              : Array.isArray(baseClipboardPayload.filePaths)
-                ? baseClipboardPayload.filePaths.slice()
-                : [],
-          structuredFlowback: flowback,
-        }
-      : null;
+    const nextClipboard = buildDirectClipboardPayloadForItems(items);
     const copied = nextClipboard
       ? await clipboardBroker.copyPayloadToClipboard(nextClipboard)
       : null;
