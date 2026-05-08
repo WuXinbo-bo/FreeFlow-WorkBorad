@@ -36,8 +36,11 @@ const {
   VerticalAlignTable,
   WidthType,
   convertMillimetersToTwip,
+  convertToXmlComponent,
   createMathAccentCharacter,
 } = require("docx");
+const { latexToOMML } = require("latex-to-omml");
+const { xml2js } = require("xml-js");
 
 const AST_KIND = "freeflow-word-export";
 const AST_VERSION = 1;
@@ -680,7 +683,108 @@ function createCompilerState(ast, theme) {
   return {
     theme,
     footnoteMap,
+    mathCache: new Map(),
   };
+}
+
+function buildMathCacheKey(latex = "", displayMode = false) {
+  return JSON.stringify({
+    latex: String(latex || "").trim(),
+    displayMode: Boolean(displayMode),
+  });
+}
+
+function normalizeLatexForOmmlConversion(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/^\${1,2}/, "")
+    .replace(/\${1,2}$/, "")
+    .replace(/\\displaystyle\b/g, "")
+    .replace(/\\textstyle\b/g, "")
+    .replace(/\\scriptstyle\b/g, "")
+    .replace(/\\scriptscriptstyle\b/g, "")
+    .replace(/\\limits\b/g, "")
+    .replace(/\\nolimits\b/g, "")
+    .replace(/\\,/g, "")
+    .replace(/\\;/g, "")
+    .replace(/\\:/g, "")
+    .replace(/\\!/g, "")
+    .replace(/\\quad\b/g, " ")
+    .replace(/\\qquad\b/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function createImportedMathComponent(omml = "") {
+  const source = String(omml || "").trim();
+  if (!source) {
+    return null;
+  }
+  const sanitized = source
+    .replace(/^\uFEFF/, "")
+    .replace(/<\?xml[\s\S]*?\?>/i, "")
+    .trim();
+  if (!sanitized) {
+    return null;
+  }
+  try {
+    const parsed = xml2js(sanitized, { compact: false });
+    const rootElement = Array.isArray(parsed?.elements) ? parsed.elements.find((entry) => entry?.type === "element") : null;
+    return rootElement ? convertToXmlComponent(rootElement) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function collectMathNodesFromValue(value, output = [], seen = new WeakSet()) {
+  if (!value) {
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectMathNodesFromValue(entry, output, seen));
+    return output;
+  }
+  if (typeof value !== "object") {
+    return output;
+  }
+  if (seen.has(value)) {
+    return output;
+  }
+  seen.add(value);
+  if (value.type === "mathInline" || value.type === "mathBlock") {
+    output.push({
+      latex: String(value.latex || "").trim(),
+      displayMode: value.type === "mathBlock",
+    });
+  }
+  Object.values(value).forEach((entry) => collectMathNodesFromValue(entry, output, seen));
+  return output;
+}
+
+async function buildWordMathCache(ast = null) {
+  const cache = new Map();
+  const mathNodes = collectMathNodesFromValue(ast);
+  const pendingEntries = [];
+  mathNodes.forEach(({ latex, displayMode }) => {
+    const normalizedLatex = normalizeLatexForOmmlConversion(latex);
+    if (!normalizedLatex) {
+      return;
+    }
+    const key = buildMathCacheKey(normalizedLatex, displayMode);
+    if (!cache.has(key)) {
+      cache.set(key, null);
+      pendingEntries.push({ key, latex: normalizedLatex, displayMode });
+    }
+  });
+  for (const entry of pendingEntries) {
+    try {
+      const omml = await latexToOMML(entry.latex, { displayMode: entry.displayMode });
+      cache.set(entry.key, createImportedMathComponent(omml));
+    } catch (_error) {
+      cache.set(entry.key, null);
+    }
+  }
+  return cache;
 }
 
 function hasOwnContent(value) {
@@ -1169,8 +1273,16 @@ function parseLatexToWordMathChildren(latex = "") {
   }
 }
 
-function buildWordMath(latex = "") {
-  const children = parseLatexToWordMathChildren(latex);
+function buildWordMath(latex = "", options = {}) {
+  const normalizedLatex = normalizeLatexForOmmlConversion(latex);
+  const cache = options && options.mathCache instanceof Map ? options.mathCache : null;
+  if (normalizedLatex && cache) {
+    const importedMath = cache.get(buildMathCacheKey(normalizedLatex, Boolean(options.displayMode)));
+    if (importedMath) {
+      return importedMath;
+    }
+  }
+  const children = parseLatexToWordMathChildren(normalizedLatex || latex);
   return children && children.length ? new DocxMath({ children }) : null;
 }
 
@@ -1217,7 +1329,10 @@ function compileInlineNodes(nodes = [], state, inlineContext = {}) {
       });
     }
     if (node.type === "mathInline") {
-      const math = buildWordMath(node.latex || "");
+      const math = buildWordMath(node.latex || "", {
+        mathCache: state.mathCache,
+        displayMode: false,
+      });
       if (math) {
         return math;
       }
@@ -1318,7 +1433,10 @@ function compileHeadingNode(node, state, context = {}) {
 }
 
 function compileMathBlockNode(node, state, context = {}) {
-  const math = buildWordMath(node.latex || "");
+  const math = buildWordMath(node.latex || "", {
+    mathCache: state.mathCache,
+    displayMode: true,
+  });
   return new Paragraph({
     children: math
       ? [math]
@@ -1861,6 +1979,7 @@ async function compileWordExportAstToDocxBuffer(ast) {
   const normalizedAst = normalizeAst(ast);
   const theme = normalizeTheme(normalizedAst);
   const state = createCompilerState(normalizedAst, theme);
+  state.mathCache = await buildWordMathCache(normalizedAst);
   const doc = new Document({
     title: String(normalizedAst?.meta?.title || "文本").trim() || "文本",
     creator: String(normalizedAst?.meta?.creator || "FreeFlow").trim() || "FreeFlow",
