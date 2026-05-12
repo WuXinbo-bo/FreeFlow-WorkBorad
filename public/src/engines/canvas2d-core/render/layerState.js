@@ -23,8 +23,10 @@ export function createLayerState() {
   let snapshot = createBaseLayerSnapshot();
 
   function applyDirtyState(dirtyState = {}) {
+    const renderReason = String(dirtyState.reason || "render");
+    const staticOnlyViewDirty = renderReason === "large-viewport-progressive-render";
     const nextDirty = {
-      background: Boolean(dirtyState.backgroundDirty || dirtyState.viewDirty),
+      background: Boolean(dirtyState.backgroundDirty || (dirtyState.viewDirty && !staticOnlyViewDirty)),
       staticScene: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty),
       dynamicScene: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty || dirtyState.interactionDirty),
       interaction: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty || dirtyState.interactionDirty),
@@ -40,8 +42,8 @@ export function createLayerState() {
     snapshot = {
       revisions: nextRevisions,
       dirty: nextDirty,
-      renderReason: String(dirtyState.reason || "render"),
-      reasons: Array.isArray(dirtyState.reasons) && dirtyState.reasons.length ? dirtyState.reasons.slice() : [String(dirtyState.reason || "render")],
+      renderReason,
+      reasons: Array.isArray(dirtyState.reasons) && dirtyState.reasons.length ? dirtyState.reasons.slice() : [renderReason],
     };
     return getSnapshot();
   }

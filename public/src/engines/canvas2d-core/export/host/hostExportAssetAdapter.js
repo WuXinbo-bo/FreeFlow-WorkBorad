@@ -49,7 +49,7 @@ function isDataUrlSource(source = "") {
   return /^data:/i.test(String(source || "").trim());
 }
 
-function buildExportImageFallbackItem(item, reason = "missing") {
+export function buildExportImageFallbackItem(item, reason = "missing") {
   return {
     ...item,
     dataUrl: "",
@@ -58,6 +58,18 @@ function buildExportImageFallbackItem(item, reason = "missing") {
     exportFallbackPlaceholder: true,
     exportFallbackReason: String(reason || "missing").trim() || "missing",
   };
+}
+
+export function downgradeImageItemsForSafeExport(items = [], reason = "export-fallback") {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    if (!item || item.type !== "image") {
+      return item;
+    }
+    if (item.exportFallbackPlaceholder) {
+      return item;
+    }
+    return buildExportImageFallbackItem(item, reason);
+  });
 }
 
 async function blobToDataUrl(blob) {

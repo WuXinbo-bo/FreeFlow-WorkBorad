@@ -101,34 +101,6 @@ export function renderBoardToCanvas(items = [], options = {}) {
     maxCanvasPixels,
     maxCanvasSide,
   });
-  if (!scalePlan.ok) {
-    if (allowUnsafeSize) {
-      scalePlan.ok = true;
-      scalePlan.downgraded = false;
-      scalePlan.scaleApplied = scalePlan.requestedScale;
-      scalePlan.canvasWidth = Math.max(1, Math.round(scalePlan.canvasWidth || logicalWidth * exportScale * dpr));
-      scalePlan.canvasHeight = Math.max(1, Math.round(scalePlan.canvasHeight || logicalHeight * exportScale * dpr));
-      scalePlan.totalPixels = Math.max(1, Number(scalePlan.totalPixels) || scalePlan.canvasWidth * scalePlan.canvasHeight);
-    } else {
-      return {
-        canvas: null,
-        width: logicalWidth,
-        height: logicalHeight,
-        bounds,
-        padding,
-        scaleApplied: 0,
-        devicePixelRatio: dpr,
-        errorCode: scalePlan.errorCode,
-        errorMessage: scalePlan.errorMessage,
-        requestedScale: scalePlan.requestedScale,
-        requestedCanvasWidth: scalePlan.canvasWidth,
-        requestedCanvasHeight: scalePlan.canvasHeight,
-        requestedTotalPixels: scalePlan.totalPixels,
-        maxCanvasPixels: scalePlan.maxCanvasPixels,
-        maxCanvasSide: scalePlan.maxCanvasSide,
-      };
-    }
-  }
   const canvas = createExportCanvas(scalePlan.canvasWidth, scalePlan.canvasHeight, documentRef);
   if (!canvas) {
     return null;

@@ -2,6 +2,7 @@ const { chromium } = require("playwright");
 
 const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
 const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
+const MAIN_CANVAS_SELECTOR = "#canvas-office-canvas";
 
 function createTextItem(id, x, y, text) {
   return {
@@ -237,7 +238,7 @@ function createDesktopShellStub() {
 }
 
 async function waitForStableCanvas(page) {
-  await page.waitForFunction(() => Boolean(window.__canvas2dEngine && document.querySelector("canvas")));
+  await page.waitForFunction((selector) => Boolean(window.__canvas2dEngine && document.querySelector(selector)), MAIN_CANVAS_SELECTOR);
   await page.addStyleTag({
     content: `
       html, body, #canvas-office-root, .canvas-office-root, .canvas-office-shell, .canvas-office-main, .canvas-office-surface {
@@ -256,7 +257,7 @@ async function waitForStableCanvas(page) {
     const surface =
       document.querySelector("[data-canvas-office-surface]") ||
       document.querySelector(".canvas-office-surface");
-    const canvas = document.querySelector("canvas");
+    const canvas = document.querySelector("#canvas-office-canvas");
     if (!surface || !canvas) {
       return false;
     }
@@ -267,8 +268,8 @@ async function waitForStableCanvas(page) {
   await page.waitForTimeout(120);
 }
 
-async function createPage(browser, { board, useDesktopShellStub = false } = {}) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+async function createPage(browser, { board, useDesktopShellStub = false, viewport = { width: 1440, height: 960 }, deviceScaleFactor = 1 } = {}) {
+  const page = await browser.newPage({ viewport, deviceScaleFactor });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message || String(error)));
   page.on("console", (message) => {
@@ -382,7 +383,7 @@ async function createPage(browser, { board, useDesktopShellStub = false } = {}) 
 
 async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } = {}) {
   await page.evaluate(async ({ textValue, htmlValue, uriValue }) => {
-    const canvas = document.querySelector("canvas");
+    const canvas = document.querySelector("#canvas-office-canvas");
     if (!canvas || !window.__canvas2dEngine) {
       throw new Error("canvas engine is not ready");
     }
@@ -428,7 +429,7 @@ async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } 
 
 async function dispatchSyntheticCopyPasteRoundTrip(page) {
   await page.evaluate(async () => {
-    const canvas = document.querySelector("canvas");
+    const canvas = document.querySelector("#canvas-office-canvas");
     if (!canvas || !window.__canvas2dEngine) {
       throw new Error("canvas engine is not ready");
     }
@@ -490,7 +491,7 @@ async function rightClickCanvasItem(page, itemId) {
     };
   }, itemId);
   assert(metrics, `could not resolve canvas item metrics for ${itemId}`, metrics);
-  const canvasRect = await page.locator("canvas").boundingBox();
+  const canvasRect = await page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
   await page.mouse.click(canvasRect.x + metrics.x, canvasRect.y + metrics.y, { button: "right" });
   await page.waitForTimeout(120);
 }
@@ -605,7 +606,7 @@ async function runTableEditorCheck(browser) {
       };
     });
     assert(metrics, "table editor check could not resolve table metrics", metrics);
-    const canvasRect = await session.page.locator("canvas").boundingBox();
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     await session.page.mouse.dblclick(canvasRect.x + metrics.screenCenterX, canvasRect.y + metrics.screenCenterY);
     await session.page.waitForTimeout(220);
     const editorBox = await session.page.locator("#canvas-table-editor").boundingBox();
@@ -697,7 +698,7 @@ async function runPanRealtimeCheck(browser) {
   ]);
   const session = await createPage(browser, { board });
   try {
-    const rect = await session.page.locator("canvas").boundingBox();
+    const rect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     const centerX = rect.x + rect.width / 2;
     const centerY = rect.y + rect.height / 2;
     const deltaX = 96;
@@ -707,10 +708,10 @@ async function runPanRealtimeCheck(browser) {
     await session.page.mouse.down({ button: "middle" });
     await session.page.mouse.move(centerX + deltaX, centerY + deltaY, { steps: 4 });
     await session.page.waitForTimeout(80);
-    const midStats = await session.page.evaluate(() => document.querySelector("canvas").__ffRenderStats || null);
+    const midStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
     await session.page.mouse.up({ button: "middle" });
     await session.page.waitForTimeout(80);
-    const afterStats = await session.page.evaluate(() => document.querySelector("canvas").__ffRenderStats || null);
+    const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
     const result = { midStats, afterStats };
     assert(session.getErrors().length === 0, "pan check produced page errors", session.getErrors());
     assert(result.midStats?.renderReason === "pointer-pan-move", "pan move did not trigger view render", result);
@@ -745,17 +746,17 @@ async function runSelectionDragRealtimeCheck(browser) {
       };
     });
     assert(itemCenter, "selection drag check could not resolve item center", itemCenter);
-    const canvasRect = await session.page.locator("canvas").boundingBox();
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     const startX = canvasRect.x + itemCenter.x;
     const startY = canvasRect.y + itemCenter.y;
     await session.page.mouse.move(startX, startY);
     await session.page.mouse.down({ button: "left" });
     await session.page.mouse.move(startX + 96, startY + 48, { steps: 4 });
     await session.page.waitForTimeout(80);
-    const midStats = await session.page.evaluate(() => document.querySelector("canvas").__ffRenderStats || null);
+    const midStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
     await session.page.mouse.up({ button: "left" });
     await session.page.waitForTimeout(80);
-    const afterStats = await session.page.evaluate(() => document.querySelector("canvas").__ffRenderStats || null);
+    const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
     const result = { midStats, afterStats };
     assert(session.getErrors().length === 0, "selection drag check produced page errors", session.getErrors());
     assert(result.midStats?.dynamicRenderedItems >= 1, "selection drag did not render active item dynamically", result);
@@ -779,7 +780,7 @@ async function runMarqueeMultiSelectCheck(browser) {
   );
   const session = await createPage(browser, { board });
   try {
-    const canvasRect = await session.page.locator("canvas").boundingBox();
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     await session.page.mouse.move(canvasRect.x + 120, canvasRect.y + 120);
     await session.page.mouse.down({ button: "left" });
     await session.page.mouse.move(canvasRect.x + 660, canvasRect.y + 340, { steps: 8 });
@@ -816,7 +817,7 @@ async function runLocalizedTileInvalidationCheck(browser) {
     const result = await session.page.evaluate(async () => {
       window.__canvas2dEngine.alignSelection("left");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      return document.querySelector("canvas").__ffRenderStats || null;
+      return document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
     });
     const tileCache = result?.tileCache || {};
     assert(session.getErrors().length === 0, "alignSelection check produced page errors", session.getErrors());
@@ -836,13 +837,48 @@ async function runBackgroundLayerReuseCheck(browser) {
     const result = await session.page.evaluate(async () => {
       window.__canvas2dEngine.setBoardBackgroundPattern("grid");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      return document.querySelector("canvas").__ffRenderStats || null;
+      return document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
     });
     assert(session.getErrors().length === 0, "background reuse check produced page errors", session.getErrors());
     assert(result?.layerReuse?.backgroundReused === false, "background layer did not redraw", result);
     assert(result?.layerReuse?.staticSceneReused === true, "static scene layer should have been reused", result);
     assert(result?.layerReuse?.dynamicSceneReused === true, "dynamic scene layer should have been reused", result);
     assert(result?.layerReuse?.interactionReused === true, "interaction layer should have been reused", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runLargeViewportPixelBudgetCheck(browser) {
+  const board = createBoard(createLargeBoard(1600), [], { scale: 0.75, offsetX: 0, offsetY: 0 });
+  const session = await createPage(browser, {
+    board,
+    viewport: { width: 4200, height: 2400 },
+    deviceScaleFactor: 2,
+  });
+  try {
+    const result = await session.page.evaluate(async () => {
+      window.__canvas2dEngine?.resize?.({ immediate: true, reason: "large-viewport-test" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const canvas = document.querySelector("#canvas-office-canvas");
+      return {
+        stats: canvas?.__ffRenderStats || null,
+        width: canvas?.width || 0,
+        height: canvas?.height || 0,
+        clientWidth: canvas?.clientWidth || 0,
+        clientHeight: canvas?.clientHeight || 0,
+        devicePixelRatio: window.devicePixelRatio,
+      };
+    });
+    const stats = result.stats || {};
+    const budget = stats.pixelBudget || {};
+    assert(session.getErrors().length === 0, "large viewport budget check produced page errors", session.getErrors());
+    assert(result.width * result.height <= budget.maxBackingPixels, "canvas backing store exceeded pixel budget", result);
+    assert(budget.dprLimited === true, "large viewport did not limit effective DPR", result);
+    assert(budget.effectiveDpr < result.devicePixelRatio, "effective DPR was not reduced under large viewport", result);
+    assert(stats.progressiveRender?.enabled === true || stats.progressiveRender?.pending === true, "large viewport did not enable progressive render", result);
+    assert(Number(stats.tileCache?.tileCount || 0) >= 1, "large viewport did not render visible tiles", result);
     return result;
   } finally {
     await session.page.close();
@@ -1580,7 +1616,7 @@ async function runFileCardLodThresholdCheck(browser) {
   try {
     await session.page.waitForTimeout(240);
     const result = await session.page.evaluate(() => {
-      const stats = document.querySelector("canvas")?.__ffRenderStats || null;
+      const stats = document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null;
       return { stats };
     });
     assert(session.getErrors().length === 0, "fileCard lod threshold check produced page errors", session.getErrors());
@@ -1689,7 +1725,7 @@ async function runElementContextMenuClipboardCheck(browser) {
     });
     await codeSession.page.waitForTimeout(120);
     await clickContextMenuAction(codeSession.page, "copy");
-    const canvasRect = await codeSession.page.locator("canvas").boundingBox();
+    const canvasRect = await codeSession.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     await codeSession.page.mouse.click(canvasRect.x + canvasRect.width - 120, canvasRect.y + canvasRect.height - 120, { button: "right" });
     await codeSession.page.waitForTimeout(120);
     await clickContextMenuAction(codeSession.page, "paste");
@@ -1751,6 +1787,7 @@ async function main() {
     report.checks.marqueeMultiSelect = await runMarqueeMultiSelectCheck(browser);
     report.checks.localizedTileInvalidation = await runLocalizedTileInvalidationCheck(browser);
     report.checks.backgroundLayerReuse = await runBackgroundLayerReuseCheck(browser);
+    report.checks.largeViewportPixelBudget = await runLargeViewportPixelBudgetCheck(browser);
     report.checks.undoPatch = await runUndoPatchCheck(browser);
     report.checks.mindMapBasic = await runMindMapBasicCheck(browser);
     report.checks.mindMapDragConnection = await runMindMapDragConnectionCheck(browser);

@@ -3,6 +3,29 @@ function normalizeExportName(value, fallback = "freeflow-export") {
   return base.replace(/[\\/:*?"<>|]+/g, "_");
 }
 
+function sanitizePngDataUrl(raw = "") {
+  const value = String(raw || "").trim();
+  if (!value.startsWith("data:image/png")) {
+    return "";
+  }
+  if (value.length < 128) {
+    return "";
+  }
+  const base64Marker = "base64,";
+  const index = value.indexOf(base64Marker);
+  if (index < 0) {
+    return "";
+  }
+  const payload = value.slice(index + base64Marker.length).replace(/\s+/g, "");
+  if (!payload || payload.length < 64) {
+    return "";
+  }
+  if (!/^iVBOR/i.test(payload)) {
+    return "";
+  }
+  return value;
+}
+
 function triggerBlobDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -77,8 +100,15 @@ export function createHostExportFileAdapter({
 
   async function saveDataUrlAsImage(dataUrl, options = {}) {
     const name = normalizeExportName(options.defaultName || "freeflow-export", "freeflow-export");
-    const raw = String(dataUrl || "").trim();
-    if (!raw.startsWith("data:image/png") || raw.length < 128) {
+    let raw = sanitizePngDataUrl(dataUrl);
+    if (!raw && typeof options?.onFallbackDataUrl === "function") {
+      try {
+        raw = sanitizePngDataUrl(await options.onFallbackDataUrl());
+      } catch {
+        raw = "";
+      }
+    }
+    if (!raw) {
       return { ok: false, error: "图片生成失败：无效 PNG 数据" };
     }
     if (resolveUseLocalFileSystem() && typeof saveImageDataToImportFolder === "function") {

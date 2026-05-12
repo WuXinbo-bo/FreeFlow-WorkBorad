@@ -1363,6 +1363,97 @@ export function createRichTextAdapter(
     return node.splitText(safeOffset);
   }
 
+  function resolveRangeBoundaryTextPosition(container, offset, { preferPrevious = false } = {}) {
+    if (container instanceof Text) {
+      return {
+        node: container,
+        offset: Math.max(0, Math.min(container.data.length, Number(offset) || 0)),
+      };
+    }
+    if (!(container instanceof Node)) {
+      return null;
+    }
+    const root = element;
+    const limit = Math.max(0, Math.min(container.childNodes.length, Number(offset) || 0));
+    const seekNode = (node, backwards = false) => {
+      if (!(node instanceof Node)) {
+        return null;
+      }
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      if (!backwards) {
+        while (walker.nextNode()) {
+          const current = walker.currentNode;
+          if (current instanceof Text && current.data) {
+            return current;
+          }
+        }
+        return null;
+      }
+      const matches = [];
+      while (walker.nextNode()) {
+        const current = walker.currentNode;
+        if (current instanceof Text && current.data) {
+          matches.push(current);
+        }
+      }
+      return matches.length ? matches[matches.length - 1] : null;
+    };
+
+    if (preferPrevious) {
+      for (let index = limit - 1; index >= 0; index -= 1) {
+        const match = seekNode(container.childNodes[index], true);
+        if (match && root.contains(match)) {
+          return {
+            node: match,
+            offset: match.data.length,
+          };
+        }
+      }
+      let cursor = container;
+      while (cursor && cursor !== root) {
+        let sibling = cursor.previousSibling;
+        while (sibling) {
+          const match = seekNode(sibling, true);
+          if (match && root.contains(match)) {
+            return {
+              node: match,
+              offset: match.data.length,
+            };
+          }
+          sibling = sibling.previousSibling;
+        }
+        cursor = cursor.parentNode;
+      }
+      return null;
+    }
+
+    for (let index = limit; index < container.childNodes.length; index += 1) {
+      const match = seekNode(container.childNodes[index], false);
+      if (match && root.contains(match)) {
+        return {
+          node: match,
+          offset: 0,
+        };
+      }
+    }
+    let cursor = container;
+    while (cursor && cursor !== root) {
+      let sibling = cursor.nextSibling;
+      while (sibling) {
+        const match = seekNode(sibling, false);
+        if (match && root.contains(match)) {
+          return {
+            node: match,
+            offset: 0,
+          };
+        }
+        sibling = sibling.nextSibling;
+      }
+      cursor = cursor.parentNode;
+    }
+    return null;
+  }
+
   function collectTextNodesBetween(firstNode, lastNode) {
     if (!(firstNode instanceof Text) || !(lastNode instanceof Text)) {
       return [];
@@ -1413,41 +1504,50 @@ export function createRichTextAdapter(
     if (!(range instanceof Range) || range.collapsed) {
       return [];
     }
-    const startContainer = range.startContainer;
-    const endContainer = range.endContainer;
-    const startOffset = Math.max(0, Number(range.startOffset) || 0);
-    const endOffset = Math.max(0, Number(range.endOffset) || 0);
-    if (startContainer instanceof Text && endContainer instanceof Text && startContainer === endContainer) {
+    const startPosition = resolveRangeBoundaryTextPosition(range.startContainer, range.startOffset, {
+      preferPrevious: false,
+    });
+    const endPosition = resolveRangeBoundaryTextPosition(range.endContainer, range.endOffset, {
+      preferPrevious: true,
+    });
+    if (!(startPosition?.node instanceof Text) || !(endPosition?.node instanceof Text)) {
+      return collectTextNodesInRange(range);
+    }
+
+    const startNode = startPosition.node;
+    const endNode = endPosition.node;
+    const startOffset = Math.max(0, Math.min(startNode.data.length, Number(startPosition.offset) || 0));
+    const endOffset = Math.max(0, Math.min(endNode.data.length, Number(endPosition.offset) || 0));
+
+    if (startNode === endNode) {
       if (endOffset <= startOffset) {
         return [];
       }
-      const originalLength = startContainer.data.length;
-      if (endOffset < originalLength) {
-        startContainer.splitText(endOffset);
+      const boundedNode = endOffset < startNode.data.length ? startNode.splitText(endOffset) : null;
+      const selectedNode = startOffset > 0 ? startNode.splitText(startOffset) : startNode;
+      if (boundedNode instanceof Text && boundedNode.previousSibling instanceof Text && boundedNode.previousSibling !== selectedNode) {
+        return [boundedNode.previousSibling].filter((node) => node instanceof Text && node.data);
       }
-      const selectedNode = startOffset > 0 ? startContainer.splitText(startOffset) : startContainer;
       return selectedNode instanceof Text && selectedNode.data ? [selectedNode] : [];
     }
-    let firstNode = startContainer instanceof Text ? startContainer : null;
-    let lastNode = endContainer instanceof Text ? endContainer : null;
-    if (lastNode instanceof Text) {
-      if (endOffset <= 0) {
-        lastNode = null;
-      } else if (endOffset < lastNode.data.length) {
-        lastNode.splitText(endOffset);
-      }
+
+    let firstNode = startNode;
+    let lastNode = endNode;
+    if (endOffset <= 0) {
+      return [];
     }
-    if (firstNode instanceof Text) {
-      if (startOffset >= firstNode.data.length) {
-        firstNode = firstNode.nextSibling instanceof Text ? firstNode.nextSibling : null;
-      } else if (startOffset > 0) {
-        firstNode = firstNode.splitText(startOffset);
-      }
+    if (endOffset < lastNode.data.length) {
+      lastNode.splitText(endOffset);
+    }
+    if (startOffset >= firstNode.data.length) {
+      firstNode = firstNode.nextSibling instanceof Text ? firstNode.nextSibling : firstNode;
+    } else if (startOffset > 0) {
+      firstNode = firstNode.splitText(startOffset);
     }
     if (!(firstNode instanceof Text) || !(lastNode instanceof Text)) {
       return collectTextNodesInRange(range);
     }
-    return collectTextNodesBetween(firstNode, lastNode);
+    return collectTextNodesBetween(firstNode, lastNode).filter((node) => node instanceof Text && node.data);
   }
 
   function stripFontSizeWrappersFromTextNode(node) {

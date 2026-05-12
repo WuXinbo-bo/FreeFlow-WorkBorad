@@ -1,12 +1,14 @@
 const path = require("path");
 let electron = require("electron");
 if (typeof electron === "string") {
-  electron = require("electron/main");
+  const electronBinaryPath = electron;
+  electron = require(path.join(path.dirname(electronBinaryPath), "resources", "electron.asar", "browser", "init.js"));
 }
 const { app, BrowserWindow, ipcMain, shell, globalShortcut, clipboard, desktopCapturer, session, screen, dialog, nativeImage } = electron;
 const { execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
+const sharp = require("sharp");
 const HTMLtoDOCX = require("html-to-docx");
 const { compileWordExportAstToDocxBuffer } = require("./wordDocxCompiler");
 const { ensureDoubaoWindow, chatWithDoubao, cancelDoubaoChat, prepareDoubaoPrompt } = require("./doubao-web");
@@ -63,6 +65,10 @@ const APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
 const PIN_LEVEL = "screen-saver";
 const PIN_RELATIVE_LEVEL = 1;
 const WORD_PREVIEW_TIMEOUT_MS = 45000;
+const EXPORT_SELF_TEST_INPUT = String(process.env.FREEFLOW_EXPORT_SELFTEST_INPUT || "").trim();
+const EXPORT_SELF_TEST_OUTPUT = String(process.env.FREEFLOW_EXPORT_SELFTEST_OUTPUT || "").trim();
+const EXPORT_SELF_TEST_KIND = String(process.env.FREEFLOW_EXPORT_SELFTEST_KIND || "png").trim().toLowerCase();
+const EXPORT_SELF_TEST_TRACE = path.join(app?.getPath?.("temp") || os.tmpdir(), "freeflow-export-selftest.log");
 
 let mainWindow = null;
 let clickThroughEnabled = false;
@@ -91,10 +97,64 @@ let desktopEmbedCleanupPromise = Promise.resolve();
 let mainWindowCloseInFlight = false;
 let desktopShortcutSettings = { ...DEFAULT_SHORTCUT_SETTINGS };
 let startupContextCache = null;
+let backgroundExportWindow = null;
+let backgroundExportReady = false;
+let backgroundExportTaskSequence = 0;
+const pendingBackgroundExportTasks = new Map();
+const canceledBackgroundExportTasks = new Set();
 
 function getConfiguredUpdateWebsiteUrl() {
   const configured = String(startupContextCache?.uiSettings?.updateDownloadPageUrl || "").trim();
   return configured || DEFAULT_UPDATE_CONFIG.websiteUrl;
+}
+
+function appendExportSelfTestTrace(message) {
+  try {
+    fs.appendFileSync(EXPORT_SELF_TEST_TRACE, `${new Date().toISOString()} ${String(message || "")}\n`);
+  } catch {
+    // ignore trace failures
+  }
+}
+
+function extractBoardPayloadFromFileContent(rawContent = "") {
+  const parsed = JSON.parse(String(rawContent || "").trim() || "{}");
+  return parsed?.payload?.board || parsed?.board || parsed?.payload || parsed;
+}
+
+async function runBackgroundExportSelfTest() {
+  if (!EXPORT_SELF_TEST_INPUT || !EXPORT_SELF_TEST_OUTPUT) {
+    return;
+  }
+  appendExportSelfTestTrace(`[start] input=${EXPORT_SELF_TEST_INPUT} output=${EXPORT_SELF_TEST_OUTPUT} kind=${EXPORT_SELF_TEST_KIND}`);
+  const inputPath = path.resolve(EXPORT_SELF_TEST_INPUT);
+  const outputPath = path.resolve(EXPORT_SELF_TEST_OUTPUT);
+  const kind = EXPORT_SELF_TEST_KIND === "pdf" ? "pdf" : "png";
+  const source = await fs.promises.readFile(inputPath, "utf8");
+  const board = extractBoardPayloadFromFileContent(source);
+  const originalShowSaveDialog = dialog.showSaveDialog.bind(dialog);
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: outputPath });
+  try {
+    const result = await runBoardExportInBackground({
+      kind,
+      board,
+      options: {
+        defaultName: path.basename(outputPath, path.extname(outputPath)),
+        background: "white",
+        includeGrid: false,
+      },
+    });
+    appendExportSelfTestTrace(`[result] ${JSON.stringify(result)}`);
+    const exists = fs.existsSync(outputPath);
+    appendExportSelfTestTrace(`[file] exists=${exists} path=${outputPath}`);
+    setTimeout(() => {
+      app.exit(result?.ok && exists ? 0 : 1);
+    }, 300);
+  } catch (error) {
+    appendExportSelfTestTrace(`[error] ${error?.message || error}`);
+    setTimeout(() => app.exit(1), 300);
+  } finally {
+    dialog.showSaveDialog = originalShowSaveDialog;
+  }
 }
 
 const { startServer, stopServer, registerDesktopBridge } = require("../server");
@@ -391,6 +451,171 @@ async function buildWordPreviewDocxFromAst(ast) {
     message: "Word 预览文档已生成",
     docxBase64: buffer.toString("base64"),
     size: buffer.byteLength,
+  };
+}
+
+function normalizeTileExportList(tiles = []) {
+  return (Array.isArray(tiles) ? tiles : [])
+    .map((tile, index) => {
+      const bytes = tile?.bytes instanceof Uint8Array
+        ? tile.bytes
+        : ArrayBuffer.isView(tile?.bytes)
+          ? new Uint8Array(tile.bytes.buffer, tile.bytes.byteOffset, tile.bytes.byteLength)
+          : tile?.bytes instanceof ArrayBuffer
+            ? new Uint8Array(tile.bytes)
+            : null;
+      return {
+        index: Number(tile?.index ?? index) || index,
+        row: Math.max(0, Number(tile?.row || 0) || 0),
+        column: Math.max(0, Number(tile?.column || 0) || 0),
+        left: Math.max(0, Number(tile?.left || 0) || 0),
+        top: Math.max(0, Number(tile?.top || 0) || 0),
+        width: Math.max(1, Math.round(Number(tile?.width || 0) || 0) || 1),
+        height: Math.max(1, Math.round(Number(tile?.height || 0) || 0) || 1),
+        pixelLeft: Math.max(0, Math.round(Number(tile?.pixelLeft || 0) || 0)),
+        pixelTop: Math.max(0, Math.round(Number(tile?.pixelTop || 0) || 0)),
+        pixelWidth: Math.max(1, Math.round(Number(tile?.pixelWidth || 0) || 0) || 1),
+        pixelHeight: Math.max(1, Math.round(Number(tile?.pixelHeight || 0) || 0) || 1),
+        bytes,
+      };
+    })
+    .filter((entry) => entry.bytes && entry.bytes.byteLength);
+}
+
+async function buildCompositePngFromTiles(tiles = [], options = {}) {
+  const normalized = normalizeTileExportList(tiles);
+  if (!normalized.length) {
+    return { ok: false, error: "导出分块为空" };
+  }
+  const width = Math.max(1, Math.round(Number(options.pixelWidth || options.width || 0) || 0) || normalized.reduce((max, tile) => Math.max(max, tile.pixelLeft + tile.pixelWidth), 0));
+  const height = Math.max(1, Math.round(Number(options.pixelHeight || options.height || 0) || 0) || normalized.reduce((max, tile) => Math.max(max, tile.pixelTop + tile.pixelHeight), 0));
+  const background = String(options.background || "transparent").trim().toLowerCase();
+  const composite = sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: background === "transparent" ? { r: 0, g: 0, b: 0, alpha: 0 } : { r: 255, g: 255, b: 255, alpha: 1 },
+    },
+    limitInputPixels: false,
+    unlimited: true,
+  });
+  const overlays = await Promise.all(
+    normalized.map(async (tile) => ({
+      input: Buffer.from(tile.bytes),
+      left: tile.pixelLeft,
+      top: tile.pixelTop,
+      limitInputPixels: false,
+    }))
+  );
+  return composite
+    .composite(overlays)
+    .png()
+    .toBuffer();
+}
+
+const PDF_A4_PORTRAIT = Object.freeze({
+  width: 595.28,
+  height: 841.89,
+});
+
+const PDF_A4_LANDSCAPE = Object.freeze({
+  width: 841.89,
+  height: 595.28,
+});
+
+function resolveCompositePdfPageSize(orientation = "auto", width = 1, height = 1) {
+  const normalizedOrientation = String(orientation || "auto").trim().toLowerCase();
+  if (normalizedOrientation === "portrait") {
+    return { ...PDF_A4_PORTRAIT, orientationApplied: "portrait" };
+  }
+  if (normalizedOrientation === "landscape") {
+    return { ...PDF_A4_LANDSCAPE, orientationApplied: "landscape" };
+  }
+  return width >= height
+    ? { ...PDF_A4_LANDSCAPE, orientationApplied: "landscape" }
+    : { ...PDF_A4_PORTRAIT, orientationApplied: "portrait" };
+}
+
+function fitCompositeImageToPdfPage(imageWidth, imageHeight, pageWidth, pageHeight, padding = 24) {
+  const maxWidth = Math.max(1, pageWidth - padding * 2);
+  const maxHeight = Math.max(1, pageHeight - padding * 2);
+  const ratio = Math.min(maxWidth / Math.max(1, imageWidth), maxHeight / Math.max(1, imageHeight));
+  const width = Math.max(1, imageWidth * ratio);
+  const height = Math.max(1, imageHeight * ratio);
+  return {
+    width,
+    height,
+    x: (pageWidth - width) / 2,
+    y: (pageHeight - height) / 2,
+  };
+}
+
+async function buildCompositePdfFromTiles(tiles = [], options = {}) {
+  const { PDFDocument } = require("pdf-lib");
+  const normalized = normalizeTileExportList(tiles);
+  if (!normalized.length) {
+    return { ok: false, error: "导出分块为空" };
+  }
+  const width = Math.max(
+    1,
+    Math.round(Number(options.pixelWidth || options.width || 0) || 0) ||
+      normalized.reduce((max, tile) => Math.max(max, tile.pixelLeft + tile.pixelWidth), 0)
+  );
+  const height = Math.max(
+    1,
+    Math.round(Number(options.pixelHeight || options.height || 0) || 0) ||
+      normalized.reduce((max, tile) => Math.max(max, tile.pixelTop + tile.pixelHeight), 0)
+  );
+  const background = String(options.background || "transparent").trim().toLowerCase();
+  const compositePngBuffer = await buildCompositePngFromTiles(normalized, {
+    width,
+    height,
+    pixelWidth: width,
+    pixelHeight: height,
+    background,
+  });
+  if (!compositePngBuffer || !compositePngBuffer.byteLength) {
+    return { ok: false, error: "PDF 合成失败" };
+  }
+  const pdf = await PDFDocument.create();
+  const image = await pdf.embedPng(compositePngBuffer);
+  const pageSize = resolveCompositePdfPageSize(options.orientation, width, height);
+  const page = pdf.addPage([pageSize.width, pageSize.height]);
+  const imageFrame = fitCompositeImageToPdfPage(image.width, image.height, pageSize.width, pageSize.height);
+  page.drawImage(image, imageFrame);
+  return {
+    ok: true,
+    buffer: Buffer.from(await pdf.save()),
+    pageWidth: pageSize.width,
+    pageHeight: pageSize.height,
+    pageCount: 1,
+  };
+}
+
+async function saveBufferWithDialog(buffer, options = {}, defaultPath = "") {
+  const payload = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+  if (!payload.byteLength) {
+    return { ok: false, canceled: false, error: "数据为空" };
+  }
+  const result = await dialog.showSaveDialog(mainWindow || undefined, {
+    title: String(options.title || "保存文件").trim() || "保存文件",
+    buttonLabel: String(options.buttonLabel || "保存").trim() || "保存",
+    defaultPath: String(options.defaultName || "").trim() || defaultPath,
+    filters: Array.isArray(options.filters) ? options.filters : undefined,
+    properties: ["showOverwriteConfirmation"],
+  });
+  if (!result || result.canceled || !result.filePath) {
+    return { ok: false, canceled: true };
+  }
+  const resolvedPath = path.resolve(String(result.filePath || "").trim());
+  await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
+  await fs.promises.writeFile(resolvedPath, payload);
+  return {
+    ok: true,
+    canceled: false,
+    path: resolvedPath,
+    size: payload.byteLength,
   };
 }
 
@@ -1670,6 +1895,145 @@ function createMainWindow() {
   return window;
 }
 
+function getBackgroundExportUrl() {
+  return `http://127.0.0.1:${SERVER_PORT}/canvas-office.html?desktop=1&backgroundExport=1`;
+}
+
+function createBackgroundExportWindow() {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+  window.removeMenu();
+  window.webContents.setBackgroundThrottling(false);
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    const source = String(sourceId || "").trim() || "background-export";
+    console.log(`[background-export:${level}] ${source}:${line} ${message}`);
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.error(
+      `[background-export:did-fail-load] code=${errorCode} mainFrame=${Boolean(isMainFrame)} url=${validatedURL || ""} error=${errorDescription || ""}`
+    );
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`[background-export:gone] reason=${details?.reason || "unknown"} exitCode=${details?.exitCode ?? ""}`);
+  });
+  window.on("closed", () => {
+    if (backgroundExportWindow === window) {
+      backgroundExportWindow = null;
+    }
+    backgroundExportReady = false;
+    const pendingEntries = Array.from(pendingBackgroundExportTasks.entries());
+    pendingBackgroundExportTasks.clear();
+    pendingEntries.forEach(([, task]) => {
+      try {
+        task.reject(new Error("后台导出窗口已关闭"));
+      } catch {
+        // ignore
+      }
+    });
+  });
+  return window;
+}
+
+async function ensureBackgroundExportWindow() {
+  if (backgroundExportWindow && !backgroundExportWindow.isDestroyed()) {
+    if (backgroundExportReady) {
+      return backgroundExportWindow;
+    }
+    return backgroundExportWindow;
+  }
+  backgroundExportReady = false;
+  backgroundExportWindow = createBackgroundExportWindow();
+  appendExportSelfTestTrace(`[background-export] load ${getBackgroundExportUrl()}`);
+  await backgroundExportWindow.loadURL(getBackgroundExportUrl());
+  return backgroundExportWindow;
+}
+
+function flushPendingBackgroundExportTasks() {
+  if (!backgroundExportWindow || backgroundExportWindow.isDestroyed() || !backgroundExportReady) {
+    return;
+  }
+  for (const [taskId, task] of pendingBackgroundExportTasks.entries()) {
+    if (task.dispatched) {
+      continue;
+    }
+    task.dispatched = true;
+    appendExportSelfTestTrace(`[background-export] dispatch task=${taskId} kind=${String(task?.payload?.kind || "")}`);
+    backgroundExportWindow.webContents.send("desktop-shell:background-export-task", {
+      taskId,
+      payload: task.payload,
+    });
+  }
+}
+
+async function runBoardExportInBackground(payload = {}) {
+  const taskId = `background-export-${Date.now()}-${backgroundExportTaskSequence += 1}`;
+  const window = await ensureBackgroundExportWindow();
+  return new Promise((resolve, reject) => {
+    pendingBackgroundExportTasks.set(taskId, {
+      payload,
+      resolve,
+      reject,
+      dispatched: false,
+    });
+    if (window && !window.isDestroyed() && backgroundExportReady) {
+      flushPendingBackgroundExportTasks();
+    }
+  });
+}
+
+function cancelBackgroundExportTask(taskId = "") {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) {
+    return { ok: false, canceled: false, error: "导出任务不存在" };
+  }
+  const task = pendingBackgroundExportTasks.get(normalizedTaskId);
+  if (!task) {
+    return { ok: false, canceled: false, error: "导出任务不存在或已结束" };
+  }
+  canceledBackgroundExportTasks.add(normalizedTaskId);
+  try {
+    if (backgroundExportWindow && !backgroundExportWindow.isDestroyed()) {
+      backgroundExportWindow.webContents.send("desktop-shell:background-export-cancel", {
+        taskId: normalizedTaskId,
+      });
+    }
+  } catch {
+    // ignore
+  }
+  pendingBackgroundExportTasks.delete(normalizedTaskId);
+  try {
+    task.resolve({
+      ok: false,
+      canceled: true,
+      code: "PDF_EXPORT_CANCELED",
+      message: "",
+      fileName: "",
+      filePath: "",
+      bytes: 0,
+      pageWidth: 0,
+      pageHeight: 0,
+      scaleApplied: 0,
+    });
+  } catch {
+    // ignore
+  }
+  return { ok: true, canceled: true, taskId: normalizedTaskId };
+}
+
 function copyFilesToClipboard(paths = []) {
   const entries = Array.isArray(paths)
     ? [...new Set(paths.map((item) => path.resolve(String(item || "").trim())).filter(Boolean))]
@@ -1914,6 +2278,11 @@ async function bootstrapDesktopApp() {
   await session.defaultSession?.clearCache().catch(() => {});
   mainWindow = createMainWindow();
   await mainWindow.loadURL(APP_URL);
+  if (EXPORT_SELF_TEST_INPUT && EXPORT_SELF_TEST_OUTPUT) {
+    setTimeout(() => {
+      void runBackgroundExportSelfTest();
+    }, 1200);
+  }
 }
 
 ipcMain.handle("desktop-shell:get-state", () => ({
@@ -1956,6 +2325,61 @@ ipcMain.on("desktop-shell:renderer-ready", (event) => {
 
   mainWindow.__freeflowRendererReady = true;
   tryShowMainWindow(mainWindow);
+});
+
+ipcMain.on("desktop-shell:background-export-ready", (event) => {
+  if (!backgroundExportWindow || backgroundExportWindow.isDestroyed() || event.sender !== backgroundExportWindow.webContents) {
+    return;
+  }
+  backgroundExportReady = true;
+  appendExportSelfTestTrace("[background-export] renderer ready");
+  flushPendingBackgroundExportTasks();
+});
+
+ipcMain.handle("desktop-shell:export-board-in-background", async (_event, payload) => {
+  try {
+    return await runBoardExportInBackground(payload || {});
+  } catch (error) {
+    return {
+      ok: false,
+      canceled: false,
+      code: "BACKGROUND_EXPORT_FAILED",
+      message: error?.message || "后台导出失败",
+    };
+  }
+});
+
+ipcMain.handle("desktop-shell:background-export-result", async (_event, payload) => {
+  const taskId = String(payload?.taskId || "").trim();
+  if (taskId && canceledBackgroundExportTasks.has(taskId)) {
+    canceledBackgroundExportTasks.delete(taskId);
+    return { ok: true, ignored: true };
+  }
+  if (!taskId || !pendingBackgroundExportTasks.has(taskId)) {
+    return { ok: false, error: "导出任务不存在或已结束" };
+  }
+  const task = pendingBackgroundExportTasks.get(taskId);
+  pendingBackgroundExportTasks.delete(taskId);
+  if (payload?.error) {
+    appendExportSelfTestTrace(`[background-export] task failed id=${taskId} error=${String(payload.error || "")}`);
+    task.reject(new Error(String(payload.error || "后台导出失败")));
+    return { ok: true };
+  }
+  appendExportSelfTestTrace(`[background-export] task resolved id=${taskId} ok=${Boolean(payload?.result?.ok)}`);
+  task.resolve(payload?.result || null);
+  return { ok: true };
+});
+
+ipcMain.handle("desktop-shell:cancel-background-export", async (_event, taskId) => {
+  try {
+    return cancelBackgroundExportTask(taskId);
+  } catch (error) {
+    return {
+      ok: false,
+      canceled: false,
+      error: error?.message || "取消后台导出失败",
+    };
+  }
 });
 
 ipcMain.handle("desktop-shell:release-boot-shape-lock", (event) => {
@@ -2728,6 +3152,97 @@ ipcMain.handle("desktop-shell:pick-pdf-save-path", async (_event, payload) => {
     canceled: result.canceled,
     filePath: result.filePath || "",
   };
+});
+
+ipcMain.handle("desktop-shell:save-tile-composite-image", async (_event, payload) => {
+  try {
+    appendExportSelfTestTrace(`[background-export] compose png tiles=${Array.isArray(payload?.tiles) ? payload.tiles.length : 0}`);
+    const buffer = await buildCompositePngFromTiles(payload?.tiles, {
+      width: payload?.width,
+      height: payload?.height,
+      pixelWidth: payload?.pixelWidth,
+      pixelHeight: payload?.pixelHeight,
+      background: payload?.background,
+    });
+    if (!buffer || !buffer.byteLength) {
+      return { ok: false, canceled: false, error: "PNG 合成失败" };
+    }
+    const defaultName = String(payload?.defaultName || "").trim() || "freeflow-export.png";
+    const saveResult = await saveBufferWithDialog(buffer, {
+      defaultName,
+      title: "导出 PNG",
+      buttonLabel: "保存 PNG",
+      filters: [
+        { name: "PNG 图片", extensions: ["png"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    }, path.join(app.getPath("documents"), defaultName));
+    if (!saveResult?.ok) {
+      appendExportSelfTestTrace(`[background-export] save png failed canceled=${Boolean(saveResult?.canceled)} error=${String(saveResult?.error || "")}`);
+      return saveResult?.canceled
+        ? { ok: false, canceled: true }
+        : { ok: false, canceled: false, error: saveResult?.error || "PNG 保存失败" };
+    }
+    appendExportSelfTestTrace(`[background-export] save png ok path=${saveResult.path || ""} size=${Number(saveResult.size || 0)}`);
+    return {
+      ok: true,
+      canceled: false,
+      path: saveResult.path,
+      size: saveResult.size,
+      message: "PNG 已导出",
+    };
+  } catch (error) {
+    return { ok: false, canceled: false, error: error?.message || "PNG 合成失败" };
+  }
+});
+
+ipcMain.handle("desktop-shell:save-tile-composite-pdf", async (_event, payload) => {
+  try {
+    const compositeResult = await buildCompositePdfFromTiles(payload?.tiles, {
+      width: payload?.width,
+      height: payload?.height,
+      pixelWidth: payload?.pixelWidth,
+      pixelHeight: payload?.pixelHeight,
+      orientation: payload?.orientation,
+      background: payload?.background,
+    });
+    const buffer =
+      compositeResult?.buffer instanceof Uint8Array
+        ? compositeResult.buffer
+        : compositeResult?.buffer
+          ? new Uint8Array(compositeResult.buffer)
+          : null;
+    if (!buffer || !buffer.byteLength) {
+      return { ok: false, canceled: false, error: compositeResult?.error || "PDF 合成失败" };
+    }
+    const defaultName = String(payload?.defaultName || "").trim() || "freeflow-board.pdf";
+    const saveResult = await saveBufferWithDialog(buffer, {
+      defaultName,
+      title: "导出 PDF",
+      buttonLabel: "保存 PDF",
+      filters: [
+        { name: "PDF 文件", extensions: ["pdf"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    }, path.join(app.getPath("documents"), defaultName));
+    if (!saveResult?.ok) {
+      return saveResult?.canceled
+        ? { ok: false, canceled: true }
+        : { ok: false, canceled: false, error: saveResult?.error || "PDF 保存失败" };
+    }
+    return {
+      ok: true,
+      canceled: false,
+      path: saveResult.path,
+      size: saveResult.size,
+      pageWidth: Number(compositeResult?.pageWidth || 0) || 0,
+      pageHeight: Number(compositeResult?.pageHeight || 0) || 0,
+      pageCount: Number(compositeResult?.pageCount || 1) || 1,
+      message: "PDF 已导出",
+    };
+  } catch (error) {
+    return { ok: false, canceled: false, error: error?.message || "PDF 合成失败" };
+  }
 });
 
 ipcMain.handle("desktop-shell:export-rich-text-docx", async (_event, payload) => {

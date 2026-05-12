@@ -224,6 +224,7 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     excludeIds = [],
     sceneChanged = false,
     dirtyItemIds = [],
+    maxColdTiles = Infinity,
     drawItems,
   }) {
     if (!sceneIndex || !ctx || !sceneKey || typeof drawItems !== "function") {
@@ -272,6 +273,10 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     let dirtyVisibleTiles = 0;
     let lodSimplifiedCount = 0;
     let customRendererHandledCount = 0;
+    let deferredColdTiles = 0;
+    const coldTileBudget = Number.isFinite(Number(maxColdTiles))
+      ? Math.max(0, Math.floor(Number(maxColdTiles)))
+      : Infinity;
 
     for (let tileX = tileXMin; tileX <= tileXMax; tileX += 1) {
       for (let tileY = tileYMin; tileY <= tileYMax; tileY += 1) {
@@ -289,6 +294,10 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
           touchEntry(key, entry);
         } else {
           cacheMisses += 1;
+          if (coldRenderedTiles >= coldTileBudget) {
+            deferredColdTiles += 1;
+            continue;
+          }
           if (isDirtyVisibleTile) {
             rerasterizedDirtyTiles += 1;
           } else {
@@ -328,6 +337,8 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
       dirtyVisibleTiles,
       lodSimplifiedCount,
       customRendererHandledCount,
+      deferredColdTiles,
+      hasDeferredColdTiles: deferredColdTiles > 0,
     };
   }
 

@@ -28,6 +28,22 @@ async function canvasToPngBytes(canvas) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+async function resolveCanvasToPngBytes(canvas, retryRenderer = null) {
+  const primary = await canvasToPngBytes(canvas);
+  if (primary?.byteLength) {
+    return primary;
+  }
+  if (typeof retryRenderer !== "function") {
+    return null;
+  }
+  try {
+    const retryCanvas = await retryRenderer();
+    return await canvasToPngBytes(retryCanvas?.canvas || retryCanvas);
+  } catch {
+    return null;
+  }
+}
+
 function resolvePageSize(orientation = "auto", width = 1, height = 1) {
   if (orientation === "portrait") {
     return { ...A4_PORTRAIT, orientationApplied: "portrait" };
@@ -85,43 +101,7 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
     backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
     backgroundGrid: options.includeGrid,
     backgroundPattern: String(inputOptions?.backgroundPattern || "").trim().toLowerCase(),
-    allowUnsafeSize: false,
   });
-
-  const oversized =
-    renderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
-    renderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
-  if (oversized) {
-    const continueExport =
-      typeof inputOptions?.onOversizeConfirm === "function"
-        ? await inputOptions.onOversizeConfirm({
-            requestedCanvasWidth: renderResult?.requestedCanvasWidth,
-            requestedCanvasHeight: renderResult?.requestedCanvasHeight,
-            requestedTotalPixels: renderResult?.requestedTotalPixels,
-          })
-        : false;
-    if (!continueExport) {
-      return {
-        ok: false,
-        canceled: true,
-        code: "PDF_EXPORT_CANCELED",
-        message: "",
-        fileName: "",
-        filePath: "",
-        bytes: 0,
-        pageWidth: 0,
-        pageHeight: 0,
-        scaleApplied: 0,
-      };
-    }
-    renderResult = await renderBoard({
-      scale: options.scale,
-      backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
-      backgroundGrid: options.includeGrid,
-      backgroundPattern: String(inputOptions?.backgroundPattern || "").trim().toLowerCase(),
-      allowUnsafeSize: true,
-    });
-  }
 
   if (renderResult?.canceled) {
     return {
@@ -168,7 +148,10 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
     };
   }
 
-  const pngBytes = await canvasToPngBytes(renderResult.canvas);
+  const pngBytes = await resolveCanvasToPngBytes(
+    renderResult.canvas,
+    inputOptions?.onCanvasTaintedRetry || defaults?.onCanvasTaintedRetry
+  );
   if (!pngBytes?.byteLength) {
     return {
       ok: false,

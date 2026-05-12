@@ -153,8 +153,16 @@ import {
 } from "./scene/sceneIndex.js";
 import { createSceneRegistry } from "./scene/sceneRegistry.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
+import { createOverlayBudgetManager } from "./overlay/overlayBudgetManager.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
+import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
+import { createInteractionPriorityGate } from "./perf/interactionPriorityGate.js";
+import {
+  recordAssetStats,
+  timeAssetTask,
+} from "./perf/canvasRuntimeStats.js";
+import { createTransientMinimap } from "./ui/createTransientMinimap.js";
 import {
   computeMultiSelectionResizedBounds,
   getHandleCursorKey,
@@ -163,6 +171,10 @@ import {
   isScenePointInsideBounds as isPointInsideMultiSelectionBounds,
 } from "./multiSelectionTransform.js";
 import { createRenderScheduler } from "./render/renderScheduler.js";
+import {
+  hasViewportSizeChanged,
+  resolveViewportPixelBudget,
+} from "./render/viewportPixelBudget.js";
 import { buildUnifiedPreviewSummaryMarkup } from "./previewSummaryMarkup.js";
 import {
   buildFileCardContextMenuHtml,
@@ -781,6 +793,7 @@ const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
 const RICH_OVERLAY_DETAIL_CACHE_LIMIT = 180;
 const RICH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const RICH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
+const RICH_OVERLAY_EDIT_HANDOFF_DETAIL_MS = 900;
 const MATH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const MATH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE = 0.15;
@@ -1722,28 +1735,81 @@ function syncTextLinkSemanticFields(item, plainText = "", richTextDocument = nul
   };
 }
 
-  function applyRichEditorLayoutStyles(editor, item, scale) {
-  if (!(editor instanceof HTMLDivElement) || !item) {
-    return;
+function resolveRichTextSurfaceLayout(item, viewOrScale = 1, { mode = "display", overlayMode = "detail" } = {}) {
+  if (!item) {
+    return null;
   }
+  const view =
+    viewOrScale && typeof viewOrScale === "object"
+      ? viewOrScale
+      : {
+          scale: Number(viewOrScale || 1) || 1,
+          offsetX: 0,
+          offsetY: 0,
+        };
+  const scale = Math.max(0.1, Number(view?.scale || viewOrScale || 1) || 1);
   const isFlowNode = item.type === "flowNode";
   const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
   const isWrapText = isWrapTextItem(item);
   const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(scale) || 1);
   const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(scale) || 1);
-  const padding = isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
-  const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_BODY_LINE_HEIGHT_RATIO;
-  editor.classList.toggle("is-flow-node", isFlowNode);
-  editor.classList.toggle("is-mind-node", isMindNode);
-  editor.classList.toggle("is-wrap-mode", isWrapText);
-  editor.classList.toggle("is-fixed-size", isFixedSizeTextItem(item));
-  editor.style.padding = `${padding.y}px ${padding.x}px`;
-  editor.style.lineHeight = String(lineHeightRatio);
-  editor.style.fontFamily = TEXT_FONT_FAMILY;
-  editor.style.fontWeight = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
-  editor.style.color = item.color || "#0f172a";
-  editor.style.boxSizing = "border-box";
-  editor.style.overflow = isFixedSizeTextItem(item) ? "hidden" : "visible";
+  const detailLike = mode === "edit" || overlayMode === "detail";
+  const padding = detailLike && isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
+  const boxStyles = getRichOverlayBoxStyles(item, scale);
+  return {
+    scale,
+    left: Number(item.x || 0) * scale + Number(view?.offsetX || 0),
+    top: Number(item.y || 0) * scale + Number(view?.offsetY || 0),
+    width,
+    height,
+    fontSize: Math.max(1, Number(item.fontSize || DEFAULT_TEXT_FONT_SIZE) * scale),
+    padding,
+    paddingCss: `${padding.y}px ${padding.x}px`,
+    lineHeightRatio: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO,
+    fontFamily: TEXT_FONT_FAMILY,
+    fontWeight: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT,
+    color: item.color || "#0f172a",
+    boxStyles,
+    classToggles: {
+      "is-flow-node": isFlowNode,
+      "is-mind-node": isMindNode,
+      "is-wrap-mode": isWrapText,
+      "is-fixed-size": isFixedSizeTextItem(item),
+    },
+  };
+}
+
+function applyRichTextSurfaceLayout(node, layout, { includePosition = true, includeBox = true } = {}) {
+  if (!(node instanceof HTMLElement) || !layout) {
+    return;
+  }
+  Object.entries(layout.classToggles || {}).forEach(([className, enabled]) => {
+    node.classList.toggle(className, Boolean(enabled));
+  });
+  if (includePosition) {
+    setStyleIfNeeded(node, "left", `${layout.left}px`);
+    setStyleIfNeeded(node, "top", `${layout.top}px`);
+  }
+  if (includeBox) {
+    setStyleIfNeeded(node, "width", `${Math.max(1, layout.width)}px`);
+    setStyleIfNeeded(node, "height", `${Math.max(1, layout.height)}px`);
+  }
+  setStyleIfNeeded(node, "fontSize", `${layout.fontSize}px`);
+  setStyleIfNeeded(node, "fontFamily", layout.fontFamily);
+  setStyleIfNeeded(node, "padding", layout.paddingCss);
+  setStyleIfNeeded(node, "lineHeight", String(layout.lineHeightRatio));
+  setStyleIfNeeded(node, "fontWeight", layout.fontWeight);
+  setStyleIfNeeded(node, "color", layout.color);
+  setStyleIfNeeded(node, "boxSizing", "border-box");
+  setStyleIfNeeded(node, "overflow", layout.classToggles?.["is-fixed-size"] ? "hidden" : "visible");
+}
+
+  function applyRichEditorLayoutStyles(editor, item, scale) {
+  if (!(editor instanceof HTMLDivElement) || !item) {
+    return;
+  }
+  const layout = resolveRichTextSurfaceLayout(item, scale, { mode: "edit", overlayMode: "detail" });
+  applyRichTextSurfaceLayout(editor, layout, { includePosition: false, includeBox: false });
   applyRichEditorTypographyTokens(editor);
 }
 
@@ -1864,7 +1930,7 @@ function isCanvasLodScale(scale = 1, minScale = 0.15) {
   return getCanvasLodScalePercent(scale) <= Math.round(Math.max(0.1, Number(minScale) || 0.15) * 100);
 }
 
-function hideOverlayHost(host, virtualizer, { onRemove = null } = {}) {
+function hideOverlayHost(host, virtualizer, { onRemove = null, budgetManager = null, overlayType = "" } = {}) {
   if (!(host instanceof HTMLDivElement)) {
     return;
   }
@@ -1874,6 +1940,7 @@ function hideOverlayHost(host, virtualizer, { onRemove = null } = {}) {
     removeNodes: true,
     onRemove,
   });
+  budgetManager?.reset?.(overlayType);
 }
 
 function showOverlayHost(host) {
@@ -2478,7 +2545,7 @@ function resolveRichOverlaySummaryMode({ scale = 1, width = 0, height = 0 } = {}
   if (normalizedScale < RICH_OVERLAY_PREVIEW_MIN_SCALE || area < 2600) {
     return "summary-skeleton";
   }
-  return "summary-skeleton";
+  return "detail";
 }
 
 function getRichOverlayClassSignature(item) {
@@ -2594,7 +2661,7 @@ function resolveMathOverlaySummaryMode({ scale = 1, width = 0, height = 0, displ
   if (normalizedScale < MATH_OVERLAY_PREVIEW_MIN_SCALE || area < (displayMode ? 2200 : 1200)) {
     return "summary-skeleton";
   }
-  return "summary-skeleton";
+  return "detail";
 }
 
 function buildMathOverlaySummaryMarkup({
@@ -2800,13 +2867,8 @@ function getRichEditableItemSignature(item) {
     return;
   }
   const scale = Math.max(0.1, Number(view?.scale || 1));
-  const left = Number(item.x || 0) * scale + Number(view?.offsetX || 0);
-  const top = Number(item.y || 0) * scale + Number(view?.offsetY || 0);
-  editor.style.left = `${left}px`;
-  editor.style.top = `${top}px`;
-  editor.style.width = `${Math.max(1, Number(item.width || 1) * scale)}px`;
-  editor.style.height = `${Math.max(1, Number(item.height || 1) * scale)}px`;
-  editor.style.fontSize = `${Math.max(1, Number(item.fontSize || DEFAULT_TEXT_FONT_SIZE) * scale)}px`;
+  const layout = resolveRichTextSurfaceLayout(item, view, { mode: "edit", overlayMode: "detail" });
+  applyRichTextSurfaceLayout(editor, layout, { includePosition: true, includeBox: true });
   applyRichEditorLayoutStyles(editor, item, scale);
   applyInlineFontSizingToContainer(editor, scale);
 }
@@ -3278,8 +3340,34 @@ export function createCanvas2DEngine(options = {}) {
     fileImportInput: null,
     imageImportInput: null,
   };
+  const transientMinimap = createTransientMinimap({
+    getItems: () => state.board.items,
+    getView: () => state.board.view,
+    getViewportSize: () => ({
+      width: Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1),
+      height: Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1),
+    }),
+    getSceneRevision: () => sceneRevision,
+    onNavigate: (scenePoint) => {
+      const rect = getCanvasRect();
+      if (!rect?.width || !rect?.height) {
+        return;
+      }
+      const scale = Number(state.board.view?.scale || 1) || 1;
+      state.board.view = createView({
+        scale,
+        offsetX: rect.width / 2 - Number(scenePoint?.x || 0) * scale,
+        offsetY: rect.height / 2 - Number(scenePoint?.y || 0) * scale,
+      });
+      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "minimap-navigate" });
+      setStatus("已跳转到当前位置");
+    },
+  });
   const cleanupFns = [];
   let resizeObserver = null;
+  let pendingResizeFrame = 0;
+  let lastViewportBudget = null;
+  let largeViewportProgressivePending = false;
   let mounted = false;
   let renderScheduler = null;
   let lastContextMenuPoint = null;
@@ -3372,6 +3460,14 @@ let tablePointerSelectionState = {
     nodeMap: codeBlockDisplayMap,
     visibleIds: codeBlockVisibleIds,
   });
+  const hydrationScheduler = createHydrationScheduler({
+    frameBudgetMs: 8,
+    maxTasksPerFlush: 3,
+    timeout: 96,
+  });
+  const overlayBudgetManager = createOverlayBudgetManager();
+  const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
+  const richOverlayDetailPinnedUntil = new Map();
   let fileCardPreviewSurfaceHost = null;
   let fileCardPreviewSurfaceRoot = null;
   let fileCardPreviewSurfaceStyleRoot = null;
@@ -3494,6 +3590,8 @@ let tablePointerSelectionState = {
   let richColorPreviewCommitTimer = 0;
   let pendingRichEditorHideFrame = 0;
   let pendingRichEditorHideToken = 0;
+  let pendingCommittedTextWorkToken = 0;
+  const committedTextDraftCache = new Map();
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
   let pendingCanvasLinkBinding = false;
@@ -3758,7 +3856,8 @@ let tablePointerSelectionState = {
     const syntaxHighlighting = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE);
     const showLineNumbers = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE);
     const showHeader = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE);
-    const summaryMode = !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
+    const interactionPriorityActive = interactionPriorityGate.isActive();
+    const summaryMode = interactionPriorityActive || !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
     if (!isVisible) {
       codeBlockOverlayVirtualizer.hideNode(item.id);
       return;
@@ -3767,6 +3866,14 @@ let tablePointerSelectionState = {
       const nextNode = document.createElement("div");
       refs.codeBlockDisplayHost.appendChild(nextNode);
       return nextNode;
+    }, {
+      budgetManager: overlayBudgetManager,
+      overlayType: "code",
+      budgetOptions: {
+        force: isEditing,
+        allowDuringInteraction: isEditing,
+      },
+      onDeferred: () => markCodeBlockOverlayDirty(item.id),
     });
     if (!node) {
       return;
@@ -4159,6 +4266,19 @@ let tablePointerSelectionState = {
     };
   }
 
+  function getCurrentViewportBudget() {
+    if (lastViewportBudget) {
+      return lastViewportBudget;
+    }
+    const rect = refs.canvas?.getBoundingClientRect?.() || refs.surface?.getBoundingClientRect?.() || { width: 1, height: 1 };
+    lastViewportBudget = resolveViewportPixelBudget({
+      cssWidth: Math.max(1, Number(rect.width || refs.canvas?.clientWidth || 1) || 1),
+      cssHeight: Math.max(1, Number(rect.height || refs.canvas?.clientHeight || 1) || 1),
+      devicePixelRatio: typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+    });
+    return lastViewportBudget;
+  }
+
   function queryVisibleItemsByTypes(types = [], options = {}) {
     const viewport = getViewportPixelSize();
     const sceneIndex = getSceneIndexRuntime(options);
@@ -4433,6 +4553,12 @@ let tablePointerSelectionState = {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
+    const viewportBudget = getCurrentViewportBudget();
+    const shouldDeferColdTiles = Boolean(
+      viewportBudget?.isLargeViewport &&
+      !largeViewportProgressivePending &&
+      (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.backgroundDirty || dirtyState?.reason === "mount")
+    );
     renderer.render({
       ctx: refs.ctx,
       canvas: refs.canvas,
@@ -4460,9 +4586,37 @@ let tablePointerSelectionState = {
         pattern: getBoardBackgroundPattern(),
       },
       renderTextInCanvas: RENDER_TEXT_IN_CANVAS,
+      pixelRatio: viewportBudget.effectiveDpr,
+      viewportBudget,
+      deferColdTiles: shouldDeferColdTiles,
       dirtyState,
       layerState,
     });
+    const stats = refs.canvas?.__ffRenderStats || null;
+    if (stats?.progressiveRender?.pending) {
+      if (!largeViewportProgressivePending) {
+        largeViewportProgressivePending = true;
+        scheduleRender({
+          reason: "large-viewport-progressive-render",
+          sceneDirty: false,
+          viewDirty: true,
+          interactionDirty: false,
+          overlayDirty: false,
+        });
+      }
+    } else {
+      largeViewportProgressivePending = false;
+    }
+    const interactionPriorityActive = interactionPriorityGate.isActive();
+    const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending || interactionPriorityActive);
+    const overlaySuspended = Boolean(skipDetailOverlays);
+    overlayBudgetManager.beginFrame({
+      suspended: overlaySuspended,
+      reason: String(dirtyState?.reason || "render"),
+    });
+    if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
+      hydrationScheduler.bumpGeneration();
+    }
     syncEditorLayout();
     syncRichTextToolbar();
     syncRichTextOverlays(visibleScene);
@@ -4502,6 +4656,27 @@ let tablePointerSelectionState = {
       fullOverlayRescan: Boolean(options.fullOverlayRescan),
       itemIds: Array.isArray(options.itemIds) ? options.itemIds : [],
     });
+  }
+
+  function activateInteractionPriority(reason = "interaction") {
+    interactionPriorityGate.activate(reason);
+    hydrationScheduler.setPaused(true);
+  }
+
+  function releaseInteractionPriority(delayMs = 140) {
+    interactionPriorityGate.scheduleRelease(delayMs);
+    window.setTimeout(() => {
+      if (interactionPriorityGate.isActive()) {
+        return;
+      }
+      hydrationScheduler.setPaused(false);
+      store.emit();
+      scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
+    }, Math.max(0, Number(delayMs || 140) || 140));
+  }
+
+  function getInteractionPrioritySnapshot() {
+    return interactionPriorityGate.getSnapshot();
   }
 
   function syncBoard({
@@ -4551,6 +4726,11 @@ let tablePointerSelectionState = {
       fullOverlayRescan,
       itemIds,
     });
+    if (sceneChange) {
+      transientMinimap.refreshSceneSnapshot();
+    } else if (viewChange) {
+      transientMinimap.refreshViewport();
+    }
   }
 
   function clearAlignmentSnap(reason = "reset", { render = false } = {}) {
@@ -4734,6 +4914,42 @@ let tablePointerSelectionState = {
     state.statusText = String(text || "");
     state.statusTone = tone;
     store.emit();
+  }
+
+  let activeExportController = null;
+  let activeExportKind = "";
+
+  function beginExportTask(kind = "") {
+    if (activeExportController) {
+      try {
+        activeExportController.abort();
+      } catch {
+        // ignore
+      }
+    }
+    activeExportController = new AbortController();
+    activeExportKind = String(kind || "").trim().toUpperCase();
+    return activeExportController;
+  }
+
+  function clearActiveExportTask(controller = null) {
+    if (!controller || controller === activeExportController) {
+      activeExportController = null;
+      activeExportKind = "";
+    }
+  }
+
+  function cancelActiveExport() {
+    if (!activeExportController) {
+      return false;
+    }
+    try {
+      activeExportController.abort();
+    } catch {
+      // ignore
+    }
+    setStatus(`${activeExportKind || "导出"} 导出已取消`, "warning");
+    return true;
   }
 
   async function runClipboardOperationWithStatus(statusText = "处理中…", operation) {
@@ -7277,23 +7493,51 @@ let tablePointerSelectionState = {
     };
   }
 
-  function resize() {
+  function applyResize({ reason = "resize" } = {}) {
     if (!refs.canvas) {
       return;
     }
     const rect = refs.canvas.getBoundingClientRect();
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const nextWidth = Math.max(1, Math.round(rect.width * dpr));
-    const nextHeight = Math.max(1, Math.round(rect.height * dpr));
-    const sizeChanged = refs.canvas.width !== nextWidth || refs.canvas.height !== nextHeight;
-    refs.canvas.width = nextWidth;
-    refs.canvas.height = nextHeight;
+    const nextBudget = resolveViewportPixelBudget({
+      cssWidth: Math.max(1, Number(rect.width || refs.canvas.clientWidth || 1) || 1),
+      cssHeight: Math.max(1, Number(rect.height || refs.canvas.clientHeight || 1) || 1),
+      devicePixelRatio: window.devicePixelRatio || 1,
+    });
+    const sizeChanged = hasViewportSizeChanged(lastViewportBudget, nextBudget);
+    lastViewportBudget = nextBudget;
+    if (refs.canvas.width !== nextBudget.pixelWidth) {
+      refs.canvas.width = nextBudget.pixelWidth;
+    }
+    if (refs.canvas.height !== nextBudget.pixelHeight) {
+      refs.canvas.height = nextBudget.pixelHeight;
+    }
     scheduleRender({
-      reason: sizeChanged ? "resize" : "resize-sync",
+      reason: sizeChanged ? reason : `${reason}-sync`,
       backgroundDirty: true,
       viewDirty: true,
       interactionDirty: true,
       overlayDirty: true,
+    });
+    transientMinimap.resize();
+  }
+
+  function resize(options = {}) {
+    const immediate = Boolean(options?.immediate);
+    const reason = String(options?.reason || "resize").trim() || "resize";
+    if (immediate) {
+      if (pendingResizeFrame) {
+        cancelAnimationFrame(pendingResizeFrame);
+        pendingResizeFrame = 0;
+      }
+      applyResize({ reason });
+      return;
+    }
+    if (pendingResizeFrame) {
+      return;
+    }
+    pendingResizeFrame = requestAnimationFrame(() => {
+      pendingResizeFrame = 0;
+      applyResize({ reason });
     });
   }
 
@@ -7639,6 +7883,8 @@ let tablePointerSelectionState = {
       });
       refs.surface.appendChild(refs.imageImportInput);
     }
+
+    transientMinimap.mount(refs.fixedOverlayHost || refs.surface);
 
     refs.richDisplayHost = refs.surface.querySelector("#canvas2d-rich-display");
     if (!(refs.richDisplayHost instanceof HTMLDivElement)) {
@@ -9479,66 +9725,292 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
+  const LONG_RICH_TEXT_FAST_PATH_HTML_LENGTH = 24000;
+  const LONG_RICH_TEXT_FAST_PATH_TEXT_LENGTH = 12000;
+
+  function getCommittedTextDraftCacheEntry(itemId = "") {
+    const id = String(itemId || "").trim();
+    if (!id || !committedTextDraftCache.has(id)) {
+      return null;
+    }
+    return committedTextDraftCache.get(id) || null;
+  }
+
+  function setCommittedTextDraftCacheEntry(itemId = "", entry = null) {
+    const id = String(itemId || "").trim();
+    if (!id) {
+      return;
+    }
+    if (!entry) {
+      committedTextDraftCache.delete(id);
+      return;
+    }
+    committedTextDraftCache.set(id, entry);
+  }
+
+  function clearCommittedTextDraftCacheEntry(itemId = "") {
+    const id = String(itemId || "").trim();
+    if (!id) {
+      return;
+    }
+    committedTextDraftCache.delete(id);
+  }
+
+  function isLongRichTextDraft({ html = "", plainText = "" } = {}) {
+    return String(html || "").length >= LONG_RICH_TEXT_FAST_PATH_HTML_LENGTH || String(plainText || "").length >= LONG_RICH_TEXT_FAST_PATH_TEXT_LENGTH;
+  }
+
+  function buildCommittedTextDraft(item, {
+    html = "",
+    fontSize = DEFAULT_TEXT_FONT_SIZE,
+    preserveLinkSemantics = null,
+  } = {}) {
+    if (!item) {
+      return null;
+    }
+    const normalizedHtml = normalizeRichHtmlInlineFontSizes(
+      html,
+      item.fontSize || fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+    );
+    const nextFontSize = item.fontSize || fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE);
+    const content = normalizeEditedRichTextContent(item, normalizedHtml, nextFontSize);
+    const plainText = content.plainText;
+    const canonicalHtml = normalizeRichHtmlInlineFontSizes(
+      getCanonicalRichTextHtml(content, normalizedHtml),
+      nextFontSize
+    );
+    const layoutConfig = resolveEditedTextLayoutConfig(
+      item,
+      { ...content, html: canonicalHtml },
+      nextFontSize
+    );
+    const longTextFastPath = isLongRichTextDraft({ html: canonicalHtml, plainText });
+    const shouldPreserveLinks = preserveLinkSemantics === true || (preserveLinkSemantics == null && longTextFastPath);
+    const cachedSemanticMeta = shouldPreserveLinks
+      ? {
+          linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+          urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
+        }
+      : null;
+    const linkSemantics = shouldPreserveLinks
+      ? cachedSemanticMeta
+      : (linkSemanticEnabled
+          ? refreshTextLinkSemantics(
+              {
+                ...item,
+                html: canonicalHtml,
+                richTextDocument: content.richTextDocument,
+              },
+              plainText
+            )
+          : {
+              linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
+              urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
+            });
+    const richTextDocumentWithMeta =
+      content.richTextDocument && typeof content.richTextDocument === "object"
+        ? {
+            ...content.richTextDocument,
+            meta: {
+              ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
+                ? content.richTextDocument.meta
+                : {}),
+              linkTokens: linkSemantics.linkTokens,
+              urlMetaCache: linkSemantics.urlMetaCache,
+            },
+          }
+        : content.richTextDocument;
+    const currentWidth = Math.max(80, Number(item.width || 0) || 80);
+    const currentHeight = Math.max(40, Number(item.height || 0) || 40);
+    return {
+      itemId: String(item.id || ""),
+      html: canonicalHtml,
+      plainText,
+      text: plainText,
+      content,
+      richTextDocument: richTextDocumentWithMeta,
+      layoutConfig,
+      currentWidth,
+      currentHeight,
+      fontSize: nextFontSize,
+      linkSemantics,
+      linkSemanticsDeferred: shouldPreserveLinks,
+      longTextFastPath,
+      createdAt: Date.now(),
+    };
+  }
+
+  function applyCommittedTextDraftToItem(item, draft, { measuredSize = null } = {}) {
+    if (!item || !draft) {
+      return;
+    }
+    const finalLayoutConfig = draft.layoutConfig;
+    const normalizedItem = normalizeTextElement(
+      {
+        ...item,
+        html: draft.html,
+        plainText: draft.plainText,
+        text: draft.text,
+        richTextDocument: draft.richTextDocument,
+        linkTokens: draft.linkSemantics?.linkTokens || [],
+        urlMetaCache: draft.linkSemantics?.urlMetaCache || {},
+        textBoxLayoutMode: finalLayoutConfig.layoutMode,
+        textResizeMode: finalLayoutConfig.resizeMode,
+        title: buildTextTitle(draft.plainText || "文本"),
+        width:
+          finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
+            ? Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || draft.currentWidth) || draft.currentWidth))
+            : draft.currentWidth,
+        height: draft.currentHeight,
+      },
+      {
+        skipMetrics: true,
+      }
+    );
+    Object.assign(item, normalizedItem);
+    if (measuredSize) {
+      if (finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+        item.width = Math.max(80, Math.ceil(Number(measuredSize.width || 0) || 80));
+        item.height = Math.max(40, Math.ceil(Number(measuredSize.height || 0) || 40));
+      } else if (finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT) {
+        item.width = Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || item.width || 0) || 80));
+        item.height = Math.max(40, Math.ceil(Number(measuredSize.height || 0) || 40));
+      } else {
+        item.width = Math.max(
+          80,
+          Math.ceil(Number(finalLayoutConfig.widthHint || item.width || 0) || Number(measuredSize.width || 0) || 80)
+        );
+        item.height = Math.max(
+          40,
+          Math.ceil(Number(finalLayoutConfig.heightHint || item.height || 0) || Number(measuredSize.height || 0) || 40)
+        );
+      }
+    }
+  }
+
+  function scheduleDeferredCommittedTextFollowups(item, draft) {
+    if (!item?.id || !draft) {
+      return;
+    }
+    const itemId = String(item.id || "");
+    const workToken = ++pendingCommittedTextWorkToken;
+    const runIfCurrent = (callback) => {
+      if (workToken !== pendingCommittedTextWorkToken) {
+        return;
+      }
+      const currentItem = sceneRegistry.getItemById(itemId, "text");
+      if (!currentItem) {
+        clearCommittedTextDraftCacheEntry(itemId);
+        return;
+      }
+      callback(currentItem);
+    };
+    scheduleAnimationFrameTask(() => {
+      runIfCurrent((currentItem) => {
+        if (refs.richEditor instanceof HTMLDivElement && draft.layoutConfig?.layoutMode !== TEXT_BOX_LAYOUT_MODE_FIXED_SIZE) {
+          const measureItem = {
+            ...currentItem,
+            width: draft.layoutConfig.widthHint,
+            height: draft.layoutConfig.heightHint,
+            textBoxLayoutMode: draft.layoutConfig.layoutMode,
+            textResizeMode: draft.layoutConfig.resizeMode,
+          };
+          const measuredSize = getEditingTextBoxMetrics(refs.richEditor, measureItem, state.board.view, draft.plainText);
+          applyCommittedTextDraftToItem(currentItem, draft, { measuredSize });
+          markSceneGraphDirty();
+          syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+        }
+      });
+    });
+    scheduleIdleTask(() => {
+      runIfCurrent((currentItem) => {
+        let changed = false;
+        if (draft.linkSemanticsDeferred && linkSemanticEnabled) {
+          const refreshedLinkSemantics = refreshTextLinkSemantics(
+            {
+              ...currentItem,
+              html: currentItem.html || draft.html,
+              richTextDocument: currentItem.richTextDocument || draft.richTextDocument,
+            },
+            currentItem.plainText || draft.plainText
+          );
+          currentItem.linkTokens = refreshedLinkSemantics.linkTokens;
+          currentItem.urlMetaCache = refreshedLinkSemantics.urlMetaCache;
+          if (currentItem.richTextDocument && typeof currentItem.richTextDocument === "object") {
+            currentItem.richTextDocument = {
+              ...currentItem.richTextDocument,
+              meta: {
+                ...(currentItem.richTextDocument.meta && typeof currentItem.richTextDocument.meta === "object"
+                  ? currentItem.richTextDocument.meta
+                  : {}),
+                linkTokens: refreshedLinkSemantics.linkTokens,
+                urlMetaCache: refreshedLinkSemantics.urlMetaCache,
+              },
+            };
+          }
+          changed = true;
+          if (refreshedLinkSemantics?.linkTokens?.length) {
+            scheduleUrlMetaHydrationForItem(currentItem);
+          }
+        } else if (draft.linkSemantics?.linkTokens?.length) {
+          scheduleUrlMetaHydrationForItem(currentItem);
+        }
+        prepareRichOverlayDetailHandoff(currentItem, { deferHtmlWarmup: true });
+        if (changed) {
+          markSceneGraphDirty();
+          syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+        }
+        clearCommittedTextDraftCacheEntry(itemId);
+      });
+    });
+  }
+
   function syncEditingTextItemSize(item) {
     if (!item || item.type !== "text" || !(refs.richEditor instanceof HTMLDivElement)) {
       return false;
     }
     const beforeSignature = getRichEditableItemSignature(item);
+    const fontSize = item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE);
     const html = normalizeRichHtmlInlineFontSizes(
       richTextSession.getHTML() || refs.richEditor.innerHTML || "",
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+      fontSize
     );
-    const content = normalizeEditedRichTextContent(
-      item,
-      html,
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
-    const plainText = content.plainText;
-    const canonicalHtml = normalizeRichHtmlInlineFontSizes(
-      getCanonicalRichTextHtml(content, html),
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
-    const layoutConfig = resolveEditedTextLayoutConfig(
-      item,
-      { ...content, html: canonicalHtml },
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
-    const layoutMode = layoutConfig.layoutMode;
+    const cachedDraft =
+      getCommittedTextDraftCacheEntry(item.id)?.html === html
+        ? getCommittedTextDraftCacheEntry(item.id)
+        : buildCommittedTextDraft(item, {
+            html,
+            fontSize,
+            preserveLinkSemantics: true,
+          });
+    if (!cachedDraft) {
+      return false;
+    }
+    setCommittedTextDraftCacheEntry(item.id, cachedDraft);
+    const layoutMode = cachedDraft.layoutConfig.layoutMode;
     const measureItem = {
       ...item,
-      width: layoutConfig.widthHint,
-      height: layoutConfig.heightHint,
+      width: cachedDraft.layoutConfig.widthHint,
+      height: cachedDraft.layoutConfig.heightHint,
       textBoxLayoutMode: layoutMode,
-      textResizeMode: layoutConfig.resizeMode,
+      textResizeMode: cachedDraft.layoutConfig.resizeMode,
     };
-    const nextSize = getEditingTextBoxMetrics(refs.richEditor, measureItem, state.board.view, plainText);
-    item.html = canonicalHtml;
-    item.plainText = plainText;
-    item.text = plainText;
-    item.richTextDocument = content.richTextDocument;
-    const semanticState = syncTextLinkSemanticFields(item, plainText, content.richTextDocument, {
-      semanticEnabled: linkSemanticEnabled,
-    });
-    if (semanticState?.linkTokens?.length) {
-      scheduleUrlMetaHydrationForItem(item);
-    }
-    item.title = buildTextTitle(plainText || "文本");
-    item.textBoxLayoutMode = layoutMode;
-    item.textResizeMode = layoutConfig.resizeMode;
+    const nextSize = getEditingTextBoxMetrics(refs.richEditor, measureItem, state.board.view, cachedDraft.plainText);
+    applyCommittedTextDraftToItem(item, cachedDraft, { measuredSize: nextSize });
     if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
       item.width = Math.max(80, Math.ceil(Number(nextSize?.width || 0) || 80));
       item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
     } else if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT) {
-      item.width = Math.max(80, Math.ceil(Number(layoutConfig.widthHint || item.width || 0) || 80));
+      item.width = Math.max(80, Math.ceil(Number(cachedDraft.layoutConfig.widthHint || item.width || 0) || 80));
       item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
     } else {
       item.width = Math.max(
         80,
-        Math.ceil(Number(layoutConfig.widthHint || item.width || 0) || Number(nextSize?.width || 0) || 80)
+        Math.ceil(Number(cachedDraft.layoutConfig.widthHint || item.width || 0) || Number(nextSize?.width || 0) || 80)
       );
       item.height = Math.max(
         40,
-        Math.ceil(Number(layoutConfig.heightHint || item.height || 0) || Number(nextSize?.height || 0) || 40)
+        Math.ceil(Number(cachedDraft.layoutConfig.heightHint || item.height || 0) || Number(nextSize?.height || 0) || 40)
       );
     }
     syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
@@ -9755,6 +10227,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingRichOverlayDetail(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "rich",
       });
       return;
     }
@@ -9764,6 +10238,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingRichOverlayDetail(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "rich",
       });
       return;
     }
@@ -9774,6 +10250,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingRichOverlayDetail(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "rich",
       });
       return;
     }
@@ -9790,11 +10268,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingRichOverlayDetail(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "rich",
       });
       return;
     }
     showOverlayHost(refs.richDisplayHost);
 
+    const interactionPriorityActive = interactionPriorityGate.isActive();
     const detailMode = isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
@@ -9840,6 +10321,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         refs.richDisplayHost.appendChild(nextNode);
         return nextNode;
       },
+      budgetManager: overlayBudgetManager,
+      overlayType: "rich",
+      getBudgetOptions: ({ item, visible }) => ({
+        force: editingId && editingId === item.id,
+        allowDuringInteraction: editingId && editingId === item.id,
+      }),
+      onDeferred: () => scheduleRender({ overlayDirty: true, reason: "rich-overlay-budget-deferred" }),
       shouldHide: ({ item, visible }) => {
         if (!visible || (editingId && editingId === item.id)) {
           return true;
@@ -9869,13 +10357,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.dataset.classSignature = classSignature;
       }
 
-      const fontSize = Math.max(12, Number(item.fontSize || 18)) * scale;
       const isFlowNode = item.type === "flowNode";
       const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
-      const padding = isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
-      const lineHeightRatio = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO;
       const linkSignature = item.type === "text" || isMindNode ? getLinkSemanticSignature(item) : "";
-      const overlayMode = detailMode ? "detail" : resolveRichOverlaySummaryMode({ scale, width, height });
+      const overlayMode =
+        (!interactionPriorityActive && detailMode) || isRichOverlayDetailPinned(item.id)
+          ? "detail"
+          : resolveRichOverlaySummaryMode({ scale, width, height });
+      const surfaceLayout = resolveRichTextSurfaceLayout(item, state.board.view, {
+        mode: "display",
+        overlayMode,
+      });
       const detailCacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
       const detailRenderSignature = `${detailCacheKey}|${scaleBucket}`;
       node.classList.toggle("is-summary-skeleton", overlayMode === "summary-skeleton");
@@ -9956,18 +10448,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             overflow: "hidden",
           }
         : baseBoxStyles;
-      const fontWeight = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT;
-      const appliedPaddingX = overlayMode === "detail" ? padding.x : 0;
-      const appliedPaddingY = overlayMode === "detail" ? padding.y : 0;
       const styleSignature = getRichOverlayStyleSignature({
-        left,
-        top,
-        fontSize,
-        paddingX: appliedPaddingX,
-        paddingY: appliedPaddingY,
-        lineHeightRatio,
-        fontWeight,
-        color: item.color || "#0f172a",
+        left: surfaceLayout?.left ?? left,
+        top: surfaceLayout?.top ?? top,
+        fontSize: surfaceLayout?.fontSize ?? Math.max(12, Number(item.fontSize || 18)) * scale,
+        paddingX: surfaceLayout?.padding?.x ?? 0,
+        paddingY: surfaceLayout?.padding?.y ?? 0,
+        lineHeightRatio: surfaceLayout?.lineHeightRatio ?? TEXT_LINE_HEIGHT_RATIO,
+        fontWeight: surfaceLayout?.fontWeight ?? TEXT_FONT_WEIGHT,
+        color: surfaceLayout?.color ?? item.color ?? "#0f172a",
         widthCss: boxStyles.widthCss,
         heightCss: boxStyles.heightCss,
         minHeightCss: boxStyles.minHeightCss,
@@ -9979,26 +10468,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         overflow: boxStyles.overflow,
       });
       if (node.dataset.styleSignature !== styleSignature) {
-        setStyleIfNeeded(node, "left", `${left}px`);
-        setStyleIfNeeded(node, "top", `${top}px`);
+        applyRichTextSurfaceLayout(node, surfaceLayout, { includePosition: true, includeBox: overlayMode !== "detail" });
         setStyleIfNeeded(node, "display", boxStyles.display);
         setStyleIfNeeded(node, "width", boxStyles.widthCss);
         setStyleIfNeeded(node, "height", boxStyles.heightCss);
         setStyleIfNeeded(node, "minHeight", boxStyles.minHeightCss);
         setStyleIfNeeded(node, "maxWidth", boxStyles.maxWidthCss);
-        setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
-        setStyleIfNeeded(node, "fontFamily", TEXT_FONT_FAMILY);
-        setStyleIfNeeded(node, "padding", `${appliedPaddingY}px ${appliedPaddingX}px`);
-        setStyleIfNeeded(node, "lineHeight", String(lineHeightRatio));
-        setStyleIfNeeded(node, "fontWeight", fontWeight);
-        setStyleIfNeeded(node, "color", item.color || "#0f172a");
         setStyleIfNeeded(node, "whiteSpace", boxStyles.whiteSpace);
         setStyleIfNeeded(node, "wordBreak", boxStyles.wordBreak);
         setStyleIfNeeded(node, "overflowWrap", boxStyles.overflowWrap);
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (overlayMode === "detail" && (item.type === "text" || isMindNode)) {
+      if (overlayMode === "detail" && !state.editingId && (item.type === "text" || isMindNode)) {
         const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
@@ -10016,6 +10498,48 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
+  function pinRichOverlayDetailForHandoff(itemId = "") {
+    const id = String(itemId || "").trim();
+    if (!id) {
+      return;
+    }
+    richOverlayDetailPinnedUntil.set(id, Date.now() + RICH_OVERLAY_EDIT_HANDOFF_DETAIL_MS);
+  }
+
+  function prepareRichOverlayDetailHandoff(item, { deferHtmlWarmup = false } = {}) {
+    if (!item?.id) {
+      return;
+    }
+    const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
+    if (item.type === "text" || isMindNode || item.type === "flowNode") {
+      const linkSignature = item.type === "text" || isMindNode ? getLinkSemanticSignature(item) : "";
+      if (deferHtmlWarmup) {
+        scheduleIdleTask(() => {
+          resolveCachedRichOverlayDetailHtml(item, linkSignature);
+        });
+      } else {
+        resolveCachedRichOverlayDetailHtml(item, linkSignature);
+      }
+    }
+    pinRichOverlayDetailForHandoff(item.id);
+  }
+
+  function isRichOverlayDetailPinned(itemId = "") {
+    const id = String(itemId || "").trim();
+    if (!id) {
+      return false;
+    }
+    const until = Number(richOverlayDetailPinnedUntil.get(id) || 0);
+    if (!until) {
+      return false;
+    }
+    if (until <= Date.now()) {
+      richOverlayDetailPinnedUntil.delete(id);
+      return false;
+    }
+    return true;
+  }
+
   function syncMathOverlays(visibleScene = null) {
     if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
       return;
@@ -10026,6 +10550,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingMathRender(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "math",
       });
       return;
     }
@@ -10035,6 +10561,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingMathRender(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "math",
       });
       return;
     }
@@ -10050,6 +10578,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingMathRender(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "math",
       });
       return;
     }
@@ -10061,10 +10591,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           cancelPendingMathRender(node);
           node.remove?.();
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "math",
       });
       return;
     }
     showOverlayHost(refs.mathDisplayHost);
+    const interactionPriorityActive = interactionPriorityGate.isActive();
     const detailMode = isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
@@ -10107,6 +10640,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         refs.mathDisplayHost.appendChild(nextNode);
         return nextNode;
       },
+      budgetManager: overlayBudgetManager,
+      overlayType: "math",
+      getBudgetOptions: () => ({
+        allowDuringInteraction: false,
+      }),
+      onDeferred: () => scheduleRender({ overlayDirty: true, reason: "math-overlay-budget-deferred" }),
       onRemove: (node) => {
         cancelPendingMathRender(node);
         node.remove?.();
@@ -10119,7 +10658,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       syncNode: (node, { item, left, top, width, height }) => {
       const displayMode = item.displayMode !== false;
       const formula = String(item.formula || "");
-      const overlayMode = detailMode ? "detail" : resolveMathOverlaySummaryMode({ scale, width, height, displayMode });
+      const overlayMode =
+        !interactionPriorityActive && detailMode
+          ? "detail"
+          : resolveMathOverlaySummaryMode({ scale, width, height, displayMode });
       const shouldRetryRender =
         overlayMode === "detail" &&
         item.mathOverlayReady !== true &&
@@ -10326,6 +10868,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         cleanupCodeBlockStaticNode(node);
         node.remove?.();
       },
+      budgetManager: overlayBudgetManager,
+      overlayType: "code",
     });
 
     if (shouldRescan) {
@@ -10340,6 +10884,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           refs.codeBlockDisplayHost.appendChild(nextNode);
           return nextNode;
         },
+        budgetManager: overlayBudgetManager,
+        overlayType: "code",
+        getBudgetOptions: (item) => ({
+          force: state.editingId === item.id && state.editingType === "code-block",
+          allowDuringInteraction: state.editingId === item.id && state.editingType === "code-block",
+        }),
+        onDeferred: (itemId) => markCodeBlockOverlayDirty(itemId),
         onRemove: (node) => {
           cleanupCodeBlockStaticNode(node);
           node.remove?.();
@@ -10535,21 +11086,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
+    const fontSize = item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE);
     const html = normalizeRichHtmlInlineFontSizes(
       richTextSession.getHTML() || refs.richEditor.innerHTML || "",
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
+      fontSize
     );
-    const content = normalizeEditedRichTextContent(
-      item,
+    const draft = buildCommittedTextDraft(item, {
       html,
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
-    const plainText = content.plainText;
-    const canonicalHtml = normalizeRichHtmlInlineFontSizes(
-      getCanonicalRichTextHtml(content, html),
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
+      fontSize,
+    });
+    if (!draft) {
+      return false;
+    }
+    setCommittedTextDraftCacheEntry(item.id, draft);
+    const plainText = draft.plainText;
     if (!plainText.trim()) {
+      clearCommittedTextDraftCacheEntry(item.id);
       state.board.items = state.board.items.filter((entry) => {
         if (entry.id === item.id) {
           return false;
@@ -10575,9 +11127,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const textSplitItems = buildTextSplitItems(item, html, {
       width: Math.max(80, Number(item.width || 0) || 80),
-      fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE),
+      fontSize,
     });
     if (Array.isArray(textSplitItems) && textSplitItems.length) {
+      clearCommittedTextDraftCacheEntry(item.id);
       textSplitItems.forEach((entry) => {
         if (entry?.type === "text") {
           scheduleUrlMetaHydrationForItem(entry);
@@ -10620,11 +11173,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return true;
     }
-    const splitItems = buildStandaloneMathBlockSplitItems(item, canonicalHtml, {
+    const splitItems = buildStandaloneMathBlockSplitItems(item, draft.html, {
       width: Math.max(80, Number(item.width || 0) || 80),
-      fontSize: item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE),
+      fontSize,
     });
     if (Array.isArray(splitItems) && splitItems.length) {
+      clearCommittedTextDraftCacheEntry(item.id);
       splitItems.forEach((entry) => {
         if (entry?.type === "text") {
           scheduleUrlMetaHydrationForItem(entry);
@@ -10667,64 +11221,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return true;
     }
-    syncEditingTextItemSize(item);
-    const currentWidth = Math.max(80, Number(item.width || 0) || 80);
-    const currentHeight = Math.max(40, Number(item.height || 0) || 40);
-    const refreshedLinkSemantics = linkSemanticEnabled
-      ? refreshTextLinkSemantics(
-          {
-            ...item,
-            html: canonicalHtml,
-            richTextDocument: content.richTextDocument,
-          },
-          plainText
-        )
-      : {
-          linkTokens: Array.isArray(item.linkTokens) ? item.linkTokens : [],
-          urlMetaCache: item.urlMetaCache && typeof item.urlMetaCache === "object" ? item.urlMetaCache : {},
-        };
-    const richTextDocumentWithMeta =
-      content.richTextDocument && typeof content.richTextDocument === "object"
-        ? {
-            ...content.richTextDocument,
-            meta: {
-              ...(content.richTextDocument.meta && typeof content.richTextDocument.meta === "object"
-                ? content.richTextDocument.meta
-                : {}),
-              linkTokens: refreshedLinkSemantics.linkTokens,
-              urlMetaCache: refreshedLinkSemantics.urlMetaCache,
-            },
-          }
-        : content.richTextDocument;
-    const finalLayoutConfig = resolveEditedTextLayoutConfig(
-      item,
-      { ...content, html: canonicalHtml },
-      item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE)
-    );
-    const normalizedItem = normalizeTextElement(
-      {
-        ...item,
-        html: canonicalHtml,
-        plainText,
-        text: plainText,
-        richTextDocument: richTextDocumentWithMeta,
-        linkTokens: refreshedLinkSemantics.linkTokens,
-        urlMetaCache: refreshedLinkSemantics.urlMetaCache,
-        textBoxLayoutMode: finalLayoutConfig.layoutMode,
-        textResizeMode: finalLayoutConfig.resizeMode,
-        title: buildTextTitle(plainText || "文本"),
-        width:
-          finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT
-            ? Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || currentWidth) || currentWidth))
-            : currentWidth,
-        height: currentHeight,
-      },
-      {
-        skipMetrics: true,
-      }
-    );
-    Object.assign(item, normalizedItem);
-    scheduleUrlMetaHydrationForItem(item);
+    applyCommittedTextDraftToItem(item, draft);
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
@@ -10732,6 +11229,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新文本", "text-edit");
     if (!changed) {
+      scheduleDeferredCommittedTextFollowups(item, draft);
       syncBoard({ persist: false, emit: true, markDirty: false });
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
         shouldExitTextToolAfterEdit = false;
@@ -10739,6 +11237,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return true;
     }
+    scheduleDeferredCommittedTextFollowups(item, draft);
     setStatus("文本已更新");
     persistCommittedBoardIfPossible();
     if (state.tool === "text" && shouldExitTextToolAfterEdit) {
@@ -10801,6 +11300,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
+    prepareRichOverlayDetailHandoff(item);
     scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新节点", "flow-node-edit");
@@ -10898,6 +11398,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
+    prepareRichOverlayDetailHandoff(item);
     scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新思维节点", "mind-node-edit");
@@ -13924,7 +14425,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return null;
     }
     const hydratedItems = await hydrateImageItems(selectedItems);
-    const exportItems = buildExportReadyBoardItems(hydratedItems);
+    const exportItems = buildExportReadyBoardItems(hydratedItems, { safeExport: true });
     if (reportProgress) {
       await reportProgress("正在预加载图片资源...");
     }
@@ -13945,42 +14446,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       devicePixelRatio: 1,
       exportBounds: bounds,
     };
-    const initialRenderResult = renderExportBoardToCanvas(exportItems, baseRenderOptions);
-    const isOversizedExport =
-      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
-      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
-    if (!isOversizedExport) {
-      return initialRenderResult;
-    }
-    const requestedWidth = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasWidth || 0) || 1));
-    const requestedHeight = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasHeight || 0) || 1));
-    const requestedPixels = Math.max(1, Math.round(Number(initialRenderResult?.requestedTotalPixels || 0) || 1));
-    const continueExport =
-      typeof window !== "undefined" && typeof window.confirm === "function"
-        ? window.confirm(
-            [
-              `当前${exportLabel}尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。`,
-              "",
-              `目标画布像素：${requestedWidth} × ${requestedHeight}`,
-              `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
-              "",
-              "是否仍然继续导出？",
-            ].join("\n")
-          )
-        : false;
-    if (!continueExport) {
-      return {
-        canceled: true,
-        code: options.cancelCode || "PNG_EXPORT_CANCELED",
-      };
-    }
-    if (reportProgress) {
-      await reportProgress(`正在按大尺寸继续${exportLabel}...`);
-    }
-    return renderExportBoardToCanvas(exportItems, {
-      ...baseRenderOptions,
-      allowUnsafeSize: true,
-    });
+    return renderExportBoardToCanvas(exportItems, baseRenderOptions);
   }
 
   async function renderBoardToCanvas(options = {}) {
@@ -13990,7 +14456,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       await reportProgress("正在准备画布资源...");
     }
     const hydratedItems = await hydrateImageItems(state.board.items);
-    const exportItems = buildExportReadyBoardItems(hydratedItems);
+    const exportItems = buildExportReadyBoardItems(hydratedItems, { safeExport: true });
     if (reportProgress) {
       await reportProgress("正在预加载图片资源...");
     }
@@ -14010,43 +14476,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       scale: options.scale ?? 1,
       devicePixelRatio: 1,
     };
-    const initialRenderResult = renderExportBoardToCanvas(exportItems, baseRenderOptions);
-    const isOversizedPdfExport =
-      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
-      initialRenderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
-    if (!isOversizedPdfExport) {
-      return initialRenderResult;
-    }
-
-    const requestedWidth = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasWidth || 0) || 1));
-    const requestedHeight = Math.max(1, Math.round(Number(initialRenderResult?.requestedCanvasHeight || 0) || 1));
-    const requestedPixels = Math.max(1, Math.round(Number(initialRenderResult?.requestedTotalPixels || 0) || 1));
-    const continueExport =
-      typeof window !== "undefined" && typeof window.confirm === "function"
-        ? window.confirm(
-            [
-              `当前${exportLabel}尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。`,
-              "",
-              `目标画布像素：${requestedWidth} × ${requestedHeight}`,
-              `总像素：${requestedPixels.toLocaleString("zh-CN")}`,
-              "",
-              "是否仍然继续导出？",
-            ].join("\n")
-          )
-        : false;
-    if (!continueExport) {
-      return {
-        canceled: true,
-        code: "PDF_EXPORT_CANCELED",
-      };
-    }
-    if (reportProgress) {
-      await reportProgress(`正在按大尺寸继续${exportLabel}...`);
-    }
-    return renderExportBoardToCanvas(exportItems, {
-      ...baseRenderOptions,
-      allowUnsafeSize: true,
-    });
+    return renderExportBoardToCanvas(exportItems, baseRenderOptions);
   }
 
   function buildExportHistoryEntry({
@@ -14073,33 +14503,25 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function exportBoardAsPdf(options = {}) {
+    const exportController = beginExportTask("PDF");
     try {
       setStatus("正在生成 PDF...");
       await waitForUiPaint();
-      const result = await structuredExportRuntime.exportBoardAsPdf(state.board, {
+      const exportOptions = {
         ...options,
+        signal: exportController.signal,
         background: "white",
         includeGrid: false,
         backgroundPattern: resolveExportBackgroundPattern(options),
-        onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
-          if (typeof window === "undefined" || typeof window.confirm !== "function") {
-            return false;
-          }
-          return window.confirm(
-            [
-              "当前 PDF 导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
-              "",
-              `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
-                1,
-                Math.round(Number(requestedCanvasHeight || 0) || 1)
-              )}`,
-              `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
-              "",
-              "是否仍然继续导出？",
-            ].join("\n")
-          );
-        },
-      });
+      };
+      const result =
+        typeof globalThis?.desktopShell?.exportBoardInBackground === "function"
+          ? await globalThis.desktopShell.exportBoardInBackground({
+              kind: "pdf",
+              board: clone(state.board),
+              options: exportOptions,
+            })
+          : await structuredExportRuntime.exportBoardAsPdf(state.board, exportOptions);
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -14120,6 +14542,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "导出失败", "warning");
       return result;
     } catch (error) {
+      if (exportController.signal.aborted) {
+        return {
+          ok: false,
+          canceled: true,
+          code: "PDF_EXPORT_CANCELED",
+          message: "",
+          fileName: "",
+          filePath: "",
+          bytes: 0,
+          pageWidth: 0,
+          pageHeight: 0,
+          scaleApplied: 0,
+        };
+      }
       const message = error?.message || "导出失败";
       setStatus(message, "warning");
       return {
@@ -14134,37 +14570,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         pageHeight: 0,
         scaleApplied: 0,
       };
+    } finally {
+      clearActiveExportTask(exportController);
     }
   }
 
   async function exportBoardAsPng(options = {}) {
+    const exportController = beginExportTask("PNG");
     try {
       setStatus("正在生成 PNG...");
       await waitForUiPaint();
-      const result = await structuredExportRuntime.exportBoardAsPng(state.board, {
+      const exportOptions = {
         ...options,
+        signal: exportController.signal,
         background: "white",
         includeGrid: false,
         backgroundPattern: resolveExportBackgroundPattern(options),
-        onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
-          if (typeof window === "undefined" || typeof window.confirm !== "function") {
-            return false;
-          }
-          return window.confirm(
-            [
-              "当前图片导出尺寸过大，可能导出很慢、占用大量内存，或最终生成失败。",
-              "",
-              `目标画布像素：${Math.max(1, Math.round(Number(requestedCanvasWidth || 0) || 1))} × ${Math.max(
-                1,
-                Math.round(Number(requestedCanvasHeight || 0) || 1)
-              )}`,
-              `总像素：${Math.max(1, Math.round(Number(requestedTotalPixels || 0) || 1)).toLocaleString("zh-CN")}`,
-              "",
-              "是否仍然继续导出？",
-            ].join("\n")
-          );
-        },
-      });
+      };
+      const result = await structuredExportRuntime.exportBoardAsPng(state.board, exportOptions);
       if (result?.canceled) {
         setStatus("PNG 导出已取消", "warning");
         return result;
@@ -14185,6 +14608,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "PNG 导出失败", "warning");
       return result;
     } catch (error) {
+      if (exportController.signal.aborted) {
+        return {
+          ok: false,
+          canceled: true,
+          code: "PNG_EXPORT_CANCELED",
+          message: "",
+          fileName: "",
+          filePath: "",
+          bytes: 0,
+        };
+      }
       const message = error?.message || "PNG 导出失败";
       setStatus(message, "warning");
       return {
@@ -14196,6 +14630,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         filePath: "",
         bytes: 0,
       };
+    } finally {
+      clearActiveExportTask(exportController);
     }
   }
 
@@ -14497,7 +14933,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   async function exportItemsAsImage(items = [], options = {}) {
     try {
-      const result = await structuredExportRuntime.exportItemsAsImage(state.board, items, {
+      const safeItems = buildExportReadyBoardItems(items, { safeExport: true });
+      const result = await structuredExportRuntime.exportItemsAsImage(state.board, safeItems, {
         ...options,
         onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
           if (typeof window === "undefined" || typeof window.confirm !== "function") {
@@ -14617,6 +15054,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const nextRequests = requests.slice();
     nextRequests.splice(targetIndex, 1);
     state.fileCardPreviewRequests = nextRequests;
+    hydrationScheduler.remove(`file-preview-read:${String(targetRequest?.id || "").trim()}`);
     clearInlineFileCardPreviewNode();
     store.emit();
     scheduleRender({ overlayDirty: true });
@@ -14655,7 +15093,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!activeRequestId || !targetPath) {
       return false;
     }
-    try {
+    return timeAssetTask("file-preview-read", async () => {
       const current = findFileCardPreviewRequest(activeRequestId);
       const previewSpec = current?.previewKind ? {
         kind: String(current.previewKind || "").trim().toLowerCase(),
@@ -14731,7 +15169,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStatus(String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览", "warning");
       }
       return Boolean(result?.ok && fileBase64 && mimeAccepted);
-    } catch (error) {
+    }).catch((error) => {
       const current = findFileCardPreviewRequest(activeRequestId);
       if (current) {
         patchFileCardPreviewRequest(activeRequestId, {
@@ -14751,7 +15189,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       setStatus(String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败", "warning");
       return false;
-    }
+    });
   }
 
   function openFileCardPreview(item = null) {
@@ -14821,7 +15259,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     store.emit();
     setStatus(hasDesktopFileBridge ? `正在加载 ${previewSpec.fileLabel} 预览...` : `正在通过后端读取 ${previewSpec.fileLabel} 预览...`);
     scheduleRender({ overlayDirty: true });
-    void hydrateFileCardPreviewFile(requestId, sourcePath);
+    recordAssetStats({ queued: 1 });
+    hydrationScheduler.enqueue(
+      `file-preview-read:${requestId}`,
+      () => hydrateFileCardPreviewFile(requestId, sourcePath),
+      {
+        priority: "selected",
+        type: "file-preview-read",
+        onError: (error) => {
+          setStatus(String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败", "warning");
+        },
+      }
+    );
     return true;
   }
 
@@ -17978,11 +18427,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     hideLinkMetaTooltip();
 
     if (pointer.type === "pan") {
+      activateInteractionPriority("pointer-pan");
       const deltaX = Number(event.clientX || 0) - Number(pointer.lastClientX || 0);
       const deltaY = Number(event.clientY || 0) - Number(pointer.lastClientY || 0);
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
       state.board.view = panView(state.board.view, deltaX, deltaY);
+      transientMinimap.handlePanMove();
       scheduleRender({ reason: "pointer-pan-move", viewDirty: true, interactionDirty: false });
       return;
     }
@@ -17994,11 +18445,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       suppressBlankCanvasContextMenuUntil = Date.now() + 600;
       pointer.type = "pan";
+      activateInteractionPriority("pointer-pan");
       const deltaX = Number(event.clientX || 0) - Number(pointer.lastClientX || 0);
       const deltaY = Number(event.clientY || 0) - Number(pointer.lastClientY || 0);
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
       state.board.view = panView(state.board.view, deltaX, deltaY);
+      transientMinimap.handlePanStart();
       scheduleRender({ reason: "pointer-pan-start", viewDirty: true, interactionDirty: false });
       return;
     }
@@ -18034,6 +18487,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     if (pointer.type === "move-selection") {
+      activateInteractionPriority("move-selection");
       let deltaX = Number(scenePoint.x || 0) - Number(pointer.startScene?.x || 0);
       let deltaY = Number(scenePoint.y || 0) - Number(pointer.startScene?.y || 0);
       const itemMap = new Map(state.board.items.map((item) => [item.id, item]));
@@ -18325,6 +18779,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     updateLastPointerPoint(scenePoint);
     refs.canvas?.releasePointerCapture?.(event.pointerId);
     state.pointer = null;
+    releaseInteractionPriority(140);
     clearAlignmentSnap("pointer-up");
     suppressNativeDrag = false;
 
@@ -18334,6 +18789,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     if (pointer.type === "pan") {
+      transientMinimap.handlePanEnd();
       syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "pointer-pan-commit" });
       return;
     }
@@ -18522,6 +18978,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     refs.canvas?.releasePointerCapture?.(event.pointerId);
     suppressNativeDrag = false;
+    releaseInteractionPriority(140);
     if (state.pointer?.type === "image-crop") {
       lightImageEditor.clearTransientState();
     }
@@ -18538,6 +18995,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onPointerLeave() {
     pointerOverCanvas = false;
+    releaseInteractionPriority(140);
     if (state.hoverId || state.hoverHandle) {
       state.hoverId = null;
       state.hoverHandle = null;
@@ -18607,6 +19065,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     event.preventDefault();
+    activateInteractionPriority(event.ctrlKey || event.metaKey ? "wheel-zoom" : "wheel-pan");
+    releaseInteractionPriority(140);
     if (event.ctrlKey || event.metaKey) {
       const focusPoint = toScenePoint(event.clientX, event.clientY);
       const zoomFactor = Math.exp(-event.deltaY * 0.0015);
@@ -23008,9 +23468,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bindEvents();
     state.mode = normalizeMode(getCanvasOfficeEngineMode());
     markHistoryBaseline(state.history, takeHistorySnapshot(state));
-    resize();
+    resize({ immediate: true, reason: "mount-resize" });
     store.emit();
     scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: true, fullOverlayRescan: true });
+    transientMinimap.refreshSceneSnapshot();
     void initBoardFileState();
     void resolveFileCardSources();
     window.dispatchEvent(new CustomEvent("canvas2d-engine-ready"));
@@ -23043,9 +23504,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelAnimationFrame(deferredBlankEditExitFrame);
       deferredBlankEditExitFrame = 0;
     }
+    if (pendingResizeFrame) {
+      cancelAnimationFrame(pendingResizeFrame);
+      pendingResizeFrame = 0;
+    }
     cancelPendingRichEditorHide();
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
+    transientMinimap.unmount();
     richTextSession.destroy();
     codeBlockEditor.clear();
     cancelTextEdit();
@@ -23058,6 +23524,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     stopAutosaveTimer();
     renderScheduler?.dispose?.();
     renderScheduler = null;
+    lastViewportBudget = null;
+    largeViewportProgressivePending = false;
     fileCardIdHydrationQueue.clear();
     fileCardSourceHydrationQueue.clear();
     urlMetaHydrationQueue.clear();
@@ -23706,6 +24174,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     resize,
     subscribe: store.subscribe,
     getSnapshot: store.getSnapshot,
+    getInteractionPrioritySnapshot,
     setTool,
     setMode,
     setStatus,
@@ -23722,6 +24191,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     renderBoardToCanvas,
     exportBoardAsPdf,
     exportBoardAsPng,
+    cancelActiveExport,
     openFileCardPreview,
     confirmWordExportPreview,
     closeWordExportPreview: clearWordExportPreviewRequest,
@@ -23828,6 +24298,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     },
     buildStructuredExportSnapshot(options = {}) {
       return structuredExportRuntime.buildSnapshot(state.board, options);
+    },
+    loadStructuredBoardForExport(board = {}, options = {}) {
+      const nextBoard = repairMisclassifiedCodeBlocksOnBoard(board, DEFAULT_TEXT_FONT_SIZE);
+      store.replaceBoard(nextBoard);
+      state.board.selectedIds = Array.isArray(nextBoard?.selectedIds) ? [...nextBoard.selectedIds] : [];
+      if (options?.resetView === true) {
+        store.resetView();
+      }
+      store.emit();
+      return true;
     },
     getStructuredExportRuntime() {
       return structuredExportRuntime;

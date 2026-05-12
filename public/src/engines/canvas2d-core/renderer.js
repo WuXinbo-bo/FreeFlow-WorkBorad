@@ -17,6 +17,7 @@ import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, s
 import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
 import { createTileSceneCache } from "./render/tileSceneCache.js";
 import { drawStableRoundedRectPath, resolveScreenCornerRadius } from "./render/cornerRadius.js";
+import { resolveViewportPixelBudget } from "./render/viewportPixelBudget.js";
 import {
   getMultiSelectionBounds,
   getMultiSelectionHandleMap,
@@ -36,6 +37,7 @@ const CANVAS_LOD_CODE_BLOCK_MIN_SCALE = 0.15;
 const CANVAS_LOD_MATH_MIN_SCALE = 0.15;
 const CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX = 72;
 const CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX = 28;
+const LARGE_VIEWPORT_COLD_TILE_BUDGET = 6;
 
 function getCanvasLodScalePercent(scale = 1) {
   return Math.round(Math.max(0.1, Number(scale) || 1) * 100);
@@ -1429,6 +1431,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
       backgroundStyle,
       renderTextInCanvas,
       pixelRatio,
+      viewportBudget = null,
+      deferColdTiles = false,
       visibleItems = null,
       sceneIndex = null,
       sceneKey = "",
@@ -1436,9 +1440,18 @@ export function createRenderer({ customRenderers = [] } = {}) {
       layerState = null,
       forceFreshSurfaces = false,
     }) {
-      const dpr = Math.max(1, Number(pixelRatio) || window.devicePixelRatio || 1);
-      const width = canvas.width / dpr;
-      const height = canvas.height / dpr;
+      const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
+      const rawDpr = Math.max(1, Number(pixelRatio) || fallbackDpr || 1);
+      const resolvedBudget = viewportBudget && typeof viewportBudget === "object"
+        ? viewportBudget
+        : resolveViewportPixelBudget({
+            cssWidth: canvas.clientWidth || canvas.width / rawDpr,
+            cssHeight: canvas.clientHeight || canvas.height / rawDpr,
+            devicePixelRatio: rawDpr,
+          });
+      const dpr = Math.max(0.1, Number(resolvedBudget.effectiveDpr || rawDpr) || 1);
+      const width = Math.max(1, Number(resolvedBudget.cssWidth || (canvas.width / dpr)) || 1);
+      const height = Math.max(1, Number(resolvedBudget.cssHeight || (canvas.height / dpr)) || 1);
       const frameStart = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (forceFreshSurfaces) {
         resetCachedSurfaces();
@@ -1449,15 +1462,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
         dynamicScene: true,
         interaction: true,
       };
-
-      const backgroundLayer = layerStore.ensure("background", width, height, dpr);
-      const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
-      const connectionLayer = layerStore.ensure("mindConnections", width, height, dpr);
-      const dynamicLayer = layerStore.ensure("dynamicScene", width, height, dpr);
-      const interactionLayer = layerStore.ensure("interaction", width, height, dpr);
-      if (!backgroundLayer || !staticLayer || !connectionLayer || !dynamicLayer || !interactionLayer) {
-        return null;
-      }
 
       const cullResult =
         Array.isArray(visibleItems)
@@ -1542,25 +1546,57 @@ export function createRenderer({ customRenderers = [] } = {}) {
       };
       let customRendererHandledCount = 0;
       let lodSimplifiedCount = 0;
+      const hasConnectionContent = frameVisibleItems.some(
+        (item) => item?.type === "mindNode" || item?.type === "mindSummary" || isMindRelationshipItem(item)
+      ) || Boolean(relationshipDraft);
+      const hasDynamicContent = dynamicItems.length > 0 || Boolean(draftElement);
+      const hasInteractionContent = Boolean(
+        selectionRect ||
+        alignmentSnap?.active ||
+        (mindMapDropTarget && mindMapDropHint) ||
+        mindMapDropHint ||
+        (Array.isArray(selectedIds) && selectedIds.length >= 2)
+      ) || Boolean(hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")));
       const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
       const effectiveStaticSceneDirty = Boolean(layerDirty.staticScene || forceStaticSceneRedraw || forceViewRedraw);
       const effectiveDynamicSceneDirty = Boolean(
-        forceViewRedraw ||
-        forceDynamicSceneRedraw ||
+        hasDynamicContent &&
         (
-          layerDirty.dynamicScene &&
-          (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+          forceViewRedraw ||
+          forceDynamicSceneRedraw ||
+          (
+            layerDirty.dynamicScene &&
+            (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+          )
         )
       );
-      const effectiveConnectionDirty = Boolean(forceViewRedraw || effectiveStaticSceneDirty || effectiveDynamicSceneDirty);
+      const effectiveConnectionDirty = Boolean(hasConnectionContent && (forceViewRedraw || effectiveStaticSceneDirty || effectiveDynamicSceneDirty));
       const effectiveInteractionDirty = Boolean(
-        forceViewRedraw ||
-        forceInteractionRedraw ||
+        hasInteractionContent &&
         (
-          layerDirty.interaction &&
-          (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+          forceViewRedraw ||
+          forceInteractionRedraw ||
+          (
+            layerDirty.interaction &&
+            (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.interactionDirty || forceStaticSceneRedraw)
+          )
         )
       );
+
+      const backgroundLayer = layerStore.ensure("background", width, height, dpr);
+      const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
+      const connectionLayer = hasConnectionContent ? layerStore.ensure("mindConnections", width, height, dpr) : null;
+      const dynamicLayer = hasDynamicContent ? layerStore.ensure("dynamicScene", width, height, dpr) : null;
+      const interactionLayer = hasInteractionContent ? layerStore.ensure("interaction", width, height, dpr) : null;
+      if (
+        !backgroundLayer ||
+        !staticLayer ||
+        (hasConnectionContent && !connectionLayer) ||
+        (hasDynamicContent && !dynamicLayer) ||
+        (hasInteractionContent && !interactionLayer)
+      ) {
+        return null;
+      }
 
       if (effectiveBackgroundDirty) {
         clearLayerContext(backgroundLayer, width, height);
@@ -1581,6 +1617,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                 excludeIds: Array.from(dynamicRenderIdSet),
                 sceneChanged: Boolean(dirtyState?.sceneDirty),
                 dirtyItemIds: Array.isArray(dirtyState?.itemIds) ? dirtyState.itemIds : [],
+                maxColdTiles: deferColdTiles ? LARGE_VIEWPORT_COLD_TILE_BUDGET : Infinity,
                 drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
                   drawVisibleItemsToContext({
                     ctx: tileCtx,
@@ -1705,14 +1742,37 @@ export function createRenderer({ customRenderers = [] } = {}) {
       ctx.clearRect(0, 0, width, height);
       ctx.drawImage(backgroundLayer.canvas, 0, 0, width, height);
       ctx.drawImage(staticLayer.canvas, 0, 0, width, height);
-      ctx.drawImage(connectionLayer.canvas, 0, 0, width, height);
-      ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
-      ctx.drawImage(interactionLayer.canvas, 0, 0, width, height);
+      if (hasConnectionContent) {
+        ctx.drawImage(connectionLayer.canvas, 0, 0, width, height);
+      }
+      if (hasDynamicContent) {
+        ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
+      }
+      if (hasInteractionContent) {
+        ctx.drawImage(interactionLayer.canvas, 0, 0, width, height);
+      }
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
       const backgroundStats = backgroundPatternCache.getStats();
-      canvas.__ffRenderStats = {
+      const renderStats = {
         frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
         viewport: { width, height },
+        pixelBudget: {
+          cssWidth: Number(resolvedBudget.cssWidth || width),
+          cssHeight: Number(resolvedBudget.cssHeight || height),
+          rawDpr: Number(resolvedBudget.rawDpr || rawDpr),
+          effectiveDpr: dpr,
+          pixelWidth: Number(resolvedBudget.pixelWidth || canvas.width),
+          pixelHeight: Number(resolvedBudget.pixelHeight || canvas.height),
+          backingPixels: Number(resolvedBudget.backingPixels || (canvas.width * canvas.height)),
+          maxBackingPixels: Number(resolvedBudget.maxBackingPixels || 0),
+          dprLimited: Boolean(resolvedBudget.dprLimited),
+          isLargeViewport: Boolean(resolvedBudget.isLargeViewport),
+        },
+        progressiveRender: {
+          enabled: Boolean(deferColdTiles),
+          deferredColdTiles: Math.max(0, Number(tileStats?.deferredColdTiles || 0) || 0),
+          pending: Boolean(tileStats?.hasDeferredColdTiles),
+        },
         culling: cullResult.stats,
         renderedItems: frameVisibleItems.length,
         staticRenderedItems: staticItems.length,
@@ -1743,6 +1803,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
           reused: !effectiveStaticSceneDirty,
         },
       };
+      canvas.__ffRenderStats = renderStats;
+      if (typeof window !== "undefined") {
+        window.__ffRenderStats = renderStats;
+      }
       ctx.restore();
     },
   };

@@ -337,13 +337,16 @@ const EXTERNAL_HTML_SEMANTIC_TAGS = new Set([
   "h4",
   "h5",
   "h6",
+  "font",
   "li",
   "ol",
+  "mark",
   "p",
   "pre",
   "s",
   "section",
   "article",
+  "span",
   "strong",
   "table",
   "tbody",
@@ -354,6 +357,56 @@ const EXTERNAL_HTML_SEMANTIC_TAGS = new Set([
   "u",
   "ul",
 ]);
+
+const EXTERNAL_HTML_SAFE_INLINE_STYLE_PROPERTIES = new Set([
+  "color",
+  "backgroundColor",
+  "fontWeight",
+  "fontStyle",
+  "textDecoration",
+  "textDecorationColor",
+  "fontFamily",
+  "fontSize",
+  "lineHeight",
+  "textAlign",
+  "whiteSpace",
+  "wordBreak",
+  "overflowWrap",
+  "letterSpacing",
+]);
+
+function sanitizeExternalHtmlInlineStyle(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const styleParts = [];
+  EXTERNAL_HTML_SAFE_INLINE_STYLE_PROPERTIES.forEach((property) => {
+    const value = String(element.style?.[property] || "").trim();
+    if (!value) {
+      return;
+    }
+    const cssName = property.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+    styleParts.push(`${cssName}:${value}`);
+  });
+  if (styleParts.length) {
+    element.setAttribute("style", styleParts.join(";"));
+  } else {
+    element.removeAttribute("style");
+  }
+}
+
+function retainExternalHtmlAttributes(element, allowedAttributes = []) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const allowed = new Set(["style", ...allowedAttributes.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean)]);
+  Array.from(element.attributes).forEach((attr) => {
+    if (!allowed.has(String(attr.name || "").trim().toLowerCase())) {
+      element.removeAttribute(attr.name);
+    }
+  });
+  sanitizeExternalHtmlInlineStyle(element);
+}
 
 function unwrapExternalHtmlElement(element) {
   if (!(element instanceof HTMLElement)) {
@@ -390,7 +443,6 @@ function sanitizeExternalHtmlAnchor(element) {
   const href = String(element.getAttribute("href") || "").trim();
   const title = String(element.getAttribute("title") || "").trim();
   const target = String(element.getAttribute("target") || "").trim();
-  Array.from(element.attributes).forEach((attr) => element.removeAttribute(attr.name));
   if (/^(https?:|mailto:|tel:|#|\/|\.\.?\/)/i.test(href)) {
     element.setAttribute("href", href);
   }
@@ -400,6 +452,7 @@ function sanitizeExternalHtmlAnchor(element) {
   if (["_blank", "_self", "_parent", "_top"].includes(target)) {
     element.setAttribute("target", target);
   }
+  retainExternalHtmlAttributes(element, ["href", "title", "target"]);
 }
 
 function sanitizeExternalHtmlListElement(element) {
@@ -408,9 +461,53 @@ function sanitizeExternalHtmlListElement(element) {
   }
   const tag = String(element.tagName || "").toLowerCase();
   const start = String(element.getAttribute("start") || "").trim();
-  Array.from(element.attributes).forEach((attr) => element.removeAttribute(attr.name));
   if (tag === "ol" && /^\d+$/.test(start)) {
     element.setAttribute("start", start);
+  }
+  retainExternalHtmlAttributes(element, tag === "ol" ? ["start"] : []);
+}
+
+function sanitizeExternalHtmlMediaElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const tag = String(element.tagName || "").toLowerCase();
+  const textFallback = sanitizeText(
+    String(element.getAttribute("alt") || element.getAttribute("title") || element.textContent || "").trim()
+  );
+  if (tag === "img") {
+    replaceExternalHtmlElementWithText(element, textFallback);
+    return;
+  }
+  if (tag === "svg" || tag === "math") {
+    replaceExternalHtmlElementWithText(element, textFallback || sanitizeText(element.textContent || "").trim());
+    return;
+  }
+  if (["iframe", "object", "embed", "canvas", "video", "audio", "picture", "source", "foreignobject"].includes(tag)) {
+    replaceExternalHtmlElementWithText(element, textFallback);
+  }
+}
+
+function sanitizeExternalHtmlStyleUrls(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  const style = String(element.getAttribute("style") || "").trim();
+  if (!style) {
+    return;
+  }
+  if (/url\s*\(/i.test(style) || /image-set\s*\(/i.test(style) || /content\s*:\s*url\s*\(/i.test(style)) {
+    element.removeAttribute("style");
+    return;
+  }
+  const unsafeProps = ["backgroundImage", "maskImage", "WebkitMaskImage", "borderImage", "WebkitBorderImage"];
+  unsafeProps.forEach((property) => {
+    if (/url\s*\(/i.test(String(element.style?.[property] || ""))) {
+      element.style[property] = "";
+    }
+  });
+  if (!element.getAttribute("style")) {
+    element.removeAttribute("style");
   }
 }
 
@@ -452,12 +549,52 @@ export function downgradeExternalHtmlToCanvasTextSemantics(value = "", baseFontS
       }
       return;
     }
-    if (tag === "img") {
-      replaceExternalHtmlElementWithText(node, String(node.getAttribute("alt") || "").trim());
+    if (
+      tag === "img" ||
+      tag === "svg" ||
+      tag === "iframe" ||
+      tag === "object" ||
+      tag === "embed" ||
+      tag === "canvas" ||
+      tag === "video" ||
+      tag === "audio" ||
+      tag === "picture" ||
+      tag === "source" ||
+      tag === "foreignobject"
+    ) {
+      sanitizeExternalHtmlMediaElement(node);
       return;
     }
     if (!EXTERNAL_HTML_SEMANTIC_TAGS.has(tag)) {
       unwrapExternalHtmlElement(node);
+      return;
+    }
+    if (tag === "font") {
+      const color = String(node.getAttribute("color") || "").trim();
+      const face = String(node.getAttribute("face") || "").trim();
+      const size = String(node.getAttribute("size") || "").trim();
+      if (color) {
+        node.style.color = color;
+      }
+      if (face) {
+        node.style.fontFamily = face;
+      }
+      if (size && /^\d+$/.test(size)) {
+        const fontSizeMap = {
+          1: "10px",
+          2: "13px",
+          3: "16px",
+          4: "18px",
+          5: "24px",
+          6: "32px",
+          7: "48px",
+        };
+        const mappedSize = fontSizeMap[size];
+        if (mappedSize) {
+          node.style.fontSize = mappedSize;
+        }
+      }
+      retainExternalHtmlAttributes(node, []);
       return;
     }
     if (tag === "a") {
@@ -479,15 +616,14 @@ export function downgradeExternalHtmlToCanvasTextSemantics(value = "", baseFontS
       tag === "code" ||
       /^h[1-6]$/.test(tag)
     ) {
-      Array.from(node.attributes).forEach((attr) => {
-        if (attr.name === "start" && tag === "ol") {
-          return;
-        }
-        node.removeAttribute(attr.name);
-      });
+      const allowedAttributes = [];
+      if (tag === "td" || tag === "th") {
+        allowedAttributes.push("colspan", "rowspan", "scope", "abbr", "headers");
+      }
+      retainExternalHtmlAttributes(node, allowedAttributes);
       return;
     }
-    Array.from(node.attributes).forEach((attr) => node.removeAttribute(attr.name));
+    retainExternalHtmlAttributes(node, []);
   });
   return normalizeRichHtmlInlineFontSizes(template.innerHTML, baseFontSize);
 }

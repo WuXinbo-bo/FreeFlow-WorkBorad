@@ -15,6 +15,7 @@ export function resolvePdfExportOptions(input = {}, defaults = {}) {
   const scope = "board";
   const includeGrid = Boolean(input?.includeGrid);
   const preferDownload = Boolean(input?.preferDownload);
+  const tileSize = Math.max(256, Math.round(Number(input?.tileSize || defaults?.tileSize || 1024) || 1024));
   const fileName = normalizeExportName(input?.fileName, defaults.defaultFileName || "freeflow-board");
 
   return {
@@ -27,6 +28,7 @@ export function resolvePdfExportOptions(input = {}, defaults = {}) {
     orientation,
     imageFormat,
     preferDownload,
+    tileSize,
   };
 }
 

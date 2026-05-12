@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld("desktopShell", {
   pickImageSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-image-save-path", payload),
   pickTextSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-text-save-path", payload),
   pickPdfSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-pdf-save-path", payload),
+  saveTileCompositeImage: (payload) => ipcRenderer.invoke("desktop-shell:save-tile-composite-image", payload),
+  saveTileCompositePdf: (payload) => ipcRenderer.invoke("desktop-shell:save-tile-composite-pdf", payload),
+  exportBoardInBackground: (payload) => ipcRenderer.invoke("desktop-shell:export-board-in-background", payload),
+  cancelBackgroundExport: (taskId) => ipcRenderer.invoke("desktop-shell:cancel-background-export", taskId),
   exportRichTextDocx: (payload) => ipcRenderer.invoke("desktop-shell:export-rich-text-docx", payload),
   exportWordDocx: (payload) => ipcRenderer.invoke("desktop-shell:export-word-docx", payload),
   previewWordDocx: (payload) => ipcRenderer.invoke("desktop-shell:preview-word-docx", payload),
@@ -96,4 +100,26 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.on("desktop-shell:state-changed", handleStateChange);
     return () => ipcRenderer.removeListener("desktop-shell:state-changed", handleStateChange);
   },
+  onBackgroundExportTask: (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    const handler = (_event, payload) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop-shell:background-export-task", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:background-export-task", handler);
+  },
+  onBackgroundExportCancel: (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    const handler = (_event, payload) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop-shell:background-export-cancel", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:background-export-cancel", handler);
+  },
+  notifyBackgroundExportReady: () => ipcRenderer.send("desktop-shell:background-export-ready"),
+  submitBackgroundExportResult: (payload) => ipcRenderer.invoke("desktop-shell:background-export-result", payload),
 });

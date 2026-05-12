@@ -36,6 +36,9 @@ export function createCanvas2DReactBridge(engine) {
     exportBoardAsPng(options) {
       return engine?.exportBoardAsPng?.(options);
     },
+    cancelActiveExport() {
+      return engine?.cancelActiveExport?.();
+    },
     confirmWordExportPreview(requestId) {
       return engine?.confirmWordExportPreview?.(requestId);
     },

@@ -1,6 +1,9 @@
 import { renderBoardToCanvas as renderExportBoardToCanvas } from "../renderBoardToCanvas.js";
+import { renderSnapshotToTileExports } from "../tileExport.js";
 import { exportBoardAsPdf as runPdfExport } from "../exportBoardAsPdf.js";
+import { buildExportReadyBoardItems } from "../buildExportReadyBoardItems.js";
 import { buildHostExportSnapshot } from "../host/hostExportSnapshotAdapter.js";
+import { downgradeImageItemsForSafeExport } from "../host/hostExportAssetAdapter.js";
 import { htmlToPlainText, normalizeRichHtml, normalizeRichHtmlInlineFontSizes, sanitizeText } from "../../utils.js";
 import { FLOW_NODE_TEXT_LAYOUT, TEXT_FONT_FAMILY, TEXT_FONT_WEIGHT, TEXT_LINE_HEIGHT_RATIO } from "../../rendererText.js";
 import { flattenTableStructureToMatrix } from "../../elements/table.js";
@@ -35,6 +38,39 @@ function safeCanvasToDataUrl(canvas) {
   }
 }
 
+function isMissingDesktopShellHandlerError(error) {
+  const raw = String(error?.message || error || "").trim();
+  return (
+    /No handler registered/i.test(raw) ||
+    /channel closed/i.test(raw) ||
+    /desktop-shell:save-tile-composite-image/i.test(raw) ||
+    /desktop-shell:save-tile-composite-pdf/i.test(raw)
+  );
+}
+
+async function invokeDesktopShellSafely(methodName, payload) {
+  const target = globalThis?.desktopShell?.[methodName];
+  if (typeof target !== "function") {
+    return {
+      ok: false,
+      missingHandler: true,
+      error: `desktopShell.${methodName} is unavailable`,
+    };
+  }
+  try {
+    return await target(payload);
+  } catch (error) {
+    if (isMissingDesktopShellHandlerError(error)) {
+      return {
+        ok: false,
+        missingHandler: true,
+        error: String(error?.message || error || "").trim(),
+      };
+    }
+    throw error;
+  }
+}
+
 function createEmptyBinaryExportResult(code, message = "") {
   return {
     ok: false,
@@ -45,6 +81,15 @@ function createEmptyBinaryExportResult(code, message = "") {
     filePath: "",
     bytes: 0,
   };
+}
+
+function isAbortErrorLike(error) {
+  if (!error) {
+    return false;
+  }
+  const name = String(error?.name || "").trim();
+  const message = String(error?.message || error || "").trim();
+  return name === "AbortError" || /aborted|canceled|cancelled|已取消/i.test(message);
 }
 
 function buildExportFallbackSummary(fallbackCount = 0) {
@@ -260,38 +305,140 @@ export function createStructuredExportRuntime({
     return renderSnapshotToCanvas(snapshot, options);
   }
 
+  async function renderSnapshotToCanvasWithFallback(snapshot, options = {}) {
+    const primary = await renderSnapshotToCanvas(snapshot, options);
+    const tainted =
+      !primary ||
+      primary?.errorCode === "PNG_EXPORT_CANVAS_TAINTED" ||
+      primary?.errorCode === "PDF_EXPORT_CANVAS_TAINTED" ||
+      primary?.errorCode === "PNG_EXPORT_RENDER_FAILED" ||
+      primary?.errorCode === "PDF_EXPORT_RENDER_FAILED";
+    if (!tainted) {
+      return primary;
+    }
+    const safeSnapshot = {
+      ...snapshot,
+      items: downgradeImageItemsForSafeExport(snapshot?.items, "export-fallback"),
+    };
+    const fallback = await renderSnapshotToCanvas(safeSnapshot, options);
+    if (fallback && typeof fallback === "object") {
+      fallback.exportFallbackMode = "safe-image-downgrade";
+      fallback.exportFallbackSourceErrorCode = primary?.errorCode || "";
+      fallback.exportFallbackSourceErrorMessage = primary?.errorMessage || "";
+    }
+    return fallback;
+  }
+
+  async function renderSnapshotToCanvasWithSafety(snapshot, options = {}) {
+    const primary = await renderSnapshotToCanvasWithFallback(snapshot, options);
+    if (primary?.canvas) {
+      return primary;
+    }
+    const safeSnapshot = {
+      ...snapshot,
+      items: buildExportReadyBoardItems(snapshot?.items, { safeExport: true }),
+    };
+    const fallback = await renderSnapshotToCanvas(safeSnapshot, options);
+    if (fallback && typeof fallback === "object") {
+      fallback.exportFallbackMode = "safe-export-ready";
+      fallback.exportFallbackSourceErrorCode = primary?.errorCode || "";
+      fallback.exportFallbackSourceErrorMessage = primary?.errorMessage || "";
+    }
+    return fallback;
+  }
+
   async function rerenderOversizedSnapshot(snapshot, baseRenderOptions = {}, onOversizeConfirm = null) {
-    let renderResult = await renderSnapshotToCanvas(snapshot, baseRenderOptions);
-    const oversized =
-      renderResult?.errorCode === "PDF_EXPORT_CANVAS_SIDE_EXCEEDED" ||
-      renderResult?.errorCode === "PDF_EXPORT_CANVAS_PIXELS_EXCEEDED";
-    if (!oversized) {
-      return renderResult;
-    }
-    const continueExport =
-      typeof onOversizeConfirm === "function"
-        ? await onOversizeConfirm({
-            requestedCanvasWidth: renderResult?.requestedCanvasWidth,
-            requestedCanvasHeight: renderResult?.requestedCanvasHeight,
-            requestedTotalPixels: renderResult?.requestedTotalPixels,
-          })
-        : false;
-    if (!continueExport) {
-      return {
-        canceled: true,
-        code: "PDF_EXPORT_CANCELED",
-      };
-    }
-    renderResult = await renderSnapshotToCanvas(snapshot, {
-      ...baseRenderOptions,
-      allowUnsafeSize: true,
-    });
-    return renderResult;
+    return renderSnapshotToCanvas(snapshot, baseRenderOptions);
   }
 
   async function exportBoardAsPng(board, options = {}) {
+    if (options?.signal?.aborted) {
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+    }
     const snapshot = buildSnapshot(board, { scope: options.scope || "board" });
-    const renderResult = await rerenderOversizedSnapshot(
+    const tileRenderOptions = {
+      renderer,
+      getElementBounds,
+      getFlowEdgeBounds,
+      allowLocalFileAccess: resolveAllowLocalFileAccess(),
+      backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+      backgroundGrid: options.includeGrid,
+      backgroundPattern: options.backgroundPattern,
+      renderTextInCanvas: options.renderTextInCanvas !== false,
+      scale: options.scale ?? 1,
+      documentRef: globalThis?.document,
+      devicePixelRatio: 1,
+      tileSize: options.tileSize,
+      signal: options.signal,
+    };
+    const saveTilePng = async (tileResult, exportFallbackMode = "") => {
+      if (!tileResult?.ok) {
+        return null;
+      }
+      const saved = await invokeDesktopShellSafely("saveTileCompositeImage", {
+        ...tileResult,
+        defaultName: options.defaultName || resolveDefaultFileName(),
+        background: options.background === "transparent" ? "transparent" : "#ffffff",
+      });
+      if (saved?.ok) {
+        return {
+          ok: true,
+          canceled: false,
+          code: "PNG_EXPORT_OK",
+          message: `${saved.message || "PNG 已导出"}${buildExportFallbackSummary(tileResult?.exportImageFallbackCount)}`,
+          fileName: `${String(options.defaultName || resolveDefaultFileName()).trim() || resolveDefaultFileName()}.png`,
+          filePath: String(saved.path || "").trim(),
+          bytes: Number(saved.size) || 0,
+          exportImageFallbackCount: Math.max(0, Number(tileResult?.exportImageFallbackCount || 0) || 0),
+          tileCount: Number(tileResult?.tileCount || 0) || 0,
+          exportFallbackMode: exportFallbackMode || "tile-render",
+        };
+      }
+      if (saved?.canceled) {
+        return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+      }
+      if (!saved?.missingHandler) {
+        return createEmptyBinaryExportResult("PNG_EXPORT_WRITE_FAILED", saved?.error || "PNG 导出失败");
+      }
+      return null;
+    };
+
+    let tileResult = await renderSnapshotToTileExports(snapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+    }
+    const tileSavedResult = await saveTilePng(tileResult);
+    if (tileSavedResult) {
+      return tileSavedResult;
+    }
+
+    const downgradedSnapshot = {
+      ...snapshot,
+      items: downgradeImageItemsForSafeExport(snapshot?.items, "export-fallback"),
+    };
+    tileResult = await renderSnapshotToTileExports(downgradedSnapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+    }
+    const downgradedTileSavedResult = await saveTilePng(tileResult, "safe-image-downgrade");
+    if (downgradedTileSavedResult) {
+      return downgradedTileSavedResult;
+    }
+
+    const safeSnapshot = {
+      ...snapshot,
+      items: buildExportReadyBoardItems(snapshot?.items, { safeExport: true }),
+    };
+    tileResult = await renderSnapshotToTileExports(safeSnapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+    }
+    const safeTileSavedResult = await saveTilePng(tileResult, "safe-export-ready");
+    if (safeTileSavedResult) {
+      return safeTileSavedResult;
+    }
+
+    let renderResult = await rerenderOversizedSnapshot(
       snapshot,
       {
         scale: options.scale,
@@ -305,11 +452,19 @@ export function createStructuredExportRuntime({
       return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
     }
     if (renderResult?.errorCode) {
-      return createEmptyBinaryExportResult(renderResult.errorCode, renderResult.errorMessage || "PNG 导出失败");
+      renderResult = await renderSnapshotToCanvasWithSafety(snapshot, {
+        scale: options.scale,
+        backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+        backgroundGrid: options.includeGrid,
+        backgroundPattern: options.backgroundPattern,
+      });
     }
     const dataUrl = safeCanvasToDataUrl(renderResult?.canvas);
     if (!dataUrl) {
-      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "PNG 导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
+      return createEmptyBinaryExportResult(
+        tileResult?.code || renderResult?.errorCode || "PNG_EXPORT_CANVAS_TAINTED",
+        tileResult?.message || renderResult?.errorMessage || "PNG 导出失败"
+      );
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
       defaultName: options.defaultName || resolveDefaultFileName(),
@@ -325,25 +480,136 @@ export function createStructuredExportRuntime({
       canceled: false,
       code: "PNG_EXPORT_OK",
       message: `${saveResult.message || "PNG 已导出"}${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`,
-      fileName: `${resolveDefaultFileName()}.png`,
+      fileName: `${String(options.defaultName || resolveDefaultFileName()).trim() || resolveDefaultFileName()}.png`,
       filePath: String(saveResult.path || "").trim(),
       bytes: Number(saveResult.size) || 0,
       exportImageFallbackCount: Math.max(0, Number(renderResult?.exportImageFallbackCount || 0) || 0),
+      exportFallbackMode: "canvas-fallback",
     };
   }
 
   async function exportBoardAsPdf(board, options = {}) {
+    if (options?.signal?.aborted) {
+      return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+    }
+    const snapshot = buildSnapshot(board, {
+      scope: options.scope || "board",
+      items: Array.isArray(options.items) ? options.items : undefined,
+    });
+    const tileRenderOptions = {
+      renderer,
+      getElementBounds,
+      getFlowEdgeBounds,
+      allowLocalFileAccess: resolveAllowLocalFileAccess(),
+      backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+      backgroundGrid: options.includeGrid,
+      backgroundPattern: options.backgroundPattern,
+      renderTextInCanvas: options.renderTextInCanvas !== false,
+      scale: options.scale ?? 1,
+      documentRef: globalThis?.document,
+      devicePixelRatio: 1,
+      tileSize: options.tileSize,
+      signal: options.signal,
+    };
+    let pdfDesktopHandlerMissing = false;
+    const saveTilePdf = async (tileResult, exportFallbackMode = "") => {
+      if (!tileResult?.ok) {
+        return null;
+      }
+      const saved = await invokeDesktopShellSafely("saveTileCompositePdf", {
+        ...tileResult,
+        defaultName: options.defaultName || resolveDefaultFileName(),
+        background: options.background === "transparent" ? "transparent" : "#ffffff",
+        orientation: options.orientation || "auto",
+      });
+      if (saved?.ok) {
+        return {
+          ok: true,
+          canceled: false,
+          code: "PDF_EXPORT_OK",
+          message: `${saved.message || "PDF 已导出"}${buildExportFallbackSummary(tileResult?.exportImageFallbackCount)}`,
+          fileName: `${String(options.defaultName || "freeflow-board").trim() || "freeflow-board"}.pdf`,
+          filePath: String(saved.path || "").trim(),
+          bytes: Number(saved.size) || 0,
+          pageWidth: Number(saved.pageWidth || 0) || 0,
+          pageHeight: Number(saved.pageHeight || 0) || 0,
+          scaleApplied: Number(tileResult?.scaleApplied || options.scale || 1) || 1,
+          exportImageFallbackCount: Math.max(0, Number(tileResult?.exportImageFallbackCount || 0) || 0),
+          tileCount: Number(tileResult?.tileCount || 0) || 0,
+          exportFallbackMode: exportFallbackMode || "tile-render",
+        };
+      }
+      if (saved?.canceled) {
+        return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+      }
+      if (!saved?.missingHandler) {
+        return createEmptyBinaryExportResult("PDF_EXPORT_WRITE_FAILED", saved?.error || "PDF 导出失败");
+      }
+      pdfDesktopHandlerMissing = true;
+      return null;
+    };
+
+    let tileResult = await renderSnapshotToTileExports(snapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+    }
+    const tileSavedResult = await saveTilePdf(tileResult);
+    if (tileSavedResult) {
+      return tileSavedResult;
+    }
+
+    const downgradedSnapshot = {
+      ...snapshot,
+      items: downgradeImageItemsForSafeExport(snapshot?.items, "export-fallback"),
+    };
+    tileResult = await renderSnapshotToTileExports(downgradedSnapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+    }
+    const downgradedTileSavedResult = await saveTilePdf(tileResult, "safe-image-downgrade");
+    if (downgradedTileSavedResult) {
+      return downgradedTileSavedResult;
+    }
+
+    const safeSnapshot = {
+      ...snapshot,
+      items: buildExportReadyBoardItems(snapshot?.items, { safeExport: true }),
+    };
+    tileResult = await renderSnapshotToTileExports(safeSnapshot, tileRenderOptions);
+    if (tileResult?.canceled) {
+      return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+    }
+    const safeTileSavedResult = await saveTilePdf(tileResult, "safe-export-ready");
+    if (safeTileSavedResult) {
+      return safeTileSavedResult;
+    }
+
+    if (pdfDesktopHandlerMissing) {
+      console.warn(
+        "[FreeFlow] saveTileCompositePdf handler is unavailable, falling back to legacy PDF export.",
+        ""
+      );
+    }
+    if (options?.signal?.aborted) {
+      return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
+    }
     return runPdfExport(
       (renderOptions) =>
-        renderBoardToCanvas(board, {
+        renderSnapshotToCanvasWithSafety(snapshot, {
           ...renderOptions,
-          scope: options.scope || "board",
-          items: Array.isArray(options.items) ? options.items : undefined,
           backgroundPattern: options.backgroundPattern,
         }),
       options,
       {
         defaultFileName: resolveDefaultFileName(),
+        onCanvasTaintedRetry: () =>
+          renderSnapshotToCanvasWithSafety(snapshot, {
+            scale: options.scale,
+            backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
+            backgroundGrid: options.includeGrid,
+            backgroundPattern: options.backgroundPattern,
+            allowUnsafeSize: true,
+          }),
       }
     );
   }
@@ -356,7 +622,7 @@ export function createStructuredExportRuntime({
     if (!snapshot.itemCount) {
       return { ok: false, canceled: false, code: "PNG_EXPORT_EMPTY_SELECTION", message: "导出失败：未选中可导出内容" };
     }
-    const renderResult = await rerenderOversizedSnapshot(
+    let renderResult = await rerenderOversizedSnapshot(
       snapshot,
       {
         scale: options.scale ?? 1,
@@ -374,7 +640,36 @@ export function createStructuredExportRuntime({
     }
     const dataUrl = safeCanvasToDataUrl(renderResult.canvas);
     if (!dataUrl) {
-      return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
+      renderResult = await renderSnapshotToCanvasWithSafety(snapshot, {
+        scale: options.scale ?? 1,
+        backgroundFill: options.forceWhiteBackground ? "#ffffff" : "transparent",
+        backgroundGrid: false,
+        backgroundPattern: options.backgroundPattern,
+      });
+      const fallbackDataUrl = safeCanvasToDataUrl(renderResult?.canvas);
+      if (!fallbackDataUrl) {
+        return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
+      }
+      const fallbackSaveResult = await fileAdapter?.saveDataUrlAsImage?.(fallbackDataUrl, {
+        defaultName: options.defaultName || "freeflow-export",
+      });
+      if (!fallbackSaveResult?.ok) {
+        if (fallbackSaveResult?.canceled) {
+          return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
+        }
+        return createEmptyBinaryExportResult("PNG_EXPORT_WRITE_FAILED", fallbackSaveResult?.error || "导出失败");
+      }
+      return {
+        ok: true,
+        canceled: false,
+        code: "PNG_EXPORT_OK",
+        message: `${fallbackSaveResult.message || "图片已导出"}${buildExportFallbackSummary(renderResult?.exportImageFallbackCount)}`,
+        fileName: `${String(options.defaultName || "freeflow-export").trim() || "freeflow-export"}.png`,
+        filePath: String(fallbackSaveResult.path || "").trim(),
+        bytes: Number(fallbackSaveResult.size) || 0,
+        exportImageFallbackCount: Math.max(0, Number(renderResult?.exportImageFallbackCount || 0) || 0),
+        exportFallbackMode: "safe-image-downgrade",
+      };
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
       defaultName: options.defaultName || "freeflow-export",

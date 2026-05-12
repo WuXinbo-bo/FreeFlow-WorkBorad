@@ -84,6 +84,14 @@ const AI_MIRROR_TARGETS = Object.freeze([
     webUrl: "https://www.kimi.com/",
     windowTitle: "AI 镜像 · Kimi月之暗面",
   },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    label: "Perplexity",
+    note: "联网问答，检索增强",
+    webUrl: "https://www.perplexity.ai/",
+    windowTitle: "AI 镜像 · Perplexity",
+  },
 ]);
 
 function createAiMirrorTargetManager() {

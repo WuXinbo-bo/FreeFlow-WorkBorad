@@ -18,6 +18,7 @@ import {
 } from "../search/canvasSearchIndex.js";
 import { getElementBounds } from "../elements/index.js";
 import { getFileCardPreviewBounds } from "../elements/fileCard.js";
+import { timeAssetTask } from "../perf/canvasRuntimeStats.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../../../tutorial-core/tutorialTypes.js";
@@ -226,6 +227,27 @@ function buildFallbackFileCardPreviewItem(request = null) {
   };
 }
 
+function resolveFileCardElementPlacement(item = null, board = null) {
+  if (!item || !board?.view) {
+    return null;
+  }
+  const scale = Math.max(0.1, Number(board.view.scale || 1));
+  const left = Number(item.x || 0) || 0;
+  const top = Number(item.y || 0) || 0;
+  const width = Math.max(1, Number(item.width || 336) || 336);
+  const height = Math.max(1, Number(item.height || 128) || 128);
+  return {
+    screenWidth: width * scale,
+    screenHeight: height * scale,
+    style: {
+      left: `${Math.round(left * scale + Number(board.view.offsetX || 0))}px`,
+      top: `${Math.round(top * scale + Number(board.view.offsetY || 0))}px`,
+      width: `${Math.round(width * scale)}px`,
+      height: `${Math.round(height * scale)}px`,
+    },
+  };
+}
+
 function decodeBase64ToByteArray(base64 = "") {
   const normalized = String(base64 || "").trim();
   if (!normalized) {
@@ -237,6 +259,24 @@ function decodeBase64ToByteArray(base64 = "") {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function buildFilePreviewInteractionSkeletonMarkup({ kind = "docx" } = {}) {
+  const pageCount = kind === "pdf" ? 2 : 1;
+  return Array.from({ length: pageCount }, (_, index) => {
+    const lineCount = kind === "pdf" ? 5 : 4;
+    const lines = Array.from({ length: lineCount }, (__, lineIndex) => {
+      const widths = kind === "pdf" ? [0.82, 0.74, 0.78, 0.7, 0.56] : [0.86, 0.78, 0.72, 0.58];
+      const width = widths[lineIndex] || 0.6;
+      return `<span class="canvas2d-file-preview-skeleton-line" style="width:${Math.round(width * 100)}%"></span>`;
+    }).join("");
+    return `
+      <div class="canvas2d-file-preview-skeleton-page${index > 0 ? " is-secondary" : ""}">
+        <div class="canvas2d-file-preview-skeleton-strip"></div>
+        <div class="canvas2d-file-preview-skeleton-body">${lines}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 function getFileCardPreviewRuntimeLabel(status = "", renderState = "") {
@@ -282,6 +322,43 @@ function getPreviewDisplayLabel(request = null) {
     generatingText: "正在生成 Word 预览",
     scrollAriaLabel: "Word 预览滚动区域",
   };
+}
+
+function FileCardPreviewPlaceholder({ request = null, board = null, item = null, renderState = null, previewLabel = null, previewStatus = "" }) {
+  const placement = useMemo(() => resolveFileCardElementPlacement(item, board), [board, item]);
+  if (!request?.open || !placement?.style) {
+    return null;
+  }
+  const isFailed = String(renderState?.status || "").trim() === "failed";
+  const kind = String(request?.previewKind || "docx").trim().toLowerCase();
+  const title = isFailed ? previewLabel?.unavailableText : `${previewLabel?.noun || "文档"}预览`;
+  const message =
+    !item
+      ? "文件卡锚点缺失"
+      : String(renderState?.message || "").trim() || (isFailed ? previewLabel?.failedText : previewLabel?.generatingText);
+  const badge = String(request?.previewBadgeLabel || previewLabel?.badge || "DOCX");
+  const runtimeLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState?.status);
+  return (
+    <div
+      className="canvas2d-file-preview-placeholder-card"
+      style={placement.style}
+      data-render-state={String(renderState?.status || "loading").trim() || "loading"}
+      data-preview-kind={kind}
+    >
+      <div className="canvas2d-file-preview-placeholder-card-head">
+        <span className="canvas2d-file-preview-placeholder-card-badge">{badge}</span>
+        <span className="canvas2d-file-preview-placeholder-card-status">{runtimeLabel}</span>
+      </div>
+      <div
+        className="canvas2d-file-preview-placeholder-card-body"
+        dangerouslySetInnerHTML={{ __html: buildFilePreviewInteractionSkeletonMarkup({ kind }) }}
+      />
+      <div className="canvas2d-file-preview-placeholder-card-foot">
+        <strong>{title}</strong>
+        <span>{message}</span>
+      </div>
+    </div>
+  );
 }
 
 function FileCardAttachedPreview({ request = null, board = null, bridge = null }) {
@@ -349,6 +426,9 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     FILE_CARD_PREVIEW_ZOOM_MIN,
     FILE_CARD_PREVIEW_ZOOM_MAX
   );
+  const interactionPriorityActive = Boolean(bridge?.getInteractionPrioritySnapshot?.()?.active);
+  const placeholderMode =
+    !item || livePreviewSuppressed || interactionPriorityActive || previewStatus !== "ready" || !fileBase64;
 
   useEffect(() => {
     zoomRef.current = previewZoom;
@@ -401,6 +481,21 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       setContentHeight(1123);
       return undefined;
     }
+    if (interactionPriorityActive) {
+      host.innerHTML = buildFilePreviewInteractionSkeletonMarkup({ kind: previewKind });
+      styleHost.innerHTML = "";
+      setRenderState({
+        status: "deferred",
+        message: `${previewLabel.noun} 预览将在交互结束后恢复`,
+        loadState: String(diagnostics.loadState || "文档已加载"),
+        parseState: "已暂停",
+        pageCount: Number(diagnostics.pageCount || 0) || 0,
+        contentNodeCount: Number(diagnostics.contentNodeCount || 0) || 0,
+        runtimeLabel: "已暂停",
+      });
+      setContentHeight(previewKind === "pdf" ? 1480 : 1123);
+      return undefined;
+    }
     if (previewStatus !== "ready" || !fileBase64) {
       host.innerHTML = "";
       styleHost.innerHTML = "";
@@ -418,6 +513,8 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     }
 
     let cancelled = false;
+    let pdfLoadingTask = null;
+    let activePdfRenderTask = null;
     setRenderState({
       status: "rendering",
       message: previewLabel.renderingText,
@@ -428,7 +525,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       runtimeLabel: "解析中",
     });
 
-    const render = async () => {
+    const render = async () => timeAssetTask("file-preview-render", async () => {
       const bytes = decodeBase64ToByteArray(fileBase64);
       if (!bytes?.length) {
         throw new Error("预览文档为空");
@@ -455,6 +552,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           standardFontDataUrl: new URL("../../../../assets/vendor/pdfjs-dist/standard_fonts/", import.meta.url).toString(),
           wasmUrl: new URL("../../../../assets/vendor/pdfjs-dist/wasm/", import.meta.url).toString(),
         });
+        pdfLoadingTask = loadingTask;
         const pdfDocument = await loadingTask.promise;
         pages = Number(pdfDocument.numPages || 0) || 0;
         for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
@@ -479,10 +577,12 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           if (!context) {
             throw new Error("PDF 预览画布上下文不可用");
           }
-          await page.render({
+          activePdfRenderTask = page.render({
             canvasContext: context,
             viewport,
-          }).promise;
+          });
+          await activePdfRenderTask.promise;
+          activePdfRenderTask = null;
           nodes += 1;
         }
         setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
@@ -525,7 +625,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           runtimeLabel: "已恢复",
         });
       }
-    };
+    });
 
     void render().catch((error) => {
       if (cancelled) {
@@ -556,8 +656,18 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
 
     return () => {
       cancelled = true;
+      try {
+        activePdfRenderTask?.cancel?.();
+      } catch {
+        // Ignore pdf.js cancellation differences across builds.
+      }
+      try {
+        pdfLoadingTask?.destroy?.();
+      } catch {
+        // Ignore pdf.js cleanup failures.
+      }
     };
-  }, [fileBase64, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
+  }, [bridge, fileBase64, interactionPriorityActive, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -599,6 +709,19 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     return null;
   }
 
+  if (placeholderMode) {
+    return (
+      <FileCardPreviewPlaceholder
+        request={request}
+        board={board}
+        item={item}
+        renderState={renderState}
+        previewLabel={previewLabel}
+        previewStatus={previewStatus}
+      />
+    );
+  }
+
   const diagnosticStyle = style || {
     left: "24px",
     top: "24px",
@@ -609,7 +732,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
   };
   const missingAnchor = !item || !style;
   const statusLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState.status);
-  const showPlaceholder = renderState.status !== "ready" || missingAnchor;
+  const showPlaceholder = false;
 
   return (
     <div
@@ -2315,6 +2438,28 @@ function Canvas2DControls({ engine }) {
               </div>
             </div>
             <div className="canvas2d-pdf-export-meta">完成后将继续进入文件保存界面</div>
+            <div
+              style={{
+                marginTop: "18px",
+                display: "flex",
+                justifyContent: "center",
+              }}
+            >
+              <button
+                type="button"
+                className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                onClick={() => {
+                  bridge.cancelActiveExport?.();
+                  setPdfExportBusy(false);
+                }}
+                style={{
+                  minWidth: "136px",
+                  justifyContent: "center",
+                }}
+              >
+                <span>中断导出</span>
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

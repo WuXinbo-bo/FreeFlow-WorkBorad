@@ -17,7 +17,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
   const nodes = nodeMap instanceof Map ? nodeMap : new Map();
   const visibleSet = visibleIds instanceof Set ? visibleIds : null;
 
-  function removeNode(itemId = "", { onRemove } = {}) {
+  function removeNode(itemId = "", { onRemove, budgetManager, overlayType = "" } = {}) {
     const id = normalizeId(itemId);
     if (!id) {
       return null;
@@ -34,6 +34,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     }
     nodes.delete(id);
     visibleSet?.delete(id);
+    budgetManager?.noteRemove?.(overlayType);
     return node;
   }
 
@@ -48,26 +49,33 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     visibleSet?.clear();
   }
 
-  function syncActiveIds(activeIds = [], { onRemove } = {}) {
+  function syncActiveIds(activeIds = [], { onRemove, budgetManager, overlayType = "" } = {}) {
     const activeSet = toIdSet(activeIds);
     Array.from(nodes.keys()).forEach((id) => {
       if (!activeSet.has(id)) {
-        removeNode(id, { onRemove });
+        removeNode(id, { onRemove, budgetManager, overlayType });
       }
     });
     return activeSet;
   }
 
-  function ensureNode(itemId = "", createNode) {
+  function ensureNode(itemId = "", createNode, { budgetManager, overlayType = "", budgetOptions = null, onDeferred } = {}) {
     const id = normalizeId(itemId);
     if (!id) {
       return null;
     }
     let node = nodes.get(id) || null;
     if (!node && typeof createNode === "function") {
+      if (budgetManager && !budgetManager.canCreate?.(overlayType, budgetOptions || {})) {
+        if (typeof onDeferred === "function") {
+          onDeferred(id);
+        }
+        return null;
+      }
       node = createNode(id) || null;
       if (node) {
         nodes.set(id, node);
+        budgetManager?.noteCreate?.(overlayType);
       }
     }
     return node;
@@ -118,6 +126,10 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     onShow,
     syncNode,
     hideUnprocessed = false,
+    budgetManager = null,
+    overlayType = "",
+    getBudgetOptions,
+    onDeferred,
   } = {}) {
     const list = Array.isArray(items) ? items : [];
     const resolveId =
@@ -128,7 +140,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
       activeIds == null
         ? new Set(list.map((item) => resolveId(item)).filter(Boolean))
         : toIdSet(activeIds);
-    syncActiveIds(nextActiveIds, { onRemove });
+    syncActiveIds(nextActiveIds, { onRemove, budgetManager, overlayType });
     const processedIds = new Set();
     list.forEach((item, index) => {
       const itemId = normalizeId(resolveId(item, index));
@@ -140,7 +152,16 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
         hideNode(itemId, { onHide });
         return;
       }
-      const node = ensureNode(itemId, () => (typeof createNode === "function" ? createNode(item, itemId, index) : null));
+      const node = ensureNode(
+        itemId,
+        () => (typeof createNode === "function" ? createNode(item, itemId, index) : null),
+        {
+          budgetManager,
+          overlayType,
+          budgetOptions: typeof getBudgetOptions === "function" ? getBudgetOptions(item, itemId, index) : null,
+          onDeferred,
+        }
+      );
       if (!node) {
         return;
       }
