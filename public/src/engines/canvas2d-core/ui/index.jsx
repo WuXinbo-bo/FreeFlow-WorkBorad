@@ -286,7 +286,6 @@ function getFileCardPreviewRuntimeLabel(status = "", renderState = "") {
     return "渲染失败";
   }
   if (normalizedRender === "suppressed") return "已省略";
-  if (normalizedRender === "deferred") return "恢复中";
   if (normalizedRender === "ready") return "已恢复";
   if (normalizedRender === "rendering") return "解析中";
   return "加载中";
@@ -426,9 +425,8 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     FILE_CARD_PREVIEW_ZOOM_MIN,
     FILE_CARD_PREVIEW_ZOOM_MAX
   );
-  const interactionPriorityActive = Boolean(bridge?.getInteractionPrioritySnapshot?.()?.active);
   const placeholderMode =
-    !item || livePreviewSuppressed || interactionPriorityActive || previewStatus !== "ready" || !fileBase64;
+    !item || livePreviewSuppressed || previewStatus !== "ready" || !fileBase64;
 
   useEffect(() => {
     zoomRef.current = previewZoom;
@@ -473,27 +471,12 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         status: "suppressed",
         message: previewLabel.suppressedText,
         loadState: String(diagnostics.loadState || "文档已加载"),
-        parseState: String(diagnostics.parseState || "已暂停"),
+        parseState: String(diagnostics.parseState || "已省略"),
         pageCount: Number(diagnostics.pageCount || 0) || 0,
         contentNodeCount: Number(diagnostics.contentNodeCount || 0) || 0,
         runtimeLabel: "已省略",
       });
       setContentHeight(1123);
-      return undefined;
-    }
-    if (interactionPriorityActive) {
-      host.innerHTML = buildFilePreviewInteractionSkeletonMarkup({ kind: previewKind });
-      styleHost.innerHTML = "";
-      setRenderState({
-        status: "deferred",
-        message: `${previewLabel.noun} 预览将在交互结束后恢复`,
-        loadState: String(diagnostics.loadState || "文档已加载"),
-        parseState: "已暂停",
-        pageCount: Number(diagnostics.pageCount || 0) || 0,
-        contentNodeCount: Number(diagnostics.contentNodeCount || 0) || 0,
-        runtimeLabel: "已暂停",
-      });
-      setContentHeight(previewKind === "pdf" ? 1480 : 1123);
       return undefined;
     }
     if (previewStatus !== "ready" || !fileBase64) {
@@ -667,7 +650,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         // Ignore pdf.js cleanup failures.
       }
     };
-  }, [bridge, fileBase64, interactionPriorityActive, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
+  }, [bridge, fileBase64, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
 
   useEffect(() => {
     const host = hostRef.current;

@@ -18,6 +18,11 @@ const {
 } = require("../models/canvasBoardFileFormat");
 const { readUiSettingsStore, writeUiSettingsStore } = require("./uiSettingsService");
 const { repairCanvasBoardFile } = require("./canvasBoardRepairService");
+const { atomicWriteFile } = require("../utils/atomicWrite");
+const { acquireFileLock, withFileLock } = require("../utils/fileLock");
+const { addChecksumToEnvelope, verifyEnvelopeChecksum, CHECKSUM_ALGORITHMS } = require("../utils/checksum");
+
+const BOARD_FILE_CHECKSUM_ALGORITHM = CHECKSUM_ALGORITHMS.CRC32;
 
 function resolveCanvasBoardFilePath(input = "") {
   const raw = String(input || "").trim();
@@ -145,6 +150,17 @@ async function readCanvasBoard(explicitPath = "") {
 
   const [rawText, stat] = await Promise.all([fs.readFile(requestedPath, "utf8"), fs.stat(requestedPath)]);
   const parsed = parseBoardFileText(rawText);
+
+  // 验证文件完整性校验和
+  let checksumValid = null;
+  if (parsed.envelope && parsed.envelope.meta?.checksum) {
+    const checksumResult = verifyEnvelopeChecksum(parsed.envelope);
+    checksumValid = checksumResult.valid;
+    if (!checksumValid) {
+      console.warn(`[canvasBoardService] 文件校验和验证失败: ${requestedPath}`, checksumResult.error);
+    }
+  }
+
   const board = normalizeCanvasBoard(extractBoardPayload(parsed.payload));
   let canonicalFile = requestedPath;
   let migrated = false;
@@ -166,41 +182,61 @@ async function readCanvasBoard(explicitPath = "") {
     migrated,
     legacy: parsed.legacy,
     format: parsed.format,
+    checksumValid: parsed.envelope?.meta?.checksum ? checksumValid : null,
   };
 }
 
 async function writeCanvasBoard(payload = {}, explicitPath = "") {
   const requestedPath = await getConfiguredCanvasBoardFilePath(explicitPath);
   const filePath = ensureFreeFlowBoardFileName(requestedPath || CANVAS_BOARD_FILE);
-  const board = normalizeCanvasBoard({
-    ...extractBoardPayload(payload),
-    updatedAt: Date.now(),
+
+  // 使用文件锁保护写入操作
+  return await withFileLock(filePath, async () => {
+    const board = normalizeCanvasBoard({
+      ...extractBoardPayload(payload),
+      updatedAt: Date.now(),
+    });
+    const hostPayload =
+      payload?.kind === "structured-host-board"
+        ? { ...payload, board }
+        : {
+            kind: "structured-host-board",
+            version: "1.0.0",
+            createdAt: Number(payload?.createdAt) || Date.now(),
+            meta: payload?.meta && typeof payload.meta === "object" ? { ...payload.meta, boardFilePath: filePath } : { boardFilePath: filePath },
+            board,
+          };
+    let envelope = wrapFreeFlowBoardPayload(hostPayload, { updatedAt: board.updatedAt });
+    // 添加校验和
+    envelope = addChecksumToEnvelope(envelope, { algorithm: BOARD_FILE_CHECKSUM_ALGORITHM });
+
+    // 使用原子写入：先写入临时文件，然后原子重命名
+    const serialized = JSON.stringify(envelope, null, 2);
+    const atomicResult = await atomicWriteFile(filePath, serialized, {
+      fsync: true,
+      preserveTempOnFailure: false,
+    });
+
+    if (!atomicResult.ok) {
+      throw new Error(`原子写入失败: ${atomicResult.error || "未知错误"}`);
+    }
+
+    await persistRecentBoardPathIfNeeded(filePath);
+    return {
+      file: filePath,
+      canonicalFile: filePath,
+      board,
+      fileSizeBytes: atomicResult.bytesWritten,
+      updatedAt: board.updatedAt,
+      migrated: isLegacyJsonBoardFileName(requestedPath),
+      legacy: false,
+      format: "freeflow",
+    };
+  }, {
+    // 锁配置：30秒超时，1分钟锁过期
+    lockTimeoutMs: 30_000,
+    lockExpiryMs: 60_000,
   });
-  const hostPayload =
-    payload?.kind === "structured-host-board"
-      ? { ...payload, board }
-      : {
-          kind: "structured-host-board",
-          version: "1.0.0",
-          createdAt: Number(payload?.createdAt) || Date.now(),
-          meta: payload?.meta && typeof payload.meta === "object" ? { ...payload.meta, boardFilePath: filePath } : { boardFilePath: filePath },
-          board,
-        };
-  const envelope = wrapFreeFlowBoardPayload(hostPayload, { updatedAt: board.updatedAt });
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const serialized = JSON.stringify(envelope, null, 2);
-  await fs.writeFile(filePath, serialized, "utf8");
-  await persistRecentBoardPathIfNeeded(filePath);
-  return {
-    file: filePath,
-    canonicalFile: filePath,
-    board,
-    fileSizeBytes: Buffer.byteLength(serialized, "utf8"),
-    updatedAt: board.updatedAt,
-    migrated: isLegacyJsonBoardFileName(requestedPath),
-    legacy: false,
-    format: "freeflow",
-  };
 }
 
 module.exports = {

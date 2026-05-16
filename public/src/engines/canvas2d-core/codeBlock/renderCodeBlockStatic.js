@@ -656,11 +656,19 @@ export function cleanupCodeBlockStaticNode(node) {
   }
   cancelPendingHighlight(node);
   cancelPendingMermaid(node);
+  if (node.style) {
+    node.style.display = "";
+    node.style.visibility = "";
+    node.style.opacity = "";
+  }
   node.dataset.highlightState = "";
   node.dataset.highlightCacheKey = "";
   node.dataset.highlightTransport = "";
   node.dataset.mermaidState = "";
   node.dataset.mermaidCacheKey = "";
+  node.dataset.markupSignature = "";
+  node.dataset.renderContentSignature = "";
+  node.dataset.renderSignature = "";
 }
 
 function applyHighlightedMarkup(node, markupSignature, highlightCacheKey, prismLanguage, highlightedHtml) {

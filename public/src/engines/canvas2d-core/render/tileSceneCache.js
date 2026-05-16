@@ -44,6 +44,39 @@ function getTileCoordKey(tileX, tileY) {
   return `${tileX}:${tileY}`;
 }
 
+function getTileDistanceToBoundsCenter(tileBounds, bounds) {
+  if (!tileBounds || !bounds) {
+    return 0;
+  }
+  const tileCenterX = Number(tileBounds.left || 0) + Number(tileBounds.width || 0) / 2;
+  const tileCenterY = Number(tileBounds.top || 0) + Number(tileBounds.height || 0) / 2;
+  const boundsCenterX = Number(bounds.left || 0) + Number(bounds.width || 0) / 2;
+  const boundsCenterY = Number(bounds.top || 0) + Number(bounds.height || 0) / 2;
+  return Math.abs(tileCenterX - boundsCenterX) + Math.abs(tileCenterY - boundsCenterY);
+}
+
+function intersectsBounds(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  return !(
+    Number(a.right || 0) < Number(b.left || 0) ||
+    Number(a.left || 0) > Number(b.right || 0) ||
+    Number(a.bottom || 0) < Number(b.top || 0) ||
+    Number(a.top || 0) > Number(b.bottom || 0)
+  );
+}
+
+function getTileTier(tileBounds, primaryBounds, preloadBounds) {
+  if (intersectsBounds(tileBounds, primaryBounds)) {
+    return "primary";
+  }
+  if (intersectsBounds(tileBounds, preloadBounds)) {
+    return "preload";
+  }
+  return "overscan";
+}
+
 export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) {
   const cache = new Map();
   const lastBoundsById = new Map();
@@ -225,6 +258,9 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     sceneChanged = false,
     dirtyItemIds = [],
     maxColdTiles = Infinity,
+    viewportMarginPx = null,
+    preloadMarginPx = null,
+    overscanMarginPx = null,
     drawItems,
   }) {
     if (!sceneIndex || !ctx || !sceneKey || typeof drawItems !== "function") {
@@ -259,7 +295,15 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
         syncBoundsSnapshot(sceneIndex);
       }
     }
-    const viewportBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, tileSize * scale * 0.1);
+    const primaryViewportBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, 0);
+    const resolvedPreloadMarginPx = preloadMarginPx == null
+      ? Math.max(tileSize * scale * 0.08, tileSize * 0.35)
+      : Math.max(0, Number(preloadMarginPx || 0) || 0);
+    const resolvedOverscanMarginPx = overscanMarginPx == null
+      ? (viewportMarginPx == null ? tileSize * scale * 0.1 : Math.max(0, Number(viewportMarginPx || 0) || 0))
+      : Math.max(resolvedPreloadMarginPx, Number(overscanMarginPx || 0) || 0);
+    const preloadViewportBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, resolvedPreloadMarginPx);
+    const viewportBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, resolvedOverscanMarginPx);
     const tileXMin = Math.floor(viewportBounds.left / tileSize);
     const tileXMax = Math.floor(viewportBounds.right / tileSize);
     const tileYMin = Math.floor(viewportBounds.top / tileSize);
@@ -278,14 +322,56 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
       ? Math.max(0, Math.floor(Number(maxColdTiles)))
       : Infinity;
 
+    const tileDescriptors = [];
     for (let tileX = tileXMin; tileX <= tileXMax; tileX += 1) {
       for (let tileY = tileYMin; tileY <= tileYMax; tileY += 1) {
         tileCount += 1;
+        const tileBounds = getTileBounds(tileX, tileY, tileSize);
         const tileCoordKey = getTileCoordKey(tileX, tileY);
         const isDirtyVisibleTile = dirtyTileCoordKeys.has(tileCoordKey);
-        if (isDirtyVisibleTile) {
-          dirtyVisibleTiles += 1;
-        }
+        const tier = getTileTier(tileBounds, primaryViewportBounds, preloadViewportBounds);
+        const isPrimaryTile = tier === "primary";
+        tileDescriptors.push({
+          tileX,
+          tileY,
+          tileBounds,
+          tileCoordKey,
+          isDirtyVisibleTile,
+          isPrimaryTile,
+          tier,
+          distance: getTileDistanceToBoundsCenter(tileBounds, primaryViewportBounds),
+        });
+      }
+    }
+    tileDescriptors.sort((a, b) => {
+      const tierWeight = { primary: 0, preload: 1, overscan: 2 };
+      if (tierWeight[a.tier] !== tierWeight[b.tier]) {
+        return tierWeight[a.tier] - tierWeight[b.tier];
+      }
+      if (a.isDirtyVisibleTile !== b.isDirtyVisibleTile) {
+        return a.isDirtyVisibleTile ? -1 : 1;
+      }
+      if (a.distance !== b.distance) {
+        return a.distance - b.distance;
+      }
+      if (a.tileY !== b.tileY) {
+        return a.tileY - b.tileY;
+      }
+      return a.tileX - b.tileX;
+    });
+
+    for (const descriptor of tileDescriptors) {
+      const {
+        tileX,
+        tileY,
+        tileCoordKey,
+        isDirtyVisibleTile,
+        isPrimaryTile,
+        tier,
+      } = descriptor;
+      if (isDirtyVisibleTile) {
+        dirtyVisibleTiles += 1;
+      }
         const key = getTileKey(sceneKey, scaleBucket, tileX, tileY, normalizedExcludeIds);
         let entry = cache.get(key) || null;
         if (entry) {
@@ -294,14 +380,16 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
           touchEntry(key, entry);
         } else {
           cacheMisses += 1;
-          if (coldRenderedTiles >= coldTileBudget) {
+          if (tier === "overscan" && coldRenderedTiles >= coldTileBudget) {
             deferredColdTiles += 1;
             continue;
           }
           if (isDirtyVisibleTile) {
             rerasterizedDirtyTiles += 1;
           } else {
-            coldRenderedTiles += 1;
+            if (tier !== "primary") {
+              coldRenderedTiles += 1;
+            }
           }
           entry = renderTile({
             sceneKey,
@@ -323,7 +411,6 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
         const drawWidth = entry.tileBounds.width * scale;
         const drawHeight = entry.tileBounds.height * scale;
         ctx.drawImage(entry.canvas, screenX, screenY, drawWidth, drawHeight);
-      }
     }
 
     return {

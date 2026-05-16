@@ -5,32 +5,83 @@ import { clone } from "./utils.js";
 
 const DEFAULT_PERSIST_DEBOUNCE_MS = 320;
 
-function loadBoard(disableLocalStorage = false, storageKey = DEFAULT_STORAGE_KEY) {
+/**
+ * 从 localStorage 加载 board，包含时间戳同步检查
+ * @returns {{board: object, meta: {savedAt?: number, fileTimestamp?: number, checksum?: string}}}
+ */
+function loadBoardWithMeta(disableLocalStorage = false, storageKey = DEFAULT_STORAGE_KEY) {
   if (disableLocalStorage) {
-    return normalizeBoard({});
+    return { board: normalizeBoard({}), meta: {} };
   }
   try {
     const raw = localStorage.getItem(storageKey || DEFAULT_STORAGE_KEY);
     if (raw) {
-      return normalizeBoard(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      // 支持旧版本无 meta 的格式和新版有 meta 的格式
+      if (parsed && typeof parsed === "object") {
+        if (parsed.board && parsed.meta) {
+          return { board: normalizeBoard(parsed.board), meta: parsed.meta || {} };
+        }
+        // 兼容旧格式（直接是 board 数据）
+        return { board: normalizeBoard(parsed), meta: { legacy: true } };
+      }
     }
-    return normalizeBoard({});
+    return { board: normalizeBoard({}), meta: {} };
   } catch {
-    return normalizeBoard({});
+    return { board: normalizeBoard({}), meta: {} };
+  }
+}
+
+function loadBoard(disableLocalStorage = false, storageKey = DEFAULT_STORAGE_KEY) {
+  return loadBoardWithMeta(disableLocalStorage, storageKey).board;
+}
+
+/**
+ * 检查 localStorage 缓存是否比文件时间戳更新
+ * @param {number} fileTimestamp - 文件最后修改时间戳
+ * @returns {boolean} true 如果缓存比文件更新
+ */
+export function isLocalStorageNewerThanFile(fileTimestamp, storageKey = DEFAULT_STORAGE_KEY) {
+  if (!fileTimestamp || !Number.isFinite(fileTimestamp)) {
+    return true;
+  }
+  try {
+    const raw = localStorage.getItem(storageKey || DEFAULT_STORAGE_KEY);
+    if (!raw) {
+      return false;
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed?.meta?.savedAt && Number.isFinite(parsed.meta.savedAt)) {
+      return parsed.meta.savedAt > fileTimestamp;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 保存 board 到 localStorage，带有时间戳和元数据
+ */
+export function persistBoard(board, storageKey = DEFAULT_STORAGE_KEY, fileTimestamp) {
+  try {
+    const payload = {
+      board,
+      meta: {
+        savedAt: Date.now(),
+        fileTimestamp: fileTimestamp || null,
+        version: 1,
+      },
+    };
+    localStorage.setItem(storageKey || DEFAULT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore local persistence failures.
   }
 }
 
 export function clearLegacyBoardStorage() {
   try {
     LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-  } catch {
-    // Ignore local persistence failures.
-  }
-}
-
-export function persistBoard(board, storageKey = DEFAULT_STORAGE_KEY) {
-  try {
-    localStorage.setItem(storageKey || DEFAULT_STORAGE_KEY, JSON.stringify(board));
   } catch {
     // Ignore local persistence failures.
   }
@@ -284,6 +335,13 @@ export function createCanvas2DStore({
       state.statusText = String(text || "");
       state.statusTone = tone;
       emit();
+    },
+    getFileTimestamp() {
+      return Number(state.boardLastSavedAt || 0) || null;
+    },
+    getLocalStorageMeta() {
+      const { meta } = loadBoardWithMeta(disableLocalStorage, resolvedStorageKey);
+      return meta;
     },
   };
 }

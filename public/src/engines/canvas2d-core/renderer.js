@@ -921,6 +921,77 @@ function shouldBypassStaticTileCache(item, dynamicIdSet) {
   );
 }
 
+function resolveRenderRuntimeMode({
+  viewportInteractionActive = false,
+  editingId = "",
+  draftElement = null,
+  flowDraft = null,
+  relationshipDraft = null,
+  selectionRect = null,
+  imageEditState = null,
+} = {}) {
+  const editingActive = Boolean(String(editingId || "").trim());
+  const draftActive = Boolean(draftElement || flowDraft || relationshipDraft);
+  const marqueeActive = Boolean(selectionRect?.start && selectionRect?.current);
+  const imageEditActive = Boolean(imageEditState?.id || imageEditState?.mode);
+  const interactionActive = Boolean(
+    viewportInteractionActive ||
+    editingActive ||
+    draftActive ||
+    marqueeActive ||
+    imageEditActive
+  );
+  return {
+    viewportInteractionActive: viewportInteractionActive === true,
+    editingActive,
+    draftActive,
+    marqueeActive,
+    imageEditActive,
+    interactionActive,
+    mode: viewportInteractionActive
+      ? "viewport-interaction"
+      : interactionActive
+        ? "element-interaction"
+        : "steady",
+  };
+}
+
+function resolveLayerAssignment(frameVisibleItems = [], {
+  runtimeMode = null,
+  editingId = "",
+  hoverId = "",
+  selectedIds = [],
+} = {}) {
+  const requiresDynamicIds = new Set();
+  const hoveredFlowNode = (Array.isArray(frameVisibleItems) ? frameVisibleItems : []).find(
+    (item) => String(item?.id || "") === String(hoverId || "") && item?.type === "flowNode"
+  );
+  if (runtimeMode?.mode === "viewport-interaction") {
+    return {
+      staticItems: [],
+      dynamicItems: Array.isArray(frameVisibleItems) ? frameVisibleItems.slice() : [],
+    };
+  }
+  [
+    editingId,
+    ...(hoveredFlowNode ? [hoverId] : []),
+    ...(Array.isArray(selectedIds) ? selectedIds : []),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .forEach((id) => requiresDynamicIds.add(id));
+  const staticItems = [];
+  const dynamicItems = [];
+  (Array.isArray(frameVisibleItems) ? frameVisibleItems : []).forEach((item) => {
+    if (shouldBypassStaticTileCache(item, requiresDynamicIds)) {
+      dynamicItems.push(item);
+      return;
+    }
+    staticItems.push(item);
+  });
+  return { staticItems, dynamicItems };
+}
+
 
 function drawSelectionRect(ctx, view, selectionRect) {
   if (!selectionRect?.start || !selectionRect?.current) {
@@ -1361,6 +1432,10 @@ function getViewVisualSignature(view = null) {
   ].join(":");
 }
 
+function getRenderModeSignature({ renderTextInCanvas = false, viewportInteractionActive = false } = {}) {
+  return [renderTextInCanvas ? 1 : 0, viewportInteractionActive ? 1 : 0].join(":");
+}
+
 export function createRenderer({ customRenderers = [] } = {}) {
   const renderers = Array.isArray(customRenderers) ? customRenderers : [];
   const viewportCuller = createViewportCuller();
@@ -1384,6 +1459,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastDynamicVisualSignature = "";
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
+  let lastRenderModeSignature = "";
 
   function resetCachedSurfaces() {
     staticTileLayer.clear();
@@ -1405,6 +1481,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     lastDynamicVisualSignature = "";
     lastInteractionVisualSignature = "";
     lastViewVisualSignature = "";
+    lastRenderModeSignature = "";
   }
 
   return {
@@ -1429,11 +1506,15 @@ export function createRenderer({ customRenderers = [] } = {}) {
       alignmentSnapConfig,
       allowLocalFileAccess,
       backgroundStyle,
+      viewportInteractionActive = false,
       renderTextInCanvas,
       pixelRatio,
       viewportBudget = null,
       deferColdTiles = false,
       visibleItems = null,
+      visibleSceneBounds = null,
+      visibleSceneMarginPx = 0,
+      preloadSceneMarginPx = 0,
       sceneIndex = null,
       sceneKey = "",
       dirtyState = null,
@@ -1463,8 +1544,19 @@ export function createRenderer({ customRenderers = [] } = {}) {
         interaction: true,
       };
 
+      const runtimeMode = resolveRenderRuntimeMode({
+        viewportInteractionActive,
+        editingId,
+        draftElement,
+        flowDraft,
+        relationshipDraft,
+        selectionRect,
+        imageEditState,
+      });
+      const interactionCompositeMode = runtimeMode.mode === "viewport-interaction";
+      const liveInteractionMode = runtimeMode.interactionActive === true;
       const cullResult =
-        Array.isArray(visibleItems)
+        !liveInteractionMode && Array.isArray(visibleItems)
           ? {
               items: visibleItems,
               stats: {
@@ -1485,18 +1577,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
         frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
         allItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
         null;
-      const requiresDynamicHover = hoveredItem?.type === "flowNode";
-      const dynamicIdSet = new Set(
-        [
-          editingId,
-          ...(requiresDynamicHover ? [hoverId] : []),
-          ...(Array.isArray(selectedIds) ? selectedIds : []),
-        ]
-          .map((value) => String(value || ""))
-          .filter(Boolean)
-      );
-      const staticItems = frameVisibleItems.filter((item) => !shouldBypassStaticTileCache(item, dynamicIdSet));
-      const dynamicItems = frameVisibleItems.filter((item) => shouldBypassStaticTileCache(item, dynamicIdSet));
+      const { staticItems, dynamicItems } = resolveLayerAssignment(frameVisibleItems, {
+        runtimeMode,
+        editingId,
+        hoverId,
+        selectedIds,
+      });
       const dynamicRenderIdSet = new Set(
         dynamicItems
           .map((item) => String(item?.id || "").trim())
@@ -1525,14 +1611,17 @@ export function createRenderer({ customRenderers = [] } = {}) {
         selectedIds,
       });
       const viewVisualSignature = getViewVisualSignature(view);
+      const renderModeSignature = getRenderModeSignature({ renderTextInCanvas, viewportInteractionActive });
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
       const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
       const forceViewRedraw = viewVisualSignature !== lastViewVisualSignature;
+      const forceRenderModeRedraw = renderModeSignature !== lastRenderModeSignature;
       lastStaticExclusionSignature = staticExclusionSignature;
       lastDynamicVisualSignature = dynamicVisualSignature;
       lastInteractionVisualSignature = interactionVisualSignature;
       lastViewVisualSignature = viewVisualSignature;
+      lastRenderModeSignature = renderModeSignature;
 
       let tileStats = {
         tileCount: 0,
@@ -1558,10 +1647,17 @@ export function createRenderer({ customRenderers = [] } = {}) {
         (Array.isArray(selectedIds) && selectedIds.length >= 2)
       ) || Boolean(hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")));
       const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
-      const effectiveStaticSceneDirty = Boolean(layerDirty.staticScene || forceStaticSceneRedraw || forceViewRedraw);
+      const effectiveStaticSceneDirty = Boolean(
+        liveInteractionMode ||
+        layerDirty.staticScene ||
+        forceStaticSceneRedraw ||
+        forceViewRedraw ||
+        forceRenderModeRedraw
+      );
       const effectiveDynamicSceneDirty = Boolean(
         hasDynamicContent &&
         (
+          forceRenderModeRedraw ||
           forceViewRedraw ||
           forceDynamicSceneRedraw ||
           (
@@ -1574,6 +1670,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const effectiveInteractionDirty = Boolean(
         hasInteractionContent &&
         (
+          forceRenderModeRedraw ||
           forceViewRedraw ||
           forceInteractionRedraw ||
           (
@@ -1606,11 +1703,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
       if (effectiveStaticSceneDirty) {
         clearLayerContext(staticLayer, width, height);
         tileStats =
-          staticItems.length && sceneIndex && sceneKey
+              !liveInteractionMode && staticItems.length && sceneIndex && sceneKey
             ? staticTileLayer.draw({
                 ctx: staticLayer.ctx,
                 sceneIndex,
-                sceneKey,
+                sceneKey: `${sceneKey}|mode:${renderModeSignature}`,
                 view,
                 viewportWidth: width,
                 viewportHeight: height,
@@ -1618,6 +1715,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
                 sceneChanged: Boolean(dirtyState?.sceneDirty),
                 dirtyItemIds: Array.isArray(dirtyState?.itemIds) ? dirtyState.itemIds : [],
                 maxColdTiles: deferColdTiles ? LARGE_VIEWPORT_COLD_TILE_BUDGET : Infinity,
+                viewportMarginPx: Number(visibleSceneMarginPx || 0) || 0,
+                preloadMarginPx: Number(preloadSceneMarginPx || 0) || 0,
+                overscanMarginPx: Number(visibleSceneMarginPx || 0) || 0,
                 drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
                   drawVisibleItemsToContext({
                     ctx: tileCtx,
@@ -1635,7 +1735,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     renderers,
                   }),
               })
-            : staticItems.length
+            : !liveInteractionMode && staticItems.length
               ? drawVisibleItemsToContext({
                   ctx: staticLayer.ctx,
                   items: staticItems,

@@ -672,6 +672,64 @@ export function readFileAsDataUrl(file) {
   });
 }
 
+/**
+ * 将绝对路径转换为相对于 board 文件的相对路径
+ */
+export function toRelativePath(absolutePath = "", basePath = "") {
+  const cleanAbs = String(absolutePath || "").trim();
+  const cleanBase = String(basePath || "").trim();
+  if (!cleanAbs || !cleanBase) {
+    return cleanAbs;
+  }
+  const normalizeSlashes = (p) => p.replace(/\\/g, "/");
+  const absParts = normalizeSlashes(cleanAbs).split("/").filter(Boolean);
+  const baseParts = normalizeSlashes(cleanBase).split("/").filter(Boolean);
+  // Remove the last segment (the file name) from base to get the directory
+  baseParts.pop();
+  if (!baseParts.length || !absParts.length) {
+    return cleanAbs;
+  }
+  // Find common prefix
+  let commonLen = 0;
+  while (commonLen < Math.min(baseParts.length, absParts.length) && baseParts[commonLen].toLowerCase() === absParts[commonLen].toLowerCase()) {
+    commonLen += 1;
+  }
+  const upCount = baseParts.length - commonLen;
+  const downs = absParts.slice(commonLen);
+  const relParts = Array(upCount).fill("..").concat(downs);
+  return relParts.join("/");
+}
+
+/**
+ * 将相对路径解析为绝对路径
+ */
+export function resolveRelativePath(relativePath = "", basePath = "") {
+  const cleanRel = String(relativePath || "").trim();
+  const cleanBase = String(basePath || "").trim();
+  if (!cleanRel || !cleanBase) {
+    return cleanRel || cleanBase;
+  }
+  // Already absolute
+  if (/^[a-zA-Z]:[\\/]/.test(cleanRel) || cleanRel.startsWith("/")) {
+    return cleanRel;
+  }
+  const normalizeSlashes = (p) => p.replace(/\\/g, "/");
+  const baseParts = normalizeSlashes(cleanBase).split("/").filter(Boolean);
+  // Remove last segment (file name)
+  baseParts.pop();
+  const relParts = normalizeSlashes(cleanRel).split("/").filter(Boolean);
+  const resultParts = [...baseParts];
+  for (const part of relParts) {
+    if (part === "..") {
+      resultParts.pop();
+    } else if (part !== ".") {
+      resultParts.push(part);
+    }
+  }
+  const prefix = /^[a-zA-Z]:/.test(resultParts[0]) ? "" : "/";
+  return prefix + resultParts.join("/");
+}
+
 export function toFileUrl(path = "") {
   const raw = String(path || "").trim();
   if (!raw) {

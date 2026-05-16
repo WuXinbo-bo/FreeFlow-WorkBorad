@@ -410,6 +410,50 @@ export function queryVisibleSceneItems(index, view, viewportWidth = 0, viewportH
   };
 }
 
+function createSortedRecordBuckets(records = []) {
+  const sorted = Array.isArray(records) ? records.slice().sort((a, b) => a.itemIndex - b.itemIndex) : [];
+  return {
+    records: sorted,
+    items: sorted.map((record) => record.item),
+  };
+}
+
+export function querySceneViewportPacket(index, view, viewportWidth = 0, viewportHeight = 0, options = {}) {
+  const preloadMarginPx = Math.max(0, Number(options.preloadMarginPx || 0) || 0);
+  const overscanMarginPx = Math.max(preloadMarginPx, Number(options.overscanMarginPx || 0) || 0);
+  const primaryBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, 0);
+  const preloadBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, preloadMarginPx);
+  const overscanBounds = getSceneViewportBounds(view, viewportWidth, viewportHeight, overscanMarginPx);
+  const primaryBucket = createSortedRecordBuckets(querySceneIndex(index, primaryBounds, options));
+  const preloadAllBucket = createSortedRecordBuckets(querySceneIndex(index, preloadBounds, options));
+  const overscanAllBucket = createSortedRecordBuckets(querySceneIndex(index, overscanBounds, options));
+  const primaryIndexes = new Set(primaryBucket.records.map((record) => record.itemIndex));
+  const preloadIndexes = new Set(preloadAllBucket.records.map((record) => record.itemIndex));
+  const preloadBucket = createSortedRecordBuckets(
+    preloadAllBucket.records.filter((record) => !primaryIndexes.has(record.itemIndex))
+  );
+  const overscanBucket = createSortedRecordBuckets(
+    overscanAllBucket.records.filter((record) => !preloadIndexes.has(record.itemIndex))
+  );
+  return {
+    bounds: overscanBounds,
+    primaryBounds,
+    preloadBounds,
+    overscanBounds,
+    primaryMarginPx: 0,
+    preloadMarginPx,
+    overscanMarginPx,
+    records: overscanAllBucket.records,
+    items: overscanAllBucket.items,
+    primaryRecords: primaryBucket.records,
+    primaryItems: primaryBucket.items,
+    preloadRecords: preloadBucket.records,
+    preloadItems: preloadBucket.items,
+    overscanRecords: overscanBucket.records,
+    overscanItems: overscanBucket.items,
+  };
+}
+
 export function getSceneRecord(index, itemId = "") {
   if (!index?.recordById || !itemId) {
     return null;
