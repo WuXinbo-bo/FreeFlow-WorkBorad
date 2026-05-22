@@ -3,6 +3,7 @@ const fsp = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { version: CURRENT_VERSION } = require("../package.json");
 
 function assert(condition, message) {
   if (!condition) {
@@ -247,8 +248,8 @@ async function main() {
       hasShownStartupTutorial:
         scenarioName === "legacy-user-template-refresh" ||
         scenarioName === "current-version-intro-dismissed",
-      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.1" : "",
-      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? "1.1.1" : "",
+      lastTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? CURRENT_VERSION : "",
+      dismissedTutorialIntroVersion: scenarioName === "current-version-intro-dismissed" ? CURRENT_VERSION : "",
     });
     console.log(JSON.stringify(result));
     return;

@@ -2,7 +2,7 @@ const { chromium } = require("playwright");
 
 const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
 const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
-
+const MAIN_CANVAS_SELECTOR = "#canvas-office-canvas";
 function createTextItem(id, x, y, text) {
   return {
     id,
@@ -55,7 +55,7 @@ function assert(condition, message, details = null) {
 }
 
 async function waitForStableCanvas(page) {
-  await page.waitForFunction(() => Boolean(window.__canvas2dEngine && document.querySelector("canvas")));
+  await page.waitForFunction((selector) => Boolean(window.__canvas2dEngine && document.querySelector(selector)), MAIN_CANVAS_SELECTOR);
   await page.addStyleTag({
     content: `
       html, body, #canvas-office-root, .canvas-office-root, .canvas-office-shell, .canvas-office-main, .canvas-office-surface {
@@ -70,10 +70,10 @@ async function waitForStableCanvas(page) {
   await page.evaluate(() => {
     window.__canvas2dEngine?.resize?.();
   });
-  await page.waitForFunction(() => {
-    const canvas = document.querySelector("canvas");
+  await page.waitForFunction((selector) => {
+    const canvas = document.querySelector(selector);
     return Boolean(canvas && canvas.clientWidth > 400 && canvas.clientHeight > 200);
-  });
+  }, MAIN_CANVAS_SELECTOR);
   await page.waitForTimeout(120);
 }
 
@@ -138,11 +138,11 @@ async function dispatchCanvasPaste(page, text) {
   await page.evaluate((textValue) => {
     globalThis.__TEST_CLIPBOARD_TEXT = String(textValue || "");
   }, text);
-  const canvasRect = await page.locator("canvas").boundingBox();
+  const canvasRect = await page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
   await page.mouse.move(canvasRect.x + canvasRect.width / 2, canvasRect.y + canvasRect.height / 2);
-  return page.evaluate(async () => {
+  return page.evaluate(async (selector) => {
     const startedAt = performance.now();
-    const canvas = document.querySelector("canvas");
+    const canvas = document.querySelector(selector);
     if (!(canvas instanceof HTMLCanvasElement)) {
       throw new Error("canvas not found");
     }
@@ -165,7 +165,7 @@ async function dispatchCanvasPaste(page, text) {
     canvas.dispatchEvent(event);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return Math.round((performance.now() - startedAt) * 100) / 100;
-  });
+  }, MAIN_CANVAS_SELECTOR);
 }
 
 async function runSemanticPasteChecks(browser) {
@@ -221,7 +221,7 @@ async function runLargeBoardResponsivenessCheck(browser) {
     }
     await session.page.waitForTimeout(240);
     const pasteDurationMs = await dispatchCanvasPaste(session.page, "final responsiveness probe");
-    const canvasRect = await session.page.locator("canvas").boundingBox();
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     const centerX = canvasRect.x + canvasRect.width / 2;
     const centerY = canvasRect.y + canvasRect.height / 2;
     const beforeView = await session.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.view || null);

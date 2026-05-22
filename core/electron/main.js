@@ -17,7 +17,7 @@ const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTa
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
-const { writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
+const { readUiSettingsStore, writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
   FREEFLOW_BOARD_FILE_KIND,
   wrapFreeFlowBoardPayload,
@@ -57,7 +57,7 @@ function isCanvasBoardFileName(fileName = "") {
   const value = String(fileName || "").trim().toLowerCase();
   return value.endsWith(FREEFLOW_BOARD_EXTENSION) || value.endsWith(LEGACY_BOARD_EXTENSION);
 }
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.1.1";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.2.0";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
@@ -2720,27 +2720,43 @@ ipcMain.handle("desktop-shell:refresh-startup-context", async () => {
 
 ipcMain.handle("desktop-shell:check-for-app-update", async (_event, payload) => {
   try {
-    const mockMode = Boolean(payload?.mockMode);
-    const mockRelease = mockMode
-      ? {
-          tag_name: "v1.1.2",
-          name: "FreeFlow v1.1.2",
-          body: "- 临时测试版本提醒\n- 用于验证更新检查与提示链路",
-          published_at: "2026-05-08T08:00:00Z",
-          html_url: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v1.1.2",
-          assets: [
-            {
-              name: "FreeFlow-v1.1.2-x64.exe",
-              browser_download_url:
-                "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/v1.1.2/FreeFlow-v1.1.2-x64.exe",
-              size: 125829120,
-            },
-          ],
-        }
-      : null;
+    const manual = payload?.manual === true;
+    const latestUiSettings = await readUiSettingsStore().catch(() => startupContextCache?.uiSettings || {});
+    if (startupContextCache?.ok && latestUiSettings && typeof latestUiSettings === "object") {
+      startupContextCache = {
+        ...startupContextCache,
+        uiSettings: {
+          ...(startupContextCache.uiSettings || {}),
+          ...latestUiSettings,
+        },
+      };
+    }
+    if (!manual && latestUiSettings?.updateCheckEnabled === false) {
+      return {
+        ok: true,
+        skipped: true,
+        skipReason: "UPDATE_CHECK_DISABLED",
+        hasUpdate: false,
+        currentVersion: normalizeVersion(app.getVersion()),
+        latestVersion: "",
+        latestVersionRaw: "",
+        dismissed: false,
+        isLatest: false,
+        releaseName: "",
+        releaseNotes: "",
+        publishedAt: "",
+        releasePageUrl: DEFAULT_UPDATE_CONFIG.releasesPageUrl,
+        websiteUrl: getConfiguredUpdateWebsiteUrl(),
+        downloadUrl: "",
+        downloadAssetName: "",
+        downloadAssetSize: 0,
+        versionValid: true,
+        errorCode: "",
+        errorMessage: "",
+      };
+    }
     const result = await checkForAppUpdate({
       currentVersion: app.getVersion(),
-      mockRelease,
       config: {
         ...DEFAULT_UPDATE_CONFIG,
         websiteUrl: getConfiguredUpdateWebsiteUrl(),

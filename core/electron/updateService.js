@@ -12,29 +12,53 @@ const DEFAULT_UPDATE_CONFIG = Object.freeze({
 const DEFAULT_REQUEST_TIMEOUT_MS = 7000;
 
 function normalizeVersion(value = "") {
-  return String(value || "").trim().replace(/^v/i, "").trim();
+  return String(value || "")
+    .trim()
+    .replace(/^v/i, "")
+    .trim();
 }
 
 function parseVersion(value = "") {
   const normalized = normalizeVersion(value);
-  if (!normalized || !/^\d+(?:\.\d+){0,3}$/.test(normalized)) {
+  const match = normalized.match(/^(\d+(?:\.\d+){0,3})(?:[-+].*)?$/);
+  if (!match) {
     return null;
   }
-  return normalized.split(".").map((part) => Number(part) || 0);
+  return match[1].split(".").map((part) => Number(part) || 0);
+}
+
+function parseVersionInfo(value = "") {
+  const normalized = normalizeVersion(value);
+  const match = normalized.match(/^(\d+(?:\.\d+){0,3})(?:-([^+]+))?(?:\+.*)?$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    parts: match[1].split(".").map((part) => Number(part) || 0),
+    prerelease: String(match[2] || "").trim(),
+  };
 }
 
 function compareVersions(left = "", right = "") {
-  const leftParts = parseVersion(left);
-  const rightParts = parseVersion(right);
-  if (!leftParts || !rightParts) {
+  const leftInfo = parseVersionInfo(left);
+  const rightInfo = parseVersionInfo(right);
+  if (!leftInfo || !rightInfo) {
     return null;
   }
-  const length = Math.max(leftParts.length, rightParts.length);
+  const length = Math.max(leftInfo.parts.length, rightInfo.parts.length);
   for (let index = 0; index < length; index += 1) {
-    const leftValue = leftParts[index] || 0;
-    const rightValue = rightParts[index] || 0;
+    const leftValue = leftInfo.parts[index] || 0;
+    const rightValue = rightInfo.parts[index] || 0;
     if (leftValue > rightValue) return 1;
     if (leftValue < rightValue) return -1;
+  }
+  if (leftInfo.prerelease && !rightInfo.prerelease) return -1;
+  if (!leftInfo.prerelease && rightInfo.prerelease) return 1;
+  if (leftInfo.prerelease && rightInfo.prerelease) {
+    return leftInfo.prerelease.localeCompare(rightInfo.prerelease, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
   }
   return 0;
 }
@@ -59,6 +83,7 @@ function buildLatestReleaseUrl(config) {
 }
 
 function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_UPDATE_CONFIG) {
+  const escapedVersion = String(remoteVersion || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const expectedName = String(config.assetNameTemplate || DEFAULT_UPDATE_CONFIG.assetNameTemplate).replace(
     "{version}",
     remoteVersion
@@ -72,7 +97,10 @@ function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_
       size: Number(exact.size || 0) || 0,
     };
   }
-  const fallback = list.find((asset) => /freeflow-v[\d.]+-x64\.exe$/i.test(String(asset?.name || "").trim()));
+  const installerPattern = escapedVersion
+    ? new RegExp(`freeflow-v${escapedVersion}(?:[-\\w.]*)?-x64\\.exe$`, "i")
+    : /freeflow-v[\d.]+(?:[-\w.]*)?-x64\.exe$/i;
+  const fallback = list.find((asset) => installerPattern.test(String(asset?.name || "").trim()));
   if (fallback?.browser_download_url) {
     return {
       name: String(fallback.name || "").trim(),
