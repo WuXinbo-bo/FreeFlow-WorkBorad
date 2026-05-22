@@ -1,9 +1,4 @@
-const path = require("path");
-const { loadEnvFileSync } = require("./src/backend/utils/envLoader");
-
-loadEnvFileSync(path.join(__dirname, ".env"));
-
-const server = require("./src/backend");
+const server = require("./core/server");
 
 module.exports = server;
 

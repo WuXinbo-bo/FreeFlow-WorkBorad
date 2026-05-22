@@ -1,28 +1,35 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title FreeFlow Dev
+title FreeFlow Core Dev
 
-echo [FreeFlow] Starting desktop development build...
+echo [FreeFlow] Redirecting to core desktop development build...
 
-set "ELECTRON_RUN_AS_NODE="
-set "ELECTRON_BIN=%~dp0node_modules\.bin\electron.cmd"
+set "CORE_DIR=%~dp0core"
+set "CORE_START=%CORE_DIR%\start-desktop.cmd"
 
-if not exist "%ELECTRON_BIN%" goto missing_electron
+if not exist "%CORE_DIR%\package.json" goto missing_core
+if not exist "%CORE_START%" goto missing_core_start
 
-call "%ELECTRON_BIN%" .
+call "%CORE_START%"
 if errorlevel 1 goto startup_failed
 goto end
 
-:missing_electron
-echo [FreeFlow][ERROR] Local Electron binary was not found.
-echo Run npm install in this project first.
+:missing_core
+echo [FreeFlow][ERROR] core project folder was not found.
+echo Expected: %CORE_DIR%
+pause
+exit /b 1
+
+:missing_core_start
+echo [FreeFlow][ERROR] core start script was not found.
+echo Expected: %CORE_START%
 pause
 exit /b 1
 
 :startup_failed
 echo.
-echo [FreeFlow][ERROR] Desktop app failed to start.
+echo [FreeFlow][ERROR] Core desktop app failed to start.
 pause
 exit /b 1
 
