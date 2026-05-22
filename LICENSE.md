@@ -29,7 +29,6 @@ Commercial use includes but is not limited to:
 To obtain a commercial license, please contact:
 
 - Email: 1806598228@qq.com
-- Email: w1806598228@163.com
 
 ## 4. Disclaimer
 

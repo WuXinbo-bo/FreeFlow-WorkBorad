@@ -391,14 +391,14 @@
                   {
                       "id":  "50f29aef-a66b-40ce-8bad-d8d70507a8a4",
                       "type":  "text",
-                      "text":  "FreeFlow v1.1.1 更新说明",
-                      "html":  "\u003ch2\u003eFreeFlow v1.1.1 更新说明\u003c/h2\u003e",
-                      "plainText":  "FreeFlow v1.1.1 更新说明",
+                      "text":  "FreeFlow v1.2.0 更新说明",
+                      "html":  "\u003ch2\u003eFreeFlow v1.2.0 更新说明\u003c/h2\u003e",
+                      "plainText":  "FreeFlow v1.2.0 更新说明",
                       "richTextDocument":  {
                                                "version":  2,
                                                "kind":  "freeflow-rich-text",
-                                               "html":  "\u003ch2\u003eFreeFlow v1.1.1 更新说明\u003c/h2\u003e",
-                                               "plainText":  "FreeFlow v1.1.1 更新说明",
+                                               "html":  "\u003ch2\u003eFreeFlow v1.2.0 更新说明\u003c/h2\u003e",
+                                               "plainText":  "FreeFlow v1.2.0 更新说明",
                                                "blocks":  [
                                                               {
                                                                   "id":  "block-1",
@@ -408,7 +408,7 @@
                                                                   "content":  [
                                                                                   {
                                                                                       "type":  "text",
-                                                                                      "text":  "FreeFlow v1.1.1 更新说明",
+                                                                                      "text":  "FreeFlow v1.2.0 更新说明",
                                                                                       "marks":  [
 
                                                                                                 ],
@@ -450,7 +450,7 @@
                       "wrapMode":  "manual",
                       "textBoxLayoutMode":  "auto-height",
                       "textResizeMode":  "wrap",
-                      "title":  "FreeFlow v1.1.1 更新说明",
+                      "title":  "FreeFlow v1.2.0 更新说明",
                       "x":  1367.692936980542,
                       "y":  3306.5938513087876,
                       "width":  1198,
@@ -11824,14 +11824,14 @@
                   {
                       "id":  "60952ee8-5977-464f-a284-c68b09f50264",
                       "type":  "text",
-                      "text":  "版本号：v1.1.1",
-                      "html":  "\u003cdiv\u003e版本号：v1.1.1\u003c/div\u003e",
-                      "plainText":  "版本号：v1.1.1",
+                      "text":  "版本号：v1.2.0",
+                      "html":  "\u003cdiv\u003e版本号：v1.2.0\u003c/div\u003e",
+                      "plainText":  "版本号：v1.2.0",
                       "richTextDocument":  {
                                                "version":  2,
                                                "kind":  "freeflow-rich-text",
-                                               "html":  "\u003cdiv\u003e版本号：v1.1.1\u003c/div\u003e",
-                                               "plainText":  "版本号：v1.1.1",
+                                               "html":  "\u003cdiv\u003e版本号：v1.2.0\u003c/div\u003e",
+                                               "plainText":  "版本号：v1.2.0",
                                                "blocks":  [
                                                               {
                                                                   "id":  "block-1",
@@ -11841,7 +11841,7 @@
                                                                   "content":  [
                                                                                   {
                                                                                       "type":  "text",
-                                                                                      "text":  "版本号：v1.1.1",
+                                                                                      "text":  "版本号：v1.2.0",
                                                                                       "marks":  [
 
                                                                                                 ],
@@ -11883,7 +11883,7 @@
                       "wrapMode":  "manual",
                       "textBoxLayoutMode":  "auto-width",
                       "textResizeMode":  "auto-width",
-                      "title":  "版本号：v1.1.1",
+                      "title":  "版本号：v1.2.0",
                       "x":  526.6666361490885,
                       "y":  171.4645544050691,
                       "width":  127,

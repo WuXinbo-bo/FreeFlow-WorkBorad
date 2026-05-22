@@ -3,33 +3,36 @@ setlocal
 cd /d "%~dp0"
 title FreeFlow Core Dev
 
-echo [FreeFlow] Redirecting to core desktop development build...
+echo [FreeFlow] Starting core desktop development build...
 
-set "CORE_DIR=%~dp0core"
-set "CORE_START=%CORE_DIR%\start-desktop.cmd"
+set "ELECTRON_RUN_AS_NODE="
+set "ELECTRON_BIN=%~dp0node_modules\.bin\electron.cmd"
+set "ROOT_ELECTRON_BIN=%~dp0..\node_modules\.bin\electron.cmd"
 
-if not exist "%CORE_DIR%\package.json" goto missing_core
-if not exist "%CORE_START%" goto missing_core_start
+if exist "%ELECTRON_BIN%" goto start_desktop
+if exist "%ROOT_ELECTRON_BIN%" (
+  set "ELECTRON_BIN=%ROOT_ELECTRON_BIN%"
+  goto start_desktop
+)
+goto missing_electron
 
-call "%CORE_START%"
+:start_desktop
+call "%ELECTRON_BIN%" .
 if errorlevel 1 goto startup_failed
 goto end
 
-:missing_core
-echo [FreeFlow][ERROR] core project folder was not found.
-echo Expected: %CORE_DIR%
-pause
-exit /b 1
-
-:missing_core_start
-echo [FreeFlow][ERROR] core start script was not found.
-echo Expected: %CORE_START%
+:missing_electron
+echo [FreeFlow][ERROR] Local Electron binary was not found.
+echo Checked:
+echo   %~dp0node_modules\.bin\electron.cmd
+echo   %~dp0..\node_modules\.bin\electron.cmd
+echo Run npm install in the project root first.
 pause
 exit /b 1
 
 :startup_failed
 echo.
-echo [FreeFlow][ERROR] Core desktop app failed to start.
+echo [FreeFlow][ERROR] Desktop app failed to start.
 pause
 exit /b 1
 
