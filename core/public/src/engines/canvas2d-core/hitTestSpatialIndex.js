@@ -192,11 +192,15 @@ function buildGenericRecord(item, itemIndex) {
   let memoBounds = null;
   if (item.type === "fileCard" && item.memoVisible) {
     memoBounds = clampBounds(getFileCardMemoBounds(item));
-    queryBounds = mergeBounds(queryBounds, memoBounds);
+    if (memoBounds.right > memoBounds.left && memoBounds.bottom > memoBounds.top) {
+      queryBounds = mergeBounds(queryBounds, memoBounds);
+    }
   }
   if (item.type === "image" && item.memoVisible) {
     memoBounds = clampBounds(getImageMemoBounds(item));
-    queryBounds = mergeBounds(queryBounds, memoBounds);
+    if (memoBounds.right > memoBounds.left && memoBounds.bottom > memoBounds.top) {
+      queryBounds = mergeBounds(queryBounds, memoBounds);
+    }
   }
   return {
     itemIndex,

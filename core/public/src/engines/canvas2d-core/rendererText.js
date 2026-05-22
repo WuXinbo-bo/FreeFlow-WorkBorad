@@ -770,6 +770,10 @@ function getCachedRichTextRuns(html = "") {
   return runs;
 }
 
+export function warmRichTextRunCache(html = "") {
+  return getCachedRichTextRuns(html);
+}
+
 function fontForRun(runStyle, baseFontSize, scale = 1, options = {}) {
   const fontScale = Math.max(0.1, Number(runStyle.fontScale || 1));
   const rawFont = Number(runStyle.fontSize || baseFontSize * fontScale);
@@ -786,7 +790,7 @@ function createLine(baseFontSize, scaleValue, lineHeightRatio) {
   return {
     segments: [],
     width: 0,
-    height: Math.max(22, baseFontSize * lineHeightRatio) * scaleValue,
+    height: Math.max(baseFontSize * 1.2, baseFontSize * lineHeightRatio) * scaleValue,
     spacingAfter: 0,
   };
 }
@@ -795,7 +799,7 @@ function appendSegment(line, text, style, width, baseFontSize, scaleValue, lineH
   if (!text) return;
   const fontSize = Math.max(10, Number(style.fontSize || baseFontSize)) * scaleValue;
   const segmentLineHeightRatio = Math.max(1, Number(style.lineHeightRatio || lineHeightRatio));
-  const lineHeight = Math.max(22, fontSize * segmentLineHeightRatio);
+  const lineHeight = Math.max(fontSize * 1.2, fontSize * segmentLineHeightRatio);
   line.height = Math.max(line.height, lineHeight);
   const previous = line.segments[line.segments.length - 1];
   if (previous && previous.style === style) {
@@ -1016,11 +1020,12 @@ export function drawRichTextInBox(ctx, {
   fontWeight = TEXT_FONT_WEIGHT,
   boldWeight = TEXT_BOLD_WEIGHT,
   fontFamily = TEXT_FONT_FAMILY,
+  precomputedRuns = null,
 } = {}) {
   const baseFontSize = Math.max(10, Number(fontSize || 18));
   const scaleValue = Math.max(0.1, Number(scale) || 1);
   const plain = String(text || "");
-  const runs = getCachedRichTextRuns(html);
+  const runs = precomputedRuns || getCachedRichTextRuns(html);
   if (!runs || !runs.length) {
     return false;
   }
@@ -1236,22 +1241,27 @@ function drawTextBody(ctx, element, view, selected, hover, editing, drawSelectio
   if (!hideText && (!editing || !hideWhenEditing)) {
     const linkTokens = options.linkTokens ?? element?.structuredImport?.linkTokens ?? element?.linkTokens ?? [];
     const rawHtml = options.html ?? element.html;
-    const html = resolveRichTextDisplayHtml({
-      text,
-      html: rawHtml,
-      linkTokens,
-    });
-    const rendered = html.trim()
+    const precomputed = element._richTextPrecomputed;
+    let displayHtml;
+    let precomputedRuns = null;
+    if (precomputed && precomputed.sourceHtml === rawHtml && precomputed.runs) {
+      displayHtml = precomputed.displayHtml;
+      precomputedRuns = precomputed.runs;
+    } else {
+      displayHtml = resolveRichTextDisplayHtml({ text, html: rawHtml, linkTokens });
+    }
+    const rendered = displayHtml.trim()
       ? drawRichTextInBox(ctx, {
           x: x + padding,
           y: y + padding,
           width: Math.max(1, width - padding * 2),
           height: Math.max(1, height - padding * 2),
-          html,
+          html: displayHtml,
           text: text || placeholder,
           color: element.color || "#0f172a",
           fontSize: logicalFontSize,
           scale,
+          precomputedRuns,
         })
       : false;
     if (!rendered) {

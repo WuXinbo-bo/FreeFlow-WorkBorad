@@ -126,6 +126,7 @@ export function getTextMinSize(element = {}, options = {}) {
   });
   const fontSize = normalizeTextFontSize(element.fontSize ?? options.fontSize ?? 20, options.fontSize ?? 20);
   const resizeMode = normalizeTextResizeMode(element.textResizeMode, element.wrapMode);
+  const contentFitOption = options.contentFit !== undefined ? options.contentFit : undefined;
   const layout = normalizeTextBoxLayoutModel(
     {
       ...element,
@@ -133,6 +134,7 @@ export function getTextMinSize(element = {}, options = {}) {
         normalizeTextBoxLayoutMode(element.textBoxLayoutMode, resizeMode, element.wrapMode)
       ),
       textResizeMode: resizeMode,
+      contentFit: contentFitOption,
       widthHint: options.widthHint ?? element.width ?? 80,
       heightHint: options.heightHint ?? element.height ?? 40,
       minWidth: 80,
@@ -152,6 +154,7 @@ export function getTextMinSize(element = {}, options = {}) {
     textBoxLayoutMode: layout.layoutMode,
     layoutMode: layout.layoutMode,
     resizeMode: layout.legacyResizeMode,
+    contentFit: layout.contentFit,
     widthHint: layout.widthHint,
     heightHint: layout.heightHint,
     minWidth: layout.minWidth,
@@ -165,9 +168,11 @@ export function getTextMinSize(element = {}, options = {}) {
     const contentHeight = Math.max(40, Number(measured?.contentHeight || measured?.frameHeight || 0) || 40);
     return {
       width:
-        layout.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+        layout.contentFit
           ? measured.frameWidth
-          : Math.max(80, layout.widthHint),
+          : layout.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+            ? measured.frameWidth
+            : Math.max(80, layout.widthHint),
       height:
         layout.layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE
           ? Math.max(40, layout.heightHint, contentHeight)
@@ -383,9 +388,9 @@ export function normalizeTextElement(element = {}, options = {}) {
         }
       );
   const nextWidth =
-    textBoxLayoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
-      ? Math.max(80, Number(element.width ?? 0) || metrics.width)
-      : Math.max(80, metrics.width);
+    textBoxLayoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH
+      ? Math.max(80, metrics.width)
+      : Math.max(80, metrics.width || Number(element.width ?? 0) || 80);
   const nextHeight =
     textBoxLayoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE
       ? Math.max(40, Number(element.height ?? 0) || metrics.height)

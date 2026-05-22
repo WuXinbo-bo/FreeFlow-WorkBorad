@@ -48,9 +48,15 @@ export function createTextMeasurementResultModel(inputModel, measurement = {}, m
   const input = inputModel && typeof inputModel === "object" ? inputModel : normalizeTextMeasurementInput();
   const contentWidth = Math.max(1, Math.ceil(Number(measurement.contentWidth || measurement.frameWidth || 0) || 1));
   const contentHeight = Math.max(1, Math.ceil(Number(measurement.contentHeight || measurement.frameHeight || 0) || 1));
-  const frameWidth = input.layout.autoWidth
-    ? Math.max(input.layout.minWidth, Math.ceil(Number(measurement.frameWidth || contentWidth) || contentWidth))
-    : Math.max(input.layout.minWidth, input.layout.widthHint);
+  let frameWidth;
+  if (input.layout.autoWidth) {
+    frameWidth = Math.max(input.layout.minWidth, Math.ceil(Number(measurement.frameWidth || contentWidth) || contentWidth));
+  } else if (input.layout.contentFit) {
+    const maxAllowed = Math.max(input.layout.minWidth, input.layout.widthHint);
+    frameWidth = Math.max(input.layout.minWidth, Math.min(maxAllowed, contentWidth));
+  } else {
+    frameWidth = Math.max(input.layout.minWidth, input.layout.widthHint);
+  }
   const frameHeight = input.layout.fixedSize
     ? Math.max(input.layout.minHeight, input.layout.heightHint)
     : Math.max(input.layout.minHeight, Math.ceil(Number(measurement.frameHeight || contentHeight) || contentHeight));

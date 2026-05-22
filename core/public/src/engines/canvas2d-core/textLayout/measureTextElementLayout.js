@@ -63,7 +63,31 @@ function buildMeasureHtml(html = "", plainText = "") {
   return escapeHtml(cleanText).replace(/\n/g, "<br>");
 }
 
-function measureFallbackText(text = "", { minWidth = DEFAULT_MIN_WIDTH, maxWidth = DEFAULT_MAX_WIDTH, fontSize = DEFAULT_FONT_SIZE } = {}) {
+function detectRichTextFormatFactors(html = "") {
+  const source = String(html || "");
+  let widthFactor = 1;
+  let heightExtra = 0;
+  if (/<h[1-3]\b/i.test(source)) {
+    widthFactor = Math.max(widthFactor, 1.4);
+    heightExtra += 8;
+  } else if (/<h[4-6]\b/i.test(source)) {
+    widthFactor = Math.max(widthFactor, 1.2);
+    heightExtra += 4;
+  }
+  if (/<strong\b|<b\b/i.test(source)) {
+    widthFactor = Math.max(widthFactor, 1.08);
+  }
+  if (/<[uo]l\b/i.test(source)) {
+    heightExtra += 6;
+    widthFactor = Math.max(widthFactor, 1.05);
+  }
+  if (/<blockquote\b/i.test(source)) {
+    widthFactor = Math.max(widthFactor, 1.06);
+  }
+  return { widthFactor, heightExtra };
+}
+
+function measureFallbackText(text = "", { minWidth = DEFAULT_MIN_WIDTH, maxWidth = DEFAULT_MAX_WIDTH, fontSize = DEFAULT_FONT_SIZE, html = "" } = {}) {
   const clean = sanitizeText(text);
   const lines = clean ? clean.split("\n") : [""];
   const paragraphCount = Math.max(
@@ -73,15 +97,16 @@ function measureFallbackText(text = "", { minWidth = DEFAULT_MIN_WIDTH, maxWidth
       .map((segment) => segment.trim())
       .filter(Boolean).length || 1
   );
+  const { widthFactor, heightExtra } = detectRichTextFormatFactors(html);
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
-  const width = clamp(Math.round(24 + longest * (fontSize * 0.6)), minWidth, maxWidth);
+  const width = clamp(Math.round((24 + longest * (fontSize * 0.6)) * widthFactor), minWidth, maxWidth);
   const lineHeight = fontSize * BODY_LINE_HEIGHT_RATIO;
   const paragraphSpacing = Math.max(0, paragraphCount - 1) * fontSize * TEXT_BLOCK_SPACING_EM.paragraph;
-  const height = Math.max(Math.round(fontSize * 1.25), Math.round(10 + lines.length * lineHeight + paragraphSpacing));
+  const height = Math.max(Math.round(fontSize * 1.25), Math.round(10 + lines.length * lineHeight + paragraphSpacing + heightExtra));
   return { width, height };
 }
 
-function applyMeasurementNodeStyles(node, { fontFamily, fontSize, lineHeightRatio, fontWeight, maxWidth, layoutMode, widthHint }) {
+function applyMeasurementNodeStyles(node, { fontFamily, fontSize, lineHeightRatio, fontWeight, maxWidth, layoutMode, widthHint, contentFit }) {
   node.style.fontFamily = String(fontFamily || DEFAULT_FONT_FAMILY);
   node.style.fontSize = `${Math.max(1, fontSize)}px`;
   node.style.fontWeight = String(fontWeight || DEFAULT_FONT_WEIGHT);
@@ -90,20 +115,27 @@ function applyMeasurementNodeStyles(node, { fontFamily, fontSize, lineHeightRati
   );
   node.style.boxSizing = "border-box";
   node.style.overflow = "hidden";
-  if (layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
-    node.style.display = "block";
-    node.style.width = `${Math.max(1, widthHint)}px`;
-    node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
-    node.style.whiteSpace = "pre-wrap";
-    node.style.wordBreak = "break-word";
-    node.style.overflowWrap = "anywhere";
-  } else {
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
     node.style.display = "inline-block";
     node.style.width = "max-content";
     node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
     node.style.whiteSpace = "pre";
     node.style.wordBreak = "normal";
     node.style.overflowWrap = "normal";
+  } else if (contentFit) {
+    node.style.display = "inline-block";
+    node.style.width = "max-content";
+    node.style.maxWidth = `${Math.max(1, widthHint)}px`;
+    node.style.whiteSpace = "pre-wrap";
+    node.style.wordBreak = "break-word";
+    node.style.overflowWrap = "anywhere";
+  } else {
+    node.style.display = "block";
+    node.style.width = `${Math.max(1, widthHint)}px`;
+    node.style.maxWidth = `${Math.max(widthHint || 0, maxWidth)}px`;
+    node.style.whiteSpace = "pre-wrap";
+    node.style.wordBreak = "break-word";
+    node.style.overflowWrap = "anywhere";
   }
 }
 
@@ -208,6 +240,7 @@ function measureWithHost({
   layoutMode,
   widthHint,
   maxWidth,
+  contentFit,
 }) {
   const host = createTextMeasureHost();
   if (!host?.content) {
@@ -237,6 +270,7 @@ function measureWithHost({
       maxWidth,
       layoutMode,
       widthHint,
+      contentFit,
     });
     node.innerHTML = html;
     normalizeMeasurementMarkup(node, { baseFontSize: fontSize });
@@ -246,10 +280,18 @@ function measureWithHost({
     if (!contentWidth || !contentHeight) {
       return null;
     }
+    let frameWidth;
+    if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+      frameWidth = Math.min(contentWidth, maxWidth);
+    } else if (contentFit) {
+      frameWidth = Math.min(contentWidth, widthHint);
+    } else {
+      frameWidth = widthHint;
+    }
     return {
       contentWidth,
       contentHeight,
-      frameWidth: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? Math.min(contentWidth, maxWidth) : widthHint,
+      frameWidth,
       frameHeight: contentHeight,
     };
   } finally {
@@ -278,6 +320,7 @@ function measureWithCanvas({
   layoutMode,
   widthHint,
   maxWidth,
+  contentFit,
 }) {
   const richSize = measureRichTextBox({
     html,
@@ -292,10 +335,18 @@ function measureWithCanvas({
   if (!richSize?.width || !richSize?.height) {
     return null;
   }
+  let frameWidth;
+  if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
+    frameWidth = Math.min(richSize.width, maxWidth);
+  } else if (contentFit) {
+    frameWidth = Math.min(richSize.width, widthHint);
+  } else {
+    frameWidth = widthHint;
+  }
   return {
     contentWidth: richSize.width,
     contentHeight: richSize.height,
-    frameWidth: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH ? Math.min(richSize.width, maxWidth) : widthHint,
+    frameWidth,
     frameHeight: richSize.height,
   };
 }
@@ -346,6 +397,7 @@ export function measureTextLayoutModel(input = {}) {
     layoutMode: layout.layoutMode,
     widthHint: layout.widthHint,
     maxWidth: layout.maxWidth,
+    contentFit: layout.contentFit,
   });
   if (hostMeasured) {
     return createTextMeasurementResultModel(
@@ -368,6 +420,7 @@ export function measureTextLayoutModel(input = {}) {
     layoutMode: layout.layoutMode,
     widthHint: layout.widthHint,
     maxWidth: layout.maxWidth,
+    contentFit: layout.contentFit,
   });
   if (canvasMeasured) {
     return createTextMeasurementResultModel(
@@ -384,13 +437,22 @@ export function measureTextLayoutModel(input = {}) {
     minWidth: layout.minWidth,
     maxWidth: layout.autoWidth ? layout.maxWidth : layout.widthHint,
     fontSize: typography.fontSize,
+    html: measureHtml,
   });
+  let fallbackFrameWidth;
+  if (layout.autoWidth) {
+    fallbackFrameWidth = fallback.width;
+  } else if (layout.contentFit) {
+    fallbackFrameWidth = Math.min(fallback.width, layout.widthHint);
+  } else {
+    fallbackFrameWidth = layout.widthHint;
+  }
   return createTextMeasurementResultModel(
     measurementInput,
     {
       contentWidth: fallback.width,
       contentHeight: fallback.height,
-      frameWidth: layout.autoWidth ? fallback.width : layout.widthHint,
+      frameWidth: fallbackFrameWidth,
       frameHeight: layout.fixedSize ? layout.heightHint : fallback.height,
     },
     {

@@ -809,10 +809,9 @@ function getExportHistoryActionLabel(entry = null) {
 
 const ABOUT_CANVAS_ITEMS = Object.freeze([
   { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v1.1.1" },
+  { label: "版本号", value: "v1.2.0" },
   { label: "开发作者", value: "Wu Xinbo" },
   { label: "邮箱", value: "1806598228@qq.com" },
-  { label: "授权邮箱", value: "w1806598228@163.com" },
   {
     label: "GitHub",
     value: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad",
@@ -1048,6 +1047,7 @@ function Canvas2DControls({ engine }) {
   const viewScale = Number(snapshot?.board?.view?.scale || 1);
   const zoomPercent = Math.round(viewScale * 100);
   const overlayScale = clamp((uiViewport.width - 72) / 940, 0.76, 1);
+  const overlayCompact = overlayScale <= 0.9;
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const activeDrawTool = DRAW_TOOLS.find((tool) => tool.key === activeTool) || DRAW_TOOLS[0];
   const drawActive = DRAW_TOOLS.some((tool) => tool.key === activeTool);
@@ -1436,7 +1436,7 @@ function Canvas2DControls({ engine }) {
   return (
     <div
       ref={rootRef}
-      className="canvas2d-engine-ui"
+      className={`canvas2d-engine-ui${overlayCompact ? " is-overlay-compact" : ""}`}
       style={{
         "--canvas2d-overlay-scale": overlayScale,
         "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",

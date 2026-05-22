@@ -105,6 +105,7 @@ import {
   getFlowNodeTextPadding,
   measureRichTextBox,
   resolveRichTextDisplayHtml,
+  warmRichTextRunCache,
   TEXT_BOLD_WEIGHT,
   TEXT_FONT_FAMILY,
   TEXT_FONT_WEIGHT,
@@ -1394,6 +1395,7 @@ function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT
       resizeMode: deriveTextResizeModeFromLayoutMode(currentLayoutMode),
       widthHint: currentWidth,
       heightHint: currentHeight,
+      contentFit: currentLayoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
     };
   }
   const importedLayout = resolveImportedTextBoxLayout(
@@ -1405,6 +1407,7 @@ function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT
     resizeMode: TEXT_RESIZE_MODE_WRAP,
     widthHint: Math.max(240, currentWidth, Number(importedLayout?.width || 0) || 0),
     heightHint: currentHeight,
+    contentFit: true,
   };
 }
 
@@ -1547,6 +1550,7 @@ function buildSplitTextSegmentItem(baseItem, segment, { x = 0, y = 0, width = 24
       height: Math.max(40, Number(baseItem?.height || 0) || 40),
       textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
       textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      contentFit: true,
     },
     {
       includeHtmlMeasurement: true,
@@ -1558,7 +1562,7 @@ function buildSplitTextSegmentItem(baseItem, segment, { x = 0, y = 0, width = 24
     id: createId("text"),
     x,
     y,
-    width,
+    width: Math.max(80, measured.frameWidth || width),
     height: Math.max(40, Math.ceil(Number(measured.height || 0) || 40)),
     fontSize,
     html: content.html,
@@ -1608,6 +1612,7 @@ function buildSplitMathBlockItem(baseItem, formula = "", { x = 0, y = 0, width =
       height: Math.max(72, Number(mathItem.height || 0) || 72),
       textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
       textResizeMode: TEXT_RESIZE_MODE_WRAP,
+      contentFit: true,
     },
     {
       includeHtmlMeasurement: true,
@@ -1618,7 +1623,7 @@ function buildSplitMathBlockItem(baseItem, formula = "", { x = 0, y = 0, width =
     ...mathItem,
     x,
     y,
-    width,
+    width: Math.max(80, measured.frameWidth || width),
     height: Math.max(72, Math.ceil(Number(measured.height || mathItem.height || 0) || 72)),
     textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
     textResizeMode: TEXT_RESIZE_MODE_WRAP,
@@ -3386,6 +3391,9 @@ export function createCanvas2DEngine(options = {}) {
   let deferredStoreEmitHandle = 0;
   let cancelDeferredStoreEmit = null;
   let deferredStoreEmitPending = false;
+  let startupHydrationToken = 0;
+  let startupHydrationInFlight = false;
+  let cancelStartupHydrationTask = null;
   const urlMetaHydrationTasks = new Map();
   const queuedUrlMetaHydrationTasks = new Map();
   const fileCardIdHydrationInFlight = new Set();
@@ -3856,8 +3864,7 @@ let tablePointerSelectionState = {
     const syntaxHighlighting = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE);
     const showLineNumbers = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE);
     const showHeader = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE);
-    const interactionPriorityActive = interactionPriorityGate.isActive();
-    const summaryMode = interactionPriorityActive || !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
+    const summaryMode = !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
     if (!isVisible) {
       codeBlockOverlayVirtualizer.hideNode(item.id);
       return;
@@ -4608,7 +4615,7 @@ let tablePointerSelectionState = {
       largeViewportProgressivePending = false;
     }
     const interactionPriorityActive = interactionPriorityGate.isActive();
-    const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending || interactionPriorityActive);
+    const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending);
     const overlaySuspended = Boolean(skipDetailOverlays);
     overlayBudgetManager.beginFrame({
       suspended: overlaySuspended,
@@ -5196,6 +5203,48 @@ let tablePointerSelectionState = {
       void processDeferredFileCardSourceHydration(itemId);
     },
   });
+
+  function cancelStartupHydrationWork() {
+    startupHydrationToken += 1;
+    startupHydrationInFlight = false;
+    if (typeof cancelStartupHydrationTask === "function") {
+      cancelStartupHydrationTask();
+    }
+    cancelStartupHydrationTask = null;
+  }
+
+  function scheduleStartupHydration(task, delayMs = 0) {
+    cancelStartupHydrationWork();
+    const token = startupHydrationToken;
+    startupHydrationInFlight = true;
+    const runTask = async () => {
+      cancelStartupHydrationTask = null;
+      try {
+        await yieldToNextFrame();
+        await yieldToIdleWindow(120);
+        if (token !== startupHydrationToken) {
+          return;
+        }
+        await task({ token, isCancelled: () => token !== startupHydrationToken });
+      } finally {
+        if (token === startupHydrationToken) {
+          startupHydrationInFlight = false;
+        }
+      }
+    };
+    if (delayMs > 0) {
+      const handle = setTimeout(() => {
+        void runTask();
+      }, Math.max(0, Number(delayMs || 0) || 0));
+      cancelStartupHydrationTask = () => clearTimeout(handle);
+      return token;
+    }
+    const cancelFrame = scheduleAnimationFrameTask(() => {
+      void runTask();
+    });
+    cancelStartupHydrationTask = cancelFrame;
+    return token;
+  }
 
   const urlMetaHydrationQueue = createIdleBatchQueue({
     perFlushLimit: 2,
@@ -6133,7 +6182,16 @@ let tablePointerSelectionState = {
     return boardSaveInFlight;
   }
 
-  async function loadBoardFromPath(filePath, { silent = false, updateSettings = true } = {}) {
+  async function loadBoardFromPath(
+    filePath,
+    {
+      silent = false,
+      updateSettings = true,
+      deferHydration = true,
+      deferFileCardResolve = true,
+      deferOverlayRescan = true,
+    } = {}
+  ) {
     if (!useLocalFileSystem) {
       if (!silent) {
         setStatus("当前环境不支持加载本地画布", "warning");
@@ -6148,6 +6206,7 @@ let tablePointerSelectionState = {
       return boardLoadInFlight;
     }
     boardLoadInFlight = (async () => {
+      cancelStartupHydrationWork();
       const loadMetrics = createBoardLoadMetrics(targetPath);
       const hasDesktopReadBridge = typeof globalThis?.desktopShell?.readFile === "function";
       const hasDesktopExistsBridge = typeof globalThis?.desktopShell?.pathExists === "function";
@@ -6241,7 +6300,13 @@ let tablePointerSelectionState = {
         cancelFileMemoEdit();
         cancelImageMemoEdit();
         finishImageEdit();
-        syncBoard({ persist: false, emit: true, markDirty: false });
+        syncBoard({
+          persist: false,
+          emit: true,
+          markDirty: false,
+          fullOverlayRescan: !deferOverlayRescan,
+          reason: "board-load-minimal",
+        });
         loadMetrics.mark("sync-board");
         let canonicalPath = targetPath;
         if (parsed.legacy || isLegacyJsonBoardFileName(targetPath)) {
@@ -6256,7 +6321,46 @@ let tablePointerSelectionState = {
         setBoardDirty(false, { emit: false });
         store.emit();
         loadMetrics.mark("emit-store");
-        void resolveFileCardSources();
+        if (deferHydration) {
+          scheduleStartupHydration(
+            async ({ isCancelled }) => {
+              if (isCancelled()) {
+                return;
+              }
+              if (deferOverlayRescan) {
+                markCodeBlockOverlayDirty([], { fullRescan: true });
+                scheduleRender({
+                  reason: "board-load-overlay-recovery",
+                  overlayDirty: true,
+                  fullOverlayRescan: true,
+                  interactionDirty: false,
+                });
+                await yieldToIdleWindow(120);
+                if (isCancelled()) {
+                  return;
+                }
+              }
+              if (deferFileCardResolve) {
+                await resolveFileCardSources({
+                  viewportOnly: true,
+                  startupOnly: true,
+                });
+                if (isCancelled()) {
+                  return;
+                }
+              }
+              store.emit();
+            },
+            24
+          );
+        } else if (deferFileCardResolve) {
+          void resolveFileCardSources({
+            viewportOnly: true,
+            startupOnly: false,
+          });
+        } else {
+          void resolveFileCardSources();
+        }
         if (!silent) {
           setStatus(canonicalPath !== targetPath ? "旧画布已升级为 FreeFlow 格式" : "画布已加载");
         }
@@ -6725,6 +6829,7 @@ let tablePointerSelectionState = {
   });
 
   async function initBoardFileState() {
+    cancelStartupHydrationWork();
     state.boardAutosaveEnabled = readAutosaveEnabled();
     const startupContext = readStartupContext();
     const lastOpenedPath =
@@ -6754,6 +6859,19 @@ let tablePointerSelectionState = {
       } else if (!loaded && state.boardFilePath) {
         setStatus("当前画布加载失败，已停留在空白画布", "warning");
       }
+    } else {
+      scheduleStartupHydration(
+        async ({ isCancelled }) => {
+          if (isCancelled()) {
+            return;
+          }
+          await resolveFileCardSources({
+            viewportOnly: true,
+            startupOnly: true,
+          });
+        },
+        24
+      );
     }
     void ensureImportImageFolderExists();
     void refreshCanvasImageManager({ silent: true });
@@ -7146,15 +7264,25 @@ let tablePointerSelectionState = {
     return changed;
   }
 
-  async function resolveFileCardSources() {
-    const fileCards = state.board.items.filter((item) => item.type === "fileCard" || item.type === "image");
-    fileCards.forEach((item) => {
+  async function resolveFileCardSources({ viewportOnly = false, startupOnly = false } = {}) {
+    let targets = [];
+    if (viewportOnly) {
+      const visibleItems = queryVisibleItemsByTypes(["fileCard", "image"], {
+        marginPx: startupOnly ? 280 : 220,
+      });
+      targets = Array.isArray(visibleItems?.items)
+        ? visibleItems.items.map((record) => record?.item).filter(Boolean)
+        : [];
+    } else {
+      targets = state.board.items.filter((item) => item.type === "fileCard" || item.type === "image");
+    }
+    targets.forEach((item) => {
       const itemId = String(item?.id || "").trim();
       if (itemId) {
         fileCardSourceHydrationQueue.enqueue(itemId);
       }
     });
-    return false;
+    return targets.length > 0;
   }
 
   function applyHistorySnapshot(snapshot, { persist = true } = {}) {
@@ -9873,7 +10001,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         item.width = Math.max(80, Math.ceil(Number(measuredSize.width || 0) || 80));
         item.height = Math.max(40, Math.ceil(Number(measuredSize.height || 0) || 40));
       } else if (finalLayoutConfig.layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT) {
-        item.width = Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || item.width || 0) || 80));
+        const maxAllowed = Math.max(80, Math.ceil(Number(finalLayoutConfig.widthHint || item.width || 0) || 80));
+        if (finalLayoutConfig.contentFit && measuredSize.width) {
+          item.width = Math.max(80, Math.min(maxAllowed, Math.ceil(Number(measuredSize.width) || 80)));
+        } else {
+          item.width = maxAllowed;
+        }
         item.height = Math.max(40, Math.ceil(Number(measuredSize.height || 0) || 40));
       } else {
         item.width = Math.max(
@@ -9917,6 +10050,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           };
           const measuredSize = getEditingTextBoxMetrics(refs.richEditor, measureItem, state.board.view, draft.plainText);
           applyCommittedTextDraftToItem(currentItem, draft, { measuredSize });
+          const postDisplayHtml = resolveRichTextDisplayHtml({
+            text: currentItem.plainText || currentItem.text || "",
+            html: currentItem.html || "",
+            linkTokens: currentItem.linkTokens || [],
+          });
+          const postRuns = warmRichTextRunCache(postDisplayHtml);
+          if (postRuns && postRuns.length) {
+            currentItem._richTextPrecomputed = {
+              sourceHtml: currentItem.html,
+              displayHtml: postDisplayHtml,
+              runs: postRuns,
+            };
+          }
+          prepareRichOverlayDetailHandoff(currentItem);
           markSceneGraphDirty();
           syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
         }
@@ -9951,6 +10098,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           changed = true;
           if (refreshedLinkSemantics?.linkTokens?.length) {
             scheduleUrlMetaHydrationForItem(currentItem);
+          }
+          const refreshedDisplayHtml = resolveRichTextDisplayHtml({
+            text: currentItem.plainText || currentItem.text || "",
+            html: currentItem.html || "",
+            linkTokens: currentItem.linkTokens || [],
+          });
+          const refreshedRuns = warmRichTextRunCache(refreshedDisplayHtml);
+          if (refreshedRuns && refreshedRuns.length) {
+            currentItem._richTextPrecomputed = {
+              sourceHtml: currentItem.html,
+              displayHtml: refreshedDisplayHtml,
+              runs: refreshedRuns,
+            };
           }
         } else if (draft.linkSemantics?.linkTokens?.length) {
           scheduleUrlMetaHydrationForItem(currentItem);
@@ -10001,7 +10161,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       item.width = Math.max(80, Math.ceil(Number(nextSize?.width || 0) || 80));
       item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
     } else if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT) {
-      item.width = Math.max(80, Math.ceil(Number(cachedDraft.layoutConfig.widthHint || item.width || 0) || 80));
+      const maxAllowed = Math.max(80, Math.ceil(Number(cachedDraft.layoutConfig.widthHint || item.width || 0) || 80));
+      if (cachedDraft.layoutConfig.contentFit && nextSize?.width) {
+        item.width = Math.max(80, Math.min(maxAllowed, Math.ceil(Number(nextSize.width) || 80)));
+      } else {
+        item.width = maxAllowed;
+      }
       item.height = Math.max(40, Math.ceil(Number(nextSize?.height || 0) || 40));
     } else {
       item.width = Math.max(
@@ -10953,6 +11118,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     state.editingId = item.id;
     state.editingType = "text";
+    item._richTextPrecomputed = null;
     state.board.selectedIds = [item.id];
     richTextSession.begin({
       itemId: item.id,
@@ -11222,6 +11388,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return true;
     }
     applyCommittedTextDraftToItem(item, draft);
+    const precomputedDisplayHtml = resolveRichTextDisplayHtml({
+      text: item.plainText || item.text || "",
+      html: item.html || "",
+      linkTokens: item.linkTokens || [],
+    });
+    const precomputedRuns = warmRichTextRunCache(precomputedDisplayHtml);
+    if (precomputedRuns && precomputedRuns.length) {
+      item._richTextPrecomputed = {
+        sourceHtml: item.html,
+        displayHtml: precomputedDisplayHtml,
+        runs: precomputedRuns,
+      };
+    }
+    prepareRichOverlayDetailHandoff(item);
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
@@ -23470,10 +23650,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     markHistoryBaseline(state.history, takeHistorySnapshot(state));
     resize({ immediate: true, reason: "mount-resize" });
     store.emit();
-    scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: true, fullOverlayRescan: true });
+    scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: false, fullOverlayRescan: false });
     transientMinimap.refreshSceneSnapshot();
     void initBoardFileState();
-    void resolveFileCardSources();
     window.dispatchEvent(new CustomEvent("canvas2d-engine-ready"));
     return api;
   }
@@ -23483,6 +23662,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelPendingHydrationSync();
       cancelPendingHydrationSync = null;
     }
+    cancelStartupHydrationWork();
     pendingHydrationSyncItemIds.clear();
     pendingHydrationSyncSceneChange = false;
     pendingHydrationSyncReason = "";

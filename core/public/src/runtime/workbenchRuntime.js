@@ -5220,7 +5220,6 @@ async function bootstrap() {
     window.setTimeout(() => {
       void runAppUpdateCheck({
         manual: false,
-        mockMode: localStorage.getItem("freeflow:update-check-mock") === "true",
       });
     }, 4200);
   }
@@ -10063,11 +10062,7 @@ function renderUpdateNotice() {
     return;
   }
   const publishedAt = formatUpdatePublishedAt(updateNoticeState.publishedAt);
-  const releaseNotes = String(updateNoticeState.releaseNotes || "")
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .slice(0, 3);
+  const updateHighlights = ["发现新版本，建议及时更新。", "包含稳定性优化、体验改进和已知问题修复。", "更新后可获得更完整的功能支持。"];
   host.innerHTML = `
     <div class="freeflow-update-notice-card" role="dialog" aria-label="版本更新提醒">
       <div class="freeflow-update-notice-head">
@@ -10078,7 +10073,7 @@ function renderUpdateNotice() {
         <button type="button" class="freeflow-update-notice-close" data-action="close" aria-label="关闭">×</button>
       </div>
       <div class="freeflow-update-notice-body">
-        ${releaseNotes.length ? `<ul class="freeflow-update-notice-notes">${releaseNotes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<div class="freeflow-update-notice-empty">检测到新版本，可前往下载更新。</div>`}
+        <ul class="freeflow-update-notice-notes">${updateHighlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </div>
       <div class="freeflow-update-notice-actions">
         <button type="button" class="freeflow-update-notice-btn is-primary" data-action="download">立即下载</button>
@@ -10106,7 +10101,11 @@ function bindUpdateNoticeEvents() {
       return;
     }
     if (action === "download") {
-      const targetUrl = "https://wuxinbo-bo.github.io/";
+      const targetUrl =
+        String(updateNoticeState?.downloadUrl || "").trim() ||
+        String(updateNoticeState?.releasePageUrl || "").trim() ||
+        String(updateNoticeState?.websiteUrl || "").trim() ||
+        DEFAULT_UPDATE_DOWNLOAD_PAGE_URL;
       const result = await DESKTOP_SHELL?.openAppUpdateTarget?.(targetUrl);
       if (!result?.ok) {
         setStatus(`打开更新地址失败：${result?.error || "未知错误"}`, "warning");
@@ -10136,13 +10135,13 @@ function bindUpdateNoticeEvents() {
   });
 }
 
-async function runAppUpdateCheck({ manual = false, mockMode = false } = {}) {
+async function runAppUpdateCheck({ manual = false } = {}) {
   if (!DESKTOP_SHELL?.checkForAppUpdate || updateCheckInFlight) {
     return null;
   }
   updateCheckInFlight = true;
   try {
-    const result = await DESKTOP_SHELL.checkForAppUpdate({ manual, mockMode });
+    const result = await DESKTOP_SHELL.checkForAppUpdate({ manual });
     if (!result?.ok) {
       if (manual) {
         setStatus(`检查更新失败：${result?.errorMessage || result?.errorCode || "未知错误"}`, "warning");

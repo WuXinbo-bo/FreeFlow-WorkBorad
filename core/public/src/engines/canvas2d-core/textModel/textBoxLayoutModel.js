@@ -98,6 +98,7 @@ export function normalizeTextBoxLayoutModel(input = {}, fallback = {}) {
     firstDefined(source.textResizeMode, source.resizeMode, fallbackObject.textResizeMode, fallbackObject.resizeMode),
     firstDefined(source.wrapMode, fallbackObject.wrapMode)
   );
+  const contentFitExplicit = firstDefined(source.contentFit, fallbackObject.contentFit);
   const minWidth = normalizePositiveNumber(firstDefined(source.minWidth, fallbackObject.minWidth), 80, 1);
   const minHeight = normalizePositiveNumber(firstDefined(source.minHeight, fallbackObject.minHeight), 40, 1);
   const maxWidth = Math.max(
@@ -120,6 +121,8 @@ export function normalizeTextBoxLayoutModel(input = {}, fallback = {}) {
       minHeight
     )
   );
+  const isAutoWidth = layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH;
+  const contentFit = contentFitExplicit !== undefined ? Boolean(contentFitExplicit) : isAutoWidth;
   return {
     layoutMode,
     interactiveLayoutMode: coerceInteractiveTextBoxLayoutMode(layoutMode),
@@ -130,11 +133,11 @@ export function normalizeTextBoxLayoutModel(input = {}, fallback = {}) {
     minWidth,
     minHeight,
     maxWidth,
-    autoWidth: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
+    autoWidth: isAutoWidth,
     autoHeight: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
     fixedSize: layoutMode === TEXT_BOX_LAYOUT_MODE_FIXED_SIZE,
-    fixedWidth: layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
-    contentFit: layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
-    wraps: layoutMode !== TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH,
+    fixedWidth: !isAutoWidth && !contentFit,
+    contentFit,
+    wraps: !isAutoWidth,
   };
 }

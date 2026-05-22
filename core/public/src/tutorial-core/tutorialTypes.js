@@ -1,4 +1,4 @@
-export const TUTORIAL_VERSION = "1.1.1";
+export const TUTORIAL_VERSION = "1.2.0";
 
 export const TUTORIAL_IDS = Object.freeze({
   MAIN_SHELL: "main-shell",

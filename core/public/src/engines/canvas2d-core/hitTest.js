@@ -32,7 +32,7 @@ function lineDistance(point, start, end) {
 }
 
 export function hitTestElement(items, point, scale = 1) {
-  const tolerance = Math.max(8, 12 / Math.max(0.1, scale));
+  const tolerance = Math.min(48, Math.max(8, 12 / Math.max(0.1, scale)));
   const index = resolveHitTestSpatialIndex(items);
   const candidates = queryHitTestSpatialIndex(index, {
     left: Number(point?.x || 0) - tolerance,
@@ -105,7 +105,7 @@ export function hitTestHandle(item, point, scale = 1) {
   if (!item) {
     return null;
   }
-  const tolerance = Math.max(8, 12 / Math.max(0.1, scale));
+  const tolerance = Math.min(48, Math.max(8, 12 / Math.max(0.1, scale)));
   if (item.type === "mindNode") {
     const pseudoView = { scale, offsetX: 0, offsetY: 0 };
     const anchorBounds = getMindNodeLinkAnchorScreenBounds(item, pseudoView, {
