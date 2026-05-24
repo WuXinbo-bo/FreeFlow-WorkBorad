@@ -177,6 +177,51 @@ export function createCanvas2DReactBridge(engine) {
     setAlignmentSnapConfig(patch) {
       return engine?.setAlignmentSnapConfig?.(patch);
     },
+    getCanvasNavigatorViewModel() {
+      return engine?.getCanvasNavigatorViewModel?.() || null;
+    },
+    getCanvasNavigatorSuggestions(limit) {
+      return engine?.getCanvasNavigatorSuggestions?.(limit) || [];
+    },
+    getCanvasNavigatorPendingTargetFolderId() {
+      return engine?.getCanvasNavigatorPendingTargetFolderId?.() || "";
+    },
+    setCanvasNavigatorCollapsed(collapsed) {
+      return engine?.setCanvasNavigatorCollapsed?.(collapsed);
+    },
+    addCanvasNavigatorFolder(options) {
+      return engine?.addCanvasNavigatorFolder?.(options);
+    },
+    addCanvasNavigatorEntryForItem(itemId, options) {
+      return engine?.addCanvasNavigatorEntryForItem?.(itemId, options);
+    },
+    removeCanvasNavigatorEntry(entryId) {
+      return engine?.removeCanvasNavigatorEntry?.(entryId);
+    },
+    renameCanvasNavigatorEntry(entryId, title) {
+      return engine?.renameCanvasNavigatorEntry?.(entryId, title);
+    },
+    moveCanvasNavigatorEntry(entryId, direction) {
+      return engine?.moveCanvasNavigatorEntry?.(entryId, direction);
+    },
+    setCanvasNavigatorEntryParent(entryId, parentId, index) {
+      return engine?.setCanvasNavigatorEntryParent?.(entryId, parentId, index);
+    },
+    beginCanvasNavigatorFolderTargetPick(entryId) {
+      return engine?.beginCanvasNavigatorFolderTargetPick?.(entryId);
+    },
+    cancelCanvasNavigatorFolderTargetPick() {
+      return engine?.cancelCanvasNavigatorFolderTargetPick?.();
+    },
+    toggleCanvasNavigatorEntryCollapsed(entryId) {
+      return engine?.toggleCanvasNavigatorEntryCollapsed?.(entryId);
+    },
+    focusCanvasNavigatorEntry(entryId) {
+      return engine?.focusCanvasNavigatorEntry?.(entryId);
+    },
+    previewCanvasNavigatorEntry(entryId) {
+      return engine?.previewCanvasNavigatorEntry?.(entryId);
+    },
     clearBoard() {
       engine?.clearBoard?.();
     },

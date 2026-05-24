@@ -204,6 +204,507 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function getNavigatorTypeLabel(type = "") {
+  const labels = {
+    text: "文本",
+    flowNode: "节点",
+    mindNode: "导图",
+    mindSummary: "摘要",
+    fileCard: "文件",
+    codeBlock: "代码",
+    table: "表格",
+    image: "图片",
+    shape: "图形",
+  };
+  return labels[String(type || "")] || "元素";
+}
+
+function buildLocalNavigatorTree(entries = []) {
+  const cloned = (Array.isArray(entries) ? entries : []).map((entry) => ({
+    ...entry,
+    children: [],
+  }));
+  const byId = new Map(cloned.map((entry) => [entry.id, entry]));
+  const roots = [];
+  cloned.forEach((entry) => {
+    const parent = entry.parentId ? byId.get(entry.parentId) : null;
+    if (!parent || parent.id === entry.id) {
+      roots.push(entry);
+      return;
+    }
+    parent.children.push(entry);
+  });
+  function sortChildren(nodes = []) {
+    nodes.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    nodes.forEach((node) => sortChildren(node.children));
+  }
+  sortChildren(roots);
+  return roots;
+}
+
+function CanvasNavigatorPanel({
+  navigator,
+  onCollapse,
+  onFocusEntry,
+  onPreviewEntry,
+  onRenameEntry,
+  onRemoveEntry,
+  onSetParent,
+  onToggleEntry,
+  onAddFolder,
+  onPickFolderTarget,
+  onCancelPickFolderTarget,
+  pendingTargetFolderId = "",
+}) {
+  const [editingId, setEditingId] = useState("");
+  const [titleDraft, setTitleDraft] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [menuState, setMenuState] = useState(null);
+  const [dragState, setDragState] = useState(null);
+  const rowRefs = useRef(new Map());
+  const rowMetaRef = useRef(new Map());
+  const panelRef = useRef(null);
+  const dragRuntimeRef = useRef(null);
+  const suppressNavigatorClickRef = useRef(false);
+  const entries = Array.isArray(navigator?.entries) ? navigator.entries : [];
+  const localCollapsedRef = useRef(new Map());
+  entries.forEach((entry) => {
+    if (localCollapsedRef.current.get(entry.id) === entry.collapsed) {
+      localCollapsedRef.current.delete(entry.id);
+    }
+  });
+  const entriesWithLocalCollapse = entries.map((entry) => {
+    if (!localCollapsedRef.current.has(entry.id)) {
+      return entry;
+    }
+    return {
+      ...entry,
+      collapsed: localCollapsedRef.current.get(entry.id) === true,
+    };
+  });
+  const rootEntries = buildLocalNavigatorTree(
+    Array.isArray(navigator?.rootEntries) ? entriesWithLocalCollapse : entriesWithLocalCollapse.filter((entry) => !entry.parentId)
+  );
+  const collapsed = navigator?.collapsed === true;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleRoots = normalizedQuery
+    ? entriesWithLocalCollapse.filter((entry) =>
+        `${entry.title || ""} ${entry.targetTitle || ""} ${entry.type || ""} ${entry.kind || ""}`.toLowerCase().includes(normalizedQuery)
+      )
+    : rootEntries;
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="canvas2d-navigator-tab"
+        onClick={() => onCollapse?.(false)}
+        aria-label="展开画布目录"
+        title="展开画布目录"
+      >
+        <span className="canvas2d-navigator-tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M6 6.5h12M6 12h12M6 17.5h7" />
+            <circle cx="4" cy="6.5" r="1" />
+            <circle cx="4" cy="12" r="1" />
+            <circle cx="4" cy="17.5" r="1" />
+          </svg>
+        </span>
+      </button>
+    );
+  }
+
+  const commitRename = () => {
+    if (!editingId) {
+      return;
+    }
+    const clean = titleDraft.trim();
+    if (clean) {
+      onRenameEntry?.(editingId, clean);
+    }
+    setEditingId("");
+    setTitleDraft("");
+  };
+  const closeEntryMenu = () => setMenuState(null);
+  const openEntryMenu = (event, entry, isFolder) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const panelRect = panelRef.current?.getBoundingClientRect();
+    const anchorRect = event.currentTarget.getBoundingClientRect();
+    if (!panelRect) {
+      return;
+    }
+    const menuWidth = 128;
+    const left = Math.min(Math.max(8, anchorRect.right - panelRect.left - menuWidth), Math.max(8, panelRect.width - menuWidth - 8));
+    const top = Math.min(Math.max(8, anchorRect.bottom - panelRect.top + 6), Math.max(8, panelRect.height - 116));
+    setMenuState({
+      entryId: entry.id,
+      isFolder,
+      x: left,
+      y: top,
+    });
+  };
+  const getDropTargetFromPoint = (clientX, clientY, draggingId) => {
+    let best = null;
+    rowRefs.current.forEach((node, id) => {
+      if (!node || id === draggingId) {
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      if (clientY < rect.top || clientY > rect.bottom) {
+        return;
+      }
+      best = { id, rect };
+    });
+    if (!best) {
+      return null;
+    }
+    const meta = rowMetaRef.current.get(best.id);
+    if (!meta?.entry) {
+      return null;
+    }
+    const insideFolder = meta.entry.kind === "folder" && clientX > best.rect.left + 42;
+    if (insideFolder) {
+      return {
+        overId: meta.entry.id,
+        parentId: meta.entry.id,
+        index: meta.childrenCount || 0,
+        mode: "inside",
+      };
+    }
+    const after = clientY > best.rect.top + best.rect.height / 2;
+    return {
+      overId: meta.entry.id,
+      parentId: meta.parentId || "",
+      index: meta.index + (after ? 1 : 0),
+      mode: after ? "after" : "before",
+    };
+  };
+  const clearNavigatorDrag = () => {
+    const runtime = dragRuntimeRef.current;
+    if (runtime?.timer) {
+      clearTimeout(runtime.timer);
+    }
+    dragRuntimeRef.current = null;
+    setDragState(null);
+  };
+  const beginNavigatorDrag = (event, entry) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      event.button !== 0 ||
+      editingId ||
+      target?.closest("input, .canvas2d-navigator-tree-toggle, .canvas2d-navigator-entry-actions button")
+    ) {
+      return;
+    }
+    event.stopPropagation();
+    const pointerId = event.pointerId;
+    dragRuntimeRef.current = {
+      entryId: entry.id,
+      pointerId,
+      timer: window.setTimeout(() => {
+        event.preventDefault();
+        suppressNavigatorClickRef.current = true;
+        setDragState({
+          active: true,
+          entryId: entry.id,
+          x: event.clientX,
+          y: event.clientY,
+          drop: null,
+        });
+      }, 220),
+    };
+    event.currentTarget.setPointerCapture?.(pointerId);
+  };
+  const updateNavigatorDrag = (event) => {
+    const runtime = dragRuntimeRef.current;
+    if (!runtime || runtime.pointerId !== event.pointerId) {
+      return;
+    }
+    event.stopPropagation();
+    if (!dragState?.active) {
+      return;
+    }
+    event.preventDefault();
+    const drop = getDropTargetFromPoint(event.clientX, event.clientY, runtime.entryId);
+    setDragState({
+      active: true,
+      entryId: runtime.entryId,
+      x: event.clientX,
+      y: event.clientY,
+      drop,
+    });
+  };
+  const finishNavigatorDrag = (event) => {
+    const runtime = dragRuntimeRef.current;
+    if (!runtime || runtime.pointerId !== event.pointerId) {
+      return;
+    }
+    event.stopPropagation();
+    if (!dragState?.active) {
+      clearNavigatorDrag();
+      return;
+    }
+    event.preventDefault();
+    if (dragState?.active && dragState.drop) {
+      onSetParent?.(runtime.entryId, dragState.drop.parentId, dragState.drop.index);
+    }
+    clearNavigatorDrag();
+    window.setTimeout(() => {
+      suppressNavigatorClickRef.current = false;
+    }, 0);
+  };
+  const focusNavigatorEntry = (event, entry, canFocus) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      !canFocus ||
+      suppressNavigatorClickRef.current ||
+      target?.closest("input, .canvas2d-navigator-tree-toggle, .canvas2d-navigator-entry-actions button")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    onFocusEntry?.(entry.targetId || entry.id);
+  };
+  const renderEntry = (entry, index, siblings = []) => {
+    const children = Array.isArray(entry.children) ? entry.children : [];
+    const hasChildren = children.length > 0;
+    const depth = Math.max(0, Number(entry.depth || 0) || 0);
+    const isFolder = entry.kind === "folder";
+    const canFocus = Boolean(entry.targetId) && !entry.missing;
+    const isDragging = dragState?.active && dragState.entryId === entry.id;
+    const isDropTarget = dragState?.active && dragState.drop?.overId === entry.id;
+    const isPickingTarget = pendingTargetFolderId && pendingTargetFolderId === entry.id;
+    return (
+      <div key={entry.id} className="canvas2d-navigator-tree-row">
+        <div
+          ref={(node) => {
+            if (node) {
+              rowRefs.current.set(entry.id, node);
+              rowMetaRef.current.set(entry.id, {
+                entry,
+                index,
+                parentId: entry.parentId || "",
+                childrenCount: children.length,
+              });
+            } else {
+              rowRefs.current.delete(entry.id);
+              rowMetaRef.current.delete(entry.id);
+            }
+          }}
+          className={`canvas2d-navigator-entry${entry.selected || (depth === 0 && hasChildren) ? " is-selected" : ""}${
+            entry.missing ? " is-missing" : ""
+          }${hasChildren ? " has-children" : " is-leaf"}${isFolder ? " is-folder" : " is-canvas-item"}${
+            isPickingTarget ? " is-picking-target" : ""
+          }${isDragging ? " is-dragging" : ""}${
+            isDropTarget ? ` is-drop-target is-drop-${dragState.drop.mode}` : ""
+          }`}
+          data-navigator-entry-id={entry.id}
+          style={{ "--navigator-depth": depth }}
+          onMouseEnter={() => onPreviewEntry?.(entry.id)}
+          onMouseLeave={() => onPreviewEntry?.("")}
+          onPointerDown={(event) => beginNavigatorDrag(event, entry)}
+          onPointerMove={updateNavigatorDrag}
+          onPointerUp={finishNavigatorDrag}
+          onPointerCancel={clearNavigatorDrag}
+          onClick={(event) => focusNavigatorEntry(event, entry, canFocus)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            className={`canvas2d-navigator-tree-toggle${isFolder ? "" : " is-empty"}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!isFolder) {
+                return;
+              }
+              localCollapsedRef.current.set(entry.id, !entry.collapsed);
+              onToggleEntry?.(entry.id);
+            }}
+            aria-label={entry.collapsed ? "展开子目录" : "收起子目录"}
+            title={isFolder ? (entry.collapsed ? "展开" : "收起") : "无子目录"}
+          >
+            {isFolder ? (entry.collapsed ? ">" : "⌄") : ""}
+          </button>
+          <button
+            type="button"
+            className="canvas2d-navigator-entry-main"
+            onClick={(event) => {
+              focusNavigatorEntry(event, entry, canFocus);
+            }}
+            aria-disabled={!canFocus}
+            title={canFocus ? "定位到画布元素" : isFolder ? "独立目录文件夹" : "目标元素已不存在"}
+          >
+            <span className="canvas2d-navigator-entry-index" aria-hidden="true">
+              {isFolder ? "" : "•"}
+            </span>
+            <span className="canvas2d-navigator-entry-copy">
+              {editingId === entry.id ? (
+                <input
+                  className="canvas2d-navigator-title-input"
+                  value={titleDraft}
+                  autoFocus
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onBlur={commitRename}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEditingId("");
+                      setTitleDraft("");
+                    }
+                  }}
+                />
+              ) : (
+                <strong>{entry.title || entry.targetTitle || "未命名笔记"}</strong>
+              )}
+              {entry.missing ? <small>目标已丢失</small> : null}
+              {!entry.missing && isFolder && entry.targetId ? <small>已映射画布元素</small> : null}
+            </span>
+          </button>
+          {hasChildren ? <span className="canvas2d-navigator-entry-count">{children.length}</span> : null}
+          <div className="canvas2d-navigator-entry-actions">
+            <button
+              type="button"
+              className="canvas2d-navigator-more-btn"
+              onClick={(event) => openEntryMenu(event, entry, isFolder)}
+              aria-label="更多操作"
+              title="更多操作"
+            >
+              ...
+            </button>
+          </div>
+        </div>
+        {!normalizedQuery && hasChildren && !entry.collapsed ? (
+          <div className="canvas2d-navigator-children">
+            {children.map((child, childIndex) => renderEntry(child, childIndex, children))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <section ref={panelRef} className="canvas2d-navigator-panel" aria-label="画布目录" onClick={closeEntryMenu}>
+      <header className="canvas2d-navigator-head">
+        <div className="canvas2d-navigator-brand">
+          <img className="canvas2d-navigator-brand-mark" src="assets/brand/FreeFlow_logo.svg" alt="" aria-hidden="true" />
+          <strong>{navigator?.title || "画布目录"}</strong>
+        </div>
+        <div className="canvas2d-navigator-head-actions">
+          <button type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="搜索目录" title="搜索">
+            <span aria-hidden="true">⌕</span>
+          </button>
+          <button type="button" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹">
+            +
+          </button>
+        </div>
+      </header>
+      <button type="button" className="canvas2d-navigator-dock-collapse" onClick={() => onCollapse?.(true)} aria-label="收起画布目录" title="收起">
+        ‹
+      </button>
+      {searchOpen ? (
+        <div className="canvas2d-navigator-search">
+          <input
+            value={query}
+            autoFocus
+            placeholder="搜索目录..."
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setQuery("");
+                setSearchOpen(false);
+              }
+            }}
+          />
+        </div>
+      ) : null}
+      {pendingTargetFolderId ? (
+        <div className="canvas2d-navigator-pick-hint">
+          <span>选择画布元素加入文件夹</span>
+          <button type="button" onClick={() => onCancelPickFolderTarget?.()}>
+            取消
+          </button>
+        </div>
+      ) : null}
+      <div className="canvas2d-navigator-meta">
+        <span>{entriesWithLocalCollapse.length} 条重要笔记</span>
+        <span>树形目录 · 支持多级嵌套</span>
+      </div>
+      <div className="canvas2d-navigator-list">
+        {visibleRoots.length ? (
+          visibleRoots.map((entry, index) => renderEntry(entry, index, visibleRoots))
+        ) : (
+          <div className="canvas2d-navigator-empty">
+            <strong>还没有目录项</strong>
+            <span>点击右上角 + 新建文件夹，或右键画布元素选择“加入画布目录”。</span>
+          </div>
+        )}
+      </div>
+      {menuState ? (
+        <div
+          className="canvas2d-navigator-context-menu"
+          style={{ left: menuState.x, top: menuState.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {menuState.isFolder ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  onPickFolderTarget?.(menuState.entryId);
+                  closeEntryMenu();
+                }}
+              >
+                添加元素
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onAddFolder?.({ parentId: menuState.entryId });
+                  closeEntryMenu();
+                }}
+              >
+                新建子文件夹
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              const entry = entriesWithLocalCollapse.find((item) => item.id === menuState.entryId);
+              setEditingId(menuState.entryId);
+              setTitleDraft(entry?.title || "");
+              closeEntryMenu();
+            }}
+          >
+            重命名
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onRemoveEntry?.(menuState.entryId);
+              closeEntryMenu();
+            }}
+          >
+            删除
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 const FILE_CARD_PREVIEW_ZOOM_MIN = 0.34;
 const FILE_CARD_PREVIEW_ZOOM_MAX = 1.9;
 const FILE_CARD_PREVIEW_DEFAULT_ZOOM = 0.82;
@@ -1101,6 +1602,14 @@ function Canvas2DControls({ engine }) {
     () => (Array.isArray(snapshot?.fileCardPreviewRequests) ? snapshot.fileCardPreviewRequests : []),
     [snapshot?.fileCardPreviewRequests]
   );
+  const navigatorView = useMemo(
+    () => bridge.getCanvasNavigatorViewModel?.() || snapshot?.board?.navigator || { entries: [], collapsed: false },
+    [bridge, snapshot]
+  );
+  const navigatorPendingTargetFolderId = useMemo(
+    () => bridge.getCanvasNavigatorPendingTargetFolderId?.() || "",
+    [bridge, snapshot]
+  );
   const searchHighlightStyle = useMemo(() => {
     if (!searchHighlight?.bounds) {
       return null;
@@ -1442,6 +1951,20 @@ function Canvas2DControls({ engine }) {
         "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
       }}
     >
+      <CanvasNavigatorPanel
+        navigator={navigatorView}
+        onCollapse={(collapsed) => bridge.setCanvasNavigatorCollapsed?.(collapsed)}
+        onFocusEntry={(entryId) => bridge.focusCanvasNavigatorEntry?.(entryId)}
+        onPreviewEntry={(entryId) => bridge.previewCanvasNavigatorEntry?.(entryId)}
+        onRenameEntry={(entryId, title) => bridge.renameCanvasNavigatorEntry?.(entryId, title)}
+        onRemoveEntry={(entryId) => bridge.removeCanvasNavigatorEntry?.(entryId)}
+        onSetParent={(entryId, parentId) => bridge.setCanvasNavigatorEntryParent?.(entryId, parentId)}
+        onToggleEntry={(entryId) => bridge.toggleCanvasNavigatorEntryCollapsed?.(entryId)}
+        onAddFolder={(options) => bridge.addCanvasNavigatorFolder?.(options)}
+        onPickFolderTarget={(entryId) => bridge.beginCanvasNavigatorFolderTargetPick?.(entryId)}
+        onCancelPickFolderTarget={() => bridge.cancelCanvasNavigatorFolderTargetPick?.()}
+        pendingTargetFolderId={navigatorPendingTargetFolderId}
+      />
       <div
         className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >

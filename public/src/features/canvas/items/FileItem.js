@@ -30,8 +30,8 @@ export class FileItem extends CanvasItem {
   getDimensions() {
     if (this.payload.kind === "image") {
       return {
-        width: Math.max(220, Math.min(420, this.width || 280)),
-        minHeight: Math.max(180, Math.min(420, this.height || 220)),
+        width: Math.max(48, this.width || 360),
+        minHeight: Math.max(48, this.height || 220),
       };
     }
     return {

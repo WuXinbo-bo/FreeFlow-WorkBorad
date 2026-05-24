@@ -185,6 +185,18 @@ import {
   toggleFileCardMark as toggleFileCardMarkEntry,
 } from "./fileCardModule.js";
 import { createRenderer } from "./renderer.js";
+import {
+  buildCanvasNavigatorSuggestions,
+  buildCanvasNavigatorViewModel,
+  canAddItemToCanvasNavigator,
+  createNavigatorFolderEntry,
+  createNavigatorEntryFromItem,
+  moveCanvasNavigatorEntry as moveCanvasNavigatorEntryToParent,
+  normalizeCanvasNavigator,
+  pruneCanvasNavigator,
+  reorderCanvasNavigatorEntries,
+  resolveCanvasNavigatorItemTitle,
+} from "./canvasNavigator.js";
 import { placeMenuNearPoint, placeSubmenuNearTrigger } from "./menuPositioning.js";
 import {
   buildCodeBlockContextMenuHtml,
@@ -2963,40 +2975,6 @@ function isMindNodeEditingType(value = "") {
   return String(value || "").trim().toLowerCase() === "mind-node";
 }
 
-function isExportableItem(item) {
-  return item?.type === "fileCard" || item?.type === "image" || item?.type === "text";
-}
-
-function getDataUrlMime(dataUrl = "") {
-  const match = String(dataUrl || "").match(/^data:([^;]+);/i);
-  return match ? match[1] : "";
-}
-
-async function readDataUrlAsBase64(dataUrl = "") {
-  const raw = String(dataUrl || "").trim();
-  if (!raw) {
-    return { data: "", mime: "" };
-  }
-  if (raw.startsWith("data:")) {
-    const mime = getDataUrlMime(raw);
-    const data = raw.split(",")[1] || "";
-    return { data, mime };
-  }
-  const response = await fetch(raw);
-  if (!response.ok) {
-    throw new Error("图片读取失败");
-  }
-  const blob = await response.blob();
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return { data: btoa(binary), mime: blob.type || "" };
-}
-
 function base64ToBytes(base64 = "") {
   const clean = String(base64 || "");
   if (!clean) {
@@ -3381,7 +3359,7 @@ export function createCanvas2DEngine(options = {}) {
   let pendingImportAnchor = null;
   let suppressNativeDrag = false;
   let suppressBlankCanvasContextMenuUntil = 0;
-  let lastExportDragAt = 0;
+  let lastNavigatorDragAt = 0;
   let captureMode = null;
   let autosaveTimer = null;
   let suppressDirtyTracking = false;
@@ -3603,6 +3581,7 @@ let tablePointerSelectionState = {
   let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
   let pendingCanvasLinkBinding = false;
+  let pendingCanvasNavigatorFolderTargetId = "";
   let activeMindNodeLinkHoverId = "";
   let mindNodeLinkPanelPinnedNodeId = "";
   let activeMindNodeLinkMenuTargetId = "";
@@ -4046,6 +4025,60 @@ let tablePointerSelectionState = {
 
   function markHitTestDirty() {
     pendingHitTestInvalidation = true;
+  }
+
+  function syncImageNaturalSize(itemId = "", naturalWidth = 0, naturalHeight = 0) {
+    const id = String(itemId || "").trim();
+    const sourceWidth = Math.max(1, Math.round(Number(naturalWidth) || 0));
+    const sourceHeight = Math.max(1, Math.round(Number(naturalHeight) || 0));
+    if (!id || !sourceWidth || !sourceHeight) {
+      return false;
+    }
+    const item = getItemByIdFast(id);
+    if (!item || item.type !== "image") {
+      return false;
+    }
+    const currentNaturalWidth = Math.round(Number(item.naturalWidth) || 0);
+    const currentNaturalHeight = Math.round(Number(item.naturalHeight) || 0);
+    const currentWidth = Math.max(1, Math.round(Number(item.width) || 0));
+    const currentHeight = Math.max(1, Math.round(Number(item.height) || 0));
+    const fallbackRatio = 420 / 220;
+    const currentRatio = currentWidth / Math.max(1, currentHeight);
+    const nextHeight = Math.max(48, Math.round(currentWidth * (sourceHeight / sourceWidth)));
+    const shouldRepairFrame =
+      !item.crop &&
+      Math.abs(currentRatio - fallbackRatio) < 0.05 &&
+      Math.abs(nextHeight - currentHeight) > 1;
+    if (currentNaturalWidth === sourceWidth && currentNaturalHeight === sourceHeight && !shouldRepairFrame) {
+      return false;
+    }
+    state.board.items = state.board.items.map((entry) => {
+      if (entry.id !== id) {
+        return entry;
+      }
+      return {
+        ...entry,
+        naturalWidth: sourceWidth,
+        naturalHeight: sourceHeight,
+        height: shouldRepairFrame ? nextHeight : entry.height,
+      };
+    });
+    markSceneGraphDirty({ hitTest: shouldRepairFrame });
+    scheduleRender({
+      reason: "image-natural-size-sync",
+      sceneDirty: shouldRepairFrame,
+      interactionDirty: true,
+      itemIds: [id],
+    });
+    syncBoard({
+      persist: shouldRepairFrame,
+      emit: true,
+      markDirty: shouldRepairFrame,
+      sceneChange: shouldRepairFrame,
+      fullOverlayRescan: false,
+      reason: "image-natural-size-sync",
+    });
+    return true;
   }
 
   function getSceneIndexRuntime(options = {}) {
@@ -4588,6 +4621,7 @@ let tablePointerSelectionState = {
       alignmentSnap: state.alignmentSnap,
       alignmentSnapConfig: state.alignmentSnapConfig,
       allowLocalFileAccess: getAllowLocalFileAccess(),
+      onImageNaturalSize: syncImageNaturalSize,
       backgroundStyle: {
         fill: "#ffffff",
         pattern: getBoardBackgroundPattern(),
@@ -4746,6 +4780,326 @@ let tablePointerSelectionState = {
     if (render && hadActiveSnap) {
       scheduleRender({ reason: "pointer-pan", viewDirty: true, interactionDirty: false });
     }
+  }
+
+  function ensureCanvasNavigatorState() {
+    state.board.navigator = pruneCanvasNavigator(normalizeCanvasNavigator(state.board.navigator), state.board.items);
+    return state.board.navigator;
+  }
+
+  function getCanvasNavigatorViewModel() {
+    const navigator = ensureCanvasNavigatorState();
+    return buildCanvasNavigatorViewModel(navigator, state.board.items, state.board.selectedIds);
+  }
+
+  function getCanvasNavigatorSuggestions(limit = 8) {
+    return buildCanvasNavigatorSuggestions(ensureCanvasNavigatorState(), state.board.items, limit);
+  }
+
+  function getCanvasNavigatorPendingTargetFolderId() {
+    return String(pendingCanvasNavigatorFolderTargetId || "").trim();
+  }
+
+  function setCanvasNavigatorCollapsed(collapsed) {
+    const navigator = ensureCanvasNavigatorState();
+    if (navigator.collapsed === Boolean(collapsed)) {
+      return navigator;
+    }
+    state.board.navigator = {
+      ...navigator,
+      collapsed: Boolean(collapsed),
+    };
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-collapse",
+    });
+    return state.board.navigator;
+  }
+
+  function addCanvasNavigatorFolder(options = {}) {
+    const navigator = ensureCanvasNavigatorState();
+    const entry = createNavigatorFolderEntry({
+      title: options.title || "新建文件夹",
+      parentId: options.parentId || "",
+      targetId: options.targetId || "",
+      order: navigator.entries.filter((item) => String(item.parentId || "") === String(options.parentId || "")).length,
+    });
+    if (!entry) {
+      return null;
+    }
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      collapsed: false,
+      entries: [...navigator.entries, entry],
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-folder-add",
+    });
+    setStatus("已新建目录文件夹");
+    return entry;
+  }
+
+  function addCanvasNavigatorEntryForItem(itemId = "", options = {}) {
+    const targetId = String(itemId || "").trim();
+    const item = targetId ? sceneRegistry.getItemById(targetId) || state.board.items.find((entry) => String(entry?.id || "") === targetId) : null;
+    if (!canAddItemToCanvasNavigator(item)) {
+      setStatus("该元素不能加入画布目录", "warning");
+      return null;
+    }
+    const navigator = ensureCanvasNavigatorState();
+    const existing = navigator.entries.find((entry) => entry.targetId === targetId);
+    if (existing && options.allowDuplicate !== true) {
+      setStatus("该元素已在画布目录中");
+      return existing;
+    }
+    const entry = createNavigatorEntryFromItem(item, {
+      title: options.title || resolveCanvasNavigatorItemTitle(item),
+      order: navigator.entries.filter((navEntry) => String(navEntry.parentId || "") === String(options.parentId || "")).length,
+      parentId: options.parentId || "",
+    });
+    if (!entry) {
+      return null;
+    }
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      collapsed: false,
+      entries: [...navigator.entries, entry],
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-add",
+    });
+    setStatus("已加入画布目录");
+    return entry;
+  }
+
+  function removeCanvasNavigatorEntry(entryId = "") {
+    const id = String(entryId || "").trim();
+    if (!id) {
+      return false;
+    }
+    const navigator = ensureCanvasNavigatorState();
+    const removedEntry = navigator.entries.find((entry) => entry.id === id);
+    const nextEntries = navigator.entries
+      .filter((entry) => entry.id !== id)
+      .map((entry) => {
+        if (entry.parentId !== id) {
+          return entry;
+        }
+        return {
+          ...entry,
+          parentId: removedEntry?.parentId || "",
+          updatedAt: Date.now(),
+        };
+      });
+    if (nextEntries.length === navigator.entries.length) {
+      return false;
+    }
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      entries: nextEntries,
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-remove",
+    });
+    return true;
+  }
+
+  function renameCanvasNavigatorEntry(entryId = "", title = "") {
+    const id = String(entryId || "").trim();
+    const cleanTitle = String(title || "").trim();
+    if (!id || !cleanTitle) {
+      return false;
+    }
+    const navigator = ensureCanvasNavigatorState();
+    let changed = false;
+    const nextEntries = navigator.entries.map((entry) => {
+      if (entry.id !== id || entry.title === cleanTitle) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        title: cleanTitle,
+        updatedAt: Date.now(),
+      };
+    });
+    if (!changed) {
+      return false;
+    }
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      entries: nextEntries,
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-rename",
+    });
+    return true;
+  }
+
+  function moveCanvasNavigatorEntry(entryId = "", direction = 0) {
+    const navigator = ensureCanvasNavigatorState();
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      entries: reorderCanvasNavigatorEntries(navigator.entries, entryId, direction),
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-reorder",
+    });
+    return state.board.navigator;
+  }
+
+  function setCanvasNavigatorEntryParent(entryId = "", parentId = "", index = null) {
+    const navigator = ensureCanvasNavigatorState();
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      entries: moveCanvasNavigatorEntryToParent(navigator.entries, entryId, { parentId, index }),
+    });
+    syncBoard({
+      persist: true,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-move-parent",
+    });
+    return state.board.navigator;
+  }
+
+  function beginCanvasNavigatorFolderTargetPick(entryId = "") {
+    const id = String(entryId || "").trim();
+    const navigator = ensureCanvasNavigatorState();
+    const entry = navigator.entries.find((item) => item.id === id && item.kind === "folder");
+    if (!entry) {
+      return false;
+    }
+    pendingCanvasNavigatorFolderTargetId = id;
+    syncBoard({
+      persist: false,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-target-pick-start",
+    });
+    return true;
+  }
+
+  function cancelCanvasNavigatorFolderTargetPick() {
+    if (!pendingCanvasNavigatorFolderTargetId) {
+      return false;
+    }
+    pendingCanvasNavigatorFolderTargetId = "";
+    syncBoard({
+      persist: false,
+      emit: true,
+      markDirty: true,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-target-pick-cancel",
+    });
+    return true;
+  }
+
+  function toggleCanvasNavigatorEntryCollapsed(entryId = "") {
+    const id = String(entryId || "").trim();
+    if (!id) {
+      return false;
+    }
+    const navigator = ensureCanvasNavigatorState();
+    let changed = false;
+    const nextEntries = navigator.entries.map((entry) => {
+      if (entry.id !== id) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        collapsed: !entry.collapsed,
+        updatedAt: Date.now(),
+      };
+    });
+    if (!changed) {
+      return false;
+    }
+    state.board.navigator = normalizeCanvasNavigator({
+      ...navigator,
+      entries: nextEntries,
+    });
+    syncBoard({
+      persist: false,
+      emit: true,
+      markDirty: false,
+      sceneChange: false,
+      boardChange: true,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-toggle-entry",
+    });
+    return true;
+  }
+
+  function focusCanvasNavigatorEntry(entryId = "") {
+    const id = String(entryId || "").trim();
+    const navigator = ensureCanvasNavigatorState();
+    const entry = navigator.entries.find((item) => item.id === id || item.targetId === id);
+    const targetId = String(entry?.targetId || id || "").trim();
+    if (!entry || !targetId) {
+      return false;
+    }
+    return focusCanvasLinkTarget(targetId);
+  }
+
+  function previewCanvasNavigatorEntry(entryId = "") {
+    const id = String(entryId || "").trim();
+    const navigator = ensureCanvasNavigatorState();
+    const entry = navigator.entries.find((item) => item.id === id || item.targetId === id);
+    state.hoverId = entry?.targetId || null;
+    syncBoard({
+      persist: false,
+      emit: true,
+      markDirty: false,
+      sceneChange: false,
+      fullOverlayRescan: false,
+      reason: "canvas-navigator-hover",
+    });
+    return Boolean(entry);
   }
 
   function setAlignmentSnapConfig(patch = {}, { emit = true, render = false } = {}) {
@@ -6895,6 +7249,50 @@ let tablePointerSelectionState = {
     refs.dragIndicator.classList.add("is-hidden");
   }
 
+  function resolveCanvasNavigatorDropTarget(clientX, clientY) {
+    if (typeof document === "undefined" || typeof document.elementFromPoint !== "function") {
+      return null;
+    }
+    const element = document.elementFromPoint(Number(clientX || 0), Number(clientY || 0));
+    if (!(element instanceof Element)) {
+      return null;
+    }
+    const panel = element.closest(".canvas2d-navigator-panel");
+    if (!(panel instanceof Element)) {
+      return null;
+    }
+    const folderEntry = element.closest(".canvas2d-navigator-entry.is-folder");
+    if (folderEntry instanceof HTMLElement && panel.contains(folderEntry)) {
+      return {
+        parentId: String(folderEntry.dataset.navigatorEntryId || "").trim(),
+        mode: "folder",
+      };
+    }
+    return {
+      parentId: "",
+      mode: "root",
+    };
+  }
+
+  function addSelectedItemsToCanvasNavigator(parentId = "") {
+    const selectedItems = sceneRegistry.getSelectedItems().filter((item) => canAddItemToCanvasNavigator(item));
+    if (!selectedItems.length) {
+      setStatus("没有可加入画布目录的选中元素", "warning");
+      return 0;
+    }
+    let added = 0;
+    for (const item of selectedItems) {
+      const entry = addCanvasNavigatorEntryForItem(item.id, { parentId });
+      if (entry?.targetId === item.id) {
+        added += 1;
+      }
+    }
+    if (added > 1) {
+      setStatus(`已加入 ${added} 个元素到画布目录`);
+    }
+    return added;
+  }
+
   async function writePlainTextToClipboard(text) {
     const value = String(text || "");
     if (!value) {
@@ -7960,15 +8358,15 @@ let tablePointerSelectionState = {
       refs.fixedOverlayHost.appendChild(refs.mindNodeLinkPanel);
     }
 
-    refs.dragIndicator = refs.surface.querySelector("#canvas2d-export-drag-indicator");
+    refs.dragIndicator = refs.surface.querySelector("#canvas2d-navigator-drag-indicator");
     if (!(refs.dragIndicator instanceof HTMLDivElement)) {
       refs.dragIndicator = document.createElement("div");
-      refs.dragIndicator.id = "canvas2d-export-drag-indicator";
-      refs.dragIndicator.className = "canvas2d-export-drag-indicator is-hidden";
+      refs.dragIndicator.id = "canvas2d-navigator-drag-indicator";
+      refs.dragIndicator.className = "canvas2d-navigator-drag-indicator is-hidden";
       refs.dragIndicator.setAttribute("aria-hidden", "true");
       refs.dragIndicator.innerHTML = `
-        <span class="canvas2d-export-drag-icon"></span>
-        <span class="canvas2d-export-drag-text">拖拽导出中</span>
+        <span class="canvas2d-navigator-drag-icon"></span>
+        <span class="canvas2d-navigator-drag-text">拖入画布目录</span>
       `;
       refs.surface.appendChild(refs.dragIndicator);
     }
@@ -10576,6 +10974,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         const logicalSummaryHeight = Math.max(18, Number(item.height || 0) || 18);
         const logicalSummaryPaddingX = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingX : 0;
         const logicalSummaryPaddingY = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingY : 0;
+        const reusableDetailHtml = String(node.dataset.html || "").trim();
+        const hasReusableDetail = node.dataset.contentMode === "detail" && reusableDetailHtml;
         const summarySignature = [
           overlayMode,
           isFlowNode ? "flow" : isMindNode ? "mind-node" : "text",
@@ -10585,7 +10985,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           Math.round(logicalSummaryPaddingY),
           hashOverlayContent(String(item.plainText || item.text || "")),
         ].join("|");
-        if (node.dataset.contentMode !== overlayMode || node.dataset.text !== summarySignature) {
+        if (!hasReusableDetail && (node.dataset.contentMode !== overlayMode || node.dataset.text !== summarySignature)) {
           node.innerHTML = buildRichOverlaySkeletonMarkup({
             width: Math.max(24, logicalSummaryWidth - logicalSummaryPaddingX * 2),
             height: Math.max(18, logicalSummaryHeight - logicalSummaryPaddingY * 2),
@@ -11401,10 +11801,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         runs: precomputedRuns,
       };
     }
-    prepareRichOverlayDetailHandoff(item);
     state.editingId = null;
     state.editingType = null;
     state.board.selectedIds = [item.id];
+    prepareRichOverlayDetailHandoff(item, { deferHtmlWarmup: false });
+    scheduleRender({ overlayDirty: true, reason: "text-edit-commit-overlay-handoff" });
     scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
     const changed = commitItemPatchHistory(before, item.id, item, "更新文本", "text-edit");
@@ -16537,6 +16938,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const item = nextItems.find((entry) => entry.id === id);
       return Boolean(item);
     });
+    state.board.navigator = pruneCanvasNavigator(state.board.navigator, state.board.items);
     commitItemsPatchHistory(before, Array.from(remove), "删除元素", "item-delete-batch", {
       beforeOrderIds: Array.isArray(before.items) ? before.items.map((item) => item.id) : [],
       afterOrderIds: nextItems.map((item) => item.id),
@@ -16556,6 +16958,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     state.board.items = result.items;
     state.board.selectedIds = state.board.selectedIds.filter((itemId) => itemId !== id);
+    state.board.navigator = pruneCanvasNavigator(state.board.navigator, state.board.items);
     commitHistory(before, "删除文件卡");
     setStatus("已删除文件卡");
     return true;
@@ -18016,83 +18419,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return inserted;
   }
 
-  async function buildExportDragPayload(items) {
-    const payload = { paths: [], texts: [], images: [] };
-    for (const item of items) {
-      if (item.type === "fileCard") {
-        const path = String(item?.sourcePath || "").trim();
-        if (path) {
-          payload.paths.push(path);
-        }
-      }
-      if (item.type === "text") {
-        const content = sanitizeText(item.plainText || item.text || htmlToPlainText(item.html || "")).trim();
-        if (content) {
-          payload.texts.push({
-            name: normalizeExportName(item.name || "Text", "Text"),
-            content,
-          });
-        }
-      }
-      if (item.type === "image") {
-        const path = String(item?.sourcePath || "").trim();
-        if (path) {
-          payload.paths.push(path);
-          continue;
-        }
-        const dataUrl = String(item?.dataUrl || "").trim();
-        if (!dataUrl) {
-          continue;
-        }
-        try {
-          const { data, mime } = await readDataUrlAsBase64(dataUrl);
-          if (data) {
-            payload.images.push({
-              name: normalizeExportName(item.name || "Image", "Image"),
-              mime: mime || item?.mime || "image/png",
-              data,
-            });
-          }
-        } catch {
-          // ignore image conversion failures
-        }
-      }
-    }
-    payload.paths = [...new Set(payload.paths.filter(Boolean))];
-    payload.texts = payload.texts.filter((entry) => entry?.content);
-    payload.images = payload.images.filter((entry) => entry?.data);
-    return payload;
-  }
-
-  async function startExportDragForSelection() {
-    if (typeof globalThis?.desktopShell?.startExportDrag !== "function") {
-      setStatus("无法拖拽：当前环境不支持导出拖拽");
-      return false;
-    }
-    const selectedItems = sceneRegistry.getSelectedItems();
-    const exportables = selectedItems.filter((item) => isExportableItem(item));
-    if (!exportables.length) {
-      setStatus("无法拖拽：未选中可导出的内容");
-      return false;
-    }
-    const payload = await buildExportDragPayload(exportables);
-    if (!payload.paths.length && !payload.texts.length && !payload.images.length) {
-      setStatus("无法拖拽：内容缺少可导出数据");
-      return false;
-    }
-    try {
-      const result = await globalThis.desktopShell.startExportDrag(payload);
-      if (!result?.ok) {
-        setStatus(result?.error || "拖拽失败");
-        return false;
-      }
-      return true;
-    } catch (error) {
-      setStatus(error?.message || "拖拽失败");
-      return false;
-    }
-  }
-
   function createShapeAt(anchorPoint, shapeType) {
     const before = takeHistorySnapshot(state);
     const start = { x: Number(anchorPoint?.x) || 0, y: Number(anchorPoint?.y) || 0 };
@@ -18214,6 +18540,27 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       clearMindRelationshipDraft();
       syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      return;
+    }
+
+    if (pendingCanvasNavigatorFolderTargetId && event.button === 0) {
+      const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      event.preventDefault();
+      const parentId = pendingCanvasNavigatorFolderTargetId;
+      pendingCanvasNavigatorFolderTargetId = "";
+      if (target?.id) {
+        addCanvasNavigatorEntryForItem(target.id, { parentId });
+      } else {
+        syncBoard({
+          persist: false,
+          emit: true,
+          markDirty: false,
+          sceneChange: false,
+          boardChange: true,
+          fullOverlayRescan: false,
+          reason: "canvas-navigator-target-pick-empty",
+        });
+      }
       return;
     }
 
@@ -18514,17 +18861,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (event.button === 0) {
         state.lastSelectionSource = "click";
       }
-      if (event.button === 2 && isExportableItem(target)) {
+      if (event.button === 2 && canAddItemToCanvasNavigator(target)) {
         event.preventDefault();
         state.pointer = {
-          type: "native-export-drag",
+          type: "navigator-item-drag",
           pointerId: event.pointerId,
           startScene: scenePoint,
           itemId: target.id,
           dragged: false,
-          started: false,
           pressedAt: Date.now(),
+          dropTarget: null,
         };
+        refs.canvas?.setPointerCapture?.(event.pointerId);
       }
       if (!state.board.selectedIds.includes(target.id)) {
         state.board.selectedIds = additive ? Array.from(new Set([...state.board.selectedIds, target.id])) : [target.id];
@@ -18790,19 +19138,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
 
-    if (pointer.type === "native-export-drag") {
+    if (pointer.type === "navigator-item-drag") {
       const moved = hasDragExceededThreshold(pointer.startScene, scenePoint, 3 / Math.max(0.1, state.board.view.scale));
       const elapsed = Date.now() - Number(pointer.pressedAt || 0);
       if (moved && elapsed >= 180) {
         pointer.dragged = true;
-        if (!pointer.started) {
-          pointer.started = true;
-          suppressNativeDrag = true;
-          lastExportDragAt = Date.now();
-          void startExportDragForSelection();
-        }
+        suppressNativeDrag = true;
+        lastNavigatorDragAt = Date.now();
+        pointer.dropTarget = resolveCanvasNavigatorDropTarget(event.clientX, event.clientY);
         showDragIndicator(event.clientX, event.clientY);
       } else {
+        pointer.dropTarget = null;
         hideDragIndicator();
       }
       return;
@@ -19082,9 +19428,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
 
-    if (pointer.type === "native-export-drag") {
+    if (pointer.type === "navigator-item-drag") {
       suppressNativeDrag = false;
       hideDragIndicator();
+      const dropTarget = pointer.dropTarget || resolveCanvasNavigatorDropTarget(event.clientX, event.clientY);
+      if (pointer.dragged && dropTarget) {
+        addSelectedItemsToCanvasNavigator(dropTarget.parentId);
+        return;
+      }
       syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       return;
     }
@@ -19382,11 +19733,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       event.preventDefault();
       return;
     }
-    if (lastExportDragAt && Date.now() - lastExportDragAt < 800) {
+    if (lastNavigatorDragAt && Date.now() - lastNavigatorDragAt < 800) {
       event.preventDefault();
       return;
     }
-    if (state.pointer?.type === "native-export-drag" && state.pointer.dragged) {
+    if (state.pointer?.type === "navigator-item-drag" && state.pointer.dragged) {
       event.preventDefault();
       return;
     }
@@ -19709,6 +20060,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               </div>
             </div>
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-relayout">整理布局</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-toggle-collapse">${
               selectedItem?.collapsed ? "展开分支" : "折叠分支"
             }</button>
@@ -19733,21 +20085,31 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           }
           refs.contextMenu.innerHTML =
             buildTableContextMenuHtml({ editing: isEditingTable, selectionMode: tableEditSelectionMode }) +
+            `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
             buildLockDeleteTailHtml(lockLabel);
         } else if (selectedItem?.type === "codeBlock") {
-          refs.contextMenu.innerHTML = buildCodeBlockContextMenuHtml() + buildLockDeleteTailHtml(lockLabel);
+          refs.contextMenu.innerHTML =
+            buildCodeBlockContextMenuHtml() +
+            `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
+            buildLockDeleteTailHtml(lockLabel);
         } else if (selectedItem?.type === "mathBlock" || selectedItem?.type === "mathInline") {
-          refs.contextMenu.innerHTML = buildMathContextMenuHtml() + buildLockDeleteTailHtml(lockLabel);
+          refs.contextMenu.innerHTML =
+            buildMathContextMenuHtml() +
+            `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
+            buildLockDeleteTailHtml(lockLabel);
         } else if (selectedItem?.type === "text" || selectedItem?.type === "flowNode") {
           const isNode = selectedItem?.type === "flowNode";
           refs.contextMenu.innerHTML =
-            buildRichTextItemContextMenuHtml({ isNode }) + buildLockDeleteTailHtml(lockLabel);
+            buildRichTextItemContextMenuHtml({ isNode }) +
+            `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
+            buildLockDeleteTailHtml(lockLabel);
       } else if (selectedItem) {
         refs.contextMenu.innerHTML = `
           <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
           ${isMindRelationshipSourceEligible(selectedItem) ? '<button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>' : ""}
+          <button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>
           <div class="canvas2d-context-submenu">
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
@@ -20045,6 +20407,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (action === "toggle-lock") {
       alignSelectionWithContextMenuTarget();
       toggleLockOnSelection();
+      hideContextMenu();
+    }
+    if (action === "navigator-add") {
+      const targetItem = alignSelectionWithContextMenuTarget();
+      if (targetItem) {
+        addCanvasNavigatorEntryForItem(targetItem.id);
+      }
       hideContextMenu();
     }
     if (action === "group-toggle") {
@@ -21493,6 +21862,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onRichEditorWheel(event) {
     if (!(event.ctrlKey || event.metaKey)) {
+      return;
+    }
+    onWheel(event);
+  }
+
+  function onStaticDisplayWheel(event) {
+    if (!isInteractiveMode()) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    const isActiveEditorWheel =
+      (state.editingId && refs.richEditor?.contains(target)) ||
+      (state.editingId && refs.fileMemoEditor?.contains(target)) ||
+      (state.editingId && refs.imageMemoEditor?.contains(target)) ||
+      (state.editingId && refs.tableEditor?.contains(target)) ||
+      (state.editingId && refs.codeBlockEditor?.contains(target));
+    if (isActiveEditorWheel) {
       return;
     }
     onWheel(event);
@@ -23486,6 +23872,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStatus("已取消画布链接绑定");
         return;
       }
+      if (pendingCanvasNavigatorFolderTargetId) {
+        cancelCanvasNavigatorFolderTargetPick();
+        return;
+      }
       hideContextMenu();
       clearTransientState();
       cancelTextEdit();
@@ -23619,6 +24009,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.richDisplayHost, "contextmenu", onRichDisplayContextMenu);
     bind(refs.richDisplayHost, "dblclick", onRichDisplayDoubleClick);
     bind(refs.richDisplayHost, "click", onRichDisplayClick);
+    bind(refs.richDisplayHost, "wheel", onStaticDisplayWheel, { passive: false });
     bind(refs.codeBlockDisplayHost, "pointermove", onCodeBlockDisplayPointerMove);
     bind(refs.codeBlockDisplayHost, "pointerleave", onCodeBlockDisplayPointerLeave);
     bind(refs.codeBlockDisplayHost, "pointerdown", onCodeBlockDisplayPointerDown, true);
@@ -23626,6 +24017,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.codeBlockDisplayHost, "dblclick", onCodeBlockDisplayDoubleClick);
     bind(refs.codeBlockDisplayHost, "click", onCodeBlockDisplayClick);
     bind(refs.codeBlockDisplayHost, "contextmenu", onCodeBlockDisplayContextMenu);
+    bind(refs.codeBlockDisplayHost, "wheel", onStaticDisplayWheel, { passive: false });
   }
 
   function mount(hostElement) {
@@ -24461,6 +24853,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     setAlignmentSnapEnabled,
     clearAlignmentSnap,
     getAlignmentSnapCandidates,
+    getCanvasNavigatorViewModel,
+    getCanvasNavigatorSuggestions,
+    getCanvasNavigatorPendingTargetFolderId,
+    setCanvasNavigatorCollapsed,
+    addCanvasNavigatorFolder,
+    addCanvasNavigatorEntryForItem,
+    removeCanvasNavigatorEntry,
+    renameCanvasNavigatorEntry,
+    moveCanvasNavigatorEntry,
+    setCanvasNavigatorEntryParent,
+    beginCanvasNavigatorFolderTargetPick,
+    cancelCanvasNavigatorFolderTargetPick,
+    toggleCanvasNavigatorEntryCollapsed,
+    focusCanvasNavigatorEntry,
+    previewCanvasNavigatorEntry,
     setAutosaveEnabled,
     importFiles,
     clearBoard,

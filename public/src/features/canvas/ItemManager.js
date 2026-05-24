@@ -659,17 +659,12 @@ export class ItemManager {
   getAdaptiveImageCardSize(imageWidth, imageHeight) {
     const sourceWidth = Math.max(1, Number(imageWidth) || 1);
     const sourceHeight = Math.max(1, Number(imageHeight) || 1);
-    const maxPreviewWidth = 360;
-    const maxPreviewHeight = 280;
-    const minPreviewWidth = 160;
-    const minPreviewHeight = 120;
-    const scale = Math.min(maxPreviewWidth / sourceWidth, maxPreviewHeight / sourceHeight, 1);
-    const previewWidth = Math.max(minPreviewWidth, Math.round(sourceWidth * scale));
-    const previewHeight = Math.max(minPreviewHeight, Math.round(sourceHeight * scale));
+    const previewWidth = 360;
+    const previewHeight = Math.max(48, Math.round(previewWidth * (sourceHeight / sourceWidth)));
 
     return {
-      width: Math.min(420, Math.max(220, previewWidth + 24)),
-      height: Math.min(420, Math.max(210, previewHeight + 112)),
+      width: previewWidth,
+      height: previewHeight,
       imageWidth: sourceWidth,
       imageHeight: sourceHeight,
     };

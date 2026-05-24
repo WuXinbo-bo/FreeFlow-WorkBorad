@@ -1,8 +1,19 @@
-import { createId, fitSize, getFileName } from "../utils.js";
+import { createId, getFileName } from "../utils.js";
 import { getMemoLayout } from "../memoLayout.js";
 export { createFileCardElement, normalizeFileCardElement } from "./fileCard.js";
 
 export const IMAGE_STRUCTURED_IMPORT_KIND = "structured-import-v1";
+const DEFAULT_IMAGE_WIDTH = 420;
+const DEFAULT_IMAGE_HEIGHT = 220;
+const MIN_IMAGE_SIZE = 48;
+
+function resolveCreatedImageSize(dimensions = {}) {
+  const naturalWidth = Math.max(1, Number(dimensions.width) || DEFAULT_IMAGE_WIDTH);
+  const naturalHeight = Math.max(1, Number(dimensions.height) || DEFAULT_IMAGE_HEIGHT);
+  const width = DEFAULT_IMAGE_WIDTH;
+  const height = Math.max(MIN_IMAGE_SIZE, Math.round(width * (naturalHeight / naturalWidth)));
+  return { width, height };
+}
 
 export function normalizeStructuredImageImportMeta(value = {}) {
   if (!value || typeof value !== "object") {
@@ -19,7 +30,7 @@ export function normalizeStructuredImageImportMeta(value = {}) {
 }
 
 export function createImageElement(file, point, dataUrl = "", dimensions = {}) {
-  const size = fitSize(dimensions.width || 320, dimensions.height || 220, 420, 320);
+  const size = resolveCreatedImageSize(dimensions);
   return {
     id: createId("img"),
     type: "image",

@@ -19,6 +19,7 @@ import { normalizeCodeBlockElement, CODE_BLOCK_MIN_HEIGHT, CODE_BLOCK_MIN_WIDTH 
 import { normalizeTableElement, TABLE_MIN_HEIGHT, TABLE_MIN_WIDTH } from "./table.js";
 import { MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
 import { buildTextElementFromMathElement } from "./mathText.js";
+import { normalizeCanvasNavigator } from "../canvasNavigator.js";
 
 function normalizeBoardBackgroundPattern(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -37,6 +38,7 @@ export function createEmptyBoard() {
       allowLocalFileAccess: true,
       backgroundPattern: "dots",
     },
+    navigator: normalizeCanvasNavigator({}),
   };
 }
 
@@ -108,6 +110,7 @@ export function normalizeBoard(input = {}) {
         typeof board.preferences?.allowLocalFileAccess === "boolean" ? board.preferences.allowLocalFileAccess : true,
       backgroundPattern: normalizeBoardBackgroundPattern(board.preferences?.backgroundPattern),
     },
+    navigator: normalizeCanvasNavigator(board.navigator),
   };
 }
 

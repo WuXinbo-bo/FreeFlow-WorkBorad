@@ -1072,6 +1072,7 @@ function drawVisibleItemsToContext({
   flowDraft,
   relationshipDraft,
   allowLocalFileAccess,
+  onImageNaturalSize,
   renderTextInCanvas,
   renderers = [],
 }) {
@@ -1103,6 +1104,7 @@ function drawVisibleItemsToContext({
           imageEditState,
           flowDraft,
           allowLocalFileAccess,
+          onImageNaturalSize,
           renderTextInCanvas,
           editingId,
         },
@@ -1505,6 +1507,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       alignmentSnap,
       alignmentSnapConfig,
       allowLocalFileAccess,
+      onImageNaturalSize,
       backgroundStyle,
       viewportInteractionActive = false,
       renderTextInCanvas,
@@ -1555,6 +1558,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       });
       const interactionCompositeMode = runtimeMode.mode === "viewport-interaction";
       const liveInteractionMode = runtimeMode.interactionActive === true;
+      const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas || runtimeMode.viewportInteractionActive);
       const cullResult =
         !liveInteractionMode && Array.isArray(visibleItems)
           ? {
@@ -1611,7 +1615,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         selectedIds,
       });
       const viewVisualSignature = getViewVisualSignature(view);
-      const renderModeSignature = getRenderModeSignature({ renderTextInCanvas, viewportInteractionActive });
+      const renderModeSignature = getRenderModeSignature({
+        renderTextInCanvas: effectiveRenderTextInCanvas,
+        viewportInteractionActive,
+      });
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
       const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
@@ -1730,7 +1737,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     flowDraft: null,
                     relationshipDraft: null,
                     allowLocalFileAccess,
-                    renderTextInCanvas,
+                    onImageNaturalSize,
+                    renderTextInCanvas: effectiveRenderTextInCanvas,
                     allItems,
                     renderers,
                   }),
@@ -1747,7 +1755,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   flowDraft: null,
                   relationshipDraft: null,
                   allowLocalFileAccess,
-                  renderTextInCanvas,
+                  onImageNaturalSize,
+                  renderTextInCanvas: effectiveRenderTextInCanvas,
                   allItems,
                   renderers,
                 })
@@ -1800,7 +1809,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
           flowDraft,
           relationshipDraft,
           allowLocalFileAccess,
-          renderTextInCanvas,
+          onImageNaturalSize,
+          renderTextInCanvas: effectiveRenderTextInCanvas,
           renderers,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;

@@ -4483,7 +4483,7 @@ body.desktop-mode .desktop-clear-stage::before {
 .canvas-card-image-asset {
   width: 100%;
   height: 100%;
-  object-fit: fill;
+  object-fit: contain;
   display: block;
   border-radius: 0;
   background: transparent;
@@ -9994,6 +9994,494 @@ body.is-office-embedded #right-pane-resizer {
   --canvas2d-topbar-left-reserved-width: 186px;
 }
 
+.canvas2d-navigator-panel {
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 0;
+  z-index: 220;
+  display: flex;
+  flex-direction: column;
+  width: min(318px, calc(100vw - 72px));
+  max-height: calc(100vh - 36px);
+  padding: 18px 14px 16px;
+  border: 1px solid rgba(203, 213, 225, 0.88);
+  border-left: 0;
+  border-radius: 0 28px 28px 0;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow:
+    18px 0 54px rgba(15, 23, 42, 0.13),
+    inset -1px 0 0 rgba(255, 255, 255, 0.86);
+  pointer-events: auto;
+}
+
+.canvas2d-navigator-dock-collapse {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #171717;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.canvas2d-navigator-dock-collapse:hover {
+  background: #e2e8f0;
+}
+
+.canvas2d-navigator-tab {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  z-index: 220;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-height: 76px;
+  border: 1px solid rgba(203, 213, 225, 0.82);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+  font-weight: 800;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.canvas2d-navigator-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.canvas2d-navigator-tab-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.canvas2d-navigator-tab-icon circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.canvas2d-navigator-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.canvas2d-navigator-brand {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.canvas2d-navigator-brand-mark {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: transparent;
+}
+
+.canvas2d-navigator-head strong {
+  display: block;
+  overflow: hidden;
+  color: #171717;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas2d-navigator-head button,
+.canvas2d-navigator-entry-actions button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8a8a8a;
+  cursor: pointer;
+}
+
+.canvas2d-navigator-head-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.canvas2d-navigator-head-actions button {
+  min-width: 22px;
+  height: 22px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.canvas2d-navigator-head-actions button:hover,
+.canvas2d-navigator-entry-actions button:hover {
+  background: #f1f1f1;
+  color: #171717;
+}
+
+.canvas2d-navigator-meta,
+.canvas2d-navigator-entry-copy small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.canvas2d-navigator-meta {
+  display: none;
+}
+
+.canvas2d-navigator-search {
+  margin: 10px 0 0;
+}
+
+.canvas2d-navigator-search input {
+  width: 100%;
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 8px 10px;
+  color: #171717;
+  outline: none;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+
+.canvas2d-navigator-list {
+  display: grid;
+  gap: 2px;
+  flex: 0 1 auto;
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+  padding: 4px 2px 0 0;
+}
+
+.canvas2d-navigator-tree-row {
+  display: grid;
+  gap: 1px;
+}
+
+.canvas2d-navigator-children {
+  display: grid;
+  position: relative;
+  gap: 1px;
+  margin-left: 14px;
+  padding-left: 11px;
+}
+
+.canvas2d-navigator-children::before {
+  position: absolute;
+  top: 0;
+  bottom: 7px;
+  left: 0;
+  width: 1px;
+  background: #f0f0f0;
+  content: "";
+}
+
+.canvas2d-navigator-entry {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  margin-left: calc(var(--navigator-depth, 0) * 2px);
+  touch-action: none;
+  user-select: none;
+}
+
+.canvas2d-navigator-entry.is-selected {
+  background: #f1f1f1;
+}
+
+.canvas2d-navigator-entry:hover {
+  background: #f6f6f6;
+}
+
+.canvas2d-navigator-entry.is-dragging {
+  opacity: 0.42;
+}
+
+.canvas2d-navigator-entry.is-drop-target {
+  position: relative;
+}
+
+.canvas2d-navigator-entry.is-drop-before::before,
+.canvas2d-navigator-entry.is-drop-after::after {
+  position: absolute;
+  left: 20px;
+  right: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: #171717;
+  content: "";
+}
+
+.canvas2d-navigator-entry.is-drop-before::before {
+  top: -2px;
+}
+
+.canvas2d-navigator-entry.is-drop-after::after {
+  bottom: -2px;
+}
+
+.canvas2d-navigator-entry.is-drop-inside {
+  background: #e9e9e9;
+  box-shadow: inset 0 0 0 1px rgba(23, 23, 23, 0.1);
+}
+
+.canvas2d-navigator-entry.is-missing {
+  opacity: 0.64;
+}
+
+.canvas2d-navigator-entry-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #262626;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas2d-navigator-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6f6f6f;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 0;
+}
+
+.canvas2d-navigator-tree-toggle.is-empty {
+  background: transparent;
+  cursor: default;
+}
+
+.canvas2d-navigator-entry-main:disabled {
+  cursor: not-allowed;
+}
+
+.canvas2d-navigator-entry-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 18px;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.canvas2d-navigator-entry-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+}
+
+.canvas2d-navigator-entry-copy strong {
+  overflow: hidden;
+  color: #2d2d2d;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas2d-navigator-entry.is-selected .canvas2d-navigator-entry-copy strong {
+  color: #171717;
+  font-weight: 650;
+}
+
+.canvas2d-navigator-entry.is-folder .canvas2d-navigator-entry-copy strong {
+  font-weight: 800;
+}
+
+.canvas2d-navigator-entry.is-picking-target {
+  background: #eeeeee;
+  box-shadow: inset 0 0 0 1px rgba(23, 23, 23, 0.1);
+}
+
+.canvas2d-navigator-entry-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #fff;
+  color: #171717;
+  padding: 0 5px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.canvas2d-navigator-entry-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.canvas2d-navigator-entry:hover .canvas2d-navigator-entry-actions,
+.canvas2d-navigator-entry:focus-within .canvas2d-navigator-entry-actions {
+  display: inline-flex;
+}
+
+.canvas2d-navigator-entry-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.canvas2d-navigator-entry-actions .canvas2d-navigator-more-btn {
+  min-width: 24px;
+  color: #737373;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.canvas2d-navigator-title-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d4d4d4;
+  border-radius: 6px;
+  padding: 3px 5px;
+  font: inherit;
+}
+
+.canvas2d-navigator-empty {
+  display: grid;
+  gap: 5px;
+  padding: 14px 8px;
+  border: 1px dashed #e5e5e5;
+  border-radius: 10px;
+  color: #737373;
+  font-size: 12px;
+}
+
+.canvas2d-navigator-pick-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  background: #f7f7f7;
+  padding: 8px 9px;
+  color: #404040;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.canvas2d-navigator-pick-hint button {
+  border: 0;
+  border-radius: 7px;
+  background: #fff;
+  color: #737373;
+  cursor: pointer;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.canvas2d-navigator-context-menu {
+  position: absolute;
+  z-index: 180;
+  display: grid;
+  gap: 3px;
+  min-width: 128px;
+  border: 1px solid #e6e6e6;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  padding: 5px;
+}
+
+.canvas2d-navigator-context-menu button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #262626;
+  cursor: pointer;
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.canvas2d-navigator-context-menu button:hover {
+  background: #f1f1f1;
+}
+
 .canvas2d-engine-topbar {
   --canvas2d-topbar-gap: 18px;
   position: absolute;
@@ -13572,7 +14060,7 @@ body.is-office-embedded #right-pane-resizer {
   color: #475569;
 }
 
-.canvas2d-export-drag-indicator {
+.canvas2d-navigator-drag-indicator {
   position: fixed;
   top: 0;
   left: 0;
@@ -13593,7 +14081,7 @@ body.is-office-embedded #right-pane-resizer {
   z-index: 200;
 }
 
-.canvas2d-export-drag-indicator.is-hidden {
+.canvas2d-navigator-drag-indicator.is-hidden {
   opacity: 0;
 }
 .canvas2d-save-toast {
@@ -13744,7 +14232,7 @@ body.is-office-embedded #right-pane-resizer {
   }
 }
 
-.canvas2d-export-drag-icon {
+.canvas2d-navigator-drag-icon {
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -13753,7 +14241,7 @@ body.is-office-embedded #right-pane-resizer {
   box-sizing: border-box;
 }
 
-.canvas2d-export-drag-icon::after {
+.canvas2d-navigator-drag-icon::after {
   content: "";
   position: absolute;
   width: 6px;
@@ -13812,6 +14300,82 @@ body.is-office-embedded #right-pane-resizer {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   pointer-events: auto;
+}
+
+.canvas2d-transient-minimap {
+  color: #0f172a;
+}
+
+.canvas2d-transient-minimap-toggle {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.canvas2d-transient-minimap-toggle:hover {
+  border-color: rgba(147, 197, 253, 0.96) !important;
+  background: rgba(239, 246, 255, 0.96) !important;
+  color: #1d4ed8 !important;
+  transform: translateY(-1px);
+}
+
+.canvas2d-transient-minimap.is-collapsed .canvas2d-transient-minimap-toggle {
+  top: 9px !important;
+  right: 9px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-color: rgba(191, 219, 254, 0.86) !important;
+  background: rgba(239, 246, 255, 0.96) !important;
+  color: #1d4ed8 !important;
+  font-size: 16px !important;
+}
+
+.canvas2d-transient-minimap-title {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  color: rgba(51, 65, 85, 0.92);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.canvas2d-transient-minimap-status-dot {
+  display: inline-flex;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.92);
+  box-shadow: 0 0 0 5px rgba(219, 234, 254, 0.9);
+}
+
+.canvas2d-transient-minimap-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: rgba(100, 116, 139, 0.78);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.canvas2d-transient-minimap-canvas {
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.canvas2d-transient-minimap-canvas:hover {
+  border-color: rgba(191, 219, 254, 0.96) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 0 0 3px rgba(239, 246, 255, 0.82) !important;
 }
 
 .canvas2d-floating-card-info {

@@ -34,6 +34,22 @@ function applyImageTransform(ctx, width, height, rotation, flipX, flipY) {
   ctx.translate(-width / 2, -height / 2);
 }
 
+function resolveImageContainRect(srcWidth, srcHeight, boxWidth, boxHeight) {
+  const safeSrcWidth = Math.max(1, Number(srcWidth) || 1);
+  const safeSrcHeight = Math.max(1, Number(srcHeight) || 1);
+  const safeBoxWidth = Math.max(1, Number(boxWidth) || 1);
+  const safeBoxHeight = Math.max(1, Number(boxHeight) || 1);
+  const scale = Math.min(safeBoxWidth / safeSrcWidth, safeBoxHeight / safeSrcHeight);
+  const width = Math.max(1, safeSrcWidth * scale);
+  const height = Math.max(1, safeSrcHeight * scale);
+  return {
+    x: (safeBoxWidth - width) / 2,
+    y: (safeBoxHeight - height) / 2,
+    width,
+    height,
+  };
+}
+
 function drawRoundedRect(ctx, x, y, width, height, radius) {
   drawStableRoundedRectPath(ctx, x, y, width, height, radius);
 }
@@ -297,7 +313,12 @@ function drawImageContent(ctx, image, item, width, height, scale, cropOverride, 
   if (needsTransform) {
     applyImageTransform(ctx, width, height, item.rotation, item.flipX, item.flipY);
   }
-  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, width, height);
+  if (crop) {
+    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, width, height);
+  } else {
+    const drawRect = resolveImageContainRect(srcWidth, srcHeight, width, height);
+    ctx.drawImage(image, sx, sy, sw, sh, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+  }
   drawAnnotations(ctx, item.annotations, width, height, scale, drafts);
   ctx.restore();
   if (needsFilter) {
@@ -485,6 +506,7 @@ export function createImageRenderer() {
     const image = entry?.image;
     drawImageMemo(ctx, item, 0, 0, width, height, scale);
     if (image?.complete && image.naturalWidth) {
+      helpers?.onImageNaturalSize?.(item.id, image.naturalWidth, image.naturalHeight);
       const cropPreview = helpers?.imageEditState?.id === item.id && helpers?.imageEditState?.cropPreview
         ? helpers.imageEditState.cropPreview
         : null;
