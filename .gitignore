@@ -5,6 +5,7 @@ output/
 .playwright-cli/
 
 .claude/
+.claude-codex/
 .codex/
 .deploy/
 .vscode/
