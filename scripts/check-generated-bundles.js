@@ -13,6 +13,7 @@ async function runNodeScript(scriptPath) {
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptPath], {
       cwd: ROOT_DIR,
+      env: { ...process.env, FREEFLOW_SKIP_VENDOR_SYNC: "1" },
       stdio: "inherit",
     });
     child.once("error", reject);

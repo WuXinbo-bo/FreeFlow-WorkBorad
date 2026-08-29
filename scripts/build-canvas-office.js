@@ -11,6 +11,7 @@ const PRISM_COMPONENTS_DIR = path.join(ROOT_DIR, "node_modules", "prismjs", "com
 const PRISM_VENDOR_DIR = path.join(PUBLIC_DIR, "vendor", "prismjs", "components");
 const MERMAID_DIST_DIR = path.join(ROOT_DIR, "node_modules", "mermaid", "dist");
 const MERMAID_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "mermaid");
+const SKIP_VENDOR_SYNC = process.env.FREEFLOW_SKIP_VENDOR_SYNC === "1";
 const PRISM_COMPONENT_FILES = [
   "prism-core.min.js",
   "prism-clike.min.js",
@@ -94,8 +95,10 @@ async function copyMermaidVendorAssets() {
 
 async function main() {
   await ensureDir(OUT_DIR);
-  await copyPrismVendorAssets();
-  await copyMermaidVendorAssets();
+  if (!SKIP_VENDOR_SYNC) {
+    await copyPrismVendorAssets();
+    await copyMermaidVendorAssets();
+  }
 
   await esbuild.build({
     entryPoints: [ENTRY_FILE],

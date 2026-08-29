@@ -17,6 +17,7 @@ const XLSX_VENDOR_DIR = path.join(PUBLIC_DIR, "vendor", "xlsx");
 const XLSX_VENDOR_FILE = path.join(XLSX_VENDOR_DIR, "xlsx.mjs");
 const PDFJS_DIST_DIR = path.join(ROOT_DIR, "node_modules", "pdfjs-dist");
 const PDFJS_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "pdfjs-dist");
+const SKIP_VENDOR_SYNC = process.env.FREEFLOW_SKIP_VENDOR_SYNC === "1";
 const PRISM_COMPONENT_FILES = [
   "prism-core.min.js",
   "prism-clike.min.js",
@@ -115,10 +116,12 @@ async function copyPdfjsVendorAssets() {
 
 async function main() {
   await ensureDir(OUT_DIR);
-  await copyPrismVendorAssets();
-  await copyMermaidVendorAssets();
-  await copyXlsxVendorAsset();
-  await copyPdfjsVendorAssets();
+  if (!SKIP_VENDOR_SYNC) {
+    await copyPrismVendorAssets();
+    await copyMermaidVendorAssets();
+    await copyXlsxVendorAsset();
+    await copyPdfjsVendorAssets();
+  }
 
   await esbuild.build({
     entryPoints: [ENTRY_FILE],
