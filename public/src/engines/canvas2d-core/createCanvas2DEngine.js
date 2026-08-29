@@ -24209,7 +24209,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     store.emit();
     scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: false, fullOverlayRescan: false });
     transientMinimap.refreshSceneSnapshot();
-    void initBoardFileState();
+    if (options.initializeBoardFileState !== false) {
+      void initBoardFileState();
+    }
     window.dispatchEvent(new CustomEvent("canvas2d-engine-ready"));
     return api;
   }

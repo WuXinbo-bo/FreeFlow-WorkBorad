@@ -4,7 +4,19 @@ if (typeof electron === "string") {
   const electronBinaryPath = electron;
   electron = require(path.join(path.dirname(electronBinaryPath), "resources", "electron.asar", "browser", "init.js"));
 }
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, clipboard, desktopCapturer, session, screen, dialog, nativeImage } = electron;
+const {
+  app,
+  BrowserWindow,
+  ipcMain: electronIpcMain,
+  shell,
+  globalShortcut,
+  clipboard,
+  desktopCapturer,
+  session,
+  screen,
+  dialog,
+  nativeImage,
+} = electron;
 const { execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -17,6 +29,7 @@ const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTa
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
+const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
 const { readUiSettingsStore, writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
@@ -104,6 +117,25 @@ let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
 const atomicBoardFileWriter = createAtomicBoardFileWriter();
+const BACKGROUND_EXPORT_IPC_CHANNELS = new Set([
+  "desktop-shell:background-export-ready",
+  "desktop-shell:background-export-result",
+  "desktop-shell:read-file-base64",
+  "desktop-shell:save-tile-composite-image",
+  "desktop-shell:save-tile-composite-pdf",
+]);
+const assertTrustedIpcEvent = createIpcEventValidator({
+  expectedOrigin: APP_URL,
+  getAllowedWebContents(channel) {
+    const window = BACKGROUND_EXPORT_IPC_CHANNELS.has(channel) ? backgroundExportWindow : mainWindow;
+    return window && !window.isDestroyed() ? [window.webContents] : [];
+  },
+});
+const ipcMain = createSecuredIpcMain({
+  ipcMain: electronIpcMain,
+  validate: assertTrustedIpcEvent,
+  onRejected: (error) => console.warn(error.message),
+});
 
 function getConfiguredUpdateWebsiteUrl() {
   const configured = String(startupContextCache?.uiSettings?.updateDownloadPageUrl || "").trim();
@@ -1732,7 +1764,7 @@ function createMainWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -1914,7 +1946,7 @@ function createBackgroundExportWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false,
     },
   });

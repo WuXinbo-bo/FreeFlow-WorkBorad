@@ -57,7 +57,7 @@ function CanvasOfficePage({ embedded = false } = {}) {
       return undefined;
     }
 
-    const engine = createCanvas2DEngine();
+    const engine = createCanvas2DEngine({ initializeBoardFileState: !backgroundExportMode });
     globalThis.__canvas2dEngine = engine;
     canvas2dHandleRef.current = engine;
     try {
