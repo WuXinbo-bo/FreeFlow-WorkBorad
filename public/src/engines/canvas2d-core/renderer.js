@@ -1,4 +1,5 @@
 import { sceneToScreen } from "./camera.js";
+import { getCanvasLodScalePercent } from "./lodScale.js";
 import { getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import {
@@ -38,10 +39,6 @@ const CANVAS_LOD_MATH_MIN_SCALE = 0.15;
 const CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX = 72;
 const CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX = 28;
 const LARGE_VIEWPORT_COLD_TILE_BUDGET = 6;
-
-function getCanvasLodScalePercent(scale = 1) {
-  return Math.round(Math.max(0.1, Number(scale) || 1) * 100);
-}
 
 function getHintLogo() {
   if (typeof Image === "undefined") {

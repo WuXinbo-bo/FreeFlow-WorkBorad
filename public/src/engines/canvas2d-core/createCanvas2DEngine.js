@@ -179,6 +179,12 @@ import {
 } from "./render/viewportPixelBudget.js";
 import { buildUnifiedPreviewSummaryMarkup } from "./previewSummaryMarkup.js";
 import {
+  getCanvasLodScalePercent,
+  getOverlayScaleBucket,
+  isCanvasLodScale,
+  isDetailedOverlayScale,
+} from "./lodScale.js";
+import {
   buildFileCardContextMenuHtml,
   getFileCardHit,
   pasteFileCardsFromClipboard,
@@ -1931,21 +1937,7 @@ function setStyleIfNeeded(node, prop, value) {
 }
 
 function getRichOverlayScaleBucket(scale = 1) {
-  const normalized = Math.max(0.1, Number(scale) || 1);
-  const step = Math.max(0.001, Number(RICH_OVERLAY_SCALE_BUCKET_STEP) || 0.02);
-  return String(Math.round(normalized / step) * step);
-}
-
-function getCanvasLodScalePercent(scale = 1) {
-  return Math.round(Math.max(0.1, Number(scale) || 1) * 100);
-}
-
-function isDetailedOverlayScale(scale = 1, minScale = 0.5) {
-  return getCanvasLodScalePercent(scale) > Math.round(Math.max(0.1, Number(minScale) || 0.5) * 100);
-}
-
-function isCanvasLodScale(scale = 1, minScale = 0.15) {
-  return getCanvasLodScalePercent(scale) <= Math.round(Math.max(0.1, Number(minScale) || 0.15) * 100);
+  return getOverlayScaleBucket(scale, RICH_OVERLAY_SCALE_BUCKET_STEP);
 }
 
 function hideOverlayHost(host, virtualizer, { onRemove = null, budgetManager = null, overlayType = "" } = {}) {
