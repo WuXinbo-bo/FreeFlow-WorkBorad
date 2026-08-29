@@ -1,3 +1,5 @@
+const fs = require("fs");
+
 function createPersistenceController(deps) {
   const {
     permissionsService,
@@ -98,7 +100,9 @@ function createPersistenceController(deps) {
 
     async getModelProviderSettings(_req, res) {
       try {
-        const store = await modelProviderSettingsService.readModelProviderSettingsStore();
+        const store = modelProviderSettingsService.toPublicModelProviderSettings(
+          await modelProviderSettingsService.readModelProviderSettingsStore()
+        );
         res.json({
           ok: true,
           file: modelProviderSettingsService.MODEL_PROVIDER_SETTINGS_FILE,
@@ -123,7 +127,7 @@ function createPersistenceController(deps) {
         res.json({
           ok: true,
           file: modelProviderSettingsService.MODEL_PROVIDER_SETTINGS_FILE,
-          ...next,
+          ...modelProviderSettingsService.toPublicModelProviderSettings(next),
         });
       } catch (error) {
         res.status(500).json({
@@ -279,8 +283,11 @@ function createPersistenceController(deps) {
 
     async extractFileText(req, res) {
       try {
+        const filePath = String(req.body?.filePath || "").trim();
+        const permissions = await permissionsService.readPermissionsStore();
+        const allowedPath = await permissionsService.resolveAllowedExistingPath(filePath, permissions.allowedRoots);
         const result = await fileTextService.extractFileText({
-          filePath: String(req.body?.filePath || "").trim(),
+          filePath: allowedPath,
           fileName: String(req.body?.fileName || "").trim(),
           mimeType: String(req.body?.mimeType || "").trim().toLowerCase(),
         });
@@ -330,26 +337,7 @@ function createPersistenceController(deps) {
 
       try {
         const permissions = await permissionsService.readPermissionsStore();
-        const allowedRoots = Array.isArray(permissions?.allowedRoots) ? permissions.allowedRoots : [];
-        const normalizedFilePath = permissionsService.normalizeRootPath(filePath);
-        const withinAllowedRoot = allowedRoots.some((root) => {
-          const normalizedRoot = permissionsService.normalizeRootPath(root);
-          return normalizedRoot && normalizedFilePath && normalizedFilePath.startsWith(normalizedRoot);
-        });
-
-        if (!withinAllowedRoot) {
-          return res.status(403).json({
-            ok: false,
-            error: "File path is outside allowed roots",
-            code: "FILE_PREVIEW_FORBIDDEN",
-            data: "",
-            mime: "",
-          });
-        }
-
-        const fs = require("fs");
-        const path = require("path");
-        const resolvedPath = path.resolve(filePath);
+        const resolvedPath = await permissionsService.resolveAllowedExistingPath(filePath, permissions.allowedRoots);
         const buffer = await fs.promises.readFile(resolvedPath);
         res.json({
           ok: true,
@@ -358,11 +346,11 @@ function createPersistenceController(deps) {
           mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
       } catch (error) {
-        res.status(500).json({
+        res.status(error.statusCode || 500).json({
           ok: false,
-          error: "Failed to read DOCX preview file",
-          code: "FILE_PREVIEW_READ_FAILED",
-          details: error.message,
+          error: error.statusCode ? error.message : "Failed to read DOCX preview file",
+          code: error.statusCode === 403 ? "FILE_PREVIEW_FORBIDDEN" : "FILE_PREVIEW_READ_FAILED",
+          details: error.statusCode ? undefined : error.message,
           data: "",
           mime: "",
         });
@@ -402,26 +390,7 @@ function createPersistenceController(deps) {
 
       try {
         const permissions = await permissionsService.readPermissionsStore();
-        const allowedRoots = Array.isArray(permissions?.allowedRoots) ? permissions.allowedRoots : [];
-        const normalizedFilePath = permissionsService.normalizeRootPath(filePath);
-        const withinAllowedRoot = allowedRoots.some((root) => {
-          const normalizedRoot = permissionsService.normalizeRootPath(root);
-          return normalizedRoot && normalizedFilePath && normalizedFilePath.startsWith(normalizedRoot);
-        });
-
-        if (!withinAllowedRoot) {
-          return res.status(403).json({
-            ok: false,
-            error: "File path is outside allowed roots",
-            code: "FILE_PREVIEW_FORBIDDEN",
-            data: "",
-            mime: "",
-          });
-        }
-
-        const fs = require("fs");
-        const path = require("path");
-        const resolvedPath = path.resolve(filePath);
+        const resolvedPath = await permissionsService.resolveAllowedExistingPath(filePath, permissions.allowedRoots);
         const buffer = await fs.promises.readFile(resolvedPath);
         res.json({
           ok: true,
@@ -430,11 +399,11 @@ function createPersistenceController(deps) {
           mime: "application/pdf",
         });
       } catch (error) {
-        res.status(500).json({
+        res.status(error.statusCode || 500).json({
           ok: false,
-          error: "Failed to read PDF preview file",
-          code: "FILE_PREVIEW_READ_FAILED",
-          details: error.message,
+          error: error.statusCode ? error.message : "Failed to read PDF preview file",
+          code: error.statusCode === 403 ? "FILE_PREVIEW_FORBIDDEN" : "FILE_PREVIEW_READ_FAILED",
+          details: error.statusCode ? undefined : error.message,
           data: "",
           mime: "",
         });

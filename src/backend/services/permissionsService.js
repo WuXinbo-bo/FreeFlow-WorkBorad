@@ -7,6 +7,7 @@ const {
   normalizePermissionsStore,
   normalizeRootPath,
 } = require("../models/permissionsModel");
+const { resolveAllowedExistingPath } = require("../utils/allowedPath");
 
 async function readPermissionsStore() {
   const result = await readVersionedJsonFile(PERMISSIONS_FILE, {
@@ -31,4 +32,5 @@ module.exports = {
   readPermissionsStore,
   writePermissionsStore,
   normalizeRootPath,
+  resolveAllowedExistingPath,
 };

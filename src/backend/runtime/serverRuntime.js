@@ -1,4 +1,5 @@
 const express = require("express");
+const { requireLoopbackRequest } = require("../utils/networkBoundary");
 const fsSync = require("fs");
 const fs = require("fs/promises");
 const os = require("os");
@@ -112,6 +113,7 @@ function setNoStoreHeaders(res) {
   res.setHeader("Surrogate-Control", "no-store");
 }
 
+app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
 app.use(
   "/vendor",
@@ -224,7 +226,7 @@ function serializeModelProviderSettings() {
     cloud: {
       provider: getConfiguredCloudProviderKind(),
       baseUrl: getConfiguredCloudBaseUrl(),
-      apiKey: getConfiguredCloudApiKey(),
+      apiKey: "",
       apiKeyConfigured: Boolean(getConfiguredCloudApiKey()),
       models: getConfiguredCloudModels(),
       defaultModel:
@@ -2330,8 +2332,9 @@ app.get("/api/local-file", async (req, res) => {
     res.status(400).json({ ok: false, error: "path is required" });
     return;
   }
-  const resolvedPath = path.resolve(targetPath);
   try {
+    const permissions = await readPermissionsStore();
+    const resolvedPath = await permissionsService.resolveAllowedExistingPath(targetPath, permissions.allowedRoots);
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) {
       res.status(404).json({ ok: false, error: "file not found" });
@@ -2340,7 +2343,7 @@ app.get("/api/local-file", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.sendFile(resolvedPath);
   } catch (error) {
-    res.status(404).json({ ok: false, error: error.message || "file not found" });
+    res.status(error.statusCode || 404).json({ ok: false, error: error.message || "file not found" });
   }
 });
 
@@ -2488,7 +2491,7 @@ function startServer(port = PORT) {
   return ensureModelProviderSettingsLoaded().then(
     () =>
       new Promise((resolve, reject) => {
-        const nextServer = app.listen(port, () => {
+        const nextServer = app.listen(port, "127.0.0.1", () => {
           serverInstance = nextServer;
           logStartup(port);
           resolve(nextServer);

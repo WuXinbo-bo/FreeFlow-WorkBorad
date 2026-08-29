@@ -75,7 +75,7 @@ async function atomicWriteFile(targetPath, data, options = {}) {
     fileHandle = await fs.open(tempPath, "w", opts.mode);
 
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data, opts.encoding);
-    await fileHandle.write(buffer);
+    await fileHandle.writeFile(buffer);
 
     // 2. 强制刷新到磁盘（确保数据持久化）
     if (opts.fsync) {
@@ -85,17 +85,23 @@ async function atomicWriteFile(targetPath, data, options = {}) {
     await fileHandle.close();
     fileHandle = null;
 
+    if (typeof opts.beforeRename === "function") {
+      await opts.beforeRename({ targetPath, tempPath });
+    }
+
     // 3. 原子重命名（在同一文件系统上是原子操作）
     await fs.rename(tempPath, targetPath);
 
     // 4. 同步目录确保文件元数据持久化
     if (opts.fsync) {
+      let dirHandle = null;
       try {
-        const dirHandle = await fs.open(path.dirname(targetPath), "r");
+        dirHandle = await fs.open(path.dirname(targetPath), "r");
         await dirHandle.sync();
-        await dirHandle.close();
       } catch {
         // 目录 sync 不是关键，失败时忽略
+      } finally {
+        await dirHandle?.close().catch(() => {});
       }
     }
 
@@ -174,7 +180,7 @@ async function atomicWriteFileWithBackup(targetPath, data, options = {}) {
       const entries = await fs.readdir(dir, { withFileTypes: true });
 
       const backups = entries
-        .filter(entry => entry.isFile() && entry.name.startsWith(`.${base}.backup-`))
+        .filter(entry => entry.isFile() && entry.name.startsWith(`${base}.backup-`))
         .map(entry => ({
           name: entry.name,
           path: path.join(dir, entry.name),
