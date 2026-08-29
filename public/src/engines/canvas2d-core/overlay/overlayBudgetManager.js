@@ -114,6 +114,13 @@ export function createOverlayBudgetManager(limits = {}) {
     canCreate,
     getActive,
     getActiveTotal,
+    getLimit: (type = "") => {
+      const normalizedType = normalizeType(type);
+      if (normalizedType === "total") {
+        return Math.max(0, Number(resolvedLimits.maxActiveTotal || 0) || 0);
+      }
+      return Math.max(0, Number(resolvedLimits[normalizedType] || 0) || 0);
+    },
     noteCreate,
     noteHidden,
     noteRemove,

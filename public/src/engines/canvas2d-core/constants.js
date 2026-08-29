@@ -13,13 +13,14 @@ export const MIN_SCALE = 0.1;
 export const MAX_SCALE = 4;
 
 export const TOOL_SHORTCUTS = Object.freeze({
+  h: "pan",
   v: "select",
   t: "text",
   r: "rect",
   a: "arrow",
   l: "line",
   e: "ellipse",
-  h: "highlight",
+  m: "highlight",
 });
 
 export const DRAW_TOOLS = Object.freeze(["rect", "ellipse", "arrow", "line", "highlight"]);

@@ -10147,6 +10147,11 @@ body.is-office-embedded #right-pane-resizer {
   line-height: 1;
 }
 
+.canvas2d-navigator-head-actions button.is-active {
+  background: #f1f1f1;
+  color: #171717;
+}
+
 .canvas2d-navigator-head-actions button:hover,
 .canvas2d-navigator-entry-actions button:hover {
   background: #f1f1f1;
@@ -10231,8 +10236,17 @@ body.is-office-embedded #right-pane-resizer {
   background: #f1f1f1;
 }
 
+.canvas2d-navigator-entry.is-nav-selected {
+  background: #e7eaee;
+  box-shadow: inset 0 0 0 1px rgba(23, 23, 23, 0.12);
+}
+
 .canvas2d-navigator-entry:hover {
   background: #f6f6f6;
+}
+
+.canvas2d-navigator-entry.is-drag-group {
+  opacity: 0.72;
 }
 
 .canvas2d-navigator-entry.is-dragging {
@@ -10316,12 +10330,12 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-navigator-entry-index {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   flex: 0 0 auto;
-  width: 8px;
+  width: 28px;
   height: 18px;
   color: #171717;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
 }
@@ -10346,6 +10360,11 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-navigator-entry.is-selected .canvas2d-navigator-entry-copy strong {
   color: #171717;
   font-weight: 650;
+}
+
+.canvas2d-navigator-entry.is-nav-selected .canvas2d-navigator-entry-copy strong {
+  color: #171717;
+  font-weight: 700;
 }
 
 .canvas2d-navigator-entry.is-folder .canvas2d-navigator-entry-copy strong {

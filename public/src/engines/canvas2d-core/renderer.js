@@ -1454,6 +1454,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     rerasterizedDirtyTiles: 0,
     coldRenderedTiles: 0,
     dirtyVisibleTiles: 0,
+    predictedPreloadTiles: 0,
     cacheSize: 0,
   };
   let lastDynamicStats = { customRendererHandledCount: 0, lodSimplifiedCount: 0 };
@@ -1476,6 +1477,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       rerasterizedDirtyTiles: 0,
       coldRenderedTiles: 0,
       dirtyVisibleTiles: 0,
+      predictedPreloadTiles: 0,
       cacheSize: 0,
     };
     lastDynamicStats = { customRendererHandledCount: 0, lodSimplifiedCount: 0 };
@@ -1516,8 +1518,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
       deferColdTiles = false,
       visibleItems = null,
       visibleSceneBounds = null,
-      visibleSceneMarginPx = 0,
-      preloadSceneMarginPx = 0,
+      visibleSceneMarginPx = null,
+      preloadSceneMarginPx = null,
+      viewportPrediction = null,
       sceneIndex = null,
       sceneKey = "",
       dirtyState = null,
@@ -1639,6 +1642,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         rerasterizedDirtyTiles: 0,
         coldRenderedTiles: 0,
         dirtyVisibleTiles: 0,
+        predictedPreloadTiles: 0,
       };
       let customRendererHandledCount = 0;
       let lodSimplifiedCount = 0;
@@ -1646,7 +1650,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
         (item) => item?.type === "mindNode" || item?.type === "mindSummary" || isMindRelationshipItem(item)
       ) || Boolean(relationshipDraft);
       const hasDynamicContent = dynamicItems.length > 0 || Boolean(draftElement);
-      const hasInteractionContent = Boolean(
+      const hasEmptyBoardHint = !(Array.isArray(items) && items.length) && !draftElement;
+      const hasInteractionContent = hasEmptyBoardHint || Boolean(
         selectionRect ||
         alignmentSnap?.active ||
         (mindMapDropTarget && mindMapDropHint) ||
@@ -1722,9 +1727,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
                 sceneChanged: Boolean(dirtyState?.sceneDirty),
                 dirtyItemIds: Array.isArray(dirtyState?.itemIds) ? dirtyState.itemIds : [],
                 maxColdTiles: deferColdTiles ? LARGE_VIEWPORT_COLD_TILE_BUDGET : Infinity,
-                viewportMarginPx: Number(visibleSceneMarginPx || 0) || 0,
-                preloadMarginPx: Number(preloadSceneMarginPx || 0) || 0,
-                overscanMarginPx: Number(visibleSceneMarginPx || 0) || 0,
+                viewportMarginPx: visibleSceneMarginPx,
+                preloadMarginPx: preloadSceneMarginPx,
+                overscanMarginPx: visibleSceneMarginPx,
+                viewportPrediction,
                 drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
                   drawVisibleItemsToContext({
                     ctx: tileCtx,
@@ -1769,6 +1775,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   rerasterizedDirtyTiles: 0,
                   coldRenderedTiles: 0,
                   dirtyVisibleTiles: 0,
+                  predictedPreloadTiles: 0,
                 };
         lastTileStats = {
           ...tileStats,
@@ -1784,6 +1791,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           rerasterizedDirtyTiles: 0,
           coldRenderedTiles: 0,
           dirtyVisibleTiles: 0,
+          predictedPreloadTiles: 0,
         };
       }
 
@@ -1881,6 +1889,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         progressiveRender: {
           enabled: Boolean(deferColdTiles),
           deferredColdTiles: Math.max(0, Number(tileStats?.deferredColdTiles || 0) || 0),
+          predictedPreloadTiles: Math.max(0, Number(tileStats?.predictedPreloadTiles || 0) || 0),
           pending: Boolean(tileStats?.hasDeferredColdTiles),
         },
         culling: cullResult.stats,

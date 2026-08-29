@@ -55,6 +55,56 @@ function getTileDistanceToBoundsCenter(tileBounds, bounds) {
   return Math.abs(tileCenterX - boundsCenterX) + Math.abs(tileCenterY - boundsCenterY);
 }
 
+function normalizeViewportPrediction(prediction = null) {
+  if (!prediction?.active) {
+    return null;
+  }
+  const velocityX = Number(prediction.velocityX || 0);
+  const velocityY = Number(prediction.velocityY || 0);
+  const speed = Math.hypot(velocityX, velocityY);
+  if (!Number.isFinite(speed) || speed <= 0.0001) {
+    return null;
+  }
+  const centerX = Number(prediction.centerX || 0);
+  const centerY = Number(prediction.centerY || 0);
+  const predictedCenterX = Number(prediction.predictedCenterX ?? centerX);
+  const predictedCenterY = Number(prediction.predictedCenterY ?? centerY);
+  if (![centerX, centerY, predictedCenterX, predictedCenterY].every(Number.isFinite)) {
+    return null;
+  }
+  return {
+    unitX: velocityX / speed,
+    unitY: velocityY / speed,
+    centerX,
+    centerY,
+    predictedCenterX,
+    predictedCenterY,
+  };
+}
+
+function getTilePredictionMetrics(tileBounds, prediction, tileSize) {
+  if (!tileBounds || !prediction) {
+    return {
+      frontBucket: 1,
+      projection: 0,
+      predictedDistance: 0,
+    };
+  }
+  const tileCenterX = Number(tileBounds.left || 0) + Number(tileBounds.width || 0) / 2;
+  const tileCenterY = Number(tileBounds.top || 0) + Number(tileBounds.height || 0) / 2;
+  const deltaX = tileCenterX - prediction.centerX;
+  const deltaY = tileCenterY - prediction.centerY;
+  const projection = deltaX * prediction.unitX + deltaY * prediction.unitY;
+  const sideBand = Math.max(64, Number(tileSize || 1024) * 0.22);
+  const frontBucket = projection > sideBand ? 0 : projection < -sideBand ? 2 : 1;
+  return {
+    frontBucket,
+    projection,
+    predictedDistance:
+      Math.abs(tileCenterX - prediction.predictedCenterX) + Math.abs(tileCenterY - prediction.predictedCenterY),
+  };
+}
+
 function intersectsBounds(a, b) {
   if (!a || !b) {
     return false;
@@ -261,6 +311,7 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     viewportMarginPx = null,
     preloadMarginPx = null,
     overscanMarginPx = null,
+    viewportPrediction = null,
     drawItems,
   }) {
     if (!sceneIndex || !ctx || !sceneKey || typeof drawItems !== "function") {
@@ -273,6 +324,7 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
         rerasterizedDirtyTiles: 0,
         coldRenderedTiles: 0,
         dirtyVisibleTiles: 0,
+        predictedPreloadTiles: 0,
       };
     }
     const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
@@ -318,9 +370,11 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     let lodSimplifiedCount = 0;
     let customRendererHandledCount = 0;
     let deferredColdTiles = 0;
+    let predictedPreloadTiles = 0;
     const coldTileBudget = Number.isFinite(Number(maxColdTiles))
       ? Math.max(0, Math.floor(Number(maxColdTiles)))
       : Infinity;
+    const normalizedPrediction = normalizeViewportPrediction(viewportPrediction);
 
     const tileDescriptors = [];
     for (let tileX = tileXMin; tileX <= tileXMax; tileX += 1) {
@@ -331,6 +385,10 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
         const isDirtyVisibleTile = dirtyTileCoordKeys.has(tileCoordKey);
         const tier = getTileTier(tileBounds, primaryViewportBounds, preloadViewportBounds);
         const isPrimaryTile = tier === "primary";
+        const predictionMetrics = getTilePredictionMetrics(tileBounds, normalizedPrediction, tileSize);
+        if (normalizedPrediction && tier !== "primary" && predictionMetrics.frontBucket === 0) {
+          predictedPreloadTiles += 1;
+        }
         tileDescriptors.push({
           tileX,
           tileY,
@@ -339,6 +397,9 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
           isDirtyVisibleTile,
           isPrimaryTile,
           tier,
+          frontBucket: predictionMetrics.frontBucket,
+          predictedDistance: predictionMetrics.predictedDistance,
+          projection: predictionMetrics.projection,
           distance: getTileDistanceToBoundsCenter(tileBounds, primaryViewportBounds),
         });
       }
@@ -350,6 +411,17 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
       }
       if (a.isDirtyVisibleTile !== b.isDirtyVisibleTile) {
         return a.isDirtyVisibleTile ? -1 : 1;
+      }
+      if (normalizedPrediction && a.tier !== "primary" && b.tier !== "primary") {
+        if (a.frontBucket !== b.frontBucket) {
+          return a.frontBucket - b.frontBucket;
+        }
+        if (a.predictedDistance !== b.predictedDistance) {
+          return a.predictedDistance - b.predictedDistance;
+        }
+        if (a.projection !== b.projection) {
+          return b.projection - a.projection;
+        }
       }
       if (a.distance !== b.distance) {
         return a.distance - b.distance;
@@ -426,6 +498,7 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
       customRendererHandledCount,
       deferredColdTiles,
       hasDeferredColdTiles: deferredColdTiles > 0,
+      predictedPreloadTiles,
     };
   }
 

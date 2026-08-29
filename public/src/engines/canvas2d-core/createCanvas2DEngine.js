@@ -147,6 +147,7 @@ import {
 } from "./viewportMetrics.js";
 import {
   getSceneRecord,
+  getSceneViewportBounds,
   invalidateSceneIndex,
   querySceneIndex,
   queryVisibleSceneItems,
@@ -289,7 +290,7 @@ import {
   wrapFreeFlowBoardPayload,
 } from "./boardFileFormat.js";
 
-const TOOL_SET = new Set(["select", "text", ...DRAW_TOOLS]);
+const TOOL_SET = new Set(["pan", "select", "text", ...DRAW_TOOLS]);
 const DEFAULT_TEXT_FONT_SIZE = 20;
 const DEFAULT_MIND_NODE_FONT_SIZE = 18;
 const TEXT_EDIT_MAX_WIDTH = 3200;
@@ -3351,7 +3352,9 @@ export function createCanvas2DEngine(options = {}) {
   let pendingResizeFrame = 0;
   let lastViewportBudget = null;
   let largeViewportProgressivePending = false;
+  let viewportPredictionSample = null;
   let mounted = false;
+  let temporaryPanPreviousTool = "";
   let renderScheduler = null;
   let lastContextMenuPoint = null;
   let lastContextMenuTargetId = null;
@@ -3795,6 +3798,17 @@ let tablePointerSelectionState = {
     });
   }
 
+  function markCodeBlockOverlayDeferred(itemId = "", deferredIds = null) {
+    const normalizedId = String(itemId || "");
+    if (!normalizedId) {
+      return;
+    }
+    markCodeBlockOverlayDirty(normalizedId);
+    if (deferredIds instanceof Set) {
+      deferredIds.add(normalizedId);
+    }
+  }
+
   function resetCodeBlockOverlayState({ clearNodes = false } = {}) {
     codeBlockOverlayDirtyIds.clear();
     codeBlockVisibleIds.clear();
@@ -3806,7 +3820,14 @@ let tablePointerSelectionState = {
     lastCodeBlockOverlayEditingId = "";
     lastCodeBlockOverlayInteractive = isInteractiveMode();
     if (clearNodes) {
-      codeBlockOverlayVirtualizer.clear({ removeNodes: true });
+      codeBlockOverlayVirtualizer.clear({
+        removeNodes: true,
+        onRemove: (node) => {
+          cleanupCodeBlockStaticNode(node);
+          node.remove?.();
+        },
+      });
+      overlayBudgetManager.reset("code");
     }
   }
 
@@ -3829,7 +3850,7 @@ let tablePointerSelectionState = {
     });
   }
 
-  function syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY) {
+  function syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds = null) {
     const itemId = String(item?.id || "");
     if (!itemId) {
       return;
@@ -3859,7 +3880,7 @@ let tablePointerSelectionState = {
         force: isEditing,
         allowDuringInteraction: isEditing,
       },
-      onDeferred: () => markCodeBlockOverlayDirty(item.id),
+      onDeferred: () => markCodeBlockOverlayDeferred(item.id, deferredIds),
     });
     if (!node) {
       return;
@@ -4566,30 +4587,84 @@ let tablePointerSelectionState = {
     return x >= bounds.left - pad && x <= bounds.right + pad && y >= bounds.top - pad && y <= bounds.bottom + pad;
   }
 
+  function resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState = null) {
+    const bounds = getSceneViewportBounds(state.board.view, viewportWidth, viewportHeight, 0);
+    const nowMs =
+      typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+    const centerX = Number(bounds.left || 0) + Number(bounds.width || 0) / 2;
+    const centerY = Number(bounds.top || 0) + Number(bounds.height || 0) / 2;
+    const previous = viewportPredictionSample;
+    viewportPredictionSample = {
+      time: nowMs,
+      centerX,
+      centerY,
+      scale: Number(state.board.view?.scale || 1) || 1,
+    };
+    const reason = String(dirtyState?.reason || "").trim();
+    const predictiveMotion =
+      reason === "pointer-pan-move" ||
+      reason === "pointer-pan-start" ||
+      reason === "pointer-pan" ||
+      reason === "wheel-pan";
+    if (!dirtyState?.viewDirty || !predictiveMotion || !previous) {
+      return null;
+    }
+    const elapsedMs = Math.max(0, nowMs - Number(previous.time || 0));
+    if (elapsedMs < 8 || elapsedMs > 480) {
+      return null;
+    }
+    const deltaX = centerX - Number(previous.centerX || 0);
+    const deltaY = centerY - Number(previous.centerY || 0);
+    const distance = Math.hypot(deltaX, deltaY);
+    const minSceneDistance = Math.max(24, Math.min(Number(bounds.width || 0), Number(bounds.height || 0)) * 0.015);
+    if (distance < minSceneDistance) {
+      return null;
+    }
+    const velocityX = deltaX / elapsedMs;
+    const velocityY = deltaY / elapsedMs;
+    const predictionMs = 180;
+    return {
+      active: true,
+      centerX,
+      centerY,
+      velocityX,
+      velocityY,
+      predictedCenterX: centerX + velocityX * predictionMs,
+      predictedCenterY: centerY + velocityY * predictionMs,
+      distance,
+      elapsedMs,
+      predictionMs,
+    };
+  }
+
   function collectRenderFrameInput({ dirtyState = null, layerState = null } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
     const sceneIndex = getSceneIndexRuntime();
     const sceneKey = "board-scene-cache-v3";
+    const viewportWidth = Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1);
+    const viewportHeight = Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1);
     const visibleScene = queryVisibleSceneItems(
       sceneIndex,
       state.board.view,
-      Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1),
-      Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1),
+      viewportWidth,
+      viewportHeight,
       { marginPx: 220 }
     );
+    const viewportPrediction = resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState);
     visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
     return {
       sceneIndex,
       sceneKey,
       visibleScene,
+      viewportPrediction,
       dirtyState,
       layerState,
     };
   }
 
-  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, dirtyState = null, layerState = null } = {}) {
+  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
@@ -4630,6 +4705,9 @@ let tablePointerSelectionState = {
       pixelRatio: viewportBudget.effectiveDpr,
       viewportBudget,
       deferColdTiles: shouldDeferColdTiles,
+      visibleSceneMarginPx: 520,
+      preloadSceneMarginPx: 280,
+      viewportPrediction,
       dirtyState,
       layerState,
     });
@@ -8075,6 +8153,10 @@ let tablePointerSelectionState = {
       refs.canvas.style.cursor = "default";
       return;
     }
+    if (state.tool === "pan" && !state.pointer) {
+      refs.canvas.style.cursor = "grab";
+      return;
+    }
     if (state.pointer?.type === "resize-selection") {
       refs.canvas.style.cursor = getHandleCursor(state.pointer.handle);
       return;
@@ -11428,6 +11510,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
     });
     const activeIds = activeVisibleItems.map((item) => item.id);
+    const deferredIds = new Set();
     codeBlockOverlayVirtualizer.syncActiveIds(activeIds, {
       onRemove: (node) => {
         cleanupCodeBlockStaticNode(node);
@@ -11455,7 +11538,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           force: state.editingId === item.id && state.editingType === "code-block",
           allowDuringInteraction: state.editingId === item.id && state.editingType === "code-block",
         }),
-        onDeferred: (itemId) => markCodeBlockOverlayDirty(itemId),
+        onDeferred: (itemId) => markCodeBlockOverlayDeferred(itemId, deferredIds),
         onRemove: (node) => {
           cleanupCodeBlockStaticNode(node);
           node.remove?.();
@@ -11465,7 +11548,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           setStyleIfNeeded(node, "display", "none");
         },
         syncNode: (_, item) => {
-          syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+          syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds);
         },
       });
     } else {
@@ -11491,11 +11574,29 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           });
           return;
         }
-        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY);
+        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds);
       });
     }
 
-    codeBlockOverlayDirtyIds.clear();
+    if (deferredIds.size) {
+      codeBlockOverlayDirtyIds.clear();
+      deferredIds.forEach((itemId) => {
+        if (codeBlockItemsById.has(itemId)) {
+          codeBlockOverlayDirtyIds.add(itemId);
+        }
+      });
+      const codeLimit = Number(overlayBudgetManager.getLimit?.("code") || 0) || 0;
+      const totalLimit = Number(overlayBudgetManager.getLimit?.("total") || 0) || 0;
+      const activeCodeCount = Number(overlayBudgetManager.getActive?.("code") || 0) || 0;
+      const activeTotalCount = Number(overlayBudgetManager.getActiveTotal?.() || 0) || 0;
+      const codeCapacityAvailable = !codeLimit || activeCodeCount < Math.min(codeLimit, activeIds.length);
+      const totalCapacityAvailable = !totalLimit || activeTotalCount < totalLimit;
+      if (codeCapacityAvailable && totalCapacityAvailable) {
+        scheduleRender({ overlayDirty: true, reason: "code-overlay-budget-deferred" });
+      }
+    } else {
+      codeBlockOverlayDirtyIds.clear();
+    }
     codeBlockOverlayNeedsFullRescan = false;
     lastCodeBlockOverlayViewportKey = viewportKey;
     lastCodeBlockOverlayInteractive = interactive;
@@ -16890,6 +16991,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
+  function enterTemporaryPanTool() {
+    if (temporaryPanPreviousTool) {
+      return true;
+    }
+    const currentTool = normalizeTool(state.tool);
+    temporaryPanPreviousTool = currentTool === "pan" ? "pan" : currentTool;
+    if (currentTool !== "pan") {
+      setTool("pan");
+    }
+    return true;
+  }
+
+  function exitTemporaryPanTool() {
+    if (!temporaryPanPreviousTool) {
+      return false;
+    }
+    const previousTool = temporaryPanPreviousTool;
+    temporaryPanPreviousTool = "";
+    if (previousTool && previousTool !== "pan") {
+      setTool(previousTool);
+    }
+    return true;
+  }
+
   function setMode(nextMode = "canvas2d") {
     store.setMode(normalizeMode(nextMode));
     if (!isInteractiveMode()) {
@@ -18833,6 +18958,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.tool === "text") {
       event.preventDefault();
       createEmptyText(scenePoint);
+      return;
+    }
+
+    if (state.tool === "pan" && event.button === 0) {
+      event.preventDefault();
+      state.selectionRect = null;
+      state.pointer = {
+        type: "pan",
+        pointerId: event.pointerId,
+        lastClientX: Number(event.clientX) || 0,
+        lastClientY: Number(event.clientY) || 0,
+      };
+      refs.canvas?.setPointerCapture?.(event.pointerId);
+      transientMinimap.handlePanStart();
+      syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+      syncCanvasCursor();
       return;
     }
 
@@ -23777,6 +23918,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       toggleLockOnSelection();
       return;
     }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (key === " " || key === "spacebar")) {
+      event.preventDefault();
+      enterTemporaryPanTool();
+      return;
+    }
     if (state.board.selectedIds.length === 1 && state.tool === "select") {
       const selected = getSingleSelectedItemFast();
       if (selected?.type === "mindNode") {
@@ -23884,16 +24030,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelFileMemoEdit();
       cancelImageMemoEdit();
       finishImageEdit();
+      temporaryPanPreviousTool = "";
       setTool("select");
       return;
     }
     if (TOOL_SHORTCUTS[key]) {
       event.preventDefault();
+      temporaryPanPreviousTool = "";
       setTool(TOOL_SHORTCUTS[key]);
     }
   }
 
   function onWindowKeyUp(event) {
+    const key = String(event.key || "").toLowerCase();
+    if (key === " " || key === "spacebar") {
+      if (exitTemporaryPanTool()) {
+        event.preventDefault();
+      }
+    }
   }
 
   function onModeChange(event) {

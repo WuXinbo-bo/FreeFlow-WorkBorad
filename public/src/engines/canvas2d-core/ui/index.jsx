@@ -28,7 +28,7 @@ const DRAW_TOOLS = [
   { key: "ellipse", icon: "◯", label: "椭圆", shortcut: "E" },
   { key: "arrow", icon: "→", label: "箭头", shortcut: "A" },
   { key: "line", icon: "—", label: "直线", shortcut: "L" },
-  { key: "highlight", icon: "▭", label: "高亮", shortcut: "H" },
+  { key: "highlight", icon: "▭", label: "高亮", shortcut: "M" },
 ];
 
 const INSERT_TOOLS = [
@@ -54,6 +54,21 @@ function MouseIcon() {
       <path
         d="M6 3.8L18.6 12.2l-5.2 1.2 2.5 6-2.4 1-2.6-6-3.9 3.6V3.8z"
         fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function HandPanIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
+      <path
+        d="M7.2 11.6V7.2a1.3 1.3 0 0 1 2.6 0v4.1M9.8 11.2V5.4a1.3 1.3 0 0 1 2.6 0v5.7M12.4 11.2V6.3a1.3 1.3 0 0 1 2.6 0v5.2M15 11.8V8.5a1.25 1.25 0 0 1 2.5 0v6.1c0 3.1-2.2 5.5-5.4 5.5h-1.4c-1.8 0-3.5-.9-4.6-2.3l-2.2-2.9a1.35 1.35 0 0 1 2.1-1.7l1.2 1.3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
@@ -219,6 +234,37 @@ function getNavigatorTypeLabel(type = "") {
   return labels[String(type || "")] || "元素";
 }
 
+function toChineseSectionNumber(value = 0) {
+  const number = Math.max(1, Math.floor(Number(value) || 0));
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  if (number <= 10) {
+    return number === 10 ? "十" : digits[number];
+  }
+  if (number < 20) {
+    return `十${digits[number % 10]}`;
+  }
+  if (number < 100) {
+    const tens = Math.floor(number / 10);
+    const units = number % 10;
+    return `${digits[tens]}十${units ? digits[units] : ""}`;
+  }
+  return String(number);
+}
+
+function getNavigatorEntryOrderLabel(depth = 0, index = 0) {
+  const order = Math.max(1, Number(index) + 1);
+  if (depth <= 0) {
+    return `${toChineseSectionNumber(order)}、`;
+  }
+  if (depth === 1) {
+    return `${order}.`;
+  }
+  if (depth === 2) {
+    return `(${order})`;
+  }
+  return `${order})`;
+}
+
 function buildLocalNavigatorTree(entries = []) {
   const cloned = (Array.isArray(entries) ? entries : []).map((entry) => ({
     ...entry,
@@ -242,6 +288,19 @@ function buildLocalNavigatorTree(entries = []) {
   return roots;
 }
 
+function flattenNavigatorEntries(entries = [], includeCollapsedChildren = false, result = []) {
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    if (!entry) {
+      return;
+    }
+    result.push(entry);
+    if (includeCollapsedChildren || entry.collapsed !== true) {
+      flattenNavigatorEntries(entry.children, includeCollapsedChildren, result);
+    }
+  });
+  return result;
+}
+
 function CanvasNavigatorPanel({
   navigator,
   onCollapse,
@@ -259,14 +318,17 @@ function CanvasNavigatorPanel({
   const [editingId, setEditingId] = useState("");
   const [titleDraft, setTitleDraft] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [orderVisible, setOrderVisible] = useState(false);
   const [query, setQuery] = useState("");
   const [menuState, setMenuState] = useState(null);
   const [dragState, setDragState] = useState(null);
+  const [selectedEntryIds, setSelectedEntryIds] = useState([]);
   const rowRefs = useRef(new Map());
   const rowMetaRef = useRef(new Map());
   const panelRef = useRef(null);
   const dragRuntimeRef = useRef(null);
   const suppressNavigatorClickRef = useRef(false);
+  const selectionAnchorRef = useRef("");
   const entries = Array.isArray(navigator?.entries) ? navigator.entries : [];
   const localCollapsedRef = useRef(new Map());
   entries.forEach((entry) => {
@@ -293,6 +355,81 @@ function CanvasNavigatorPanel({
         `${entry.title || ""} ${entry.targetTitle || ""} ${entry.type || ""} ${entry.kind || ""}`.toLowerCase().includes(normalizedQuery)
       )
     : rootEntries;
+  const entryById = new Map(entriesWithLocalCollapse.map((entry) => [entry.id, entry]));
+  const visibleEntryOrder = normalizedQuery ? visibleRoots : flattenNavigatorEntries(visibleRoots);
+  const visibleEntryIds = visibleEntryOrder.map((entry) => entry.id);
+  const selectedEntryIdSet = new Set(selectedEntryIds.filter((entryId) => entryById.has(entryId)));
+
+  const isEntryDescendantOfAny = (entryId, ancestorIdSet) => {
+    let current = entryById.get(entryId);
+    while (current?.parentId) {
+      const parentId = String(current.parentId || "").trim();
+      if (!parentId) {
+        return false;
+      }
+      if (ancestorIdSet.has(parentId)) {
+        return true;
+      }
+      current = entryById.get(parentId);
+    }
+    return false;
+  };
+
+  const getRootSelectionIds = (ids = []) => {
+    const cleanIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map((entryId) => String(entryId || "").trim()).filter(Boolean)));
+    const idSet = new Set(cleanIds);
+    return cleanIds.filter((entryId) => !isEntryDescendantOfAny(entryId, idSet));
+  };
+
+  const updateSelectionFromEntry = (entryId, options = {}) => {
+    const id = String(entryId || "").trim();
+    if (!id || !entryById.has(id)) {
+      return;
+    }
+    const extendRange = options.extendRange === true;
+    const toggle = options.toggle === true;
+    if (extendRange) {
+      const anchorId = selectionAnchorRef.current && visibleEntryIds.includes(selectionAnchorRef.current) ? selectionAnchorRef.current : id;
+      const anchorIndex = visibleEntryIds.indexOf(anchorId);
+      const targetIndex = visibleEntryIds.indexOf(id);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+        setSelectedEntryIds(visibleEntryIds.slice(start, end + 1));
+        return;
+      }
+    }
+    if (toggle) {
+      setSelectedEntryIds((current) => {
+        const set = new Set(current);
+        if (set.has(id)) {
+          set.delete(id);
+        } else {
+          set.add(id);
+        }
+        return Array.from(set);
+      });
+      selectionAnchorRef.current = id;
+      return;
+    }
+    selectionAnchorRef.current = id;
+    setSelectedEntryIds([id]);
+  };
+
+  const removeNavigatorEntries = (entryIds = []) => {
+    const orderedIds = Array.from(new Set((Array.isArray(entryIds) ? entryIds : []).map((entryId) => String(entryId || "").trim()).filter(Boolean)))
+      .map((entryId) => entryById.get(entryId))
+      .filter(Boolean)
+      .sort((a, b) => (Number(b.depth || 0) || 0) - (Number(a.depth || 0) || 0))
+      .map((entry) => entry.id);
+    if (!orderedIds.length) {
+      return;
+    }
+    orderedIds.forEach((entryId) => onRemoveEntry?.(entryId));
+    setSelectedEntryIds((current) => current.filter((entryId) => !orderedIds.includes(entryId)));
+    if (selectionAnchorRef.current && orderedIds.includes(selectionAnchorRef.current)) {
+      selectionAnchorRef.current = "";
+    }
+  };
 
   if (collapsed) {
     return (
@@ -331,13 +468,20 @@ function CanvasNavigatorPanel({
     event.preventDefault();
     event.stopPropagation();
     const panelRect = panelRef.current?.getBoundingClientRect();
-    const anchorRect = event.currentTarget.getBoundingClientRect();
     if (!panelRect) {
       return;
     }
     const menuWidth = 128;
-    const left = Math.min(Math.max(8, anchorRect.right - panelRect.left - menuWidth), Math.max(8, panelRect.width - menuWidth - 8));
-    const top = Math.min(Math.max(8, anchorRect.bottom - panelRect.top + 6), Math.max(8, panelRect.height - 116));
+    const isContextMenu = event.type === "contextmenu";
+    const anchorRect = event.currentTarget.getBoundingClientRect();
+    const rawLeft = isContextMenu
+      ? Number(event.clientX || 0) - panelRect.left
+      : anchorRect.right - panelRect.left - menuWidth;
+    const rawTop = isContextMenu
+      ? Number(event.clientY || 0) - panelRect.top
+      : anchorRect.bottom - panelRect.top + 6;
+    const left = Math.min(Math.max(8, rawLeft), Math.max(8, panelRect.width - menuWidth - 8));
+    const top = Math.min(Math.max(8, rawTop), Math.max(8, panelRect.height - 116));
     setMenuState({
       entryId: entry.id,
       isFolder,
@@ -346,9 +490,14 @@ function CanvasNavigatorPanel({
     });
   };
   const getDropTargetFromPoint = (clientX, clientY, draggingId) => {
+    const draggingIds = new Set(
+      Array.isArray(dragRuntimeRef.current?.entryIds) && dragRuntimeRef.current.entryIds.length
+        ? dragRuntimeRef.current.entryIds
+        : [draggingId]
+    );
     let best = null;
     rowRefs.current.forEach((node, id) => {
-      if (!node || id === draggingId) {
+      if (!node || draggingIds.has(id) || isEntryDescendantOfAny(id, draggingIds)) {
         return;
       }
       const rect = node.getBoundingClientRect();
@@ -366,10 +515,37 @@ function CanvasNavigatorPanel({
     }
     const insideFolder = meta.entry.kind === "folder" && clientX > best.rect.left + 42;
     if (insideFolder) {
+      const childMetas = [];
+      rowMetaRef.current.forEach((candidateMeta, candidateId) => {
+        const candidateNode = rowRefs.current.get(candidateId);
+        if (
+          !candidateNode ||
+          !candidateMeta?.entry ||
+          candidateMeta.parentId !== meta.entry.id ||
+          draggingIds.has(candidateId) ||
+          isEntryDescendantOfAny(candidateId, draggingIds)
+        ) {
+          return;
+        }
+        childMetas.push({
+          rect: candidateNode.getBoundingClientRect(),
+          order: Number(candidateMeta.entry.order) || 0,
+        });
+      });
+      childMetas.sort((a, b) => a.order - b.order);
+      let insertIndex = childMetas.length;
+      for (let index = 0; index < childMetas.length; index += 1) {
+        const childMeta = childMetas[index];
+        const midpoint = childMeta.rect.top + childMeta.rect.height / 2;
+        if (clientY <= midpoint) {
+          insertIndex = index;
+          break;
+        }
+      }
       return {
         overId: meta.entry.id,
         parentId: meta.entry.id,
-        index: meta.childrenCount || 0,
+        index: insertIndex,
         mode: "inside",
       };
     }
@@ -391,6 +567,9 @@ function CanvasNavigatorPanel({
   };
   const beginNavigatorDrag = (event, entry) => {
     const target = event.target instanceof Element ? event.target : null;
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
     if (
       event.button !== 0 ||
       editingId ||
@@ -400,8 +579,10 @@ function CanvasNavigatorPanel({
     }
     event.stopPropagation();
     const pointerId = event.pointerId;
+    const selectedIds = selectedEntryIdSet.has(entry.id) ? getRootSelectionIds(selectedEntryIds) : [entry.id];
     dragRuntimeRef.current = {
       entryId: entry.id,
+      entryIds: selectedIds,
       pointerId,
       timer: window.setTimeout(() => {
         event.preventDefault();
@@ -409,6 +590,7 @@ function CanvasNavigatorPanel({
         setDragState({
           active: true,
           entryId: entry.id,
+          entryIds: selectedIds,
           x: event.clientX,
           y: event.clientY,
           drop: null,
@@ -431,6 +613,7 @@ function CanvasNavigatorPanel({
     setDragState({
       active: true,
       entryId: runtime.entryId,
+      entryIds: runtime.entryIds,
       x: event.clientX,
       y: event.clientY,
       drop,
@@ -448,17 +631,19 @@ function CanvasNavigatorPanel({
     }
     event.preventDefault();
     if (dragState?.active && dragState.drop) {
-      onSetParent?.(runtime.entryId, dragState.drop.parentId, dragState.drop.index);
+      const movingIds = Array.isArray(runtime.entryIds) && runtime.entryIds.length ? runtime.entryIds : [runtime.entryId];
+      movingIds.forEach((entryId, index) => {
+        onSetParent?.(entryId, dragState.drop.parentId, Number(dragState.drop.index) + index);
+      });
     }
     clearNavigatorDrag();
     window.setTimeout(() => {
       suppressNavigatorClickRef.current = false;
     }, 0);
   };
-  const focusNavigatorEntry = (event, entry, canFocus) => {
+  const handleNavigatorEntryClick = (event, entry, canFocus) => {
     const target = event.target instanceof Element ? event.target : null;
     if (
-      !canFocus ||
       suppressNavigatorClickRef.current ||
       target?.closest("input, .canvas2d-navigator-tree-toggle, .canvas2d-navigator-entry-actions button")
     ) {
@@ -466,7 +651,29 @@ function CanvasNavigatorPanel({
     }
     event.preventDefault();
     event.stopPropagation();
+    if (event.shiftKey) {
+      updateSelectionFromEntry(entry.id, { extendRange: true });
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      updateSelectionFromEntry(entry.id, { toggle: true });
+      return;
+    }
+    updateSelectionFromEntry(entry.id);
+    if (!canFocus) {
+      return;
+    }
     onFocusEntry?.(entry.targetId || entry.id);
+  };
+  const handleNavigatorKeyDown = (event) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest("input, textarea, [contenteditable='true']")) {
+      return;
+    }
+    if ((event.key === "Delete" || event.key === "Backspace") && selectedEntryIdSet.size) {
+      event.preventDefault();
+      removeNavigatorEntries(Array.from(selectedEntryIdSet));
+    }
   };
   const renderEntry = (entry, index, siblings = []) => {
     const children = Array.isArray(entry.children) ? entry.children : [];
@@ -477,6 +684,8 @@ function CanvasNavigatorPanel({
     const isDragging = dragState?.active && dragState.entryId === entry.id;
     const isDropTarget = dragState?.active && dragState.drop?.overId === entry.id;
     const isPickingTarget = pendingTargetFolderId && pendingTargetFolderId === entry.id;
+    const isNavigatorSelected = selectedEntryIdSet.has(entry.id);
+    const orderLabel = orderVisible ? getNavigatorEntryOrderLabel(depth, index) : isFolder ? "" : "•";
     return (
       <div key={entry.id} className="canvas2d-navigator-tree-row">
         <div
@@ -498,6 +707,8 @@ function CanvasNavigatorPanel({
             entry.missing ? " is-missing" : ""
           }${hasChildren ? " has-children" : " is-leaf"}${isFolder ? " is-folder" : " is-canvas-item"}${
             isPickingTarget ? " is-picking-target" : ""
+          }${isNavigatorSelected ? " is-nav-selected" : ""}${
+            dragState?.active && Array.isArray(dragState.entryIds) && dragState.entryIds.includes(entry.id) ? " is-drag-group" : ""
           }${isDragging ? " is-dragging" : ""}${
             isDropTarget ? ` is-drop-target is-drop-${dragState.drop.mode}` : ""
           }`}
@@ -509,11 +720,8 @@ function CanvasNavigatorPanel({
           onPointerMove={updateNavigatorDrag}
           onPointerUp={finishNavigatorDrag}
           onPointerCancel={clearNavigatorDrag}
-          onClick={(event) => focusNavigatorEntry(event, entry, canFocus)}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
+          onClick={(event) => handleNavigatorEntryClick(event, entry, canFocus)}
+          onContextMenu={(event) => openEntryMenu(event, entry, isFolder)}
         >
           <button
             type="button"
@@ -535,14 +743,11 @@ function CanvasNavigatorPanel({
           <button
             type="button"
             className="canvas2d-navigator-entry-main"
-            onClick={(event) => {
-              focusNavigatorEntry(event, entry, canFocus);
-            }}
             aria-disabled={!canFocus}
             title={canFocus ? "定位到画布元素" : isFolder ? "独立目录文件夹" : "目标元素已不存在"}
           >
             <span className="canvas2d-navigator-entry-index" aria-hidden="true">
-              {isFolder ? "" : "•"}
+              {orderLabel}
             </span>
             <span className="canvas2d-navigator-entry-copy">
               {editingId === entry.id ? (
@@ -595,13 +800,37 @@ function CanvasNavigatorPanel({
   };
 
   return (
-    <section ref={panelRef} className="canvas2d-navigator-panel" aria-label="画布目录" onClick={closeEntryMenu}>
+    <section
+      ref={panelRef}
+      className="canvas2d-navigator-panel"
+      aria-label="画布目录"
+      tabIndex={0}
+      onKeyDown={handleNavigatorKeyDown}
+      onClick={(event) => {
+        closeEntryMenu();
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target?.closest(".canvas2d-navigator-entry, .canvas2d-navigator-context-menu, .canvas2d-navigator-head, .canvas2d-navigator-search")) {
+          setSelectedEntryIds([]);
+        }
+      }}
+    >
       <header className="canvas2d-navigator-head">
         <div className="canvas2d-navigator-brand">
           <img className="canvas2d-navigator-brand-mark" src="assets/brand/FreeFlow_logo.svg" alt="" aria-hidden="true" />
           <strong>{navigator?.title || "画布目录"}</strong>
         </div>
         <div className="canvas2d-navigator-head-actions">
+          <button
+            type="button"
+            className={orderVisible ? "is-active" : ""}
+            onClick={() => setOrderVisible((value) => !value)}
+            aria-label={orderVisible ? "隐藏目录序号" : "显示目录序号"}
+            title={orderVisible ? "隐藏目录序号" : "显示目录序号"}
+          >
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" className="canvas2d-tool-svg">
+              <path d="M9 7h10M9 12h10M9 17h10M4.5 6.8h2.2M4.5 12h2.2M4.5 17.2h2.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
           <button type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="搜索目录" title="搜索">
             <span aria-hidden="true">⌕</span>
           </button>
@@ -685,6 +914,8 @@ function CanvasNavigatorPanel({
               const entry = entriesWithLocalCollapse.find((item) => item.id === menuState.entryId);
               setEditingId(menuState.entryId);
               setTitleDraft(entry?.title || "");
+              selectionAnchorRef.current = menuState.entryId;
+              setSelectedEntryIds([menuState.entryId]);
               closeEntryMenu();
             }}
           >
@@ -693,7 +924,7 @@ function CanvasNavigatorPanel({
           <button
             type="button"
             onClick={() => {
-              onRemoveEntry?.(menuState.entryId);
+              removeNavigatorEntries(selectedEntryIdSet.has(menuState.entryId) ? Array.from(selectedEntryIdSet) : [menuState.entryId]);
               closeEntryMenu();
             }}
           >
@@ -1778,6 +2009,35 @@ function Canvas2DControls({ engine }) {
     window.setTimeout(() => setSaveToastVisible(false), 1600);
   };
 
+  const handleManualUpdateCheck = async () => {
+    if (typeof bridge.checkForAppUpdate !== "function") {
+      showToast("当前环境不支持检查更新");
+      return;
+    }
+    try {
+      const result = await bridge.checkForAppUpdate({ manual: true });
+      if (!result) {
+        showToast("当前环境不支持检查更新");
+        return;
+      }
+      if (!result.ok) {
+        showToast(`检查更新失败：${result.errorMessage || result.errorCode || "未知错误"}`);
+        return;
+      }
+      if (result.hasUpdate && !result.dismissed) {
+        showToast(`发现新版本 v${result.latestVersion || ""}`.trim());
+        return;
+      }
+      if (result.hasUpdate && result.dismissed) {
+        showToast(`检测到新版本 v${result.latestVersion || ""}，但该版本已被忽略`.trim());
+        return;
+      }
+      showToast(`当前已是最新版本 ${result.currentVersion || ""}`.trim());
+    } catch (error) {
+      showToast(`检查更新失败：${error?.message || "未知错误"}`);
+    }
+  };
+
   const openSearch = () => {
     setDrawMenuOpen(false);
     setInsertMenuOpen(false);
@@ -1958,7 +2218,7 @@ function Canvas2DControls({ engine }) {
         onPreviewEntry={(entryId) => bridge.previewCanvasNavigatorEntry?.(entryId)}
         onRenameEntry={(entryId, title) => bridge.renameCanvasNavigatorEntry?.(entryId, title)}
         onRemoveEntry={(entryId) => bridge.removeCanvasNavigatorEntry?.(entryId)}
-        onSetParent={(entryId, parentId) => bridge.setCanvasNavigatorEntryParent?.(entryId, parentId)}
+        onSetParent={(entryId, parentId, index) => bridge.setCanvasNavigatorEntryParent?.(entryId, parentId, index)}
         onToggleEntry={(entryId) => bridge.toggleCanvasNavigatorEntryCollapsed?.(entryId)}
         onAddFolder={(options) => bridge.addCanvasNavigatorFolder?.(options)}
         onPickFolderTarget={(entryId) => bridge.beginCanvasNavigatorFolderTargetPick?.(entryId)}
@@ -2044,6 +2304,18 @@ function Canvas2DControls({ engine }) {
         aria-label="工作白板工具栏"
       >
         <div className="canvas2d-engine-toolbar" role="toolbar" ref={toolbarRef}>
+          <button
+            type="button"
+            className={`canvas2d-engine-tool${activeTool === "pan" ? " is-active" : ""}`}
+            onClick={() => bridge.setTool("pan")}
+            aria-pressed={activeTool === "pan"}
+            title="拖拽视图 (H，按住 Space 临时平移)"
+          >
+            <span className="canvas2d-engine-tool-icon" aria-hidden="true">
+              <HandPanIcon />
+            </span>
+            <span className="canvas2d-engine-tool-shortcut">H</span>
+          </button>
           <button
             type="button"
             className={`canvas2d-engine-tool${activeTool === "select" ? " is-active" : ""}`}
@@ -2515,7 +2787,7 @@ function Canvas2DControls({ engine }) {
                     role="menuitem"
                     onClick={() => {
                       closeMenu();
-                      void bridge.checkForAppUpdate?.({ manual: true });
+                      void handleManualUpdateCheck();
                     }}
                   >
                     <span>检查更新</span>
