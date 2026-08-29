@@ -4729,6 +4729,11 @@ let tablePointerSelectionState = {
     const interactionPriorityActive = interactionPriorityGate.isActive();
     const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending);
     const overlaySuspended = Boolean(skipDetailOverlays);
+    overlayBudgetManager.reconcile({
+      rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
+      math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
+      code: refs.codeBlockDisplayHost?.querySelectorAll?.(".canvas2d-code-block-item[data-id]").length || 0,
+    });
     overlayBudgetManager.beginFrame({
       suspended: overlaySuspended,
       reason: String(dirtyState?.reason || "render"),

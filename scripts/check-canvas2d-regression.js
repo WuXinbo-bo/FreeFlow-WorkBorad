@@ -1707,6 +1707,53 @@ async function runTextSummaryStabilityCheck(browser) {
   }
 }
 
+async function runOverlayBudgetReconciliationCheck(browser) {
+  const board = createBoard([createTextItem("overlay-reconcile", 420, 180, "Overlay budget reconciliation")]);
+  const session = await createPage(browser, { board });
+  try {
+    await session.page.waitForFunction(() =>
+      document.querySelector('.canvas2d-rich-item[data-id="overlay-reconcile"]')?.dataset.contentMode === "detail"
+    );
+    const cycles = await session.page.evaluate(async () => {
+      const waitFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      const missing = [];
+      for (let index = 0; index < 50; index += 1) {
+        window.__canvas2dEngine.clearBoard();
+        await waitFrame();
+        if (document.querySelector('.canvas2d-rich-item[data-id="overlay-reconcile"]')) {
+          missing.push(`clear:${index}`);
+        }
+        window.__canvas2dEngine.undo();
+        await waitFrame();
+        if (!document.querySelector('.canvas2d-rich-item[data-id="overlay-reconcile"]')) {
+          missing.push(`restore:${index}`);
+        }
+      }
+      await waitFrame();
+      return { missing };
+    });
+    await session.page.waitForFunction(() =>
+      document.querySelector('.canvas2d-rich-item[data-id="overlay-reconcile"]')?.dataset.contentMode === "detail"
+    );
+    const result = await session.page.evaluate((cycleResult) => {
+      const actualRich = document.querySelectorAll("#canvas2d-rich-display .canvas2d-rich-item[data-id]").length;
+      return {
+        ...cycleResult,
+        actualRich,
+        overlayStats: window.__ffOverlayStats || null,
+      };
+    }, cycles);
+    assert(session.getErrors().length === 0, "overlay budget reconciliation produced page errors", session.getErrors());
+    assert(result.missing.length === 0, "overlay did not recover during rapid board clear/restore cycles", result);
+    assert(result.actualRich === 1, "rich overlay did not recover after rapid board switching", result);
+    assert(result.overlayStats?.activeByType?.rich === result.actualRich, "overlay budget drifted from the DOM count", result);
+    assert(result.overlayStats?.active === result.actualRich, "overlay total drifted from the DOM count", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
 async function runFileCardLodThresholdCheck(browser) {
   const board = createBoard(
     [createFileCardItem("filecard-lod", 180, 160, "项目文件夹")],
@@ -1901,6 +1948,7 @@ async function main() {
     report.checks.mindMapSubtreeReparent = await runMindMapSubtreeReparentCheck(browser);
     report.checks.lowZoomOverlaySummary = await runLowZoomOverlaySummaryCheck(browser);
     report.checks.textSummaryStability = await runTextSummaryStabilityCheck(browser);
+    report.checks.overlayBudgetReconciliation = await runOverlayBudgetReconciliationCheck(browser);
     report.checks.fileCardLodThreshold = await runFileCardLodThresholdCheck(browser);
     report.checks.pasteSemantic = await runPasteSemanticChecks(browser);
     report.checks.elementContextMenuClipboard = await runElementContextMenuClipboardCheck(browser);

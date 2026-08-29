@@ -19,6 +19,7 @@
     "check:generated-bundles": "node scripts/check-generated-bundles.js",
     "test:backend-security": "node scripts/check-backend-security.js",
     "test:desktop-atomic-save": "node scripts/check-desktop-atomic-save.js",
+    "test:overlay-budget": "node scripts/check-overlay-budget.js",
     "test:structured-parsers": "node scripts/structured-import/run-parser-unit-tests.cjs",
     "test:structured-renderers": "node scripts/structured-import/run-renderer-element-integration.cjs",
     "test:canvas2d": "node scripts/check-canvas2d-regression.js",

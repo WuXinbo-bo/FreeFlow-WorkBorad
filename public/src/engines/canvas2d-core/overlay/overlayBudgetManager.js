@@ -103,6 +103,14 @@ export function createOverlayBudgetManager(limits = {}) {
     recordOverlayEvent("hidden", count);
   }
 
+  function reconcile(countsByType = {}) {
+    activeByType.clear();
+    Object.entries(countsByType && typeof countsByType === "object" ? countsByType : {}).forEach(([type, count]) => {
+      activeByType.set(normalizeType(type), Math.max(0, Math.floor(Number(count) || 0)));
+    });
+    publishActive();
+  }
+
   function reset(type = "") {
     const normalizedType = normalizeType(type);
     activeByType.set(normalizedType, 0);
@@ -124,6 +132,7 @@ export function createOverlayBudgetManager(limits = {}) {
     noteCreate,
     noteHidden,
     noteRemove,
+    reconcile,
     reset,
   };
 }
