@@ -16,6 +16,7 @@ const { checkForAppUpdate, normalizeVersion, DEFAULT_UPDATE_CONFIG } = require("
 const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTargetManager");
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
+const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
 const { readUiSettingsStore, writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
@@ -102,6 +103,7 @@ let backgroundExportReady = false;
 let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
+const atomicBoardFileWriter = createAtomicBoardFileWriter();
 
 function getConfiguredUpdateWebsiteUrl() {
   const configured = String(startupContextCache?.uiSettings?.updateDownloadPageUrl || "").trim();
@@ -3419,6 +3421,9 @@ ipcMain.handle("desktop-shell:write-file", async (_event, targetPath, data) => {
   }
   try {
     const resolvedPath = path.resolve(normalizedPath);
+    if (isFreeFlowBoardPath(resolvedPath)) {
+      return await atomicBoardFileWriter.write(resolvedPath, data);
+    }
     const buffer = Buffer.from(data || []);
     const dir = path.dirname(resolvedPath);
     await fs.promises.mkdir(dir, { recursive: true });
