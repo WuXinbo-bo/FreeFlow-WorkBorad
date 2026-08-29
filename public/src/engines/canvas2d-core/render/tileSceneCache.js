@@ -188,13 +188,12 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
         tileCoordKeys.add(getTileCoordKey(tileX, tileY));
       }
     }
-    for (const key of Array.from(cache.keys())) {
-      const [entrySceneKey, , tileXRaw, tileYRaw] = String(key || "").split("|");
-      if (entrySceneKey !== sceneKey) {
+    for (const [key, entry] of Array.from(cache.entries())) {
+      if (entry?.sceneKey !== sceneKey) {
         continue;
       }
-      const tileX = Number(tileXRaw);
-      const tileY = Number(tileYRaw);
+      const tileX = Number(entry.tileX);
+      const tileY = Number(entry.tileY);
       if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) {
         continue;
       }
@@ -287,6 +286,7 @@ export function createTileSceneCache({ tileSize = 1024, maxEntries = 96 } = {}) 
     }) || null;
     const entry = {
       canvas: tileCanvas,
+      sceneKey,
       tileBounds,
       tileX,
       tileY,

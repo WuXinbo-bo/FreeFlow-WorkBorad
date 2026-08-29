@@ -1,6 +1,7 @@
 "use strict";
 
 async function main() {
+  globalThis.katex = require("katex");
   const rendererTextModule = await import(
     "../../public/src/engines/canvas2d-core/rendererText.js"
   );

@@ -42,7 +42,9 @@ async function main() {
       },
     },
   });
-  assert(normalized.type === "mathInline", "normalized math inline type mismatch");
+  assert(normalized.type === "text", "normalized inline math should use the text host element");
+  assert(normalized.structuredImport?.sourceNodeType === "mathInline", "normalized inline math source type mismatch");
+  assert(normalized.html.includes('data-role="math-inline"'), "normalized inline math semantic markup missing");
   assert(normalized.width >= MATH_MIN_WIDTH, "normalized math min width mismatch");
   assert(normalized.height >= MATH_MIN_HEIGHT, "normalized math min height mismatch");
   assert(normalized.structuredImport != null, "normalized math structuredImport missing");
@@ -78,7 +80,8 @@ async function main() {
     },
   });
 
-  assert(bridged.type === "mathBlock", "bridged math type mismatch");
+  assert(bridged.type === "text", "bridged math should use the text host element");
+  assert(bridged.structuredImport?.sourceNodeType === "mathBlock", "bridged math source type mismatch");
   assert(bridged.structuredImport != null, "bridged math structuredImport missing");
   assert(bridged.structuredImport.canonicalFragment.type === "mathBlock", "bridged canonical fragment mismatch");
   assert(bridged.structuredImport.sourceMeta.parserId === "latex-math-parser", "bridged parser id mismatch");

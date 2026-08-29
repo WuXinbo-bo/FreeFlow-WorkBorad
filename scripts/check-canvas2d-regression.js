@@ -390,7 +390,7 @@ async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } 
     canvas.focus();
     const types = [];
     if (textValue) {
-      types.push("text/plain", "text");
+      types.push("text/plain");
     }
     if (htmlValue) {
       types.push("text/html");
@@ -685,7 +685,40 @@ async function runTableEditorCheck(browser) {
     assert(result.contextActions.includes("table-add-row-above"), "table context menu is missing directional row insertion", result);
     assert(result.contextActions.includes("table-move-column-right"), "table context menu is missing column reorder action", result);
     assert(!result.contextActions.includes("table-sort-desc"), "table context menu should no longer expose sort action", result);
-    return result;
+    await session.page.evaluate(() => {
+      document.querySelector('#canvas-table-toolbar [data-action="table-done"]')?.click?.();
+    });
+    await session.page.waitForFunction(() => {
+      const editor = document.querySelector("#canvas-table-editor");
+      const codeBlockHost = document.querySelector("#canvas2d-code-block-display");
+      return (!editor || getComputedStyle(editor).display === "none") &&
+        Boolean(codeBlockHost) && getComputedStyle(codeBlockHost).display !== "none";
+    });
+    const restored = await session.page.evaluate(() => ({
+      editorHidden: getComputedStyle(document.querySelector("#canvas-table-editor")).display === "none",
+      toolbarHidden: getComputedStyle(document.querySelector("#canvas-table-toolbar")).display === "none",
+      codeBlockHostVisible: getComputedStyle(document.querySelector("#canvas2d-code-block-display")).display !== "none",
+    }));
+    assert(restored.editorHidden === true, "table editor did not exit edit mode", restored);
+    assert(restored.toolbarHidden === true, "table toolbar did not exit edit mode", restored);
+    assert(restored.codeBlockHostVisible === true, "codeBlock overlay host did not recover after table editing", restored);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await session.page.mouse.dblclick(canvasRect.x + metrics.screenCenterX, canvasRect.y + metrics.screenCenterY);
+      await session.page.waitForFunction(() =>
+        getComputedStyle(document.querySelector("#canvas-table-editor")).display !== "none" &&
+        getComputedStyle(document.querySelector("#canvas2d-code-block-display")).display === "none"
+      );
+      await session.page.evaluate(() => {
+        document.querySelector('#canvas-table-toolbar [data-action="table-done"]')?.click?.();
+      });
+      await session.page.waitForFunction(() =>
+        getComputedStyle(document.querySelector("#canvas-table-editor")).display === "none" &&
+        getComputedStyle(document.querySelector("#canvas2d-code-block-display")).display !== "none"
+      );
+    }
+    assert(session.getErrors().length === 0, "rapid table edit cycles produced page errors", session.getErrors());
+    return { ...result, restored, rapidCycles: 3 };
   } finally {
     await session.page.close();
   }
@@ -725,7 +758,7 @@ async function runPanRealtimeCheck(browser) {
 
 async function runSelectionDragRealtimeCheck(browser) {
   const board = createBoard(
-    [createTextItem("drag-text", 240, 220, "Drag Realtime")],
+    [createTextItem("drag-text", 520, 220, "Drag Realtime")],
     ["drag-text"]
   );
   const session = await createPage(browser, { board });
@@ -757,11 +790,29 @@ async function runSelectionDragRealtimeCheck(browser) {
     await session.page.mouse.up({ button: "left" });
     await session.page.waitForTimeout(80);
     const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
-    const result = { midStats, afterStats };
+    const afterPosition = await session.page.evaluate(() => {
+      const item = window.__canvas2dEngine?.getSnapshot?.()?.board?.items?.find?.((entry) => entry.id === "drag-text");
+      return item ? { x: Number(item.x || 0), y: Number(item.y || 0) } : null;
+    });
+    const result = { midStats, afterStats, afterPosition };
     assert(session.getErrors().length === 0, "selection drag check produced page errors", session.getErrors());
     assert(result.midStats?.dynamicRenderedItems >= 1, "selection drag did not render active item dynamically", result);
     assert(result.midStats?.layerReuse?.dynamicSceneReused === false, "dynamic layer was incorrectly reused during drag", result);
-    assert(result.midStats?.layerReuse?.interactionReused === false, "interaction layer was incorrectly reused during drag", result);
+    assert(Math.abs(result.afterPosition?.x - 616) <= 2, "selection drag did not commit the horizontal position", result);
+    assert(Math.abs(result.afterPosition?.y - 268) <= 2, "selection drag did not commit the vertical position", result);
+
+    await session.page.mouse.move(startX + 96, startY + 48);
+    await session.page.mouse.down({ button: "left" });
+    await session.page.mouse.move(startX + 48, startY + 24, { steps: 2 });
+    await session.page.mouse.up({ button: "left" });
+    await session.page.waitForTimeout(80);
+    result.repeatedPosition = await session.page.evaluate(() => {
+      const item = window.__canvas2dEngine?.getSnapshot?.()?.board?.items?.find?.((entry) => entry.id === "drag-text");
+      return item ? { x: Number(item.x || 0), y: Number(item.y || 0) } : null;
+    });
+    assert(Math.abs(result.repeatedPosition?.x - 568) <= 2, "repeated drag left stale horizontal state", result);
+    assert(Math.abs(result.repeatedPosition?.y - 244) <= 2, "repeated drag left stale vertical state", result);
+    assert(session.getErrors().length === 0, "repeated selection drag produced page errors", session.getErrors());
     return result;
   } finally {
     await session.page.close();
@@ -771,9 +822,9 @@ async function runSelectionDragRealtimeCheck(browser) {
 async function runMarqueeMultiSelectCheck(browser) {
   const board = createBoard(
     [
-      createTextItem("marquee-a", 180, 160, "Marquee A"),
-      createTextItem("marquee-b", 420, 210, "Marquee B"),
-      createRectShape("marquee-c", 700, 420, 140, 96),
+      createTextItem("marquee-a", 420, 160, "Marquee A"),
+      createTextItem("marquee-b", 680, 210, "Marquee B"),
+      createRectShape("marquee-c", 1040, 420, 140, 96),
     ],
     [],
     { scale: 1, offsetX: 0, offsetY: 0 }
@@ -781,9 +832,9 @@ async function runMarqueeMultiSelectCheck(browser) {
   const session = await createPage(browser, { board });
   try {
     const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
-    await session.page.mouse.move(canvasRect.x + 120, canvasRect.y + 120);
+    await session.page.mouse.move(canvasRect.x + 360, canvasRect.y + 120);
     await session.page.mouse.down({ button: "left" });
-    await session.page.mouse.move(canvasRect.x + 660, canvasRect.y + 340, { steps: 8 });
+    await session.page.mouse.move(canvasRect.x + 940, canvasRect.y + 340, { steps: 8 });
     await session.page.waitForTimeout(80);
     await session.page.mouse.up({ button: "left" });
     await session.page.waitForTimeout(120);
@@ -817,13 +868,19 @@ async function runLocalizedTileInvalidationCheck(browser) {
     const result = await session.page.evaluate(async () => {
       window.__canvas2dEngine.alignSelection("left");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      return document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
+      const first = document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
+      window.__canvas2dEngine.alignSelection("right");
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const repeated = document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
+      return { first, repeated };
     });
-    const tileCache = result?.tileCache || {};
     assert(session.getErrors().length === 0, "alignSelection check produced page errors", session.getErrors());
-    assert(tileCache.invalidatedTiles >= 1, "localized tile invalidation did not occur", result);
-    assert(tileCache.rerasterizedDirtyTiles >= 1, "dirty tile was not rerasterized", result);
-    assert(tileCache.reusedVisibleTiles >= 1, "visible tile reuse was lost", result);
+    for (const stats of [result?.first, result?.repeated]) {
+      const tileCache = stats?.tileCache || {};
+      assert(tileCache.invalidatedTiles >= 1, "localized tile invalidation did not occur", result);
+      assert(tileCache.rerasterizedDirtyTiles >= 1, "dirty tile was not rerasterized", result);
+      assert(tileCache.reusedVisibleTiles >= 1, "visible tile reuse was lost", result);
+    }
     return result;
   } finally {
     await session.page.close();
@@ -835,10 +892,24 @@ async function runBackgroundLayerReuseCheck(browser) {
   const session = await createPage(browser, { board });
   try {
     const result = await session.page.evaluate(async () => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      window.__canvas2dEngine.resize({ immediate: true, reason: "background-reuse-preflight" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const frames = [];
+      let latestStats = canvas.__ffRenderStats || null;
+      Object.defineProperty(canvas, "__ffRenderStats", {
+        configurable: true,
+        get: () => latestStats,
+        set: (value) => {
+          latestStats = value;
+          frames.push(value);
+        },
+      });
       window.__canvas2dEngine.setBoardBackgroundPattern("grid");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      return document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
+      return frames.find((stats) => stats?.renderReasons?.includes("set-background-pattern")) || null;
     });
+    assert(result, "background change render frame was not observed");
     assert(session.getErrors().length === 0, "background reuse check produced page errors", session.getErrors());
     assert(result?.layerReuse?.backgroundReused === false, "background layer did not redraw", result);
     assert(result?.layerReuse?.staticSceneReused === true, "static scene layer should have been reused", result);
@@ -859,11 +930,23 @@ async function runLargeViewportPixelBudgetCheck(browser) {
   });
   try {
     const result = await session.page.evaluate(async () => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const frames = [];
+      let latestStats = canvas.__ffRenderStats || null;
+      Object.defineProperty(canvas, "__ffRenderStats", {
+        configurable: true,
+        get: () => latestStats,
+        set: (value) => {
+          latestStats = value;
+          frames.push(value);
+        },
+      });
       window.__canvas2dEngine?.resize?.({ immediate: true, reason: "large-viewport-test" });
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const canvas = document.querySelector("#canvas-office-canvas");
       return {
-        stats: canvas?.__ffRenderStats || null,
+        stats: frames.find((stats) =>
+          stats?.renderReasons?.some((reason) => String(reason).startsWith("large-viewport-test"))
+        ) || null,
         width: canvas?.width || 0,
         height: canvas?.height || 0,
         clientWidth: canvas?.clientWidth || 0,
@@ -871,6 +954,7 @@ async function runLargeViewportPixelBudgetCheck(browser) {
         devicePixelRatio: window.devicePixelRatio,
       };
     });
+    assert(result.stats, "large viewport resize render frame was not observed", result);
     const stats = result.stats || {};
     const budget = stats.pixelBudget || {};
     assert(session.getErrors().length === 0, "large viewport budget check produced page errors", session.getErrors());
@@ -991,6 +1075,11 @@ async function runMindMapDragConnectionCheck(browser) {
       const duringDragStats = canvas.__ffRenderStats || null;
       canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: startX + 120, clientY: startY + 12, button: 0, buttons: 0, pointerId: 1 }));
       await waitFrame();
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      await waitFrame();
+      const afterDragStats = canvas.__ffRenderStats || null;
+      const afterSnapshot = window.__canvas2dEngine.getSnapshot();
+      const movedChild = afterSnapshot?.board?.items?.find?.((item) => item.id === child.id) || null;
       return {
         rootExists: true,
         childExists: true,
@@ -998,15 +1087,29 @@ async function runMindMapDragConnectionCheck(browser) {
         dynamicRenderedItems: Number(duringDragStats?.dynamicRenderedItems || 0),
         staticRenderedItems: Number(duringDragStats?.staticRenderedItems || 0),
         mindMapConnectionsDrawn: Number(duringDragStats?.mindMapConnectionsDrawn || 0),
+        afterDynamicRenderedItems: Number(afterDragStats?.dynamicRenderedItems || 0),
+        afterStaticRenderedItems: Number(afterDragStats?.staticRenderedItems || 0),
+        afterMindMapConnectionsDrawn: Number(afterDragStats?.mindMapConnectionsDrawn || 0),
+        movedBy: {
+          x: Number(movedChild?.x || 0) - Number(child.x || 0),
+          y: Number(movedChild?.y || 0) - Number(child.y || 0),
+        },
+        selectedIds: afterSnapshot?.board?.selectedIds || [],
+        interactionPriority: window.__canvas2dEngine.getInteractionPrioritySnapshot(),
       };
     });
     assert(session.getErrors().length === 0, "mind map drag connection check produced page errors", session.getErrors());
     assert(result.rootExists === true, "mind map drag check root was not created", result);
     assert(result.childExists === true, "mind map drag check child was not created", result);
     assert(result.renderedItems >= 2, "mind map drag check rendered item count is invalid", result);
-    assert(result.dynamicRenderedItems >= 1, "mind map drag check missing dynamic node render", result);
-    assert(result.staticRenderedItems >= 1, "mind map drag check missing static node render", result);
+    assert(result.dynamicRenderedItems === result.renderedItems, "mind map drag check did not enter dynamic interaction mode", result);
     assert(result.mindMapConnectionsDrawn >= 1, "mind map connection disappeared during drag", result);
+    assert(result.afterStaticRenderedItems === 0, "mind map node unexpectedly entered the static tile cache", result);
+    assert(result.afterDynamicRenderedItems === result.renderedItems, "mind map dynamic rendering did not recover after drag", result);
+    assert(result.afterMindMapConnectionsDrawn >= 1, "mind map connection disappeared after drag", result);
+    assert(Math.abs(result.movedBy?.x) >= 100, "mind map drag position was not committed", result);
+    assert(result.selectedIds.length === 1, "mind map drag left stale multi-selection state", result);
+    assert(result.interactionPriority?.active === false, "interaction priority did not release after mind map drag", result);
     return result;
   } finally {
     await session.page.close();
@@ -1017,7 +1120,7 @@ async function runMindMapReparentCheck(browser) {
   const board = createBoard([]);
   const session = await createPage(browser, { board });
   try {
-    const result = await session.page.evaluate(async () => {
+    const setup = await session.page.evaluate(async () => {
       const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       window.__canvas2dEngine.addFlowNode();
       await waitFrame();
@@ -1038,30 +1141,36 @@ async function runMindMapReparentCheck(browser) {
         return { rootExists: true, childPairExists: false };
       }
       const canvas = document.querySelector("#canvas-office-canvas");
+      const rect = canvas.getBoundingClientRect();
       const view = snapshot.board.view;
-      const sourceX = (Number(source.x || 0) + Number(source.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0);
-      const sourceY = (Number(source.y || 0) + Number(source.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0);
-      const targetX = (Number(target.x || 0) + Number(target.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0);
-      const targetY = (Number(target.y || 0) + Number(target.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0);
-      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: sourceX, clientY: sourceY, button: 0, buttons: 1, pointerId: 2 }));
-      canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: targetX, clientY: targetY, button: 0, buttons: 1, pointerId: 2 }));
-      await waitFrame();
-      canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: targetX, clientY: targetY, button: 0, buttons: 0, pointerId: 2 }));
-      await waitFrame();
-      snapshot = window.__canvas2dEngine.getSnapshot();
-      const movedSource = snapshot.board.items.find((item) => item.id === source.id) || null;
-      const movedTarget = snapshot.board.items.find((item) => item.id === target.id) || null;
       return {
         rootExists: true,
         childPairExists: true,
-        sourceParentId: movedSource?.parentId || "",
-        targetId: movedTarget?.id || "",
-        canUndo: Boolean(snapshot?.canUndo),
+        sourceId: source.id,
+        targetId: target.id,
+        sourceX: rect.left + (Number(source.x || 0) + Number(source.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        sourceY: rect.top + (Number(source.y || 0) + Number(source.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
+        targetX: rect.left + (Number(target.x || 0) + Number(target.width || 0) / 2) * Number(view.scale || 1) + Number(view.offsetX || 0),
+        targetY: rect.top + (Number(target.y || 0) + Number(target.height || 0) / 2) * Number(view.scale || 1) + Number(view.offsetY || 0),
       };
     });
     assert(session.getErrors().length === 0, "mind map reparent check produced page errors", session.getErrors());
-    assert(result.rootExists === true, "mind map reparent check root was not created", result);
-    assert(result.childPairExists === true, "mind map reparent check child pair missing", result);
+    assert(setup.rootExists === true, "mind map reparent check root was not created", setup);
+    assert(setup.childPairExists === true, "mind map reparent check child pair missing", setup);
+    await session.page.mouse.move(setup.sourceX, setup.sourceY);
+    await session.page.mouse.down();
+    await session.page.mouse.move(setup.targetX, setup.targetY, { steps: 14 });
+    await session.page.mouse.up();
+    await session.page.waitForTimeout(180);
+    const result = await session.page.evaluate(({ sourceId, targetId }) => {
+      const snapshot = window.__canvas2dEngine.getSnapshot();
+      return {
+        sourceParentId: snapshot?.board?.items?.find?.((item) => item.id === sourceId)?.parentId || "",
+        targetId,
+        canUndo: Boolean(snapshot?.canUndo),
+      };
+    }, { sourceId: setup.sourceId, targetId: setup.targetId });
+    assert(session.getErrors().length === 0, "mind map reparent drag produced page errors", session.getErrors());
     assert(result.sourceParentId === result.targetId, "mind map node did not reparent onto drop target", result);
     assert(result.canUndo === true, "mind map reparent action did not enter undo history", result);
     return result;
@@ -1258,6 +1367,10 @@ async function runMindMapAncestorReparentCheck(browser) {
     assert(result.rootExists === true, "mind map ancestor reparent root missing", result);
     assert(result.childExists === true, "mind map ancestor reparent child missing", result);
     assert(result.grandchildExists === true, "mind map ancestor reparent grandchild missing", result);
+    await session.page.keyboard.press("Escape");
+    await session.page.waitForTimeout(120);
+    const editingId = await session.page.evaluate(() => window.__canvas2dEngine.getSnapshot()?.editingId || "");
+    assert(!editingId, "mind map ancestor reparent did not exit edit mode", { editingId });
     await session.page.mouse.move(result.grandchildPoint.x, result.grandchildPoint.y);
     await session.page.mouse.down();
     await session.page.mouse.move(result.rootPoint.x, result.rootPoint.y, { steps: 16 });
@@ -1344,7 +1457,7 @@ async function runMindMapSummaryCheck(browser) {
 }
 
 async function runMindMapRelationshipCheck(browser) {
-  const board = createBoard([]);
+  const board = createBoard([createTextItem("relationship-source", 420, 160, "Relationship Source")]);
   const session = await createPage(browser, { board });
   try {
     const result = await session.page.evaluate(async () => {
@@ -1365,29 +1478,37 @@ async function runMindMapRelationshipCheck(browser) {
       if (children.length < 2) {
         return { rootExists: true, childrenReady: false };
       }
-      window.__canvas2dEngine.addMindRelationship(children[0].id, children[1].id, { label: "依赖" });
+      const created = window.__canvas2dEngine.addMindRelationship("relationship-source", children[0].id);
+      const duplicateCreated = window.__canvas2dEngine.addMindRelationship("relationship-source", children[0].id);
       await waitFrame();
       snapshot = window.__canvas2dEngine.getSnapshot();
-      const relationship = snapshot.board.items.find((item) => item.type === "mindRelationship") || null;
+      const relationships = snapshot.board.items.filter((item) => item.type === "mindRelationship");
+      const relationship = relationships[0] || null;
       const canvas = document.querySelector("#canvas-office-canvas");
       const stats = canvas?.__ffRenderStats || null;
       return {
         rootExists: true,
         childrenReady: true,
+        created,
+        duplicateCreated,
+        relationshipCount: relationships.length,
         relationshipExists: Boolean(relationship),
         fromId: relationship?.fromId || "",
         toId: relationship?.toId || "",
-        label: relationship?.label || "",
+        expectedFromId: "relationship-source",
+        expectedToId: children[0].id,
         connectionsDrawn: Number(stats?.mindMapConnectionsDrawn || 0),
       };
     });
     assert(session.getErrors().length === 0, "mind map relationship check produced page errors", session.getErrors());
     assert(result.rootExists === true, "mind map relationship root missing", result);
     assert(result.childrenReady === true, "mind map relationship children missing", result);
+    assert(result.created === true, "mind map relationship API rejected an eligible source", result);
+    assert(result.duplicateCreated === false, "duplicate mind map relationship was accepted", result);
+    assert(result.relationshipCount === 1, "duplicate mind map relationship was persisted", result);
     assert(result.relationshipExists === true, "mind map relationship was not created", result);
-    assert(Boolean(result.fromId) && Boolean(result.toId), "mind map relationship endpoints missing", result);
-    assert(result.label === "依赖", "mind map relationship label missing", result);
-    assert(result.connectionsDrawn >= 2, "mind map relationship should contribute to connection layer rendering", result);
+    assert(result.fromId === result.expectedFromId && result.toId === result.expectedToId, "mind map relationship endpoints missing", result);
+    assert(result.connectionsDrawn >= 3, "mind map relationship should contribute to connection layer rendering", result);
     return result;
   } finally {
     await session.page.close();
@@ -1492,53 +1613,23 @@ async function runLowZoomOverlaySummaryCheck(browser) {
       const richNode = document.querySelector('.canvas2d-rich-item[data-id="text-lod"]');
       const mathNode = document.querySelector('.canvas2d-rich-item[data-id="math-lod"]');
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="code-lod"]');
-      const codeBody = codeNode?.querySelector(".canvas2d-code-block-body");
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const hostHidden = (selector) => getComputedStyle(document.querySelector(selector)).display === "none";
       return {
-        rich: richNode
-          ? {
-              contentMode: richNode.dataset.contentMode || "",
-              className: richNode.className,
-              textLength: (richNode.textContent || "").trim().length,
-              hasUnifiedSummary: Boolean(richNode.querySelector(".canvas2d-rich-skeleton-svg")),
-            }
-          : null,
-        math: mathNode
-          ? {
-              contentMode: mathNode.dataset.contentMode || "",
-              className: mathNode.className,
-              textLength: (mathNode.textContent || "").trim().length,
-              hasUnifiedSummary: Boolean(mathNode.querySelector(".canvas2d-rich-skeleton-svg")),
-            }
-          : null,
-        code: codeNode
-          ? {
-              highlightState: codeNode.dataset.highlightState || "",
-              hasSummaryClass: codeBody?.classList.contains("is-summary") || false,
-              textLength: (codeNode.textContent || "").trim().length,
-              hasUnifiedSummary: Boolean(codeNode.querySelector(".canvas2d-rich-skeleton-svg")),
-            }
-          : null,
+        richExists: Boolean(richNode),
+        mathExists: Boolean(mathNode),
+        codeExists: Boolean(codeNode),
+        richHostHidden: hostHidden("#canvas2d-rich-display"),
+        mathHostHidden: hostHidden("#canvas2d-math-display"),
+        codeHostHidden: hostHidden("#canvas2d-code-block-display"),
+        stats: canvas?.__ffRenderStats || null,
       };
     });
     assert(session.getErrors().length === 0, "low zoom overlay summary check produced page errors", session.getErrors());
-    assert(result.rich, "rich overlay node missing in low zoom summary check", result);
-    assert(
-      result.rich.contentMode === "summary-skeleton",
-      "rich overlay did not enter summary mode",
-      result
-    );
-    assert(result.rich.hasUnifiedSummary === true, "rich overlay summary did not use unified preview shell", result);
-    assert(result.math, "math overlay node missing in low zoom summary check", result);
-    assert(
-      result.math.contentMode === "summary-skeleton",
-      "text-backed math overlay did not enter summary mode",
-      result
-    );
-    assert(result.math.hasUnifiedSummary === true, "math overlay summary did not use unified preview shell", result);
-    assert(result.code, "codeBlock overlay node missing in low zoom summary check", result);
-    assert(result.code.hasSummaryClass === true, "codeBlock overlay did not enter summary mode", result);
-    assert(result.code.highlightState === "disabled", "codeBlock summary mode should disable syntax highlighting", result);
-    assert(result.code.hasUnifiedSummary === true, "codeBlock summary did not use unified preview shell", result);
+    assert(!result.richExists && !result.mathExists && !result.codeExists, "low zoom DOM overlays were not unloaded", result);
+    assert(result.richHostHidden && result.mathHostHidden && result.codeHostHidden, "low zoom overlay hosts were not hidden", result);
+    assert(result.stats?.renderedItems === 3, "low zoom canvas did not render every item", result);
+    assert(result.stats?.lodSimplifiedCount >= 3, "low zoom canvas did not use simplified rendering", result);
     return result;
   } finally {
     await session.page.close();
@@ -1554,26 +1645,21 @@ async function runTextSummaryStabilityCheck(browser) {
   const session = await createPage(browser, { board });
   try {
     await session.page.waitForTimeout(240);
-    const before = await session.page.evaluate(() => {
-      const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
-      const svg = node?.querySelector(".canvas2d-rich-skeleton-svg");
-      return {
-        contentMode: node?.dataset.contentMode || "",
-        html: node?.innerHTML || "",
-        scrollWidth: Number(node?.scrollWidth || 0),
-        clientWidth: Number(node?.clientWidth || 0),
-        scrollHeight: Number(node?.scrollHeight || 0),
-        clientHeight: Number(node?.clientHeight || 0),
-        hasSvg: Boolean(svg),
-        padding: node ? getComputedStyle(node).padding : "",
-      };
-    });
-    await session.page.evaluate(async () => {
+    const beforeHidden = await session.page.evaluate(() => ({
+      nodeMissing: !document.querySelector('.canvas2d-rich-item[data-id="text-stability"]'),
+      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).display === "none",
+    }));
+    const firstRecoveredScale = await session.page.evaluate(async () => {
+      window.__canvas2dEngine.zoomIn();
+      window.__canvas2dEngine.zoomIn();
       window.__canvas2dEngine.zoomIn();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return window.__canvas2dEngine.getSnapshot().board.view.scale;
     });
-    await session.page.waitForTimeout(120);
-    const after = await session.page.evaluate(() => {
+    await session.page.waitForFunction(() =>
+      document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')?.dataset.contentMode === "detail"
+    );
+    const readRecovered = () => session.page.evaluate(() => {
       const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
       const svg = node?.querySelector(".canvas2d-rich-skeleton-svg");
       return {
@@ -1587,19 +1673,34 @@ async function runTextSummaryStabilityCheck(browser) {
         padding: node ? getComputedStyle(node).padding : "",
       };
     });
-    const result = { before, after };
+    const firstRecovered = await readRecovered();
+    await session.page.evaluate(() => window.__canvas2dEngine.zoomOut());
+    await session.page.waitForFunction(() => !document.querySelector('.canvas2d-rich-item[data-id="text-stability"]'));
+    const hiddenAgain = await session.page.evaluate(() => ({
+      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).display === "none",
+      scale: window.__canvas2dEngine.getSnapshot().board.view.scale,
+    }));
+    const secondRecoveredScale = await session.page.evaluate(() => {
+      window.__canvas2dEngine.zoomIn();
+      return window.__canvas2dEngine.getSnapshot().board.view.scale;
+    });
+    await session.page.waitForFunction(() =>
+      document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')?.dataset.contentMode === "detail"
+    );
+    const secondRecovered = await readRecovered();
+    const result = { beforeHidden, firstRecoveredScale, firstRecovered, hiddenAgain, secondRecoveredScale, secondRecovered };
     assert(session.getErrors().length === 0, "text summary stability check produced page errors", session.getErrors());
-    assert(before.contentMode === "summary-skeleton", "text summary stability baseline is not in summary mode", result);
-    assert(after.contentMode === "summary-skeleton", "text summary stability zoom target left summary mode", result);
-    assert(before.hasSvg === true, "text summary skeleton did not render SVG placeholder", result);
-    assert(after.hasSvg === true, "text summary skeleton lost SVG placeholder after zoom", result);
-    assert(before.html === after.html, "text summary skeleton changed after view zoom", result);
-    assert(before.padding === "0px", "text summary skeleton host should not keep text padding before zoom", result);
-    assert(after.padding === "0px", "text summary skeleton host should not keep text padding after zoom", result);
-    assert(before.scrollWidth <= before.clientWidth, "text summary skeleton overflowed width before zoom", result);
-    assert(before.scrollHeight <= before.clientHeight, "text summary skeleton overflowed height before zoom", result);
-    assert(after.scrollWidth <= after.clientWidth, "text summary skeleton overflowed width after zoom", result);
-    assert(after.scrollHeight <= after.clientHeight, "text summary skeleton overflowed height after zoom", result);
+    assert(beforeHidden.nodeMissing && beforeHidden.hostHidden, "text overlay was not hidden below the LOD threshold", result);
+    assert(hiddenAgain.hostHidden === true, "text overlay did not hide after crossing below the LOD threshold", result);
+    assert(firstRecovered.contentMode === "detail", "text overlay did not recover in detail mode", result);
+    assert(secondRecovered.contentMode === "detail", "text overlay did not recover after repeated threshold crossing", result);
+    assert(!firstRecovered.hasSvg && !secondRecovered.hasSvg, "text detail overlay retained a stale summary skeleton", result);
+    assert(firstRecovered.html === secondRecovered.html, "text detail content changed after threshold recovery", result);
+    for (const recovered of [firstRecovered, secondRecovered]) {
+      assert(recovered.padding === "0px", "text detail host retained unexpected padding", result);
+      assert(recovered.scrollWidth <= recovered.clientWidth, "text detail overlay overflowed width", result);
+      assert(recovered.scrollHeight <= recovered.clientHeight, "text detail overlay overflowed height", result);
+    }
     return result;
   } finally {
     await session.page.close();
@@ -1644,7 +1745,7 @@ async function runPasteSemanticChecks(browser) {
     },
     {
       key: "markdownTable",
-      text: "| Name | Status |\\n| --- | --- |\\n| Parser | Done |",
+      text: "| Name | Status |\n| --- | --- |\n| Parser | Done |",
       verify: (items) => {
         const target = items.find((item) => item.type === "table");
         assert(Boolean(target), "markdown table paste did not create table item", items);
@@ -1652,7 +1753,7 @@ async function runPasteSemanticChecks(browser) {
     },
     {
       key: "codeFence",
-      text: "```javascript\\nconst total = 3;\\nconsole.log(total);\\n```",
+      text: "```javascript\nconst total = 3;\nconsole.log(total);\n```",
       verify: (items) => {
         const target = items.find((item) => item.type === "codeBlock");
         assert(Boolean(target), "code fence paste did not create codeBlock item", items);
@@ -1709,7 +1810,7 @@ async function runElementContextMenuClipboardCheck(browser) {
   const result = {};
 
   const codeSession = await createPage(browser, {
-    board: createBoard([createCodeBlockItem("code-copy", 180, 160, "const answer = 42;\\nconsole.log(answer);")]),
+    board: createBoard([createCodeBlockItem("code-copy", 420, 160, "const answer = 42;\\nconsole.log(answer);")]),
   });
   try {
     await codeSession.page.evaluate(() => {
@@ -1717,7 +1818,7 @@ async function runElementContextMenuClipboardCheck(browser) {
         new MouseEvent("contextmenu", {
           bubbles: true,
           cancelable: true,
-          clientX: 220,
+          clientX: 460,
           clientY: 220,
           button: 2,
         })

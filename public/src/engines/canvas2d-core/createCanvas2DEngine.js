@@ -12177,11 +12177,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function resolveTableEditFrame(item, { baseFrame = null } = {}) {
-    const screenRect = getTableEditorScreenRect(item);
-    const width = Math.max(1, Math.round(Number(screenRect?.width || baseFrame?.width || 0) || 1));
-    const height = Math.max(1, Math.round(Number(screenRect?.height || baseFrame?.height || 0) || 1));
-    const left = Math.round(Number(screenRect?.left || baseFrame?.left || 0) || 0);
-    const top = Math.round(Number(screenRect?.top || baseFrame?.top || 0) || 0);
+    const viewport = getTableEditorViewportSize();
+    const availableWidth = Math.max(1, viewport.width - 32);
+    const availableHeight = Math.max(1, viewport.height - 32);
+    const width = Math.round(
+      resolveTableEditorDimension(Number(item?.width || baseFrame?.width || 0), 320, availableWidth, 960)
+    );
+    const height = Math.round(
+      resolveTableEditorDimension(Number(item?.height || baseFrame?.height || 0), 180, availableHeight, 720)
+    );
+    const left = Math.round((viewport.width - width) / 2);
+    const top = Math.round((viewport.height - height) / 2);
     return {
       left,
       top,
@@ -23693,14 +23699,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           return true;
         }
       }
-      const result = await dragBroker.importFromDataTransfer(clipboardFacade || event.clipboardData, anchor);
-      if (result?.handled && result.items?.length) {
-        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
-        scheduleDeferredImportedAssetPersistence(result.items, {
-          reason: "paste-drag-broker-asset-persist",
-        });
-        return true;
-      }
       const structuredDescriptor =
         !markerMatched && (clipboardFacade || event.clipboardData)
           ? structuredImportRuntime.pasteGateway.fromClipboardData(clipboardFacade || event.clipboardData, {
@@ -23722,6 +23720,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         if (structuredHandled) {
           return true;
         }
+      }
+      const result = await dragBroker.importFromDataTransfer(clipboardFacade || event.clipboardData, anchor);
+      if (result?.handled && result.items?.length) {
+        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
+        scheduleDeferredImportedAssetPersistence(result.items, {
+          reason: "paste-drag-broker-asset-persist",
+        });
+        return true;
       }
       const filePaths = await clipboardBroker.readSystemClipboardFiles();
       if (filePaths.length) {

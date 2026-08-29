@@ -22,7 +22,7 @@ async function main() {
 
   const created = createCodeBlockElement({ x: 10, y: 20 }, "const a = 1;\nconsole.log(a);", "js");
   assert(created.type === "codeBlock", "created codeBlock type mismatch");
-  assert(created.language === "js", "created codeBlock language mismatch");
+  assert(created.language === "javascript", "created codeBlock language alias was not normalized");
   assert(created.width >= CODE_BLOCK_MIN_WIDTH, "created codeBlock width mismatch");
   assert(created.height >= CODE_BLOCK_MIN_HEIGHT, "created codeBlock height mismatch");
 

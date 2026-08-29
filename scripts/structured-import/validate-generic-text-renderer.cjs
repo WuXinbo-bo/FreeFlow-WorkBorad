@@ -79,7 +79,8 @@ async function main() {
 
   const headingOperation = result.result.operations[0];
   assert(headingOperation.blockRole === "heading", "heading block role mismatch");
-  assert(headingOperation.element.fontSize === 30, "heading font size mismatch");
+  assert(headingOperation.element.fontSize === 20, "heading container font size mismatch");
+  assert(headingOperation.element.html.startsWith("<h2>"), "heading semantic level mismatch");
   assert(headingOperation.element.html.includes("<strong>Title</strong>"), "heading html mismatch");
 
   const paragraphOperation = result.result.operations[1];
