@@ -960,6 +960,422 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   }
 }
 
+/* Canvas dialogs: temporary surfaces float; their content stays flat. */
+.canvas2d-word-export-overlay,
+.canvas2d-board-workspace-overlay,
+.canvas2d-pdf-export-overlay {
+  z-index: 220 !important;
+  background: rgba(32, 37, 43, 0.12) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-tutorial-backdrop {
+  background: rgba(32, 37, 43, 0.16) !important;
+}
+
+.canvas2d-word-export-dialog,
+.canvas2d-board-workspace-dialog,
+.canvas2d-file-card-preview-dialog,
+.canvas2d-pdf-export-dialog,
+.canvas2d-capture-hint-dialog,
+.canvas2d-tutorial-center,
+.canvas2d-tutorial-overlay-panel {
+  border: 1px solid var(--air-line-strong) !important;
+  border-radius: var(--air-radius-window) !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-board-workspace-dialog {
+  overflow: hidden !important;
+  animation: none !important;
+}
+
+body:has(.canvas2d-board-workspace-overlay) .app-global-shell-actions,
+body:has(.canvas2d-board-workspace-overlay) .pane-restore-btn,
+body:has(.canvas2d-board-workspace-overlay) .stage-restore-dock,
+body:has(.canvas2d-board-workspace-overlay) .stage-panel-controls,
+body:has(.canvas2d-word-export-overlay) .app-global-shell-actions,
+body:has(.canvas2d-word-export-overlay) .pane-restore-btn,
+body:has(.canvas2d-word-export-overlay) .stage-restore-dock,
+body:has(.canvas2d-word-export-overlay) .stage-panel-controls {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.canvas2d-board-workspace-main,
+.canvas2d-image-manager-main {
+  background: #fbfcfb !important;
+}
+
+.canvas2d-board-workspace-side,
+.canvas2d-image-manager-side {
+  border-left-color: var(--air-line) !important;
+  background: #fff !important;
+}
+
+.canvas2d-board-workspace-header {
+  margin-bottom: 12px !important;
+}
+
+.canvas2d-board-workspace-header strong {
+  color: var(--air-ink) !important;
+  font-size: 20px !important;
+  letter-spacing: 0 !important;
+}
+
+.canvas2d-board-workspace-eyebrow,
+.canvas2d-board-workspace-path-main span,
+.canvas2d-board-workspace-list-head span,
+.canvas2d-board-workspace-current span,
+.canvas2d-board-workspace-sort-field span {
+  color: var(--air-ink-soft) !important;
+  letter-spacing: 0 !important;
+}
+
+.canvas2d-board-workspace-header-meta span,
+.canvas2d-board-workspace-list-badge,
+.canvas2d-board-workspace-status-pill,
+.canvas2d-board-workspace-current-meta small,
+.canvas2d-board-workspace-active-pill,
+.canvas2d-word-export-meta span,
+.canvas2d-word-export-type-list span {
+  min-height: 22px !important;
+  padding: 0 7px !important;
+  border-radius: 5px !important;
+  color: var(--air-ink-muted) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-board-workspace-close,
+.canvas2d-word-export-head-close,
+.canvas2d-tutorial-center-close,
+.canvas2d-tutorial-overlay-close {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-board-workspace-close:hover,
+.canvas2d-word-export-head-close:hover,
+.canvas2d-tutorial-center-close:hover,
+.canvas2d-tutorial-overlay-close:hover {
+  border-color: var(--air-line-strong) !important;
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-board-workspace-path-card {
+  min-height: 68px !important;
+  padding: 12px 0 !important;
+  border: 0 !important;
+  border-top: 1px solid var(--air-line) !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-board-workspace-path-card button,
+.canvas2d-board-workspace-action-grid button,
+.canvas2d-board-workspace-action-stack button,
+.canvas2d-board-workspace-bottom-actions button,
+.canvas2d-board-workspace-rename-editor button,
+.canvas2d-board-workspace-create-dock button,
+.canvas2d-image-manager-action-grid button,
+.canvas2d-word-export-actions button,
+.canvas2d-word-export-zoom-btn,
+.canvas2d-word-export-zoom-value,
+.canvas2d-tutorial-overlay-btn {
+  border-color: var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-board-workspace-main button:not(:disabled):hover,
+.canvas2d-board-workspace-side button:not(:disabled):hover,
+.canvas2d-image-manager-action-grid button:not(:disabled):hover,
+.canvas2d-word-export-actions button:not(:disabled):hover,
+.canvas2d-word-export-zoom-btn:hover,
+.canvas2d-word-export-zoom-value:hover,
+.canvas2d-tutorial-overlay-btn:hover:not(:disabled) {
+  border-color: var(--air-line-strong) !important;
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+  transform: none !important;
+}
+
+.canvas2d-board-workspace-bottom-actions .is-primary,
+.canvas2d-board-workspace-create-dock button.is-primary,
+.canvas2d-word-export-primary,
+.canvas2d-tutorial-overlay-btn.is-primary {
+  border-color: var(--air-accent) !important;
+  color: #fff !important;
+  background: var(--air-accent) !important;
+}
+
+.canvas2d-board-workspace-sort-field {
+  padding: 0 8px !important;
+  border-color: var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  background: transparent !important;
+}
+
+.canvas2d-board-workspace-stat,
+.canvas2d-board-workspace-current,
+.canvas2d-board-workspace-note,
+.canvas2d-image-manager-detail-card {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-board-workspace-item,
+.canvas2d-image-manager-item {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-board-workspace-item:hover,
+.canvas2d-image-manager-item:hover {
+  border-color: var(--air-line-strong) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-board-workspace-item.is-selected,
+.canvas2d-board-workspace-item.is-active,
+.canvas2d-image-manager-item.is-active {
+  border-color: rgba(53, 106, 230, 0.24) !important;
+  background: var(--air-active) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-board-workspace-empty,
+.canvas2d-engine-export-history-empty {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-image-manager-main {
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) !important;
+}
+
+.canvas2d-image-manager-banner {
+  align-self: start !important;
+  min-height: 0 !important;
+  padding: 9px 10px !important;
+  border-color: var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-image-manager-banner.is-error,
+.canvas2d-image-manager-item.is-missing {
+  border-color: rgba(216, 98, 98, 0.22) !important;
+  color: #a33f3f !important;
+  background: rgba(216, 98, 98, 0.07) !important;
+}
+
+.canvas2d-board-workspace-confirm-backdrop {
+  background: rgba(32, 37, 43, 0.12) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-board-workspace-confirm-dialog {
+  border-color: var(--air-line-strong) !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+}
+
+.canvas2d-word-export-dialog {
+  padding: 16px !important;
+}
+
+.canvas2d-word-export-head-copy strong,
+.canvas2d-word-export-preview-toolbar-label,
+.canvas2d-word-preview-empty strong {
+  color: var(--air-ink) !important;
+}
+
+.canvas2d-word-export-head-copy span,
+.canvas2d-word-export-preview-toolbar-hint,
+.canvas2d-word-export-preview-footer,
+.canvas2d-word-export-note span {
+  color: var(--air-ink-muted) !important;
+}
+
+.canvas2d-word-export-body {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  background: var(--air-workspace) !important;
+}
+
+.canvas2d-word-export-preview-toolbar,
+.canvas2d-word-export-preview-footer {
+  border-color: var(--air-line) !important;
+  background: rgba(255, 255, 255, 0.86) !important;
+}
+
+.canvas2d-word-export-note {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+}
+
+.canvas2d-tutorial-center,
+.canvas2d-tutorial-overlay-panel {
+  gap: 14px !important;
+  padding: 18px !important;
+}
+
+.canvas2d-tutorial-center-action {
+  padding: 11px 8px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  color: var(--air-ink) !important;
+  background: transparent !important;
+}
+
+.canvas2d-tutorial-center-action:hover:not(:disabled) {
+  border-color: var(--air-line) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-tutorial-highlight {
+  border-color: rgba(53, 106, 230, 0.72) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 0 9999px rgba(32, 37, 43, 0.1), 0 0 0 4px rgba(53, 106, 230, 0.1) !important;
+}
+
+.canvas2d-pdf-export-dialog {
+  padding: 18px !important;
+}
+
+.canvas2d-capture-hint-dialog {
+  border-color: var(--air-line-strong) !important;
+  color: var(--air-ink) !important;
+}
+
+.canvas2d-capture-hint-title {
+  color: var(--air-ink) !important;
+}
+
+.canvas2d-capture-hint-text {
+  color: var(--air-ink-muted) !important;
+}
+
+.canvas2d-save-toast,
+.canvas2d-navigator-drag-indicator {
+  border-radius: var(--air-radius-control) !important;
+  box-shadow: var(--air-shadow-float) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+@media (max-width: 980px) {
+  .canvas2d-board-workspace-overlay,
+  .canvas2d-word-export-overlay {
+    padding: 14px !important;
+  }
+
+  .canvas2d-board-workspace-dialog,
+  .canvas2d-word-export-dialog {
+    width: calc(100% - 28px) !important;
+    height: calc(100% - 28px) !important;
+    min-height: 0 !important;
+    transform: none !important;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 980px) {
+  .canvas2d-engine-ui.is-overlay-compact .canvas2d-board-workspace-dialog {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 32%) !important;
+  }
+
+  .canvas2d-engine-ui.is-overlay-compact .canvas2d-image-manager-dialog {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 34%) !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .canvas2d-board-workspace-dialog,
+  .canvas2d-image-manager-dialog {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: max-content max-content !important;
+    overflow: auto !important;
+  }
+
+  .canvas2d-board-workspace-main,
+  .canvas2d-board-workspace-side,
+  .canvas2d-image-manager-main,
+  .canvas2d-image-manager-side {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .canvas2d-image-manager-list,
+  .canvas2d-board-workspace-list {
+    min-height: 180px !important;
+  }
+
+  .canvas2d-board-workspace-side,
+  .canvas2d-image-manager-side {
+    border-left: 0 !important;
+    border-top: 1px solid var(--air-line) !important;
+  }
+
+  .canvas2d-image-manager-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .canvas2d-board-workspace-main,
+  .canvas2d-board-workspace-side {
+    padding: 14px !important;
+  }
+
+  .canvas2d-board-workspace-path-card,
+  .canvas2d-board-workspace-toolbar {
+    align-items: stretch !important;
+    flex-direction: column !important;
+  }
+
+  .canvas2d-board-workspace-path-actions,
+  .canvas2d-board-workspace-toolbar-actions {
+    flex-wrap: wrap !important;
+  }
+
+  .canvas2d-image-manager-action-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* Conversation workspace: keep content primary and chrome visually quiet. */
 .conversation-panel,
 body.desktop-mode .conversation-panel {
