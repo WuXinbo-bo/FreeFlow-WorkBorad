@@ -6147,16 +6147,25 @@ function beginStagePanelMove(side, event) {
     }
   };
 
-  const handleUp = () => {
+  let moveEnded = false;
+  const handleEnd = () => {
+    if (moveEnded) return;
+    moveEnded = true;
     document.removeEventListener("pointermove", handleMove);
-    document.removeEventListener("pointerup", handleUp);
+    document.removeEventListener("pointerup", handleEnd);
+    document.removeEventListener("pointercancel", handleEnd);
+    window.removeEventListener("blur", handleEnd);
+    dragHandle?.removeEventListener?.("lostpointercapture", handleEnd);
     if (moveFrame) {
       window.cancelAnimationFrame(moveFrame);
       flushMove();
     }
-    dragHandle?.releasePointerCapture?.(event.pointerId);
+    if (dragHandle?.hasPointerCapture?.(event.pointerId)) {
+      dragHandle.releasePointerCapture(event.pointerId);
+    }
     document.body.classList.remove("is-resizing");
     document.body.classList.remove("is-stage-dragging");
+    element.classList.remove("is-stage-moving");
     saveStagePanelsState();
     requestPanelLayoutFinalShapeSync();
   };
@@ -6164,8 +6173,12 @@ function beginStagePanelMove(side, event) {
   dragHandle?.setPointerCapture?.(event.pointerId);
   document.body.classList.add("is-stage-dragging");
   document.body.classList.add("is-resizing");
+  element.classList.add("is-stage-moving");
   document.addEventListener("pointermove", handleMove);
-  document.addEventListener("pointerup", handleUp, { once: true });
+  document.addEventListener("pointerup", handleEnd);
+  document.addEventListener("pointercancel", handleEnd);
+  window.addEventListener("blur", handleEnd);
+  dragHandle?.addEventListener?.("lostpointercapture", handleEnd);
 }
 
 function shouldStartWorkspaceShellMove(side, event) {

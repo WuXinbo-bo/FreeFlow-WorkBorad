@@ -1933,7 +1933,7 @@ function Canvas2DControls({ engine }) {
             topbarStackRef.current instanceof HTMLElement ? topbarStackRef.current.getBoundingClientRect() : null;
           const expandedInfoWidth = infoPanelCollapsed || infoPanelAutoCollapsed ? 186 : infoRect.width;
           const collapseGap = 8;
-          const releaseGap = 44;
+          const releaseGap = 16;
           const occupiedLeft = stackRect ? stackRect.left : Number.POSITIVE_INFINITY;
           const expandedInfoRight = infoRect.left + expandedInfoWidth;
           const now = performance.now();
@@ -2251,7 +2251,7 @@ function Canvas2DControls({ engine }) {
         className="canvas2d-engine-corner canvas2d-engine-corner-top-left"
         aria-label="工作白板模式信息"
       >
-        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-collapsed" : ""}`}>
+        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact canvas-chrome-surface canvas-chrome-info-dock${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-collapsed" : ""}`}>
           <div className="canvas2d-brand-row" aria-label="FreeFlow 品牌">
             <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
             <img
@@ -2321,7 +2321,7 @@ function Canvas2DControls({ engine }) {
         }`}
         aria-label="工作白板工具栏"
       >
-        <div className="canvas2d-engine-toolbar" role="toolbar" ref={toolbarRef}>
+        <div className="canvas2d-engine-toolbar canvas-chrome-surface canvas-chrome-toolbar" role="toolbar" ref={toolbarRef}>
           <button
             type="button"
             className={`canvas2d-engine-tool${activeTool === "pan" ? " is-active" : ""}`}
@@ -2999,7 +2999,7 @@ function Canvas2DControls({ engine }) {
         </div>
       </div>
       <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen ? " is-overlay-active" : ""}`}>
-        <div className="canvas2d-engine-search-row">
+        <div className="canvas2d-engine-search-row canvas-chrome-surface canvas-chrome-utility-dock">
           <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
             <CanvasSearchOverlay
               isOpen={searchOpen}
@@ -3128,7 +3128,7 @@ function Canvas2DControls({ engine }) {
       ))}
 
       <div className="canvas2d-engine-corner canvas2d-engine-corner-bottom-right" aria-label="工作白板缩放区">
-        <div className="canvas2d-floating-card canvas2d-floating-card-zoom">
+        <div className="canvas2d-floating-card canvas2d-floating-card-zoom canvas-chrome-surface canvas-chrome-viewport-dock">
           <div className="canvas2d-zoom-display">
             <span className="canvas2d-zoom-label">缩放</span>
             <strong>{zoomPercent}%</strong>

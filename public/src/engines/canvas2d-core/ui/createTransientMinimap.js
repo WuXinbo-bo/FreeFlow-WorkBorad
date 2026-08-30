@@ -197,7 +197,7 @@ function resolveAnchorRect(host) {
 
 function measureShellWidth(anchor = null) {
   const preferred = Math.round(Number(anchor?.width || DEFAULT_WIDTH) || DEFAULT_WIDTH);
-  return Math.max(168, Math.min(236, preferred));
+  return Math.max(DEFAULT_WIDTH, Math.min(236, preferred));
 }
 
 function drawBoardSnapshot(ctx, items = [], layout) {
@@ -326,7 +326,7 @@ export function createTransientMinimap({
     if (!(shell instanceof HTMLDivElement)) {
       shell = document.createElement("div");
       shell.id = "canvas2d-transient-minimap";
-      shell.className = "canvas2d-transient-minimap";
+      shell.className = "canvas2d-transient-minimap canvas-chrome-surface canvas-chrome-minimap";
       shell.setAttribute("aria-hidden", "false");
       shell.style.position = "absolute";
       shell.style.overflow = "hidden";
@@ -443,15 +443,16 @@ export function createTransientMinimap({
       return;
     }
     const anchor = resolveAnchorRect(host);
-    if (!anchor) {
-      shell.style.left = `${DEFAULT_MARGIN}px`;
-      shell.style.top = `${DEFAULT_MARGIN + 84}px`;
-      shell.style.right = "auto";
-      shell.style.bottom = "auto";
-      return;
-    }
-    shell.style.left = `${Math.round(anchor.left)}px`;
-    shell.style.top = `${Math.round(anchor.bottom + 10)}px`;
+    const hostRect = host.getBoundingClientRect();
+    const navigator = host.closest(".canvas-engine-stage")?.querySelector(".canvas2d-navigator-panel");
+    const navigatorRect = navigator instanceof HTMLElement && getComputedStyle(navigator).display !== "none"
+      ? navigator.getBoundingClientRect()
+      : null;
+    const navigatorSafeLeft = navigatorRect ? navigatorRect.right - hostRect.left + 12 : DEFAULT_MARGIN;
+    const desiredLeft = anchor ? Math.max(anchor.left, navigatorSafeLeft) : navigatorSafeLeft;
+    const maxLeft = Math.max(DEFAULT_MARGIN, host.clientWidth - shell.offsetWidth - DEFAULT_MARGIN);
+    shell.style.left = `${Math.round(Math.min(desiredLeft, maxLeft))}px`;
+    shell.style.top = `${Math.round(anchor ? anchor.bottom + 10 : DEFAULT_MARGIN + 84)}px`;
     shell.style.right = "auto";
     shell.style.bottom = "auto";
   }

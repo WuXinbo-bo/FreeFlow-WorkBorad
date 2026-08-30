@@ -1,0 +1,322 @@
+:root {
+  --canvas-chrome-inline-inset: 16px;
+  --canvas-chrome-block-inset: 16px;
+  --canvas-chrome-control-size: 30px;
+  --canvas-chrome-height: 36px;
+  --canvas-chrome-radius: 10px;
+  --canvas-chrome-glass-idle: rgba(255, 255, 255, 0.58);
+  --canvas-chrome-glass-active: rgba(255, 255, 255, 0.8);
+  --canvas-chrome-glass-border: rgba(255, 255, 255, 0.78);
+  --canvas-chrome-glass-border-active: rgba(255, 255, 255, 0.94);
+  --canvas-chrome-glass-shadow: 0 8px 24px rgba(31, 38, 46, 0.08);
+  --canvas-chrome-glass-shadow-active: 0 12px 30px rgba(31, 38, 46, 0.13);
+}
+
+.canvas-chrome-surface {
+  border: 1px solid var(--canvas-chrome-glass-border) !important;
+  border-radius: var(--canvas-chrome-radius) !important;
+  background-color: var(--canvas-chrome-glass-idle) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    var(--canvas-chrome-glass-shadow) !important;
+  backdrop-filter: blur(16px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(125%) !important;
+  opacity: 0.84;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease !important;
+}
+
+.canvas-chrome-surface:hover,
+.canvas-chrome-surface:focus-within,
+.canvas2d-engine-toolbar-wrap.is-overlay-active > .canvas-chrome-surface,
+.canvas2d-engine-search-stack.is-overlay-active .canvas-chrome-surface,
+body:has(#conversation-shell-menu:not(.is-hidden)) .canvas-chrome-status-dock,
+body:has(#insight-drawer.is-open) .canvas-chrome-status-dock {
+  border-color: var(--canvas-chrome-glass-border-active) !important;
+  background-color: var(--canvas-chrome-glass-active) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.1) 52%, rgba(181, 204, 224, 0.16)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    var(--canvas-chrome-glass-shadow-active) !important;
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.app-global-shell-actions.canvas-chrome-status-dock {
+  top: 18px !important;
+  right: 18px !important;
+  min-height: var(--canvas-chrome-height);
+  gap: 2px !important;
+  padding: 2px !important;
+  box-sizing: border-box;
+}
+
+.canvas-chrome-status-dock .conversation-more-btn,
+.canvas-chrome-status-dock #conversation-settings-btn,
+.canvas-chrome-status-dock #conversation-shell-more {
+  width: var(--canvas-chrome-control-size) !important;
+  min-width: var(--canvas-chrome-control-size) !important;
+  height: var(--canvas-chrome-control-size) !important;
+  min-height: var(--canvas-chrome-control-size) !important;
+}
+
+.canvas2d-engine-topbar {
+  top: var(--canvas-chrome-block-inset) !important;
+  left: var(--canvas-chrome-inline-inset) !important;
+  right: 98px !important;
+}
+
+.canvas2d-engine-toolbar.canvas-chrome-toolbar {
+  min-height: var(--canvas-chrome-height);
+  padding: 2px !important;
+  box-sizing: border-box;
+}
+
+.canvas2d-engine-toolbar > .canvas2d-engine-tool,
+.canvas2d-engine-toolbar > .canvas2d-engine-tool-group,
+.canvas2d-engine-tool-group .canvas2d-engine-tool {
+  flex-basis: var(--canvas-chrome-control-size) !important;
+  width: var(--canvas-chrome-control-size) !important;
+  min-width: var(--canvas-chrome-control-size) !important;
+}
+
+.canvas2d-engine-tool {
+  width: var(--canvas-chrome-control-size) !important;
+  height: var(--canvas-chrome-control-size) !important;
+}
+
+.canvas2d-engine-search-row.canvas-chrome-utility-dock {
+  width: max-content;
+  height: var(--canvas-chrome-height);
+  min-height: var(--canvas-chrome-height);
+  max-height: var(--canvas-chrome-height);
+  align-items: center !important;
+  margin-left: auto;
+  padding: 2px !important;
+  box-sizing: border-box;
+  transform: translateX(82px);
+}
+
+.canvas2d-engine-search-row.canvas-chrome-utility-dock:hover,
+.canvas2d-engine-search-row.canvas-chrome-utility-dock:focus-within,
+.canvas2d-engine-search-stack.is-overlay-active .canvas-chrome-utility-dock {
+  background-color: var(--canvas-chrome-glass-idle) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12)) !important;
+  opacity: 0.84;
+  transform: translate(82px, -1px);
+}
+
+.canvas-chrome-utility-dock .canvas2d-engine-search-placeholder,
+.canvas-chrome-utility-dock .canvas2d-engine-export-history-trigger {
+  width: var(--canvas-chrome-control-size) !important;
+  min-width: var(--canvas-chrome-control-size) !important;
+  height: var(--canvas-chrome-control-size) !important;
+  min-height: var(--canvas-chrome-control-size) !important;
+  box-sizing: border-box;
+}
+
+.canvas2d-engine-corner-bottom-right {
+  right: var(--canvas-chrome-inline-inset) !important;
+  bottom: var(--canvas-chrome-block-inset) !important;
+}
+
+.canvas2d-floating-card-zoom.canvas-chrome-viewport-dock {
+  min-height: var(--canvas-chrome-height);
+  padding: 2px !important;
+  box-sizing: border-box;
+  opacity: 0.84;
+}
+
+.canvas-chrome-viewport-dock .canvas2d-zoom-btn {
+  width: var(--canvas-chrome-control-size) !important;
+  min-width: var(--canvas-chrome-control-size) !important;
+  height: var(--canvas-chrome-control-size) !important;
+  padding: 0 !important;
+}
+
+.canvas-chrome-panel-controls {
+  padding: 2px !important;
+}
+
+.canvas-chrome-layout-dock {
+  padding: 2px !important;
+}
+
+.canvas-chrome-layout-dock #stage-restore-btn {
+  min-height: var(--canvas-chrome-control-size) !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.canvas-chrome-minimap {
+  overflow: hidden;
+  z-index: 52;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: auto;
+  transition:
+    width 180ms ease,
+    height 180ms ease,
+    padding 180ms ease,
+    border-radius 180ms ease,
+    opacity 160ms ease,
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease !important;
+}
+
+.canvas-chrome-minimap.is-collapsed {
+  opacity: 0.72;
+  border-color: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas-chrome-minimap.is-collapsed:hover,
+.canvas-chrome-minimap.is-collapsed:focus-within {
+  opacity: 1;
+}
+
+.canvas-chrome-minimap .canvas2d-transient-minimap-toggle {
+  border-color: transparent !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas-chrome-minimap .canvas2d-transient-minimap-title {
+  white-space: nowrap;
+}
+
+.canvas-chrome-minimap .canvas2d-transient-minimap-toggle:hover,
+.canvas-chrome-minimap .canvas2d-transient-minimap-toggle:focus-visible {
+  border-color: transparent !important;
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas-chrome-minimap .canvas2d-transient-minimap-canvas {
+  border-color: rgba(181, 196, 211, 0.52) !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+}
+
+.canvas-chrome-info-dock {
+  border-radius: var(--canvas-chrome-radius) !important;
+}
+
+.canvas-chrome-info-dock.is-collapsed {
+  min-width: 78px;
+  opacity: 0.82;
+}
+
+.canvas-chrome-info-dock .canvas2d-info-collapse-toggle {
+  border-color: transparent !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas-chrome-info-dock .canvas2d-info-collapse-toggle:hover,
+.canvas-chrome-info-dock .canvas2d-info-collapse-toggle:focus-visible {
+  border-color: transparent !important;
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas-chrome-edge-rail {
+  overflow: hidden;
+  background: transparent !important;
+  cursor: grab !important;
+}
+
+.canvas-chrome-edge-rail::after {
+  position: absolute;
+  content: "";
+  border-radius: 999px;
+  background: rgba(78, 116, 153, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  transform: scale(0.72);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+
+.canvas-chrome-edge-rail.is-top::after,
+.canvas-chrome-edge-rail.is-bottom::after {
+  right: 22px;
+  left: 22px;
+  height: 2px;
+}
+
+.canvas-chrome-edge-rail.is-top::after {
+  top: 4px;
+}
+
+.canvas-chrome-edge-rail.is-bottom::after {
+  bottom: 4px;
+}
+
+.canvas-chrome-edge-rail.is-left::after,
+.canvas-chrome-edge-rail.is-right::after {
+  top: 22px;
+  bottom: 22px;
+  width: 2px;
+}
+
+.canvas-chrome-edge-rail.is-left::after {
+  left: 4px;
+}
+
+.canvas-chrome-edge-rail.is-right::after {
+  right: 4px;
+}
+
+.canvas-chrome-edge-rail:hover::after,
+.canvas-chrome-edge-rail:active::after,
+.is-stage-moving > .canvas-chrome-edge-rail::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.canvas-chrome-edge-rail:active,
+.is-stage-moving > .canvas-chrome-edge-rail {
+  cursor: grabbing !important;
+}
+
+.desktop-clear-stage.is-stage-moving,
+.conversation-panel.is-stage-moving {
+  border-color: rgba(78, 116, 153, 0.34) !important;
+  box-shadow: 0 16px 42px rgba(31, 38, 46, 0.14) !important;
+}
+
+body.desktop-full-pass-through .canvas-chrome-surface {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+@media (max-width: 720px) {
+  #restore-right-pane-btn:not(.is-hidden) {
+    top: 112px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-chrome-surface {
+    transition: none !important;
+  }
+
+  .canvas-chrome-edge-rail::after {
+    transition: none;
+  }
+}

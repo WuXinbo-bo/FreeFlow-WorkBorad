@@ -85,6 +85,7 @@
     <link rel="stylesheet" href="./ui.tokens.css" />
     <link rel="stylesheet" href="./ui.shell.css" />
     <link rel="stylesheet" href="./ui.air-canvas.css" />
+    <link rel="stylesheet" href="./ui.canvas-chrome.css" />
   </head>
   <body class="app-booting boot-shape-lock">
     <div class="boot-splash" aria-hidden="true">
@@ -125,7 +126,7 @@
           </div>
         </div>
       </div>
-      <div class="app-global-shell-actions" aria-label="全局界面操作">
+      <div class="app-global-shell-actions canvas-chrome-surface canvas-chrome-status-dock" aria-label="全局界面操作">
         <button id="conversation-settings-btn" class="conversation-more-btn" type="button" title="设置" aria-label="设置">
           <span class="conversation-shell-trigger-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
@@ -360,11 +361,11 @@
         <div id="left-pane-resizer" class="pane-resizer" role="separator" aria-label="调整对话区宽度"></div>
 
         <section class="desktop-clear-stage canvas-stage" aria-label="无限画布工作区">
-          <div class="workspace-drag-band is-top" data-stage-panel-frame="left" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-right" data-stage-panel-frame="left" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-bottom" data-stage-panel-frame="left" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-left" data-stage-panel-frame="left" aria-hidden="true"></div>
-          <div class="stage-panel-controls" data-stage-panel-controls="left" aria-label="左侧面板控制">
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-top" data-stage-panel-frame="left" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-right" data-stage-panel-frame="left" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="left" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-left" data-stage-panel-frame="left" aria-hidden="true"></div>
+          <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="left" aria-label="左侧面板控制">
             <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="left" title="关闭左侧面板" aria-label="关闭左侧面板"></button>
             <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="left" title="拖动左侧面板" aria-label="拖动左侧面板"></button>
             <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="left" title="恢复左侧默认位置" aria-label="恢复左侧默认位置"></button>
@@ -383,11 +384,11 @@
         <div id="right-pane-resizer" class="pane-resizer" role="separator" aria-label="调整控制菜单宽度"></div>
 
         <section class="conversation-panel glass-panel chat-sidebar">
-          <div class="workspace-drag-band is-top" data-stage-panel-frame="right" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-right" data-stage-panel-frame="right" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-bottom" data-stage-panel-frame="right" aria-hidden="true"></div>
-          <div class="workspace-drag-band is-left" data-stage-panel-frame="right" aria-hidden="true"></div>
-          <div class="stage-panel-controls" data-stage-panel-controls="right" aria-label="右侧面板控制">
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-top" data-stage-panel-frame="right" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-right" data-stage-panel-frame="right" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="right" aria-hidden="true"></div>
+          <div class="workspace-drag-band canvas-chrome-edge-rail is-left" data-stage-panel-frame="right" aria-hidden="true"></div>
+          <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="right" aria-label="右侧面板控制">
             <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="right" title="关闭右侧面板" aria-label="关闭右侧面板"></button>
             <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="right" title="拖动右侧面板" aria-label="拖动右侧面板"></button>
             <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="right" title="恢复右侧默认位置" aria-label="恢复右侧默认位置"></button>
@@ -617,7 +618,7 @@
               </div>
             </form>
         </section>
-        <div id="stage-restore-dock" class="stage-restore-dock is-hidden">
+        <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock is-hidden">
           <button id="stage-restore-btn" class="ghost-btn compact-btn" type="button">恢复默认布局</button>
         </div>
       </main>
