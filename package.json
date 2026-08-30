@@ -25,6 +25,7 @@
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",
     "test:element-runtime": "node scripts/check-element-runtime-architecture.js",
     "test:element-registry": "node scripts/check-builtin-element-registry.js",
+    "test:canvas-element-interactions": "node scripts/check-canvas2d-element-interactions.js",
     "test:structured-parsers": "node scripts/structured-import/run-parser-unit-tests.cjs",
     "test:structured-renderers": "node scripts/structured-import/run-renderer-element-integration.cjs",
     "test:canvas2d": "node scripts/check-canvas2d-regression.js",

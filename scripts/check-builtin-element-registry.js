@@ -89,6 +89,11 @@ async function main() {
   assert.strictEqual(resizedFile.width, 200);
   assert.strictEqual(resizedFile.height, 96);
 
+  const mindSummary = { id: "summary", type: "mindSummary", x: 0, y: 0, width: 220, height: 72 };
+  const resizedSummary = resizeElement(mindSummary, "se", { x: 220, y: 40 });
+  assert.strictEqual(resizedSummary.width, 220);
+  assert.strictEqual(resizedSummary.height, 72);
+
   console.log(`[check-builtin-element-registry] ok: ${validation.types.length} types`);
 }
 

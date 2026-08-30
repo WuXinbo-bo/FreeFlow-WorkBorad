@@ -106,6 +106,8 @@ function syncImageAnnotations(svg, item) {
 function createImageNode() {
   const node = document.createElement("div");
   node.className = "canvas2d-scene-content-item canvas2d-scene-image-item";
+  const memo = document.createElement("div");
+  memo.className = "canvas2d-scene-image-memo";
   const frame = document.createElement("div");
   frame.className = "canvas2d-scene-image-frame";
   const transform = document.createElement("div");
@@ -122,12 +124,12 @@ function createImageNode() {
   viewport.appendChild(image);
   transform.append(viewport, annotations);
   frame.appendChild(transform);
-  node.appendChild(frame);
+  node.append(memo, frame);
   return node;
 }
 
 function syncImageNode(node, item, context) {
-  if (item.memoVisible || context.imageEditingId === item.id) {
+  if (context.imageEditingId === item.id) {
     return false;
   }
   const source = context.resolveImageSource(item.dataUrl, item.sourcePath, {
@@ -138,10 +140,12 @@ function syncImageNode(node, item, context) {
   }
   syncWorldBox(node, item);
   const image = node.querySelector(".canvas2d-scene-image-content");
+  const memo = node.querySelector(".canvas2d-scene-image-memo");
   const annotations = node.querySelector(".canvas2d-scene-image-annotations");
   const transform = node.querySelector(".canvas2d-scene-image-transform");
   if (
     !(image instanceof HTMLImageElement) ||
+    !(memo instanceof HTMLDivElement) ||
     !(annotations instanceof SVGSVGElement) ||
     !(transform instanceof HTMLDivElement)
   ) {
@@ -184,6 +188,20 @@ function syncImageNode(node, item, context) {
   const contrast = 1 + clamp(item.contrast, -100, 100) / 100;
   setStyle(image, "filter", `brightness(${brightness}) contrast(${contrast})`);
   syncImageAnnotations(annotations, item);
+  const showMemo = item.memoVisible && context.imageMemoEditingId !== item.id;
+  memo.style.display = showMemo ? "flex" : "none";
+  if (showMemo) {
+    const layout = getMemoLayout(item, { kind: "image" });
+    memo.textContent = String(item.memo || "");
+    setStyle(memo, "left", `${layout.left - Number(item.x || 0)}px`);
+    setStyle(memo, "top", `${layout.top - Number(item.y || 0)}px`);
+    setStyle(memo, "width", `${layout.width}px`);
+    setStyle(memo, "height", `${layout.height}px`);
+    setStyle(memo, "padding", `${layout.padding}px`);
+    setStyle(memo, "borderRadius", `${layout.radius}px`);
+    setStyle(memo, "fontSize", `${layout.fontSize}px`);
+    setStyle(memo, "lineHeight", `${layout.lineHeight}px`);
+  }
   return true;
 }
 
@@ -245,7 +263,7 @@ function createFileCardNode() {
 }
 
 function syncFileCardNode(node, item, context) {
-  if (context.fileMemoEditingId === item.id || context.scale <= 0.15) {
+  if (context.scale <= 0.15) {
     return false;
   }
   syncWorldBox(node, item);
@@ -275,8 +293,9 @@ function syncFileCardNode(node, item, context) {
   setStyle(name, "fontSize", `${Math.min(28, Math.max(10, logicalHeight * 0.15))}px`);
   setStyle(meta, "fontSize", `${Math.min(24, Math.max(10, logicalHeight * 0.12))}px`);
   mark.style.display = item.marked ? "block" : "none";
-  memo.style.display = item.memoVisible ? "flex" : "none";
-  if (item.memoVisible) {
+  const showMemo = item.memoVisible && context.fileMemoEditingId !== item.id;
+  memo.style.display = showMemo ? "flex" : "none";
+  if (showMemo) {
     const layout = getMemoLayout(item, { kind: "fileCard" });
     memo.textContent = String(item.memo || "");
     setStyle(memo, "left", `${layout.left - Number(item.x || 0)}px`);
@@ -332,6 +351,7 @@ export function createSceneContentRenderer({
     const context = {
       allowLocalFileAccess,
       imageEditingId: editingType === "image" ? editingId : "",
+      imageMemoEditingId: editingType === "image-memo" ? editingId : "",
       tableEditingId: editingType === "table" ? editingId : "",
       fileMemoEditingId: editingType === "file-memo" ? editingId : "",
       scale: Math.max(0.1, Number(view?.scale || 1) || 1),

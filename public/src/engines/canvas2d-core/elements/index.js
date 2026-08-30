@@ -264,6 +264,7 @@ function createBuiltinElementRegistry() {
     createDefinition("mindSummary", {
       aliases: ["mind-summary"],
       normalize: normalizeMindSummaryElement,
+      resize: withMinSize(resizeRectElement, 160, 72),
       capabilities: { render: "canvas-dom", lod: "mind-summary", editor: "mind-node", overlay: "rich", cache: "live", visibility: "mind-map" },
     }),
     createDefinition("mindRelationship", {

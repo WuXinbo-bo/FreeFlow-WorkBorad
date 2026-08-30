@@ -2796,9 +2796,9 @@ function readSceneTextOverlayFrame(node, scale = 1) {
     return null;
   }
   const normalizedScale = Math.max(0.1, Number(scale || 1) || 1);
-  const rect = node.getBoundingClientRect();
-  const widthPx = Math.max(node.scrollWidth || 0, rect.width || 0);
-  const heightPx = Math.max(node.scrollHeight || 0, rect.height || 0);
+  const computedStyle = getComputedStyle(node);
+  const widthPx = Math.max(node.scrollWidth || 0, Number.parseFloat(computedStyle.width) || 0);
+  const heightPx = Math.max(node.scrollHeight || 0, Number.parseFloat(computedStyle.height) || 0);
   if (!widthPx || !heightPx) {
     return null;
   }
@@ -11841,7 +11841,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.canvas?.clientHeight || refs.canvas?.height || 0
     );
     const viewportKey = getCodeBlockOverlayViewportKey(viewportBounds, scale);
-    const shouldRescan =
+    let shouldRescan =
       codeBlockOverlayNeedsFullRescan ||
       !lastCodeBlockOverlayInteractive ||
       viewportKey !== lastCodeBlockOverlayViewportKey ||
@@ -11891,6 +11891,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
     });
     const activeIds = activeVisibleItems.map((item) => item.id);
+    if (
+      !shouldRescan &&
+      activeIds.some(
+        (itemId) => !codeBlockVisibleIds.has(itemId) || !codeBlockOverlayVirtualizer.hasNode(itemId)
+      )
+    ) {
+      shouldRescan = true;
+    }
     const deferredIds = new Set();
     codeBlockOverlayVirtualizer.syncActiveIds(activeIds, {
       onRemove: (node) => {

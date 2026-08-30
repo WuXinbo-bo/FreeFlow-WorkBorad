@@ -84,6 +84,9 @@ async function main() {
     await runNodeScript("scripts/check-canvas2d-regression.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
+    await runNodeScript("scripts/check-canvas2d-element-interactions.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-air-canvas-interactions.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });

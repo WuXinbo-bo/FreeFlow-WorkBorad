@@ -6440,7 +6440,8 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   pointer-events: none;
 }
 
-.canvas2d-scene-file-card-memo {
+.canvas2d-scene-file-card-memo,
+.canvas2d-scene-image-memo {
   position: absolute;
   z-index: 0;
   align-items: center;
