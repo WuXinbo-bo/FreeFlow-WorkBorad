@@ -4791,6 +4791,30 @@ let tablePointerSelectionState = {
     refs.sceneRoot.dataset.presentationPhase = String(presentation?.interaction?.phase || "steady");
   }
 
+  function collectSceneOverlayOwnedIds() {
+    const ownedIds = new Set();
+    const collect = (host, selector) => {
+      if (
+        !(host instanceof HTMLDivElement) ||
+        host.style.display === "none" ||
+        host.style.visibility === "hidden" ||
+        host.classList.contains("is-hidden")
+      ) {
+        return;
+      }
+      host.querySelectorAll(selector).forEach((node) => {
+        const itemId = String(node.getAttribute("data-id") || "").trim();
+        if (itemId && node.style.display !== "none") {
+          ownedIds.add(itemId);
+        }
+      });
+    };
+    collect(refs.richDisplayHost, ".canvas2d-rich-item[data-id]");
+    collect(refs.codeBlockDisplayHost, ".canvas2d-code-block-item[data-id]");
+    collect(refs.mathDisplayHost, ".canvas2d-math-item[data-id]");
+    return ownedIds;
+  }
+
   function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null, frameContext = null } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
@@ -4823,6 +4847,26 @@ let tablePointerSelectionState = {
       editingId: state.editingId,
       editingType: state.editingType,
     });
+    const previousStats = refs.canvas?.__ffRenderStats || null;
+    const skipDetailOverlays = Boolean(previousStats?.progressiveRender?.pending);
+    const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive || canvasLodActive);
+    overlayBudgetManager.reconcile({
+      rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
+      math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
+      code: refs.codeBlockDisplayHost?.querySelectorAll?.(".canvas2d-code-block-item[data-id]").length || 0,
+    });
+    overlayBudgetManager.beginFrame({
+      suspended: overlaySuspended,
+      reason: String(dirtyState?.reason || "render"),
+    });
+    if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
+      hydrationScheduler.bumpGeneration();
+    }
+    syncEditorLayout();
+    syncRichTextToolbar();
+    overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
+    const overlayOwnedIds = collectSceneOverlayOwnedIds();
+    const presentationOwnedIds = new Set([...sceneContentOwnedIds, ...overlayOwnedIds]);
     const visibleIds = (visibleScene?.items || []).map((item) => String(item?.id || "")).filter(Boolean);
     const interactingIds = viewportInteractionActive
       ? visibleIds
@@ -4879,7 +4923,7 @@ let tablePointerSelectionState = {
       dirtyState,
       layerState,
       frameContext,
-      sceneContentOwnedIds,
+      sceneContentOwnedIds: presentationOwnedIds,
       sceneVectorOwnedIds: sceneVectorState.ownedIds,
       sceneVectorConnectionsOwned: true,
       sceneVectorConnectionCount: sceneVectorState.connectionCount,
@@ -4899,23 +4943,6 @@ let tablePointerSelectionState = {
     } else {
       largeViewportProgressivePending = false;
     }
-    const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending);
-    const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive || canvasLodActive);
-    overlayBudgetManager.reconcile({
-      rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
-      math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
-      code: refs.codeBlockDisplayHost?.querySelectorAll?.(".canvas2d-code-block-item[data-id]").length || 0,
-    });
-    overlayBudgetManager.beginFrame({
-      suspended: overlaySuspended,
-      reason: String(dirtyState?.reason || "render"),
-    });
-    if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
-      hydrationScheduler.bumpGeneration();
-    }
-    syncEditorLayout();
-    syncRichTextToolbar();
-    overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
     // File-card Word previews are rendered by the Canvas2D React UI from state.
     syncCodeBlockToolbar();
     syncImageToolbar();

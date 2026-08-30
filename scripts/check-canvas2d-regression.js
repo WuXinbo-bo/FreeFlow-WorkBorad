@@ -920,6 +920,12 @@ async function runViewportInteractionRecoveryCheck(browser) {
         view: activeView,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         sceneContentOwnedCount: canvas.__ffRenderStats?.sceneContentOwnedCount || 0,
+        sceneOverlayOwnedCount: Array.from(document.querySelectorAll(
+          ".canvas2d-rich-item[data-id], .canvas2d-code-block-item[data-id], .canvas2d-math-item[data-id]"
+        )).filter((node) => {
+          const host = node.parentElement;
+          return node.style.display !== "none" && host && getComputedStyle(host).visibility !== "hidden";
+        }).length,
         sceneVectorOwnedCount: canvas.__ffRenderStats?.sceneVectorOwnedCount || 0,
         pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
       };
@@ -994,7 +1000,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
       result
     );
     assert(result.active.hostsOwnedByContentLayer, "scene content hosts do not share the content layer", result);
-    assert(result.active.sceneContentOwnedCount === 2, "image and table did not have singular scene ownership", result);
+    assert(
+      result.active.sceneContentOwnedCount === result.active.sceneOverlayOwnedCount + 2,
+      "visible DOM subjects did not have singular scene ownership",
+      result
+    );
     assert(result.active.sceneVectorOwnedCount === 2, "shape and flow edge did not have singular vector ownership", result);
     assert(
       Math.abs(result.active.richLocalLeft - result.initialRichLocalLeft) < 0.01,
