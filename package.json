@@ -25,6 +25,7 @@
     "test:structured-parsers": "node scripts/structured-import/run-parser-unit-tests.cjs",
     "test:structured-renderers": "node scripts/structured-import/run-renderer-element-integration.cjs",
     "test:canvas2d": "node scripts/check-canvas2d-regression.js",
+    "test:air-canvas-interactions": "node scripts/check-air-canvas-interactions.js",
     "test": "node scripts/run-test-suite.js",
     "check:canvas2d-regression": "node scripts/check-canvas2d-regression.js",
     "check:canvas2d-paste-optimization": "node scripts/check-canvas2d-paste-optimization.js",

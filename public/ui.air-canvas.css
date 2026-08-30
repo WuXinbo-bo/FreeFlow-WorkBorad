@@ -97,6 +97,15 @@ body.desktop-mode {
   background: transparent !important;
 }
 
+html.desktop-full-pass-through,
+html.desktop-full-pass-through body,
+body.desktop-full-pass-through,
+body.desktop-full-pass-through .page-shell,
+body.desktop-full-pass-through .workspace {
+  background: transparent !important;
+  background-image: none !important;
+}
+
 body::before,
 .ambient {
   display: none !important;
@@ -211,7 +220,7 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
   padding: 2px !important;
   border: 0 !important;
   border-radius: 8px !important;
-  background: rgba(248, 250, 248, 0.86) !important;
+  background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -379,7 +388,7 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border-right: 1px solid var(--air-line) !important;
   border-radius: 0 !important;
   color: var(--air-ink) !important;
-  background: rgba(248, 250, 248, 0.96) !important;
+  background: #fff !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -551,7 +560,7 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border: 1px solid var(--air-line) !important;
   border-radius: var(--air-radius-control) !important;
   color: var(--air-ink-muted) !important;
-  background: rgba(248, 250, 248, 0.9) !important;
+  background: #fff !important;
   box-shadow: none !important;
 }
 
@@ -586,7 +595,7 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border: 1px solid transparent !important;
   border-radius: 8px !important;
   color: var(--air-ink-muted) !important;
-  background: rgba(248, 250, 248, 0.78) !important;
+  background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -604,8 +613,8 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
 
 .canvas2d-engine-toolbar:hover,
 .canvas2d-engine-toolbar:focus-within {
-  border-color: var(--air-line) !important;
-  background: rgba(255, 255, 255, 0.94) !important;
+  border-color: transparent !important;
+  background: transparent !important;
 }
 
 .canvas2d-engine-toolbar > .canvas2d-engine-tool,
@@ -655,7 +664,7 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border: 0 !important;
   border-radius: var(--air-radius-control) !important;
   color: var(--air-ink-muted) !important;
-  background: rgba(248, 250, 248, 0.78) !important;
+  background: transparent !important;
   box-shadow: none !important;
 }
 
@@ -673,7 +682,7 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border: 0 !important;
   border-radius: 8px !important;
   color: var(--air-ink) !important;
-  background: rgba(248, 250, 248, 0.82) !important;
+  background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -685,14 +694,14 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   min-width: 0 !important;
   padding: 4px !important;
   gap: 4px !important;
-  opacity: 0.62;
+  opacity: 0.74;
   transition: opacity 140ms ease, background-color 140ms ease !important;
 }
 
 .canvas2d-floating-card-zoom:hover,
 .canvas2d-floating-card-zoom:focus-within {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.94) !important;
+  background: transparent !important;
 }
 
 .canvas2d-floating-card-zoom .canvas2d-zoom-display {
@@ -723,6 +732,12 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border-radius: var(--air-radius-control) !important;
   color: var(--air-ink-muted) !important;
   background: transparent !important;
+}
+
+.canvas2d-zoom-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .canvas2d-floating-card-zoom .canvas2d-zoom-btn.is-wide {
@@ -896,6 +911,70 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   border-radius: var(--air-radius-control) !important;
   color: var(--air-ink-muted) !important;
   background: transparent !important;
+}
+
+/* In-canvas editing chrome: one temporary white plane, no nested gray plates. */
+.canvas2d-context-menu.is-webgl-menu,
+.canvas2d-rich-toolbar,
+.canvas2d-rich-selection-toolbar,
+.canvas2d-image-toolbar,
+.canvas2d-rich-submenu-panel,
+.canvas2d-rich-size-panel,
+.canvas2d-rich-link-panel,
+.canvas2d-rich-color-panel,
+[data-role="rich-color-panel"] {
+  border: 1px solid var(--air-line) !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-context-menu-item:not(.canvas2d-context-swatch),
+.canvas2d-rich-btn:not(.color-swatch),
+.canvas2d-image-btn:not(.color-swatch),
+.canvas2d-rich-size-trigger,
+.canvas2d-rich-select,
+.canvas2d-rich-font,
+.canvas2d-rich-size-preset,
+.canvas2d-rich-color-reset,
+.canvas2d-rich-color-add {
+  border-color: transparent !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-context-menu-item:not(.canvas2d-context-swatch):hover,
+.canvas2d-rich-btn:not(.color-swatch):hover,
+.canvas2d-image-btn:not(.color-swatch):hover,
+.canvas2d-rich-size-trigger:hover,
+.canvas2d-rich-size-preset:hover,
+.canvas2d-rich-color-reset:hover,
+.canvas2d-rich-color-add:hover {
+  border-color: transparent !important;
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-rich-btn.is-active,
+.canvas2d-image-btn.is-active,
+.canvas2d-rich-size-preset.is-active {
+  border-color: transparent !important;
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-context-swatch-row,
+.canvas2d-rich-color-picker-wrap {
+  border-color: var(--air-line) !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .stage-restore-dock {

@@ -6555,9 +6555,11 @@ async function applyWorkbenchFullscreenPreference(preferences = getWorkbenchPref
 }
 
 function applyFullClickThroughUiState(enabled) {
-  document.body.classList.toggle("desktop-full-pass-through", Boolean(enabled));
+  const fullPassThrough = Boolean(enabled);
+  document.documentElement.classList.toggle("desktop-full-pass-through", fullPassThrough);
+  document.body.classList.toggle("desktop-full-pass-through", fullPassThrough);
 
-  if (enabled) {
+  if (fullPassThrough) {
     setDesktopMenuOpen(false);
     setConversationShellMenuOpen(false);
     closeConversationModelMenu();

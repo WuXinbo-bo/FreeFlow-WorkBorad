@@ -198,6 +198,24 @@ function ExportHistoryIcon() {
   );
 }
 
+function ResetViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-zoom-icon">
+      <path d="M6.4 8.1H3.8V5.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.2 8.1a8 8 0 1 1-.2 7.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FitViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-zoom-icon">
+      <path d="M8.5 4.5h-4v4M15.5 4.5h4v4M8.5 19.5h-4v-4M15.5 19.5h4v-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 function ChevronIcon({ open = false }) {
   return <span className={`canvas2d-engine-menu-chevron${open ? " is-open" : ""}`} aria-hidden="true">⌄</span>;
 }
@@ -2797,7 +2815,11 @@ function Canvas2DControls({ engine }) {
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${alignmentSnapMenuOpen ? " is-active" : ""}`}
                     role="menuitem"
                     aria-expanded={alignmentSnapMenuOpen}
-                    onClick={() => setAlignmentSnapMenuOpen((value) => !value)}
+                    onClick={() => {
+                      setBackgroundMenuOpen(false);
+                      setAboutMenuOpen(false);
+                      setAlignmentSnapMenuOpen((value) => !value);
+                    }}
                   >
                     <span>自动对齐吸附</span>
                     <ChevronIcon open={alignmentSnapMenuOpen} />
@@ -2862,7 +2884,11 @@ function Canvas2DControls({ engine }) {
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${backgroundMenuOpen ? " is-active" : ""}`}
                     role="menuitem"
                     aria-expanded={backgroundMenuOpen}
-                    onClick={() => setBackgroundMenuOpen((value) => !value)}
+                    onClick={() => {
+                      setAlignmentSnapMenuOpen(false);
+                      setAboutMenuOpen(false);
+                      setBackgroundMenuOpen((value) => !value);
+                    }}
                   >
                     <span>画布背景</span>
                     <ChevronIcon open={backgroundMenuOpen} />
@@ -2920,7 +2946,11 @@ function Canvas2DControls({ engine }) {
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${aboutMenuOpen ? " is-active" : ""}`}
                     role="menuitem"
                     aria-expanded={aboutMenuOpen}
-                    onClick={() => setAboutMenuOpen((value) => !value)}
+                    onClick={() => {
+                      setAlignmentSnapMenuOpen(false);
+                      setBackgroundMenuOpen(false);
+                      setAboutMenuOpen((value) => !value);
+                    }}
                   >
                     <span>关于画布</span>
                     <ChevronIcon open={aboutMenuOpen} />
@@ -3107,11 +3137,11 @@ function Canvas2DControls({ engine }) {
             <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomOut()} title="缩小">
               -
             </button>
-            <button type="button" className="canvas2d-zoom-btn is-wide" onClick={() => bridge.resetView()} title="恢复默认">
-              恢复默认
+            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.resetView()} title="重置视图" aria-label="重置视图">
+              <ResetViewIcon />
             </button>
-            <button type="button" className="canvas2d-zoom-btn is-wide" onClick={() => bridge.zoomToFit()} title="定位">
-              定位
+            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomToFit()} title="适配全部内容" aria-label="适配全部内容">
+              <FitViewIcon />
             </button>
             <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomIn()} title="放大">
               +
