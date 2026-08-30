@@ -85,6 +85,7 @@
     <link rel="stylesheet" href="./ui.tokens.css" />
     <link rel="stylesheet" href="./ui.shell.css" />
     <link rel="stylesheet" href="./ui.air-canvas.css" />
+    <link rel="stylesheet" href="./ui.chrome-system.css" />
     <link rel="stylesheet" href="./ui.canvas-chrome.css" />
   </head>
   <body class="app-booting boot-shape-lock">
@@ -107,7 +108,7 @@
         <button id="desktop-fullscreen-btn" class="desktop-shell-btn" type="button" title="切换全屏">全屏</button>
         <div class="desktop-shell-menu-wrap">
           <button id="desktop-menu-btn" class="desktop-shell-btn" type="button" title="更多控制">更多</button>
-          <div id="desktop-menu-panel" class="desktop-menu-panel is-hidden">
+          <div id="desktop-menu-panel" class="desktop-menu-panel ui-chrome-popover is-hidden">
             <div class="desktop-menu-group">
               <div class="desktop-menu-group-title">Window</div>
               <button id="desktop-pin-btn" class="desktop-menu-item" data-icon="PIN" type="button" title="切换固定">固定</button>
@@ -144,7 +145,7 @@
               </svg>
             </span>
           </button>
-          <div id="conversation-shell-menu" class="conversation-shell-menu is-hidden">
+          <div id="conversation-shell-menu" class="conversation-shell-menu ui-chrome-popover is-hidden">
             <button id="conversation-shell-pin-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" focusable="false">
@@ -360,7 +361,7 @@
 
         <div id="left-pane-resizer" class="pane-resizer" role="separator" aria-label="调整对话区宽度"></div>
 
-        <section class="desktop-clear-stage canvas-stage" aria-label="无限画布工作区">
+        <section class="desktop-clear-stage canvas-stage ui-workspace-surface" aria-label="无限画布工作区">
           <div class="workspace-drag-band canvas-chrome-edge-rail is-top" data-stage-panel-frame="left" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-right" data-stage-panel-frame="left" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="left" aria-hidden="true"></div>
@@ -383,7 +384,7 @@
 
         <div id="right-pane-resizer" class="pane-resizer" role="separator" aria-label="调整控制菜单宽度"></div>
 
-        <section class="conversation-panel glass-panel chat-sidebar">
+        <section class="conversation-panel glass-panel chat-sidebar ui-workspace-surface ui-chrome-workspace">
           <div class="workspace-drag-band canvas-chrome-edge-rail is-top" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-right" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="right" aria-hidden="true"></div>
@@ -397,7 +398,7 @@
           <header class="conversation-header">
             <div class="conversation-header-topline">
               <div class="right-panel-window-controls">
-                <div id="right-panel-window-strip" class="right-panel-window-strip" role="tablist" aria-label="右侧窗口调度">
+                <div id="right-panel-window-strip" class="right-panel-window-strip ui-chrome-segmented" role="tablist" aria-label="右侧窗口调度">
                   <span id="right-panel-window-slider" class="right-panel-window-slider" aria-hidden="true"></span>
                   <button
                     id="right-panel-tab-assistant"
@@ -422,7 +423,7 @@
                 </div>
                 <button
                   id="right-panel-switch-lock-btn"
-                  class="right-panel-switch-lock-btn"
+                  class="right-panel-switch-lock-btn ui-chrome-icon-button"
                   type="button"
                   aria-pressed="false"
                   aria-label="锁定界面切换"
@@ -443,15 +444,15 @@
                 </button>
                 <div id="screen-source-header-slot" class="screen-source-header-slot is-hidden">
                   <details id="screen-source-header-menu" class="screen-source-header-menu">
-                    <summary class="conversation-pill" title="映射控制">映射控制</summary>
-                    <div class="screen-source-header-panel">
+                    <summary class="conversation-pill ui-chrome-trigger" title="映射控制">映射控制</summary>
+                    <div class="screen-source-header-panel ui-chrome-popover">
                       <div id="screen-source-toolbar" class="screen-source-toolbar">
-                        <label class="screen-source-picker">
+                        <label class="screen-source-picker ui-chrome-content">
                           <span class="label">映射目标</span>
                           <details id="screen-source-select-menu" class="screen-source-select-menu">
                             <summary
                               id="screen-source-select-trigger"
-                              class="screen-source-select-trigger"
+                              class="screen-source-select-trigger ui-chrome-inline-field"
                               aria-label="选择映射目标"
                             >
                               <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
@@ -459,7 +460,7 @@
                             </summary>
                             <div
                               id="screen-source-select-panel"
-                              class="canvas2d-engine-menu canvas2d-engine-menu-wide screen-source-select-panel"
+                              class="canvas2d-engine-menu canvas2d-engine-menu-wide screen-source-select-panel ui-chrome-popover"
                               role="listbox"
                               aria-label="映射目标列表"
                             ></div>
@@ -470,7 +471,7 @@
                         <div id="screen-source-inline-actions" class="screen-source-actions">
                           <button
                             id="screen-source-refresh-btn"
-                            class="ghost-btn compact-btn"
+                            class="ghost-btn compact-btn ui-chrome-action"
                             type="button"
                             data-screen-source-action="refresh"
                           >
@@ -478,7 +479,7 @@
                           </button>
                           <button
                             id="screen-source-refresh-embed-btn"
-                            class="ghost-btn compact-btn"
+                            class="ghost-btn compact-btn ui-chrome-action"
                             type="button"
                             data-screen-source-action="refresh-embed"
                             hidden
@@ -487,7 +488,7 @@
                           </button>
                           <button
                             id="screen-source-embed-toggle-btn"
-                            class="ghost-btn compact-btn"
+                            class="ghost-btn compact-btn ui-chrome-action"
                             type="button"
                             data-screen-source-action="embed-toggle"
                           >
@@ -496,22 +497,22 @@
                         </div>
                       </div>
                       <div class="screen-source-header-meta">
-                        <label class="compact-select screen-source-render-mode">
+                        <label class="compact-select screen-source-render-mode ui-chrome-inline-field">
                           <span>渲染方式</span>
-                          <select id="screen-source-render-mode-select" aria-label="选择 AI 镜像渲染方式">
+                          <select id="screen-source-render-mode-select" class="ui-chrome-select" aria-label="选择 AI 镜像渲染方式">
                             <option value="win32">Win32 原生嵌入</option>
                             <option value="webcontentsview">WebContentsView</option>
                           </select>
                         </label>
-                        <label class="compact-select screen-source-fit-mode">
+                        <label class="compact-select screen-source-fit-mode ui-chrome-inline-field">
                           <span>适配模式</span>
-                          <select id="screen-source-fit-mode-select" aria-label="选择嵌入适配模式">
+                          <select id="screen-source-fit-mode-select" class="ui-chrome-select" aria-label="选择嵌入适配模式">
                             <option value="fill">强制拉满</option>
                             <option value="cover">铺满裁边</option>
                             <option value="contain">完整显示</option>
                           </select>
                         </label>
-                        <div id="screen-source-status-pill" class="pill-note">未启动</div>
+                        <div id="screen-source-status-pill" class="pill-note ui-chrome-status">未启动</div>
                       </div>
                     </div>
                   </details>
@@ -538,7 +539,7 @@
               <button id="cancel-session-rename-btn" class="ghost-btn compact-btn is-hidden" type="button">取消</button>
               <details class="chat-utility-menu">
                 <summary class="ghost-btn compact-btn">工具面板</summary>
-                <div class="chat-utility-panel">
+                <div class="chat-utility-panel ui-chrome-popover">
                   <button id="clipboard-save-chat-btn" class="ghost-btn compact-btn" type="button">保存剪贴板</button>
                   <button id="rename-session-btn" class="ghost-btn compact-btn" type="button">编辑名称</button>
                   <button id="toggle-right-pane-btn" class="ghost-btn compact-btn pane-toggle-btn" type="button">收起对话</button>
@@ -550,7 +551,7 @@
           <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI镜像窗口">
             <div class="screen-source-stage">
               <div id="screen-source-shell-wrap" class="screen-source-shell-wrap">
-                <div class="screen-source-preview-shell">
+                <div class="screen-source-preview-shell ui-embedded-frame ui-chrome-content">
                   <video id="screen-source-video" class="screen-source-video" autoplay muted playsinline></video>
                   <div id="screen-source-empty" class="screen-source-empty">
                     <div class="screen-source-empty-shell">
@@ -580,7 +581,7 @@
             <div id="chat-log" class="chat-log"></div>
           </div>
 
-          <form id="chat-form" class="composer glass-inset">
+          <form id="chat-form" class="composer glass-inset ui-chrome-composer">
             <div class="composer-top">
               <div class="composer-input-shell">
                 <div id="composer-attachments" class="composer-attachments is-hidden" aria-label="当前附件"></div>
@@ -618,8 +619,8 @@
               </div>
             </form>
         </section>
-        <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock is-hidden">
-          <button id="stage-restore-btn" class="ghost-btn compact-btn" type="button">恢复默认布局</button>
+        <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock ui-recovery-dock is-hidden">
+          <button id="stage-restore-btn" class="ghost-btn compact-btn ui-recovery-control" type="button">恢复默认布局</button>
         </div>
       </main>
 
@@ -630,9 +631,9 @@
 
       <div id="global-overlay-layer" class="global-overlay-layer" aria-hidden="false"></div>
 
-      <div id="drawer-backdrop" class="drawer-backdrop"></div>
+      <div id="drawer-backdrop" class="drawer-backdrop ui-chrome-backdrop"></div>
 
-      <aside id="insight-drawer" class="insight-drawer glass-panel" aria-hidden="true">
+      <aside id="insight-drawer" class="insight-drawer glass-panel ui-chrome-drawer" aria-hidden="true">
         <header class="drawer-header">
           <div>
             <div class="eyebrow">系统设置</div>
@@ -963,8 +964,8 @@
 
       <button id="insight-drawer-handle" class="drawer-handle" type="button" aria-expanded="false">系统设置</button>
 
-      <button id="restore-left-pane-btn" class="pane-restore-btn is-hidden" type="button">展开菜单</button>
-      <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right is-hidden" type="button">展开对话</button>
+      <button id="restore-left-pane-btn" class="pane-restore-btn canvas-chrome-surface ui-recovery-control is-hidden" type="button">展开菜单</button>
+      <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right canvas-chrome-surface ui-recovery-control is-hidden" type="button">展开对话</button>
     </div>
 
     <template id="message-template">
@@ -977,7 +978,7 @@
               <span class="message-time"></span>
               <details class="message-menu">
                 <summary class="message-menu-trigger" aria-label="消息菜单" title="消息菜单">•••</summary>
-                <div class="message-menu-panel">
+                <div class="message-menu-panel ui-chrome-popover">
                   <button class="message-menu-item message-menu-item-danger" type="button" data-delete-message>
                     删除这条对话
                   </button>

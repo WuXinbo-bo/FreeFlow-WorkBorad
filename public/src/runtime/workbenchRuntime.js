@@ -5980,6 +5980,7 @@ function renderPanelLayoutSide(side) {
   element.classList.toggle("is-workspace-maximized", panelState.mode === "maximized");
   element.classList.toggle("is-workspace-half", panelState.mode === "half-left" || panelState.mode === "half-right");
   element.dataset.workspaceMode = String(panelState.mode || "normal");
+  element.dataset.workspaceDock = dockSide;
 
   if (resizer) {
     const resizerLeft = Math.round((Number(panelState.x) || 0) + (Number(panelState.width) || 0) - PANEL_RESIZER_CORNER_OFFSET);

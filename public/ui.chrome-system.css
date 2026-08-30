@@ -1,0 +1,728 @@
+:root {
+  --chrome-inline-inset: 16px;
+  --chrome-inline-end-inset: 8px;
+  --chrome-block-inset: 16px;
+  --chrome-control-size: 34px;
+  --chrome-height: 40px;
+  --chrome-radius: 10px;
+  --chrome-popover-radius: 12px;
+  --chrome-panel-radius: 12px;
+  --chrome-glass-idle: rgba(255, 255, 255, 0.58);
+  --chrome-glass-active: rgba(255, 255, 255, 0.8);
+  --chrome-glass-content: rgba(255, 255, 255, 0.08);
+  --chrome-glass-border: rgba(255, 255, 255, 0.78);
+  --chrome-glass-border-active: rgba(255, 255, 255, 0.94);
+  --chrome-glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12));
+  --chrome-glass-sheen-active: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.1) 52%, rgba(181, 204, 224, 0.16));
+  --chrome-line: rgba(32, 37, 43, 0.1);
+  --chrome-line-strong: rgba(32, 37, 43, 0.16);
+  --chrome-ink: #20252b;
+  --chrome-ink-muted: #68717c;
+  --chrome-right-text: #303942;
+  --chrome-right-text-secondary: #46515c;
+  --chrome-right-text-tertiary: #596570;
+  --chrome-hover: rgba(32, 37, 43, 0.055);
+  --chrome-active: rgba(53, 106, 230, 0.1);
+  --chrome-accent: #356ae6;
+  --chrome-danger: #d86262;
+  --chrome-shadow: 0 8px 24px rgba(31, 38, 46, 0.08);
+  --chrome-shadow-active: 0 12px 30px rgba(31, 38, 46, 0.13);
+  --chrome-motion-fast: 160ms ease;
+  --canvas-chrome-inline-inset: var(--chrome-inline-inset);
+  --canvas-chrome-inline-end-inset: var(--chrome-inline-end-inset);
+  --canvas-chrome-block-inset: var(--chrome-block-inset);
+  --canvas-chrome-control-size: var(--chrome-control-size);
+  --canvas-chrome-height: var(--chrome-height);
+  --canvas-chrome-radius: var(--chrome-radius);
+  --canvas-chrome-status-dock-width: calc(var(--chrome-control-size) * 2 + 8px);
+  --canvas-chrome-minimap-expanded-width: 164px;
+  --canvas-chrome-minimap-expanded-height: 134px;
+  --canvas-chrome-minimap-collapsed-size: 38px;
+  --chrome-global-actions-reserve: calc(var(--canvas-chrome-status-dock-width) + 18px);
+}
+
+.canvas-chrome-surface,
+.ui-chrome-workspace::before,
+.ui-chrome-segmented::before,
+.ui-chrome-icon-button::before,
+.ui-chrome-trigger::before,
+.ui-chrome-field::before,
+.ui-chrome-composer::before,
+.ui-chrome-popover::before,
+.ui-chrome-drawer::before {
+  border: 1px solid var(--chrome-glass-border) !important;
+  background-color: var(--chrome-glass-idle) !important;
+  background-image: var(--chrome-glass-sheen) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    var(--chrome-shadow) !important;
+  backdrop-filter: blur(16px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(125%) !important;
+  opacity: 0.84;
+  transition:
+    opacity var(--chrome-motion-fast),
+    transform var(--chrome-motion-fast),
+    background-color var(--chrome-motion-fast),
+    border-color var(--chrome-motion-fast),
+    box-shadow var(--chrome-motion-fast) !important;
+}
+
+.canvas-chrome-surface {
+  border-radius: var(--chrome-radius) !important;
+}
+
+.ui-chrome-workspace,
+.ui-chrome-segmented,
+.ui-chrome-icon-button,
+.ui-chrome-trigger,
+.ui-chrome-field,
+.ui-chrome-composer,
+.ui-chrome-popover,
+.ui-chrome-drawer {
+  isolation: isolate;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.ui-chrome-segmented,
+.ui-chrome-icon-button,
+.ui-chrome-trigger,
+.ui-chrome-field,
+.ui-chrome-composer {
+  position: relative;
+}
+
+.ui-chrome-workspace::before,
+.ui-chrome-segmented::before,
+.ui-chrome-icon-button::before,
+.ui-chrome-trigger::before,
+.ui-chrome-field::before,
+.ui-chrome-composer::before,
+.ui-chrome-popover::before,
+.ui-chrome-drawer::before {
+  content: "";
+  display: block !important;
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  box-sizing: border-box;
+  border-radius: inherit !important;
+  pointer-events: none;
+}
+
+.canvas-chrome-surface:hover,
+.canvas-chrome-surface:focus-within,
+.canvas2d-engine-toolbar-wrap.is-overlay-active > .canvas-chrome-surface,
+.canvas2d-engine-search-stack.is-overlay-active .canvas-chrome-surface,
+body:has(#conversation-shell-menu:not(.is-hidden)) .canvas-chrome-status-dock,
+body:has(#insight-drawer.is-open) .canvas-chrome-status-dock,
+.ui-chrome-icon-button:hover::before,
+.ui-chrome-icon-button:focus-visible::before,
+.ui-chrome-icon-button.is-locked::before,
+.ui-chrome-trigger:hover::before,
+.ui-chrome-trigger:focus-visible::before,
+.screen-source-header-menu.is-open > .ui-chrome-trigger::before,
+.ui-chrome-field:hover::before,
+.ui-chrome-field:focus-within::before,
+.ui-chrome-composer:focus-within::before {
+  border-color: var(--chrome-glass-border-active) !important;
+  background-color: var(--chrome-glass-active) !important;
+  background-image: var(--chrome-glass-sheen-active) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    var(--chrome-shadow-active) !important;
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.app-global-shell-actions.canvas-chrome-status-dock {
+  top: 18px !important;
+  right: 18px !important;
+  width: var(--canvas-chrome-status-dock-width);
+  min-height: var(--chrome-height);
+  gap: 2px !important;
+  padding: 2px !important;
+  box-sizing: border-box;
+}
+
+.conversation-header {
+  --right-header-shift: 0px !important;
+}
+
+.conversation-panel[data-workspace-dock="right"] .conversation-header {
+  padding-right: var(--chrome-global-actions-reserve) !important;
+}
+
+.conversation-header-topline .right-panel-window-controls {
+  margin-left: 0 !important;
+  max-width: 100% !important;
+}
+
+.conversation-header-topline .right-panel-window-strip {
+  margin-left: 0 !important;
+}
+
+.right-panel-window-controls.is-tight {
+  gap: 4px !important;
+}
+
+.right-panel-window-controls.is-tight .right-panel-window-tab {
+  min-width: 80px !important;
+  padding-inline: 5px !important;
+  font-size: 12px !important;
+}
+
+.right-panel-window-controls.is-tight .screen-source-header-slot .ui-chrome-trigger {
+  min-height: 32px !important;
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+}
+
+.canvas-chrome-status-dock .conversation-more-btn,
+.canvas-chrome-status-dock #conversation-settings-btn,
+.canvas-chrome-status-dock #conversation-shell-more {
+  width: var(--chrome-control-size) !important;
+  min-width: var(--chrome-control-size) !important;
+  height: var(--chrome-control-size) !important;
+  min-height: var(--chrome-control-size) !important;
+}
+
+.conversation-shell-menu {
+  position: fixed;
+  z-index: 146;
+  display: grid;
+}
+
+.ui-chrome-popover,
+.conversation-shell-menu {
+  gap: 4px !important;
+  min-width: 208px !important;
+  padding: 6px !important;
+  border-radius: var(--chrome-popover-radius) !important;
+  color: var(--chrome-ink) !important;
+  box-shadow: var(--chrome-shadow-active) !important;
+}
+
+.ui-workspace-surface,
+body.desktop-mode .ui-workspace-surface {
+  border: 1px solid rgba(255, 255, 255, 0.74) !important;
+  border-radius: var(--chrome-panel-radius) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition: border-color var(--chrome-motion-fast), background-color var(--chrome-motion-fast), opacity var(--chrome-motion-fast) !important;
+}
+
+.conversation-panel.ui-chrome-workspace,
+body.desktop-mode .conversation-panel.ui-chrome-workspace {
+  border-color: transparent !important;
+  border-radius: var(--chrome-panel-radius) !important;
+  background: transparent !important;
+  box-shadow: var(--chrome-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.ui-chrome-segmented,
+.ui-chrome-icon-button,
+.ui-chrome-trigger,
+.ui-chrome-field,
+.composer.ui-chrome-composer,
+body.desktop-mode .composer.ui-chrome-composer {
+  border-radius: var(--chrome-radius) !important;
+  color: var(--chrome-ink-muted) !important;
+  transition: color var(--chrome-motion-fast), border-color var(--chrome-motion-fast), background-color var(--chrome-motion-fast), box-shadow var(--chrome-motion-fast) !important;
+}
+
+.ui-chrome-icon-button:hover,
+.ui-chrome-icon-button:focus-visible,
+.ui-chrome-icon-button.is-locked,
+.ui-chrome-trigger:hover,
+.ui-chrome-trigger:focus-visible,
+.screen-source-header-menu.is-open > .ui-chrome-trigger,
+.ui-chrome-field:hover,
+.ui-chrome-field:focus-within,
+.ui-chrome-composer:focus-within {
+  color: var(--chrome-ink) !important;
+}
+
+.ui-chrome-content {
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  border-radius: var(--chrome-radius) !important;
+  background: var(--chrome-glass-content) !important;
+  box-shadow: none !important;
+}
+
+.ui-chrome-inline-field {
+  border: 1px solid var(--chrome-line) !important;
+  border-radius: 8px !important;
+  color: var(--chrome-ink-muted) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  box-shadow: none !important;
+}
+
+.ui-chrome-inline-field:hover,
+.ui-chrome-inline-field:focus-within {
+  border-color: var(--chrome-line-strong) !important;
+  color: var(--chrome-ink) !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.ui-chrome-action {
+  border: 1px solid var(--chrome-line) !important;
+  border-radius: 8px !important;
+  color: var(--chrome-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ui-chrome-action:hover,
+.ui-chrome-action:focus-visible {
+  border-color: var(--chrome-line-strong) !important;
+  color: var(--chrome-ink) !important;
+  background: var(--chrome-hover) !important;
+}
+
+.ui-chrome-status {
+  border: 1px solid var(--chrome-line) !important;
+  border-radius: 6px !important;
+  color: var(--chrome-ink-muted) !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: none !important;
+}
+
+.right-panel-window-slider {
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: var(--chrome-active) !important;
+  box-shadow: none !important;
+}
+
+.right-panel-window-tab {
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: var(--chrome-right-text-secondary) !important;
+  background: transparent !important;
+}
+
+.right-panel-window-tab:hover,
+.right-panel-window-tab:focus-visible,
+.right-panel-window-tab.is-active {
+  color: var(--chrome-ink) !important;
+}
+
+.right-panel-window-tab.is-active {
+  font-weight: 600;
+}
+
+.conversation-panel.ui-chrome-workspace {
+  color: var(--chrome-right-text) !important;
+}
+
+.conversation-panel .message-content {
+  color: var(--chrome-right-text) !important;
+}
+
+.conversation-panel .message-content strong,
+.conversation-panel .message-content h3,
+.conversation-panel .message-content h4,
+.conversation-panel .message-content h5 {
+  color: var(--chrome-ink) !important;
+}
+
+.conversation-panel .message-meta,
+.conversation-panel .message-role,
+.conversation-panel .message-time,
+.conversation-panel .message-badge,
+.conversation-panel .composer-hint {
+  color: var(--chrome-right-text-tertiary) !important;
+  opacity: 1 !important;
+}
+
+.conversation-panel .composer textarea {
+  color: var(--chrome-right-text) !important;
+  caret-color: var(--chrome-accent);
+}
+
+.conversation-panel .composer textarea::placeholder {
+  color: var(--chrome-right-text-secondary) !important;
+  opacity: 1;
+}
+
+.conversation-panel .ui-chrome-trigger,
+.conversation-panel .ui-chrome-action,
+.conversation-panel .ui-chrome-inline-field,
+.conversation-panel .ui-chrome-select,
+.conversation-panel .ui-chrome-status {
+  color: var(--chrome-right-text-secondary) !important;
+}
+
+.screen-source-header-panel .ui-chrome-action,
+.screen-source-header-panel .ui-chrome-inline-field,
+.screen-source-header-panel .ui-chrome-select,
+.screen-source-header-panel .ui-chrome-status {
+  color: var(--chrome-right-text-secondary) !important;
+}
+
+.conversation-panel .ui-chrome-action,
+.screen-source-header-panel .ui-chrome-action,
+.screen-source-header-panel .ui-chrome-select {
+  color: var(--chrome-right-text) !important;
+}
+
+.conversation-panel .ui-chrome-trigger:hover,
+.conversation-panel .ui-chrome-trigger:focus-visible,
+.conversation-panel .screen-source-header-menu.is-open > .ui-chrome-trigger {
+  color: var(--chrome-ink) !important;
+}
+
+.conversation-panel .screen-source-select-current,
+.conversation-panel .screen-source-empty-copy strong {
+  color: var(--chrome-ink) !important;
+}
+
+.screen-source-header-panel .screen-source-select-current {
+  color: var(--chrome-ink) !important;
+}
+
+.conversation-panel .screen-source-picker .label,
+.conversation-panel .screen-source-header-meta .compact-select > span,
+.conversation-panel .screen-source-picker-note {
+  color: var(--chrome-right-text-tertiary) !important;
+  opacity: 1 !important;
+}
+
+.conversation-panel .screen-source-empty-copy p {
+  color: var(--chrome-right-text-secondary) !important;
+  opacity: 1 !important;
+}
+
+.screen-source-header-panel .screen-source-picker .label,
+.screen-source-header-panel .screen-source-header-meta .compact-select > span,
+.screen-source-header-panel .screen-source-picker-note {
+  color: var(--chrome-right-text-tertiary) !important;
+  opacity: 1 !important;
+}
+
+.screen-source-header-panel.ui-chrome-popover {
+  padding: 8px !important;
+}
+
+.screen-source-picker.ui-chrome-content {
+  padding: 8px !important;
+}
+
+.screen-source-select-trigger.ui-chrome-inline-field {
+  min-height: 38px !important;
+  padding: 8px 10px !important;
+}
+
+.screen-source-header-meta .ui-chrome-inline-field {
+  min-height: 34px;
+}
+
+.screen-source-header-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px !important;
+  margin-top: 8px !important;
+}
+
+.screen-source-header-meta .compact-select {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--chrome-ink-muted);
+  box-shadow: none;
+}
+
+.screen-source-header-meta .compact-select > span {
+  font-size: 12px;
+}
+
+.screen-source-header-meta .compact-select .ui-chrome-select {
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.screen-source-header-meta .ui-chrome-status {
+  grid-column: 1 / -1;
+}
+
+.composer.ui-chrome-composer,
+body.desktop-mode .composer.ui-chrome-composer {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: var(--chrome-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.composer.ui-chrome-composer:focus-within {
+  outline: 2px solid rgba(53, 106, 230, 0.08) !important;
+  outline-offset: 0 !important;
+}
+
+.ui-workspace-surface:hover,
+.ui-workspace-surface:focus-within {
+  border-color: rgba(255, 255, 255, 0.9) !important;
+  background: transparent !important;
+}
+
+.conversation-panel.ui-chrome-workspace:hover,
+.conversation-panel.ui-chrome-workspace:focus-within {
+  background: transparent !important;
+}
+
+.conversation-panel.screen-view-active.ui-workspace-surface {
+  padding: 8px !important;
+}
+
+.conversation-panel.screen-view-active .screen-source-panel.is-active {
+  height: calc(100% - 4px) !important;
+  margin-top: 4px !important;
+}
+
+.screen-source-stage,
+.screen-source-shell-wrap {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame,
+.screen-source-preview-shell.ui-embedded-frame.is-native-embedded {
+  overflow: hidden;
+  border: 1px solid var(--chrome-glass-border) !important;
+  border-radius: var(--chrome-radius) !important;
+  background-color: var(--chrome-glass-content) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame .screen-source-video {
+  border-radius: calc(var(--chrome-radius) - 1px);
+  background: transparent !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame .screen-source-empty {
+  background: transparent !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame .screen-source-empty-shell {
+  gap: 12px;
+}
+
+.desktop-menu-item,
+.screen-source-select-option,
+.message-menu-item,
+.chat-utility-panel .ghost-btn {
+  min-height: 36px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  color: var(--chrome-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.desktop-menu-item:hover,
+.desktop-menu-item:focus-visible,
+.screen-source-select-option:hover,
+.screen-source-select-option:focus-visible,
+.message-menu-item:hover,
+.message-menu-item:focus-visible,
+.chat-utility-panel .ghost-btn:hover,
+.chat-utility-panel .ghost-btn:focus-visible {
+  border-color: var(--chrome-line) !important;
+  color: var(--chrome-ink) !important;
+  background: rgba(255, 255, 255, 0.68) !important;
+}
+
+.desktop-menu-item.is-active,
+.screen-source-select-option[aria-selected="true"] {
+  border-color: transparent !important;
+  color: var(--chrome-accent) !important;
+  background: var(--chrome-active) !important;
+}
+
+#drawer-backdrop.ui-chrome-backdrop,
+#drawer-backdrop.ui-chrome-backdrop.is-open {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 141 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#drawer-backdrop.ui-chrome-backdrop.is-open {
+  pointer-events: auto !important;
+}
+
+#insight-drawer.ui-chrome-drawer {
+  position: fixed !important;
+  z-index: 142 !important;
+  top: 12px !important;
+  right: 12px !important;
+  bottom: 12px !important;
+  width: min(420px, calc(100vw - 24px)) !important;
+  padding: 14px !important;
+  border-radius: var(--chrome-panel-radius) !important;
+  color: var(--chrome-ink) !important;
+  box-shadow: var(--chrome-shadow-active) !important;
+}
+
+.conversation-shell-menu-item {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px !important;
+  gap: 10px !important;
+  padding: 7px 9px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  color: var(--chrome-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-align: left;
+  -webkit-app-region: no-drag;
+  transition: color var(--chrome-motion-fast), background-color var(--chrome-motion-fast), border-color var(--chrome-motion-fast);
+}
+
+.conversation-shell-menu-item:hover,
+.conversation-shell-menu-item:focus-visible {
+  border-color: var(--chrome-line) !important;
+  color: var(--chrome-ink) !important;
+  background: rgba(255, 255, 255, 0.68) !important;
+}
+
+.conversation-shell-menu-item.is-active {
+  border-color: transparent !important;
+  color: var(--chrome-accent) !important;
+  background: var(--chrome-active) !important;
+}
+
+.conversation-shell-menu-item-danger:hover,
+.conversation-shell-menu-item-danger:focus-visible {
+  color: var(--chrome-danger) !important;
+  background: rgba(216, 98, 98, 0.08) !important;
+}
+
+.conversation-shell-menu-note {
+  margin: 2px 4px 0 !important;
+  padding: 6px 4px 2px !important;
+  border-top: 1px solid var(--chrome-line);
+  color: var(--chrome-ink-muted) !important;
+}
+
+.pane-restore-btn,
+#restore-left-pane-btn,
+#restore-right-pane-btn {
+  position: absolute !important;
+  top: 50% !important;
+  bottom: auto !important;
+  z-index: 28;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  max-width: max-content;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-height: var(--chrome-height) !important;
+  padding: 2px 10px !important;
+  color: var(--chrome-ink-muted) !important;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap;
+  transform: translateY(-50%) !important;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+#restore-left-pane-btn.is-hidden,
+#restore-right-pane-btn.is-hidden {
+  display: none !important;
+}
+
+#restore-left-pane-btn:not(.pane-restore-btn-right),
+#restore-right-pane-btn:not(.pane-restore-btn-right) {
+  left: 36px !important;
+  right: auto !important;
+}
+
+#restore-left-pane-btn.pane-restore-btn-right,
+#restore-right-pane-btn.pane-restore-btn-right {
+  left: auto !important;
+  right: 36px !important;
+}
+
+.pane-restore-btn:hover,
+.pane-restore-btn:focus-visible {
+  color: var(--chrome-ink) !important;
+}
+
+.stage-restore-dock.ui-recovery-dock {
+  position: absolute !important;
+  top: auto !important;
+  bottom: 14px !important;
+  left: 50% !important;
+  z-index: 34;
+  transform: translateX(-50%) !important;
+  -webkit-app-region: no-drag;
+}
+
+.ui-recovery-control,
+.canvas-chrome-layout-dock #stage-restore-btn {
+  min-height: var(--chrome-control-size) !important;
+  padding: 0 9px !important;
+  border-radius: 8px !important;
+  color: var(--chrome-ink-muted) !important;
+}
+
+.ui-recovery-dock .ui-recovery-control,
+.canvas-chrome-layout-dock #stage-restore-btn {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ui-recovery-dock .ui-recovery-control:hover,
+.ui-recovery-dock .ui-recovery-control:focus-visible {
+  color: var(--chrome-ink) !important;
+  background: var(--chrome-hover) !important;
+}
+
+body.desktop-full-pass-through .canvas-chrome-surface {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --chrome-control-size: 30px;
+    --chrome-height: 36px;
+  }
+
+  #restore-right-pane-btn:not(.is-hidden) {
+    top: 50% !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-chrome-surface,
+  .conversation-shell-menu-item {
+    transition: none !important;
+  }
+}

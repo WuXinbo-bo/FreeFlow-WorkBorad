@@ -87,7 +87,10 @@
   --blur: 0px;
 }
 
-html,
+html {
+  background: transparent !important;
+}
+
 body {
   color: var(--air-ink);
   background: var(--air-workspace) !important;
@@ -129,20 +132,6 @@ body.desktop-mode .desktop-clear-stage,
 .conversation-panel,
 body.desktop-mode .conversation-panel {
   overflow: hidden !important;
-  border: 1px solid var(--air-line) !important;
-  border-radius: var(--air-radius-window) !important;
-  background: var(--air-canvas) !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  transition: border-color 140ms ease, opacity 140ms ease !important;
-}
-
-.desktop-clear-stage:hover,
-.conversation-panel:hover,
-.desktop-clear-stage:focus-within,
-.conversation-panel:focus-within {
-  border-color: var(--air-line-strong) !important;
 }
 
 body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
@@ -310,44 +299,6 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
   background: transparent !important;
 }
 
-.pane-restore-btn,
-#restore-left-pane-btn,
-#restore-right-pane-btn {
-  top: 68px !important;
-  width: auto !important;
-  min-height: 32px !important;
-  padding: 0 10px !important;
-  border: 1px solid var(--air-line) !important;
-  border-radius: var(--air-radius-control) !important;
-  color: var(--air-ink-muted) !important;
-  background: rgba(255, 255, 255, 0.86) !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  writing-mode: horizontal-tb !important;
-  text-orientation: mixed !important;
-  letter-spacing: 0 !important;
-  transform: none !important;
-}
-
-#restore-left-pane-btn {
-  left: 18px !important;
-  right: auto !important;
-}
-
-#restore-right-pane-btn,
-.pane-restore-btn.pane-restore-btn-right {
-  left: auto !important;
-  right: 18px !important;
-}
-
-.pane-restore-btn:hover,
-.pane-restore-btn:focus-visible {
-  border-color: var(--air-line-strong) !important;
-  color: var(--air-ink) !important;
-  background: #fff !important;
-}
-
 body:has(.canvas2d-engine-toolbar-wrap.is-overlay-active) .pane-restore-btn,
 body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   opacity: 0 !important;
@@ -364,11 +315,6 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   .workspace.right-collapsed,
   .workspace.left-collapsed.right-collapsed {
     height: calc(100vh - 16px) !important;
-  }
-
-  .desktop-clear-stage,
-  .conversation-panel {
-    border-radius: 8px !important;
   }
 
   .canvas-engine-stage {
@@ -977,27 +923,6 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
   box-shadow: none !important;
 }
 
-.stage-restore-dock {
-  top: auto !important;
-  bottom: 10px !important;
-}
-
-#stage-restore-btn {
-  min-height: 30px !important;
-  padding: 0 9px !important;
-  border: 0 !important;
-  border-radius: var(--air-radius-control) !important;
-  color: var(--air-ink-muted) !important;
-  background: rgba(248, 250, 248, 0.7) !important;
-  box-shadow: none !important;
-}
-
-#stage-restore-btn:hover,
-#stage-restore-btn:focus-visible {
-  color: var(--air-ink) !important;
-  background: var(--air-hover) !important;
-}
-
 @media (max-width: 980px) {
   .canvas2d-navigator-panel {
     width: min(232px, calc(100vw - 58px)) !important;
@@ -1482,10 +1407,6 @@ body.desktop-mode .conversation-panel {
 .right-panel-window-strip {
   min-height: 34px !important;
   padding: 2px !important;
-  border: 1px solid var(--air-line) !important;
-  border-radius: 8px !important;
-  background: rgba(255, 255, 255, 0.7) !important;
-  box-shadow: none !important;
 }
 
 .right-panel-window-slider,
@@ -1494,10 +1415,6 @@ body.desktop-mode .conversation-panel {
   top: 2px !important;
   left: 2px !important;
   height: calc(100% - 4px) !important;
-  border: 0 !important;
-  border-radius: var(--air-radius-control) !important;
-  background: var(--air-active) !important;
-  box-shadow: none !important;
 }
 
 .right-panel-window-tab,
@@ -1506,16 +1423,8 @@ body.desktop-mode .conversation-panel {
   min-width: 92px !important;
   min-height: 28px !important;
   padding: 5px 9px !important;
-  border-radius: var(--air-radius-control) !important;
-  color: var(--air-ink-muted) !important;
   font-size: 13px !important;
   transform: none !important;
-}
-
-.right-panel-window-tab:hover,
-.right-panel-window-tab:focus-visible,
-.right-panel-window-tab.is-active {
-  color: var(--air-ink) !important;
 }
 
 .right-panel-switch-lock-btn,
@@ -1525,21 +1434,7 @@ body.desktop-mode .conversation-panel {
   min-width: 32px !important;
   height: 32px !important;
   min-height: 32px !important;
-  border: 1px solid transparent !important;
-  border-radius: var(--air-radius-control) !important;
-  color: var(--air-ink-soft) !important;
-  background: transparent !important;
-  box-shadow: none !important;
   transform: none !important;
-}
-
-.right-panel-switch-lock-btn:hover,
-.right-panel-switch-lock-btn:focus-visible,
-.right-panel-switch-lock-btn.is-locked {
-  border-color: var(--air-line) !important;
-  color: var(--air-ink) !important;
-  background: var(--air-hover) !important;
-  box-shadow: none !important;
 }
 
 .thread-viewport {
@@ -1601,10 +1496,6 @@ body.desktop-mode .message.user .message-bubble {
 
 .message-menu-panel {
   padding: 4px !important;
-  border: 1px solid var(--air-line) !important;
-  border-radius: 8px !important;
-  background: #fff !important;
-  box-shadow: var(--air-shadow-float) !important;
 }
 
 .message-menu-item {
@@ -1630,19 +1521,6 @@ body.desktop-mode .composer {
   bottom: auto !important;
   margin-top: 10px !important;
   padding: 8px 10px !important;
-  border: 1px solid var(--air-line-strong) !important;
-  border-radius: 10px !important;
-  background: rgba(255, 255, 255, 0.96) !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  transition: border-color 140ms ease !important;
-}
-
-.composer:focus-within {
-  border-color: rgba(53, 106, 230, 0.38) !important;
-  outline: 2px solid rgba(53, 106, 230, 0.08) !important;
-  outline-offset: 0 !important;
 }
 
 .composer textarea {
@@ -1695,29 +1573,7 @@ body.desktop-mode .composer {
   background: var(--air-active) !important;
 }
 
-/* Settings drawer: one surface, with sections separated by rhythm and rules. */
-#insight-drawer {
-  top: 12px !important;
-  right: 12px !important;
-  bottom: 12px !important;
-  width: min(420px, calc(100vw - 24px)) !important;
-  padding: 16px !important;
-  border: 1px solid var(--air-line-strong) !important;
-  border-radius: var(--air-radius-window) !important;
-  color: var(--air-ink) !important;
-  background: #fff !important;
-  box-shadow: var(--air-shadow-float) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-.drawer-backdrop,
-.drawer-backdrop.is-open {
-  background: rgba(32, 37, 43, 0.14) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
+/* Settings drawer content: sections are separated by rhythm and rules. */
 .drawer-header {
   flex-direction: row !important;
   align-items: flex-start !important;

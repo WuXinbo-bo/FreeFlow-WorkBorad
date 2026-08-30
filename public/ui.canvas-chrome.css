@@ -1,76 +1,3 @@
-:root {
-  --canvas-chrome-inline-inset: 16px;
-  --canvas-chrome-inline-end-inset: 8px;
-  --canvas-chrome-block-inset: 16px;
-  --canvas-chrome-control-size: 34px;
-  --canvas-chrome-height: 40px;
-  --canvas-chrome-radius: 10px;
-  --canvas-chrome-status-dock-width: calc(var(--canvas-chrome-control-size) * 2 + 8px);
-  --canvas-chrome-minimap-expanded-width: 164px;
-  --canvas-chrome-minimap-expanded-height: 134px;
-  --canvas-chrome-minimap-collapsed-size: 38px;
-  --canvas-chrome-glass-idle: rgba(255, 255, 255, 0.58);
-  --canvas-chrome-glass-active: rgba(255, 255, 255, 0.8);
-  --canvas-chrome-glass-border: rgba(255, 255, 255, 0.78);
-  --canvas-chrome-glass-border-active: rgba(255, 255, 255, 0.94);
-  --canvas-chrome-glass-shadow: 0 8px 24px rgba(31, 38, 46, 0.08);
-  --canvas-chrome-glass-shadow-active: 0 12px 30px rgba(31, 38, 46, 0.13);
-}
-
-.canvas-chrome-surface {
-  border: 1px solid var(--canvas-chrome-glass-border) !important;
-  border-radius: var(--canvas-chrome-radius) !important;
-  background-color: var(--canvas-chrome-glass-idle) !important;
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12)) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    var(--canvas-chrome-glass-shadow) !important;
-  backdrop-filter: blur(16px) saturate(125%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(125%) !important;
-  opacity: 0.84;
-  transition:
-    opacity 160ms ease,
-    transform 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease !important;
-}
-
-.canvas-chrome-surface:hover,
-.canvas-chrome-surface:focus-within,
-.canvas2d-engine-toolbar-wrap.is-overlay-active > .canvas-chrome-surface,
-.canvas2d-engine-search-stack.is-overlay-active .canvas-chrome-surface,
-body:has(#conversation-shell-menu:not(.is-hidden)) .canvas-chrome-status-dock,
-body:has(#insight-drawer.is-open) .canvas-chrome-status-dock {
-  border-color: var(--canvas-chrome-glass-border-active) !important;
-  background-color: var(--canvas-chrome-glass-active) !important;
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.1) 52%, rgba(181, 204, 224, 0.16)) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    var(--canvas-chrome-glass-shadow-active) !important;
-  opacity: 1;
-  transform: translateY(-1px);
-}
-
-.app-global-shell-actions.canvas-chrome-status-dock {
-  top: 18px !important;
-  right: 18px !important;
-  min-height: var(--canvas-chrome-height);
-  width: var(--canvas-chrome-status-dock-width);
-  gap: 2px !important;
-  padding: 2px !important;
-  box-sizing: border-box;
-}
-
-.canvas-chrome-status-dock .conversation-more-btn,
-.canvas-chrome-status-dock #conversation-settings-btn,
-.canvas-chrome-status-dock #conversation-shell-more {
-  width: var(--canvas-chrome-control-size) !important;
-  min-width: var(--canvas-chrome-control-size) !important;
-  height: var(--canvas-chrome-control-size) !important;
-  min-height: var(--canvas-chrome-control-size) !important;
-}
-
 .canvas2d-engine-topbar {
   top: var(--canvas-chrome-block-inset) !important;
   left: var(--canvas-chrome-inline-inset) !important;
@@ -126,7 +53,7 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock {
 .canvas2d-engine-search-row.canvas-chrome-utility-dock:hover,
 .canvas2d-engine-search-row.canvas-chrome-utility-dock:focus-within,
 .canvas2d-engine-search-stack.is-overlay-active .canvas-chrome-utility-dock {
-  background-color: var(--canvas-chrome-glass-idle) !important;
+  background-color: var(--chrome-glass-idle) !important;
   background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12)) !important;
   opacity: 0.84;
   transform: translateY(-1px);
@@ -180,16 +107,6 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock {
 
 .canvas-chrome-panel-controls {
   padding: 2px !important;
-}
-
-.canvas-chrome-layout-dock {
-  padding: 2px !important;
-}
-
-.canvas-chrome-layout-dock #stage-restore-btn {
-  min-height: var(--canvas-chrome-control-size) !important;
-  border: 0 !important;
-  background: transparent !important;
 }
 
 .canvas-chrome-minimap {
@@ -419,19 +336,7 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock {
   box-shadow: 0 16px 42px rgba(31, 38, 46, 0.14) !important;
 }
 
-body.desktop-full-pass-through .canvas-chrome-surface {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
 @media (max-width: 720px) {
-  :root {
-    --canvas-chrome-control-size: 30px;
-    --canvas-chrome-height: 36px;
-    --canvas-chrome-status-dock-width: calc(var(--canvas-chrome-control-size) * 2 + 8px);
-  }
-
   .canvas2d-engine-topbar,
   .canvas2d-engine-corner-bottom-right {
     right: calc(var(--canvas-chrome-inline-end-inset) + var(--canvas-chrome-status-dock-width) + 8px) !important;
@@ -446,17 +351,9 @@ body.desktop-full-pass-through .canvas-chrome-surface {
     max-width: 22px;
     height: 22px;
   }
-
-  #restore-right-pane-btn:not(.is-hidden) {
-    top: 112px !important;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .canvas-chrome-surface {
-    transition: none !important;
-  }
-
   .canvas-chrome-edge-rail::after {
     transition: none;
   }
