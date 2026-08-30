@@ -114,11 +114,13 @@ function drawRotateHandle(ctx, x, y, width, height) {
 }
 
 export function createShapeRenderer() {
-  return function renderShapeElement({ ctx, item, view, selected, hover, helpers }) {
+  const renderer = function renderShapeElement({ ctx, item, view, selected, hover, helpers }) {
     if (item?.type !== "shape") {
       return false;
     }
     drawShapeElement(ctx, item, view, selected, hover, helpers);
     return true;
   };
+  renderer.supportedTypes = ["shape"];
+  return renderer;
 }

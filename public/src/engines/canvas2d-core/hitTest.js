@@ -1,4 +1,4 @@
-import { getElementBounds } from "./elements/index.js";
+import { getElementBounds, getElementDefinition } from "./elements/index.js";
 import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isMindRelationshipItem } from "./elements/mindRelationship.js";
@@ -46,7 +46,8 @@ export function hitTestElement(items, point, scale = 1) {
     if (!item) {
       continue;
     }
-    if (item.type === "flowEdge") {
+    const hitTestPolicy = getElementDefinition(item)?.capabilities?.hitTest || "bounds";
+    if (hitTestPolicy === "line") {
       const fromPoint = candidate.geometry?.fromPoint;
       const toPoint = candidate.geometry?.toPoint;
       if (!fromPoint || !toPoint) {
@@ -57,7 +58,7 @@ export function hitTestElement(items, point, scale = 1) {
       }
       continue;
     }
-    if (isMindRelationshipItem(item)) {
+    if (hitTestPolicy === "relationship") {
       const fromPoint = candidate.geometry?.fromPoint;
       const toPoint = candidate.geometry?.toPoint;
       const midpoint = candidate.geometry?.midpoint;
@@ -73,7 +74,7 @@ export function hitTestElement(items, point, scale = 1) {
       }
       continue;
     }
-    if (item.type === "shape" && isLinearShape(item.shapeType)) {
+    if (hitTestPolicy === "shape-path" && isLinearShape(item.shapeType)) {
       const startPoint = candidate.geometry?.startPoint || { x: item.startX, y: item.startY };
       const endPoint = candidate.geometry?.endPoint || { x: item.endX, y: item.endY };
       if (lineDistance(point, startPoint, endPoint) <= tolerance) {
@@ -85,13 +86,13 @@ export function hitTestElement(items, point, scale = 1) {
     if (pointInBounds(point, bounds, tolerance)) {
       return item;
     }
-    if (item.type === "fileCard" && item.memoVisible) {
+    if (hitTestPolicy === "bounds-file-memo" && item.memoVisible) {
       const memoBounds = candidate.geometry?.memoBounds || getFileCardMemoBounds(item);
       if (pointInBounds(point, memoBounds, tolerance)) {
         return item;
       }
     }
-    if (item.type === "image" && item.memoVisible) {
+    if (hitTestPolicy === "bounds-image-memo" && item.memoVisible) {
       const memoBounds = candidate.geometry?.memoBounds || getImageMemoBounds(item);
       if (pointInBounds(point, memoBounds, tolerance)) {
         return item;
@@ -106,7 +107,11 @@ export function hitTestHandle(item, point, scale = 1) {
     return null;
   }
   const tolerance = Math.min(48, Math.max(8, 12 / Math.max(0.1, scale)));
-  if (item.type === "mindNode") {
+  const handlePolicy = getElementDefinition(item)?.capabilities?.handles || "bounds";
+  if (handlePolicy === "none") {
+    return null;
+  }
+  if (handlePolicy === "mind-node") {
     const pseudoView = { scale, offsetX: 0, offsetY: 0 };
     const anchorBounds = getMindNodeLinkAnchorScreenBounds(item, pseudoView, {
       left: Number(item.x || 0),
@@ -120,7 +125,7 @@ export function hitTestHandle(item, point, scale = 1) {
       return "mind-link-anchor";
     }
   }
-  if (isMindRelationshipItem(item)) {
+  if (handlePolicy === "relationship" && isMindRelationshipItem(item)) {
     const midpoint = item.__mindRelationshipMidpoint;
     if (midpoint) {
       const distance = Math.hypot(Number(point?.x || 0) - Number(midpoint.x || 0), Number(point?.y || 0) - Number(midpoint.y || 0));
@@ -129,7 +134,7 @@ export function hitTestHandle(item, point, scale = 1) {
       }
     }
   }
-  if (item.type === "shape" && item.shapeType === "rect") {
+  if (handlePolicy === "shape" && item.shapeType === "rect") {
     const bounds = getElementBounds(item);
     const inset = Math.max(6, 10 / Math.max(0.1, scale));
     const handles = {
@@ -145,7 +150,7 @@ export function hitTestHandle(item, point, scale = 1) {
       }
     }
   }
-  if (item.type === "shape" && isLinearShape(item.shapeType)) {
+  if (handlePolicy === "shape" && isLinearShape(item.shapeType)) {
     const startHit = Math.hypot(Number(point?.x || 0) - Number(item.startX || 0), Number(point?.y || 0) - Number(item.startY || 0));
     if (startHit <= tolerance) {
       return "start";
@@ -180,7 +185,7 @@ export function collectElementsInRect(items, startPoint, currentPoint) {
   const bottom = Math.max(Number(startPoint?.y || 0), Number(currentPoint?.y || 0));
   const index = resolveHitTestSpatialIndex(items);
   const candidates = queryHitTestSpatialIndex(index, { left, top, right, bottom })
-    .filter((candidate) => candidate.item && candidate.item.type !== "flowEdge")
+    .filter((candidate) => candidate.item && getElementDefinition(candidate.item)?.capabilities?.marquee !== false)
     .sort((a, b) => a.itemIndex - b.itemIndex);
   const selectedIds = [];
   const seenIds = new Set();

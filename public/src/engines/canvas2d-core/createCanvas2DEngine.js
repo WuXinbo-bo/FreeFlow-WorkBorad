@@ -20,6 +20,7 @@ import {
 } from "./alignmentSnap.js";
 import { DEFAULT_VIEW, DRAW_TOOLS, TOOL_SHORTCUTS } from "./constants.js";
 import {
+  canvasElementRegistry,
   createEmptyBoard,
   getBoardBounds,
   getElementBounds,
@@ -40,7 +41,6 @@ import {
   collectMindMapVisibleConnections,
   isMindMapItemVisible,
   isMindMapNode,
-  isMindSummaryItem,
   MIND_BRANCH_AUTO,
   MIND_BRANCH_LEFT,
   MIND_BRANCH_RIGHT,
@@ -173,6 +173,11 @@ import {
   isScenePointInsideBounds as isPointInsideMultiSelectionBounds,
 } from "./multiSelectionTransform.js";
 import { createRenderScheduler } from "./render/renderScheduler.js";
+import { createElementLifecycleManager } from "./runtime/elementLifecycleManager.js";
+import { createElementAdapterManager } from "./runtime/elementAdapterManager.js";
+import { createElementResourceManager } from "./runtime/elementResourceManager.js";
+import { createFrameContext } from "./runtime/frameContext.js";
+import { invalidationToRenderPatch } from "./runtime/elementInvalidation.js";
 import {
   hasViewportSizeChanged,
   resolveViewportPixelBudget,
@@ -3185,16 +3190,45 @@ export function createCanvas2DEngine(options = {}) {
   const flowModule = createFlowModule({
     getItemById: (id) => sceneRegistry.getItemById(id),
   });
+  const imageRenderer = imageModule.createRenderer();
   const elementRenderers = [
     shapeModule.createRenderer(),
     flowModule.createRenderer(),
-    imageModule.createRenderer(),
+    imageRenderer,
     createStructuredCanvasRenderer(),
   ];
   const pasteHandlers = [];
   const dragHandlers = [];
   const commandHandlers = new Map();
   const renderer = createRenderer({ customRenderers: elementRenderers });
+  const elementLifecycleManager = createElementLifecycleManager({ registry: canvasElementRegistry });
+  const overlayAdapterManager = createElementAdapterManager();
+  overlayAdapterManager.register("rich", { sync: (visibleScene, frameContext) => syncRichTextOverlays(visibleScene, frameContext) });
+  overlayAdapterManager.register("code", { sync: (visibleScene, frameContext) => syncCodeBlockOverlays(visibleScene, frameContext) });
+  overlayAdapterManager.register("math", { sync: (visibleScene, frameContext) => syncMathOverlays(visibleScene, frameContext) });
+  const editorAdapterManager = createElementAdapterManager();
+  const elementResourceManager = createElementResourceManager({ registry: canvasElementRegistry });
+  elementResourceManager.register("image", {
+    sync: (items) => imageRenderer.syncResources?.(items),
+    dispose: () => imageRenderer.disposeResources?.(),
+  });
+  elementResourceManager.register("file", {
+    sync: (items) => {
+      if (items.length) {
+        return;
+      }
+      fileCardIdHydrationQueue.clear();
+      fileCardSourceHydrationQueue.clear();
+    },
+  });
+  editorAdapterManager.register("text", { begin: beginTextEdit, commit: commitTextEdit, cancel: cancelTextEdit });
+  editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
+  editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
+  editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
+  editorAdapterManager.register("table", { begin: beginTableEdit, commit: commitTableEdit, cancel: cancelTableEdit });
+  editorAdapterManager.register("file-memo", { begin: beginFileMemoEdit, commit: commitFileMemoEdit, cancel: cancelFileMemoEdit });
+  editorAdapterManager.register("image-memo", { begin: beginImageMemoEdit, commit: commitImageMemoEdit, cancel: cancelImageMemoEdit });
+  editorAdapterManager.register("image", { begin: beginImageEdit, commit: finishImageEdit, cancel: finishImageEdit });
   const clipboardBroker = createClipboardBroker({
     readClipboardText: async () => {
       if (typeof globalThis?.desktopShell?.readClipboardText === "function") {
@@ -4649,7 +4683,7 @@ let tablePointerSelectionState = {
     };
   }
 
-  function collectRenderFrameInput({ dirtyState = null, layerState = null } = {}) {
+  function collectRenderFrameInput({ dirtyState = null, layerState = null, frameId = 0, timestamp = 0 } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
@@ -4657,9 +4691,21 @@ let tablePointerSelectionState = {
     const sceneKey = "board-scene-cache-v3";
     const viewportWidth = Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1);
     const viewportHeight = Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1);
+    const frameView = createView(state.board.view);
+    const viewportBudget = getCurrentViewportBudget();
+    const frameContext = createFrameContext({
+      frameId,
+      timestamp,
+      view: frameView,
+      sceneRevision,
+      boardRevision: state.boardRevision,
+      registryRevision: canvasElementRegistry.getRevision(),
+      pixelRatio: viewportBudget.effectiveDpr,
+      runtimeMode: isViewportInteractionActive() ? "viewport-interaction" : state.editingId ? "editing" : "steady",
+    });
     const visibleScene = queryVisibleSceneItems(
       sceneIndex,
-      state.board.view,
+      frameContext.view,
       viewportWidth,
       viewportHeight,
       { marginPx: 220 }
@@ -4673,6 +4719,7 @@ let tablePointerSelectionState = {
       viewportPrediction,
       dirtyState,
       layerState,
+      frameContext,
     };
   }
 
@@ -4682,8 +4729,8 @@ let tablePointerSelectionState = {
     return Boolean(snapshot?.active && (reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan"));
   }
 
-  function updateOverlayCanvasLodState() {
-    overlayCanvasLodActive = resolveCanvasLodHysteresis(state.board.view?.scale, {
+  function updateOverlayCanvasLodState(view = state.board.view) {
+    overlayCanvasLodActive = resolveCanvasLodHysteresis(view?.scale, {
       active: overlayCanvasLodActive,
       enterScale: RICH_OVERLAY_PREVIEW_MIN_SCALE,
       exitScale: OVERLAY_CANVAS_LOD_EXIT_SCALE,
@@ -4695,7 +4742,7 @@ let tablePointerSelectionState = {
     return overlayCanvasLodActive || isViewportInteractionActive();
   }
 
-  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null } = {}) {
+  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null, frameContext = null } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
@@ -4705,12 +4752,31 @@ let tablePointerSelectionState = {
       !largeViewportProgressivePending &&
       (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.backgroundDirty || dirtyState?.reason === "mount")
     );
-    const canvasLodActive = updateOverlayCanvasLodState();
+    const frameView = frameContext?.view || createView(state.board.view);
+    const canvasLodActive = updateOverlayCanvasLodState(frameView);
     const viewportInteractionActive = isViewportInteractionActive();
+    const visibleIds = (visibleScene?.items || []).map((item) => String(item?.id || "")).filter(Boolean);
+    const interactingIds = viewportInteractionActive
+      ? visibleIds
+      : state.pointer && state.board.selectedIds.length
+        ? state.board.selectedIds
+        : [];
+    elementLifecycleManager.reconcile({
+      items: state.board.items,
+      visibleIds,
+      editingId: state.editingId,
+      interactingIds,
+      frameContext,
+      sceneRevision: frameContext?.sceneRevision || sceneRevision,
+    });
+    elementResourceManager.sync(state.board.items, {
+      sceneRevision: frameContext?.sceneRevision || sceneRevision,
+      frameContext,
+    });
     renderer.render({
       ctx: refs.ctx,
       canvas: refs.canvas,
-      view: state.board.view,
+      view: frameView,
       items: state.board.items,
       visibleItems: visibleScene?.items || [],
       sceneIndex,
@@ -4744,6 +4810,7 @@ let tablePointerSelectionState = {
       viewportPrediction,
       dirtyState,
       layerState,
+      frameContext,
     });
     const stats = refs.canvas?.__ffRenderStats || null;
     if (stats?.progressiveRender?.pending) {
@@ -4776,14 +4843,13 @@ let tablePointerSelectionState = {
     }
     syncEditorLayout();
     syncRichTextToolbar();
-    syncRichTextOverlays(visibleScene);
-    syncCodeBlockOverlays(visibleScene);
+    overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
     // File-card Word previews are rendered by the Canvas2D React UI from state.
-    syncMathOverlays(visibleScene);
     syncCodeBlockToolbar();
     syncImageToolbar();
     syncMindNodeChrome();
     syncCanvasCursor();
+    elementLifecycleManager.finishSettling(frameContext);
     return refs.canvas?.__ffRenderStats || null;
   }
 
@@ -4802,16 +4868,17 @@ let tablePointerSelectionState = {
     if (!refs.canvas || !refs.ctx) {
       return 0;
     }
+    const invalidationPatch = invalidationToRenderPatch(options.invalidation);
     return ensureRenderScheduler().schedule({
       reason: String(options.reason || "render").trim() || "render",
-      backgroundDirty: Boolean(options.backgroundDirty),
-      sceneDirty: Boolean(options.sceneDirty),
+      backgroundDirty: Boolean(options.backgroundDirty || invalidationPatch.backgroundDirty),
+      sceneDirty: Boolean(options.sceneDirty || invalidationPatch.sceneDirty),
       viewDirty: Boolean(options.viewDirty),
-      interactionDirty: options.interactionDirty !== false,
-      overlayDirty: Boolean(options.overlayDirty),
-      hitTestDirty: Boolean(options.hitTestDirty),
+      interactionDirty: options.interactionDirty !== false || invalidationPatch.interactionDirty,
+      overlayDirty: Boolean(options.overlayDirty || invalidationPatch.overlayDirty),
+      hitTestDirty: Boolean(options.hitTestDirty || invalidationPatch.hitTestDirty),
       fullOverlayRescan: Boolean(options.fullOverlayRescan),
-      itemIds: Array.isArray(options.itemIds) ? options.itemIds : [],
+      itemIds: Array.from(new Set([...(Array.isArray(options.itemIds) ? options.itemIds : []), ...invalidationPatch.itemIds])),
     });
   }
 
@@ -10917,7 +10984,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  function syncRichTextOverlays(visibleScene = null) {
+  function syncRichTextOverlays(visibleScene = null, frameContext = null) {
+    if (refs.richDisplayHost) {
+      refs.richDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
+    }
     if (!(refs.richDisplayHost instanceof HTMLDivElement)) {
       return;
     }
@@ -10943,7 +11013,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const frameView = frameContext?.view || state.board.view;
+    const scale = Math.max(0.1, Number(frameView.scale || 1));
     if (shouldSuspendCanvasOverlays()) {
       setOverlayHostSuspended(refs.richDisplayHost, true);
       return;
@@ -10982,8 +11053,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     const interactionPriorityActive = interactionPriorityGate.isActive();
     const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
-    const offsetX = Number(state.board.view.offsetX || 0);
-    const offsetY = Number(state.board.view.offsetY || 0);
+    const offsetX = Number(frameView.offsetX || 0);
+    const offsetY = Number(frameView.offsetY || 0);
     const scaleBucket = getRichOverlayScaleBucket(scale);
     const editingId = state.editingId;
     const viewportBounds = getRichOverlayViewportBounds(
@@ -11069,7 +11140,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         (!interactionPriorityActive && detailMode) || isRichOverlayDetailPinned(item.id)
           ? "detail"
           : resolveRichOverlaySummaryMode({ scale, width, height });
-      const surfaceLayout = resolveRichTextSurfaceLayout(item, state.board.view, {
+      const surfaceLayout = resolveRichTextSurfaceLayout(item, frameView, {
         mode: "display",
         overlayMode,
       });
@@ -11247,7 +11318,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
-  function syncMathOverlays(visibleScene = null) {
+  function syncMathOverlays(visibleScene = null, frameContext = null) {
+    if (refs.mathDisplayHost) {
+      refs.mathDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
+    }
     if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
       return;
     }
@@ -11295,7 +11369,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
 
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const frameView = frameContext?.view || state.board.view;
+    const scale = Math.max(0.1, Number(frameView.scale || 1));
     if (isCanvasLodScale(scale, MATH_OVERLAY_PREVIEW_MIN_SCALE)) {
       hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
         onRemove: (node) => {
@@ -11311,8 +11386,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     showOverlayHost(refs.mathDisplayHost);
     const interactionPriorityActive = interactionPriorityGate.isActive();
     const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
-    const offsetX = Number(state.board.view.offsetX || 0);
-    const offsetY = Number(state.board.view.offsetY || 0);
+    const offsetX = Number(frameView.offsetX || 0);
+    const offsetY = Number(frameView.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
       refs.surface,
       refs.canvas?.clientWidth || refs.canvas?.width || 0,
@@ -11479,7 +11554,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     // Legacy imperative file-card preview DOM was replaced by the React-owned preview surface.
   }
 
-  function syncCodeBlockOverlays(visibleScene = null) {
+  function syncCodeBlockOverlays(visibleScene = null, frameContext = null) {
+    if (refs.codeBlockDisplayHost) {
+      refs.codeBlockDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
+    }
     if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
       return;
     }
@@ -11514,7 +11592,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.codeBlockDisplayHost.classList.remove("is-hidden");
     refs.codeBlockDisplayHost.style.display = "block";
     setOverlayHostSuspended(refs.codeBlockDisplayHost, false);
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const frameView = frameContext?.view || state.board.view;
+    const scale = Math.max(0.1, Number(frameView.scale || 1));
     if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE)) {
       refs.codeBlockDisplayHost.classList.add("is-hidden");
       refs.codeBlockDisplayHost.style.display = "none";
@@ -11522,8 +11601,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastCodeBlockOverlayInteractive = interactive;
       return;
     }
-    const offsetX = Number(state.board.view.offsetX || 0);
-    const offsetY = Number(state.board.view.offsetY || 0);
+    const offsetX = Number(frameView.offsetX || 0);
+    const offsetY = Number(frameView.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
       refs.surface,
       refs.canvas?.clientWidth || refs.canvas?.width || 0,
@@ -12190,23 +12269,28 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function commitRichEdit() {
-    if (state.editingType === "flow-node") {
-      return commitFlowNodeEdit();
-    }
-    if (state.editingType === "mind-node") {
-      return commitMindNodeEdit();
-    }
-    return commitTextEdit();
+    return editorAdapterManager.invoke(state.editingType || "text", "commit") ?? false;
   }
 
   function cancelRichEdit() {
-    if (state.editingType === "flow-node") {
-      return cancelFlowNodeEdit();
+    return editorAdapterManager.invoke(state.editingType || "text", "cancel") ?? false;
+  }
+
+  function beginElementEdit(item, context = {}) {
+    if (!item) {
+      return false;
     }
-    if (state.editingType === "mind-node") {
-      return cancelMindNodeEdit();
+    const editorType = canvasElementRegistry.resolveElement(item)?.capabilities?.editor || "none";
+    if (editorType === "none" || editorType === "shape") {
+      return false;
     }
-    return cancelTextEdit();
+    if ((editorType === "file-memo" || editorType === "image-memo" || editorType === "image") && context.explicit !== true) {
+      return false;
+    }
+    const selection = editorType === "table"
+      ? context.selection || (context.scenePoint ? getTableCellSelectionFromScenePoint(item, context.scenePoint) : null)
+      : undefined;
+    return editorAdapterManager.invoke(editorType, "begin", item.id, selection) ?? false;
   }
 
   function getTableEditItem() {
@@ -19784,24 +19868,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         return;
       }
     }
-    if (target?.type === "text") {
-      beginTextEdit(target.id);
-      return;
-    }
-    if (target?.type === "flowNode") {
-      beginFlowNodeEdit(target.id);
-      return;
-    }
-    if (target?.type === "mindNode" || target?.type === "mindSummary") {
-      beginMindNodeEdit(target.id);
-      return;
-    }
-    if (target?.type === "table") {
-      beginTableEdit(target.id, getTableCellSelectionFromScenePoint(target, scenePoint));
-      return;
-    }
-    if (target?.type === "codeBlock") {
-      beginCodeBlockEdit(target.id);
+    if (target && beginElementEdit(target, {
+      scenePoint,
+    })) {
       return;
     }
     if (!target) {
@@ -24396,6 +24465,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     finishImageEdit();
     clearAlignmentSnap("unmount");
     stopAutosaveTimer();
+    elementLifecycleManager.dispose({ reason: "engine-unmount" });
+    elementResourceManager.sync([], { sceneRevision: sceneRevision + 1 });
     renderScheduler?.dispose?.();
     renderScheduler = null;
     lastViewportBudget = null;
@@ -24994,12 +25065,55 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (typeof handler !== "function") {
       return () => {};
     }
-    elementRenderers.push(handler);
+    const unregister = renderer.registerElementRenderer(handler);
+    scheduleRender({ reason: "element-renderer-register", sceneDirty: true });
+    let disposed = false;
     return () => {
-      const index = elementRenderers.indexOf(handler);
-      if (index >= 0) {
-        elementRenderers.splice(index, 1);
+      if (disposed) {
+        return;
       }
+      disposed = true;
+      unregister?.();
+      scheduleRender({ reason: "element-renderer-unregister", sceneDirty: true });
+    };
+  }
+
+  function registerElementDefinition(definition, adapters = {}) {
+    const registered = canvasElementRegistry.register(definition);
+    const disposers = [];
+    try {
+      if (typeof adapters.renderer === "function") {
+        const renderAdapter = (...args) => adapters.renderer(...args);
+        renderAdapter.supportedTypes = [registered.type];
+        disposers.push(renderer.registerElementRenderer(renderAdapter));
+      }
+      const editorType = registered.capabilities?.editor;
+      if (editorType && editorType !== "none" && adapters.editor) {
+        disposers.push(editorAdapterManager.register(editorType, adapters.editor));
+      }
+      const overlayType = registered.capabilities?.overlay;
+      if (overlayType && overlayType !== "none" && adapters.overlay) {
+        disposers.push(overlayAdapterManager.register(overlayType, adapters.overlay));
+      }
+      const resourceType = registered.capabilities?.resource;
+      if (resourceType && resourceType !== "none" && adapters.resource) {
+        disposers.push(elementResourceManager.register(resourceType, adapters.resource));
+      }
+    } catch (error) {
+      disposers.reverse().forEach((dispose) => dispose?.());
+      canvasElementRegistry.unregister(registered.type);
+      throw error;
+    }
+    scheduleRender({ reason: "element-definition-register", sceneDirty: true, overlayDirty: true });
+    let disposed = false;
+    return () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      disposers.reverse().forEach((dispose) => dispose?.());
+      canvasElementRegistry.unregister(registered.type);
+      scheduleRender({ reason: "element-definition-unregister", sceneDirty: true, overlayDirty: true });
     };
   }
 
@@ -25183,12 +25297,26 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     clearBoard,
     alignSelection,
     registerElementRenderer,
+    registerElementDefinition,
     registerPasteHandler,
     registerDragHandler,
     registerCommand,
     runCommand,
     getSnapshotData() {
       return clone(state.board);
+    },
+    getElementRegistrySnapshot() {
+      return canvasElementRegistry.validate({
+        requiredCapabilities: ["normalize", "getBounds", "translate", "resize", "render", "lod", "hitTest", "editor", "overlay", "resource", "layer"],
+      });
+    },
+    getElementRuntimeSnapshot() {
+      const snapshot = elementLifecycleManager.getSnapshot();
+      return {
+        revision: snapshot.revision,
+        states: Object.fromEntries(snapshot.states),
+        stats: snapshot.stats,
+      };
     },
     searchStructuredItems(query, limit = 10) {
       return structuredImportRuntime.buildSearchResults(state.board.items, query, limit);

@@ -1,8 +1,8 @@
-import { getElementBounds } from "../elements/index.js";
+import { getElementBounds, getElementDefinition } from "../elements/index.js";
 import { getFlowNodeConnectors } from "../elements/flow.js";
 import { getFileCardMemoBounds } from "../elements/fileCard.js";
 import { getImageMemoBounds } from "../elements/media.js";
-import { getMindRelationshipGeometry, isMindRelationshipItem } from "../elements/mindRelationship.js";
+import { getMindRelationshipGeometry } from "../elements/mindRelationship.js";
 import { isLinearShape } from "../elements/shapes.js";
 import { screenToScene } from "../camera.js";
 
@@ -233,11 +233,12 @@ function buildGenericRecord(item, itemIndex) {
   const bounds = toSizedBounds(getElementBounds(item));
   let queryBounds = bounds;
   let memoBounds = null;
-  if (item.type === "fileCard" && item.memoVisible) {
+  const hitTestPolicy = getElementDefinition(item)?.capabilities?.hitTest || "bounds";
+  if (hitTestPolicy === "bounds-file-memo" && item.memoVisible) {
     memoBounds = toSizedBounds(getFileCardMemoBounds(item));
     queryBounds = mergeBounds(queryBounds, memoBounds);
   }
-  if (item.type === "image" && item.memoVisible) {
+  if (hitTestPolicy === "bounds-image-memo" && item.memoVisible) {
     memoBounds = toSizedBounds(getImageMemoBounds(item));
     queryBounds = mergeBounds(queryBounds, memoBounds);
   }
@@ -258,13 +259,14 @@ function buildRecord(item, itemIndex, itemById) {
   if (!item || typeof item !== "object") {
     return null;
   }
-  if (item.type === "flowEdge") {
+  const hitTestPolicy = getElementDefinition(item)?.capabilities?.hitTest || "bounds";
+  if (hitTestPolicy === "line") {
     return buildFlowEdgeRecord(item, itemIndex, itemById);
   }
-  if (isMindRelationshipItem(item)) {
+  if (hitTestPolicy === "relationship") {
     return buildMindRelationshipRecord(item, itemIndex, itemById);
   }
-  if (item.type === "shape" && isLinearShape(item.shapeType)) {
+  if (hitTestPolicy === "shape-path" && isLinearShape(item.shapeType)) {
     return buildLinearShapeRecord(item, itemIndex);
   }
   return buildGenericRecord(item, itemIndex);

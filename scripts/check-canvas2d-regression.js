@@ -2010,6 +2010,164 @@ async function runElementContextMenuClipboardCheck(browser) {
   return result;
 }
 
+async function runUnifiedFrameLifecycleCheck(browser) {
+  const session = await createPage(browser, {
+    board: createBoard([
+      createTextItem("frame-text", 180, 180, "Frame contract"),
+      createCodeBlockItem("frame-code", 440, 180, "const frame = true;"),
+      createRectShape("frame-shape", 260, 360, 180, 120),
+    ]),
+  });
+  try {
+    await session.page.evaluate(async () => {
+      window.__canvas2dEngine?.resize?.();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    const before = await session.page.evaluate(() => {
+      const snapshot = window.__canvas2dEngine?.getSnapshot?.();
+      const stats = window.__ffRenderStats;
+      return {
+        frame: stats?.frameContext || null,
+        view: snapshot?.board?.view || null,
+        overlayFrames: {
+          rich: document.querySelector("#canvas2d-rich-display")?.dataset?.frameId || "",
+          math: document.querySelector("#canvas2d-math-display")?.dataset?.frameId || "",
+          code: document.querySelector("#canvas2d-code-block-display")?.dataset?.frameId || "",
+        },
+        runtime: window.__canvas2dEngine?.getElementRuntimeSnapshot?.() || null,
+        registry: window.__canvas2dEngine?.getElementRegistrySnapshot?.() || null,
+      };
+    });
+    assert(before.frame?.frameId > 0, "unified frame context was not published", before);
+    assert(JSON.stringify(before.frame.camera) === JSON.stringify(before.view), "render camera diverged from board view", before);
+    assert(Object.values(before.overlayFrames).every((value) => Number(value) === before.frame.frameId), "overlay frame revisions diverged", before);
+    assert(before.registry?.ok === true && before.registry.types?.length >= 13, "element registry is incomplete", before.registry);
+    assert(before.runtime?.states?.["frame-text"] === "visible", "text lifecycle did not enter visible", before.runtime);
+    assert(before.runtime?.states?.["frame-code"] === "visible", "code lifecycle did not enter visible", before.runtime);
+
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
+    await session.page.keyboard.down("Control");
+    for (let index = 0; index < 6; index += 1) {
+      await session.page.mouse.move(canvasRect.x + 520, canvasRect.y + 360);
+      await session.page.mouse.wheel(0, index % 2 === 0 ? -90 : 70);
+      await session.page.waitForTimeout(28);
+    }
+    await session.page.keyboard.up("Control");
+    await session.page.waitForTimeout(360);
+
+    const recovered = await session.page.evaluate(() => {
+      const snapshot = window.__canvas2dEngine?.getSnapshot?.();
+      const stats = window.__ffRenderStats;
+      return {
+        frame: stats?.frameContext || null,
+        runtimeMode: stats?.runtimeMode || null,
+        view: snapshot?.board?.view || null,
+        overlayFrames: {
+          rich: document.querySelector("#canvas2d-rich-display")?.dataset?.frameId || "",
+          math: document.querySelector("#canvas2d-math-display")?.dataset?.frameId || "",
+          code: document.querySelector("#canvas2d-code-block-display")?.dataset?.frameId || "",
+        },
+        runtime: window.__canvas2dEngine?.getElementRuntimeSnapshot?.() || null,
+      };
+    });
+    assert(recovered.frame?.frameId > before.frame.frameId, "frame revision did not advance during repeated zoom", { before, recovered });
+    assert(recovered.runtimeMode?.mode === "steady", "viewport interaction did not recover to steady", recovered);
+    assert(JSON.stringify(recovered.frame.camera) === JSON.stringify(recovered.view), "recovered camera snapshot diverged", recovered);
+    assert(Object.values(recovered.overlayFrames).every((value) => Number(value) === recovered.frame.frameId), "recovered overlay frames diverged", recovered);
+    assert(recovered.runtime?.states?.["frame-text"] === "visible", "text lifecycle retained stale interaction state", recovered.runtime);
+    assert(recovered.runtime?.states?.["frame-code"] === "visible", "code lifecycle retained stale interaction state", recovered.runtime);
+    const rendererFallback = await session.page.evaluate(async () => {
+      const calls = [];
+      const baseRenderer = ({ item }) => {
+        if (item?.id !== "frame-shape") {
+          return false;
+        }
+        calls.push("base");
+        return true;
+      };
+      baseRenderer.supportedTypes = ["shape"];
+      const overrideRenderer = ({ item }) => {
+        if (item?.id !== "frame-shape") {
+          return false;
+        }
+        calls.push("override");
+        return false;
+      };
+      overrideRenderer.supportedTypes = ["shape"];
+      const removeBase = window.__canvas2dEngine.registerElementRenderer(baseRenderer);
+      const removeOverride = window.__canvas2dEngine.registerElementRenderer(overrideRenderer);
+      window.__canvas2dEngine.resize();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      removeOverride();
+      removeBase();
+      window.__canvas2dEngine.resize();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return calls;
+    });
+    assert(
+      rendererFallback.some((value, index) => value === "override" && rendererFallback[index + 1] === "base"),
+      "renderer returning false did not fall back to the previous typed renderer",
+      rendererFallback
+    );
+
+    const extension = await session.page.evaluate(async () => {
+      const engine = window.__canvas2dEngine;
+      const definition = {
+        type: "testSticker",
+        normalize: (item) => ({ ...item, type: "testSticker" }),
+        getBounds: (item) => ({
+          left: Number(item.x || 0),
+          top: Number(item.y || 0),
+          right: Number(item.x || 0) + Number(item.width || 1),
+          bottom: Number(item.y || 0) + Number(item.height || 1),
+        }),
+        translate: (item, dx, dy) => ({ ...item, x: Number(item.x || 0) + dx, y: Number(item.y || 0) + dy }),
+        resize: (item) => item,
+        capabilities: {
+          render: "canvas",
+          lod: "full",
+          hitTest: "bounds",
+          handles: "bounds",
+          editor: "none",
+          overlay: "none",
+          resource: "none",
+          layer: "scene",
+          cache: "tile",
+          marquee: true,
+          visibility: "always",
+        },
+      };
+      const dispose = engine.registerElementDefinition(definition);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const registered = engine.getElementRegistrySnapshot();
+      dispose();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const removed = engine.getElementRegistrySnapshot();
+      const disposeReplacement = engine.registerElementDefinition(definition);
+      dispose();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const staleDisposeIgnored = engine.getElementRegistrySnapshot();
+      disposeReplacement();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const replacementRemoved = engine.getElementRegistrySnapshot();
+      return {
+        registered: registered.types.includes("testSticker") && registered.ok,
+        removed: !removed.types.includes("testSticker") && removed.ok,
+        staleDisposeIgnored: staleDisposeIgnored.types.includes("testSticker") && staleDisposeIgnored.ok,
+        replacementRemoved: !replacementRemoved.types.includes("testSticker") && replacementRemoved.ok,
+      };
+    });
+    assert(extension.registered === true, "runtime element definition did not register", extension);
+    assert(extension.removed === true, "runtime element definition did not unregister cleanly", extension);
+    assert(extension.staleDisposeIgnored === true, "stale definition disposer removed a later registration", extension);
+    assert(extension.replacementRemoved === true, "replacement definition did not unregister cleanly", extension);
+    assert(session.getErrors().length === 0, "unified frame lifecycle check produced page errors", session.getErrors());
+    return { before, recovered, rendererFallback, extension, repeatedZoomCycles: 6 };
+  } finally {
+    await session.page.close();
+  }
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const report = {
@@ -2044,6 +2202,7 @@ async function main() {
     report.checks.fileCardLodThreshold = await runFileCardLodThresholdCheck(browser);
     report.checks.pasteSemantic = await runPasteSemanticChecks(browser);
     report.checks.elementContextMenuClipboard = await runElementContextMenuClipboardCheck(browser);
+    report.checks.unifiedFrameLifecycle = await runUnifiedFrameLifecycleCheck(browser);
     console.log(JSON.stringify({ ok: true, ...report }, null, 2));
   } catch (error) {
     console.error(

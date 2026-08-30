@@ -20,6 +20,293 @@ import { normalizeTableElement, TABLE_MIN_HEIGHT, TABLE_MIN_WIDTH } from "./tabl
 import { MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
 import { buildTextElementFromMathElement } from "./mathText.js";
 import { normalizeCanvasNavigator } from "../canvasNavigator.js";
+import { createElementTypeRegistry } from "../runtime/elementTypeRegistry.js";
+
+function getRectBounds(element = {}) {
+  const left = Number(element.x || 0);
+  const top = Number(element.y || 0);
+  const width = Math.max(1, Number(element.width) || 1);
+  const height = Math.max(1, Number(element.height) || 1);
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
+
+function getShapeBounds(element = {}) {
+  if (!isLinearShape(element.shapeType)) {
+    return getRectBounds(element);
+  }
+  const left = Math.min(Number(element.startX || 0), Number(element.endX || 0));
+  const top = Math.min(Number(element.startY || 0), Number(element.endY || 0));
+  const right = Math.max(Number(element.startX || 0), Number(element.endX || 0));
+  const bottom = Math.max(Number(element.startY || 0), Number(element.endY || 0));
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+    right,
+    bottom,
+  };
+}
+
+function translateRectElement(element, dx, dy) {
+  return {
+    ...element,
+    x: Number(element.x || 0) + (Number(dx) || 0),
+    y: Number(element.y || 0) + (Number(dy) || 0),
+  };
+}
+
+function preserveElement(element) {
+  return element;
+}
+
+function getResizeRectGeometry(element, handle, point) {
+  if (!element || !handle) {
+    return null;
+  }
+  const bounds = getRectBounds(element);
+  const anchors = {
+    nw: { x: bounds.right, y: bounds.bottom },
+    ne: { x: bounds.left, y: bounds.bottom },
+    sw: { x: bounds.right, y: bounds.top },
+    se: { x: bounds.left, y: bounds.top },
+  };
+  const anchor = anchors[handle];
+  if (!anchor) {
+    return null;
+  }
+  const left = Math.min(anchor.x, Number(point?.x || 0));
+  const top = Math.min(anchor.y, Number(point?.y || 0));
+  const right = Math.max(anchor.x, Number(point?.x || 0));
+  const bottom = Math.max(anchor.y, Number(point?.y || 0));
+  return { anchor, left, top, right, bottom };
+}
+
+function resizeRectElement(element, handle, point) {
+  const geometry = getResizeRectGeometry(element, handle, point);
+  if (!geometry) {
+    return element;
+  }
+  return {
+    ...element,
+    x: geometry.left,
+    y: geometry.top,
+    width: Math.max(24, geometry.right - geometry.left),
+    height: Math.max(24, geometry.bottom - geometry.top),
+  };
+}
+
+function resizeShape(element, handle, point) {
+  if (!isLinearShape(element.shapeType)) {
+    const geometry = getResizeRectGeometry(element, handle, point);
+    const next = resizeRectElement(element, handle, point);
+    if (!geometry || next === element) {
+      return element;
+    }
+    return {
+      ...next,
+      startX: geometry.left,
+      startY: geometry.top,
+      endX: geometry.right,
+      endY: geometry.bottom,
+    };
+  }
+  const next = {
+    ...element,
+    startX: handle === "start" ? Number(point?.x || 0) : Number(element.startX || 0),
+    startY: handle === "start" ? Number(point?.y || 0) : Number(element.startY || 0),
+    endX: handle === "end" ? Number(point?.x || 0) : Number(element.endX || 0),
+    endY: handle === "end" ? Number(point?.y || 0) : Number(element.endY || 0),
+  };
+  next.x = Math.min(next.startX, next.endX);
+  next.y = Math.min(next.startY, next.endY);
+  next.width = Math.max(1, Math.abs(next.endX - next.startX));
+  next.height = Math.max(1, Math.abs(next.endY - next.startY));
+  return next;
+}
+
+function withMinSize(resize, minWidth, minHeight) {
+  return (element, handle, point) => {
+    const next = resize(element, handle, point);
+    if (next === element) {
+      return element;
+    }
+    return {
+      ...next,
+      width: Math.max(minWidth, next.width),
+      height: Math.max(minHeight, next.height),
+    };
+  };
+}
+
+function resizeFlowNode(element, handle, point) {
+  const next = resizeRectElement(element, handle, point);
+  if (next === element) {
+    return element;
+  }
+  const anchor = {
+    nw: { x: Number(element.x || 0) + Number(element.width || 0), y: Number(element.y || 0) + Number(element.height || 0) },
+    ne: { x: Number(element.x || 0), y: Number(element.y || 0) + Number(element.height || 0) },
+    sw: { x: Number(element.x || 0) + Number(element.width || 0), y: Number(element.y || 0) },
+    se: { x: Number(element.x || 0), y: Number(element.y || 0) },
+  }[handle];
+  const minSize = getFlowNodeMinSize({ ...element, ...next }, { widthHint: next.width });
+  next.width = Math.max(minSize.width, next.width);
+  next.height = Math.max(minSize.height, next.height);
+  if (handle === "nw" || handle === "sw") {
+    next.x = anchor.x - next.width;
+  }
+  if (handle === "nw" || handle === "ne") {
+    next.y = anchor.y - next.height;
+  }
+  return next;
+}
+
+function resizeText(element, handle, point) {
+  const next = resizeRectElement(element, handle, point);
+  if (next === element) {
+    return element;
+  }
+  const originalTop = Number(element.y || 0);
+  next.textBoxLayoutMode = TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT;
+  next.textResizeMode = TEXT_RESIZE_MODE_WRAP;
+  const minSize = getTextMinSize(
+    { ...element, ...next, textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT, textResizeMode: TEXT_RESIZE_MODE_WRAP },
+    { widthHint: next.width }
+  );
+  next.width = Math.max(80, minSize.width, next.width);
+  next.height = Math.max(40, minSize.height);
+  next.y = originalTop;
+  return next;
+}
+
+function createDefinition(type, options = {}) {
+  return {
+    type,
+    aliases: options.aliases || [],
+    schemaVersion: Number(options.schemaVersion || 1),
+    normalize: options.normalize,
+    getBounds: options.getBounds || getRectBounds,
+    translate: options.translate || translateRectElement,
+    resize: options.resize || resizeRectElement,
+    capabilities: {
+      render: "canvas",
+      lod: "full",
+      hitTest: "bounds",
+      editor: "none",
+      overlay: "none",
+      resource: "none",
+      layer: "scene",
+      cache: "tile",
+      handles: "bounds",
+      marquee: true,
+      visibility: "always",
+      ...options.capabilities,
+    },
+  };
+}
+
+function createBuiltinElementRegistry() {
+  const registry = createElementTypeRegistry({ fallbackType: "text" });
+  [
+    createDefinition("shape", {
+      normalize: normalizeShapeElement,
+      getBounds: getShapeBounds,
+      translate: moveShapeElement,
+      resize: resizeShape,
+      capabilities: { lod: "shape", hitTest: "shape-path", handles: "shape", editor: "shape", layer: "scene", cache: "tile" },
+    }),
+    createDefinition("image", {
+      normalize: normalizeImageElement,
+      capabilities: { lod: "image", hitTest: "bounds-image-memo", editor: "image", overlay: "image-memo", resource: "image", cache: "live" },
+    }),
+    createDefinition("fileCard", {
+      aliases: ["file"],
+      normalize: normalizeFileCardElement,
+      resize: withMinSize(resizeRectElement, 200, 96),
+      capabilities: { lod: "file-card", hitTest: "bounds-file-memo", editor: "file-memo", overlay: "file-preview", resource: "file", cache: "live" },
+    }),
+    createDefinition("codeBlock", {
+      aliases: ["code"],
+      normalize: normalizeCodeBlockElement,
+      resize: withMinSize(resizeRectElement, CODE_BLOCK_MIN_WIDTH, CODE_BLOCK_MIN_HEIGHT),
+      capabilities: { render: "canvas-dom", lod: "code-block", editor: "code-block", overlay: "code", cache: "tile" },
+    }),
+    createDefinition("table", {
+      normalize: normalizeTableElement,
+      resize: withMinSize(resizeRectElement, TABLE_MIN_WIDTH, TABLE_MIN_HEIGHT),
+      capabilities: { render: "canvas-dom", lod: "table", editor: "table", overlay: "table-editor", cache: "live" },
+    }),
+    createDefinition("mathBlock", {
+      aliases: ["math"],
+      normalize: buildTextElementFromMathElement,
+      resize: withMinSize(resizeRectElement, MATH_MIN_WIDTH, MATH_MIN_HEIGHT),
+      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile" },
+    }),
+    createDefinition("mathInline", {
+      normalize: buildTextElementFromMathElement,
+      resize: withMinSize(resizeRectElement, MATH_MIN_WIDTH, MATH_MIN_HEIGHT),
+      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile" },
+    }),
+    createDefinition("mindNode", {
+      aliases: ["mind"],
+      normalize: normalizeMindNodeElement,
+      resize: withMinSize(resizeRectElement, 160, 72),
+      capabilities: { render: "canvas-dom", lod: "mind-node", hitTest: "mind-node", handles: "mind-node", editor: "mind-node", overlay: "rich", cache: "live", visibility: "mind-map" },
+    }),
+    createDefinition("mindSummary", {
+      aliases: ["mind-summary"],
+      normalize: normalizeMindSummaryElement,
+      capabilities: { render: "canvas-dom", lod: "mind-summary", editor: "mind-node", overlay: "rich", cache: "live", visibility: "mind-map" },
+    }),
+    createDefinition("mindRelationship", {
+      aliases: ["mind-relationship"],
+      normalize: normalizeMindRelationshipElement,
+      translate: preserveElement,
+      resize: preserveElement,
+      capabilities: { hitTest: "relationship", handles: "relationship", layer: "mind-connections", cache: "live", marquee: false },
+    }),
+    createDefinition("flowNode", {
+      aliases: ["flow-node", "node"],
+      normalize: normalizeFlowNodeElement,
+      resize: resizeFlowNode,
+      capabilities: { render: "canvas-dom", lod: "flow-node", hitTest: "flow-node", editor: "flow-node", overlay: "rich", cache: "tile" },
+    }),
+    createDefinition("flowEdge", {
+      aliases: ["flow-edge", "edge"],
+      normalize: normalizeFlowEdgeElement,
+      translate: preserveElement,
+      resize: preserveElement,
+      capabilities: { hitTest: "line", handles: "none", layer: "scene-connections", cache: "tile", marquee: false },
+    }),
+    createDefinition("text", {
+      aliases: ["richText", "rich"],
+      normalize: (element) => normalizeTextElement({ ...element, type: "text" }),
+      resize: resizeText,
+      capabilities: { render: "canvas-dom", lod: "text", editor: "text", overlay: "rich", cache: "tile" },
+    }),
+  ].forEach((definition) => registry.register(definition));
+  return registry;
+}
+
+export const canvasElementRegistry = createBuiltinElementRegistry();
+
+export function getElementDefinition(elementOrType = "") {
+  return typeof elementOrType === "string"
+    ? canvasElementRegistry.resolve(elementOrType)
+    : canvasElementRegistry.resolveElement(elementOrType);
+}
+
+export function registerElementType(definition, options = {}) {
+  return canvasElementRegistry.register(definition, options);
+}
 
 function normalizeBoardBackgroundPattern(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -43,51 +330,7 @@ export function createEmptyBoard() {
 }
 
 export function normalizeElement(element = {}) {
-  const legacyKind = String(element.kind || "").trim().toLowerCase();
-  const type = String(element.type || legacyKind || "").trim().toLowerCase();
-  if (type === "shape") {
-    return normalizeShapeElement(element);
-  }
-  if (type === "image") {
-    return normalizeImageElement(element);
-  }
-  if (type === "filecard" || type === "file") {
-    return normalizeFileCardElement(element);
-  }
-  if (type === "codeblock" || type === "code") {
-    return normalizeCodeBlockElement(element);
-  }
-  if (type === "table") {
-    return normalizeTableElement(element);
-  }
-  if (type === "mathblock" || type === "mathinline" || type === "math") {
-    return buildTextElementFromMathElement(element);
-  }
-  if (type === "mindnode" || type === "mind") {
-    return normalizeMindNodeElement(element);
-  }
-  if (type === "mindsummary" || type === "mind-summary") {
-    return normalizeMindSummaryElement(element);
-  }
-  if (type === "mindrelationship" || type === "mind-relationship") {
-    return normalizeMindRelationshipElement(element);
-  }
-  if (type === "flownode" || type === "flow-node" || type === "node") {
-    return normalizeFlowNodeElement(element);
-  }
-  if (type === "flowedge" || type === "flow-edge" || type === "edge") {
-    return normalizeFlowEdgeElement(element);
-  }
-  if (type === "richtext" || type === "rich") {
-    return normalizeTextElement({
-      ...element,
-      type: "text",
-    });
-  }
-  return normalizeTextElement({
-    ...element,
-    type: "text",
-  });
+  return canvasElementRegistry.invoke(element, "normalize");
 }
 
 export function normalizeBoard(input = {}) {
@@ -115,162 +358,15 @@ export function normalizeBoard(input = {}) {
 }
 
 export function getElementBounds(element = {}) {
-  if (element.type === "shape" && isLinearShape(element.shapeType)) {
-    const left = Math.min(Number(element.startX || 0), Number(element.endX || 0));
-    const top = Math.min(Number(element.startY || 0), Number(element.endY || 0));
-    const right = Math.max(Number(element.startX || 0), Number(element.endX || 0));
-    const bottom = Math.max(Number(element.startY || 0), Number(element.endY || 0));
-    return {
-      left,
-      top,
-      width: Math.max(1, right - left),
-      height: Math.max(1, bottom - top),
-      right,
-      bottom,
-    };
-  }
-  const left = Number(element.x || 0);
-  const top = Number(element.y || 0);
-  const width = Math.max(1, Number(element.width) || 1);
-  const height = Math.max(1, Number(element.height) || 1);
-  return {
-    left,
-    top,
-    width,
-    height,
-    right: left + width,
-    bottom: top + height,
-  };
+  return canvasElementRegistry.invoke(element, "getBounds") || getRectBounds(element);
 }
 
 export function moveElement(element, dx, dy) {
-  if (element.type === "shape") {
-    return moveShapeElement(element, dx, dy);
-  }
-  if (element.type === "flowEdge") {
-    return element;
-  }
-  if (element.type === "mindRelationship") {
-    return element;
-  }
-  return {
-    ...element,
-    x: Number(element.x || 0) + (Number(dx) || 0),
-    y: Number(element.y || 0) + (Number(dy) || 0),
-  };
+  return canvasElementRegistry.invoke(element, "translate", dx, dy) || element;
 }
 
 export function resizeElement(element, handle, point) {
-  if (!element || !handle) {
-    return element;
-  }
-  if (element.type === "shape" && isLinearShape(element.shapeType)) {
-    const next = {
-      ...element,
-      startX: handle === "start" ? Number(point?.x || 0) : Number(element.startX || 0),
-      startY: handle === "start" ? Number(point?.y || 0) : Number(element.startY || 0),
-      endX: handle === "end" ? Number(point?.x || 0) : Number(element.endX || 0),
-      endY: handle === "end" ? Number(point?.y || 0) : Number(element.endY || 0),
-    };
-    next.x = Math.min(next.startX, next.endX);
-    next.y = Math.min(next.startY, next.endY);
-    next.width = Math.max(1, Math.abs(next.endX - next.startX));
-    next.height = Math.max(1, Math.abs(next.endY - next.startY));
-    return next;
-  }
-
-  const bounds = getElementBounds(element);
-  const anchors = {
-    nw: { x: bounds.right, y: bounds.bottom },
-    ne: { x: bounds.left, y: bounds.bottom },
-    sw: { x: bounds.right, y: bounds.top },
-    se: { x: bounds.left, y: bounds.top },
-  };
-  const anchor = anchors[handle];
-  if (!anchor) {
-    return element;
-  }
-  const left = Math.min(anchor.x, Number(point?.x || 0));
-  const top = Math.min(anchor.y, Number(point?.y || 0));
-  const right = Math.max(anchor.x, Number(point?.x || 0));
-  const bottom = Math.max(anchor.y, Number(point?.y || 0));
-  const width = Math.max(24, right - left);
-  const height = Math.max(24, bottom - top);
-  const next = {
-    ...element,
-    x: left,
-    y: top,
-    width,
-    height,
-  };
-  if (element.type === "fileCard") {
-    next.width = Math.max(200, next.width);
-    next.height = Math.max(96, next.height);
-  }
-  if (element.type === "mindNode") {
-    next.width = Math.max(160, next.width);
-    next.height = Math.max(72, next.height);
-  }
-  if (element.type === "codeBlock") {
-    next.width = Math.max(CODE_BLOCK_MIN_WIDTH, next.width);
-    next.height = Math.max(CODE_BLOCK_MIN_HEIGHT, next.height);
-  }
-  if (element.type === "table") {
-    next.width = Math.max(TABLE_MIN_WIDTH, next.width);
-    next.height = Math.max(TABLE_MIN_HEIGHT, next.height);
-  }
-  if (element.type === "mathBlock" || element.type === "mathInline") {
-    next.width = Math.max(MATH_MIN_WIDTH, next.width);
-    next.height = Math.max(MATH_MIN_HEIGHT, next.height);
-  }
-  if (element.type === "flowNode") {
-    const minSize = getFlowNodeMinSize(
-      {
-        ...element,
-        width: next.width,
-        height: next.height,
-      },
-      {
-        widthHint: next.width,
-      }
-    );
-    next.width = Math.max(minSize.width, next.width);
-    next.height = Math.max(minSize.height, next.height);
-    if (handle === "nw" || handle === "sw") {
-      next.x = anchor.x - next.width;
-    }
-    if (handle === "nw" || handle === "ne") {
-      next.y = anchor.y - next.height;
-    }
-  }
-  if (element.type === "text") {
-    const originalTop = Number(element.y || 0);
-    next.textBoxLayoutMode = TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT;
-    next.textResizeMode = TEXT_RESIZE_MODE_WRAP;
-    const minSize = getTextMinSize(
-      {
-        ...element,
-        ...next,
-        textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
-        textResizeMode: TEXT_RESIZE_MODE_WRAP,
-      },
-      {
-        widthHint: next.width,
-      }
-    );
-    next.width = Math.max(80, minSize.width, next.width);
-    next.height = Math.max(40, minSize.height);
-    // Text boxes should resize from the top edge and grow/shrink downward.
-    // Reflow caused by width changes must not recenter the box vertically.
-    next.y = originalTop;
-  }
-  if (element.type === "shape") {
-    next.startX = left;
-    next.startY = top;
-    next.endX = right;
-    next.endY = bottom;
-  }
-  return next;
+  return canvasElementRegistry.invoke(element, "resize", handle, point) || element;
 }
 
 export function getBoardBounds(items = []) {

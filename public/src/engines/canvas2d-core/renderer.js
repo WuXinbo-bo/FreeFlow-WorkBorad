@@ -1,12 +1,11 @@
 import { sceneToScreen } from "./camera.js";
 import { getCanvasLodScalePercent } from "./lodScale.js";
-import { getElementBounds } from "./elements/index.js";
+import { canvasElementRegistry, getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import {
   collectMindMapVisibleConnections,
   collectMindMapVisibleSummaries,
   isMindMapItemVisible,
-  isMindSummaryItem,
   MIND_BRANCH_LEFT,
 } from "./elements/mindMap.js";
 import { getMindRelationshipGeometry, isMindRelationshipItem } from "./elements/mindRelationship.js";
@@ -870,8 +869,9 @@ function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
   }
   const screenWidth = Math.max(1, Number(item.width || 1) || 1) * scale;
   const screenHeight = Math.max(1, Number(item.height || 1) || 1) * scale;
+  const lodPolicy = canvasElementRegistry.resolveElement(item)?.capabilities?.lod || "full";
   if (
-    item.type === "fileCard" &&
+    lodPolicy === "file-card" &&
     (
       scalePercent <= Math.round(CANVAS_LOD_FILE_CARD_MIN_SCALE * 100) ||
       screenWidth <= CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX ||
@@ -880,22 +880,22 @@ function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
   ) {
     return "summary";
   }
-  if (item.type === "mindNode" && scalePercent <= Math.round(CANVAS_LOD_MIND_NODE_MIN_SCALE * 100)) {
+  if (lodPolicy === "mind-node" && scalePercent <= Math.round(CANVAS_LOD_MIND_NODE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "image" && scalePercent <= Math.round(CANVAS_LOD_IMAGE_MIN_SCALE * 100)) {
+  if (lodPolicy === "image" && scalePercent <= Math.round(CANVAS_LOD_IMAGE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "table" && scalePercent <= Math.round(CANVAS_LOD_TABLE_MIN_SCALE * 100)) {
+  if (lodPolicy === "table" && scalePercent <= Math.round(CANVAS_LOD_TABLE_MIN_SCALE * 100)) {
     return "summary";
   }
-  if (item.type === "codeBlock" && scalePercent <= Math.round(CANVAS_LOD_CODE_BLOCK_MIN_SCALE * 100)) {
+  if (lodPolicy === "code-block" && scalePercent <= Math.round(CANVAS_LOD_CODE_BLOCK_MIN_SCALE * 100)) {
     return "summary";
   }
-  if ((item.type === "mathBlock" || item.type === "mathInline") && scalePercent <= Math.round(CANVAS_LOD_MATH_MIN_SCALE * 100)) {
+  if (lodPolicy === "math" && scalePercent <= Math.round(CANVAS_LOD_MATH_MIN_SCALE * 100)) {
     return "summary";
   }
-  if ((item.type === "text" || item.type === "flowNode") && scalePercent <= Math.round(CANVAS_LOD_TEXT_MIN_SCALE * 100)) {
+  if ((lodPolicy === "text" || lodPolicy === "flow-node") && scalePercent <= Math.round(CANVAS_LOD_TEXT_MIN_SCALE * 100)) {
     return "summary";
   }
   return "full";
@@ -909,13 +909,7 @@ function shouldBypassStaticTileCache(item, dynamicIdSet) {
   if (itemId && dynamicIdSet?.has(itemId)) {
     return true;
   }
-  return (
-    item.type === "image" ||
-    item.type === "table" ||
-    item.type === "fileCard" ||
-    item.type === "mindNode" ||
-    isMindSummaryItem(item)
-  );
+  return canvasElementRegistry.resolveElement(item)?.capabilities?.cache === "live";
 }
 
 function resolveRenderRuntimeMode({
@@ -1058,6 +1052,99 @@ function drawHint(ctx, width, height) {
   ctx.restore();
 }
 
+function createBuiltinElementRenderers() {
+  const create = (supportedType, render) => {
+    render.supportedTypes = [supportedType];
+    render.isBuiltin = true;
+    return render;
+  };
+  return [
+    create("fileCard", function renderFileCardElement({ ctx, item, view, selected, hover, lodMode, helpers }) {
+      if (lodMode !== "full") {
+        drawFileCardLod(ctx, item, view, selected, hover, helpers);
+        return { handled: true, lodSimplified: true };
+      }
+      drawFileCard(ctx, item, view, selected, hover, helpers);
+      return true;
+    }),
+    create("mindNode", function renderMindNodeElement({ ctx, item, view, selected, hover, lodMode }) {
+      if (lodMode !== "full") {
+        drawMindNodeLod(ctx, item, view, selected, hover);
+        return { handled: true, lodSimplified: true };
+      }
+      drawMindNode(ctx, item, view, selected, hover);
+      return true;
+    }),
+    create("mindSummary", function renderMindSummaryElement({ ctx, item, view, selected, hover }) {
+      drawMindSummaryNode(ctx, item, view, selected, hover);
+      return true;
+    }),
+    create("text", function renderTextItem({ ctx, item, view, selected, hover, editing, lodMode, helpers }) {
+      if (lodMode !== "full") {
+        drawTextElementLod(ctx, item, view, selected, hover);
+        return { handled: true, lodSimplified: true };
+      }
+      drawTextElement(ctx, item, view, selected, hover, editing, helpers.drawSelectionFrame, helpers.drawHandles, {
+        renderText: Boolean(helpers.renderTextInCanvas),
+      });
+      return true;
+    }),
+  ];
+}
+
+function createRendererDispatch() {
+  const renderersByType = new Map();
+  const fallbackRenderers = [];
+
+  function register(renderer) {
+    if (typeof renderer !== "function") {
+      return () => {};
+    }
+    const supportedTypes = Array.isArray(renderer.supportedTypes) ? renderer.supportedTypes : [];
+    if (!supportedTypes.length) {
+      fallbackRenderers.push(renderer);
+      return () => {
+        const index = fallbackRenderers.lastIndexOf(renderer);
+        if (index >= 0) {
+          fallbackRenderers.splice(index, 1);
+        }
+      };
+    }
+    const keys = supportedTypes.map((type) => {
+      const definition = canvasElementRegistry.resolve(type, { fallback: false });
+      const key = definition?.type || String(type || "");
+      const stack = renderersByType.get(key) || [];
+      stack.push(renderer);
+      renderersByType.set(key, stack);
+      return key;
+    });
+    return () => {
+      keys.forEach((key) => {
+        const stack = renderersByType.get(key) || [];
+        const index = stack.lastIndexOf(renderer);
+        if (index >= 0) {
+          stack.splice(index, 1);
+        }
+        if (!stack.length) {
+          renderersByType.delete(key);
+        }
+      });
+    };
+  }
+
+  return {
+    register,
+    resolveAll(item) {
+      const definition = canvasElementRegistry.resolveElement(item);
+      const stack = renderersByType.get(definition?.type || String(item?.type || "")) || [];
+      return stack.slice().reverse();
+    },
+    getFallbackRenderers() {
+      return fallbackRenderers.slice();
+    },
+  };
+}
+
 function drawVisibleItemsToContext({
   ctx,
   items = [],
@@ -1071,88 +1158,59 @@ function drawVisibleItemsToContext({
   allowLocalFileAccess,
   onImageNaturalSize,
   renderTextInCanvas,
-  renderers = [],
+  rendererDispatch,
 }) {
   const selected = new Set(selectedIds || []);
   let customRendererHandledCount = 0;
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
-    if ((item.type === "mindNode" || isMindSummaryItem(item)) && !isMindMapItemVisible(item, items)) {
+    const definition = canvasElementRegistry.resolveElement(item);
+    if (definition?.capabilities?.visibility === "mind-map" && !isMindMapItemVisible(item, items)) {
       return;
     }
-    if (isMindRelationshipItem(item)) {
+    if (definition?.capabilities?.layer === "mind-connections") {
       return;
     }
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
     const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
-    for (const renderElement of renderers) {
+    const renderContext = {
+      ctx,
+      item,
+      view,
+      selected: isSelected,
+      hover: isHover,
+      editing: editingId === item.id,
+      lodMode,
+      helpers: {
+        drawSelectionFrame,
+        drawHandles,
+        imageEditState,
+        flowDraft,
+        allowLocalFileAccess,
+        onImageNaturalSize,
+        renderTextInCanvas,
+        editingId,
+      },
+    };
+    const candidateRenderers = [
+      ...(rendererDispatch?.resolveAll?.(item) || []),
+      ...(rendererDispatch?.getFallbackRenderers?.() || []),
+    ];
+    for (const renderElement of candidateRenderers) {
       const handled = renderElement?.({
-        ctx,
-        item,
-        view,
-        selected: isSelected,
-        hover: isHover,
-        editing: editingId === item.id,
-        lodMode,
-        helpers: {
-          drawSelectionFrame,
-          drawHandles,
-          imageEditState,
-          flowDraft,
-          allowLocalFileAccess,
-          onImageNaturalSize,
-          renderTextInCanvas,
-          editingId,
-        },
+        ...renderContext,
       });
       if (handled) {
-        customRendererHandledCount += 1;
+        if (renderElement.isBuiltin !== true) {
+          customRendererHandledCount += 1;
+        }
         if (handled !== true && handled?.lodSimplified) {
           lodSimplifiedCount += 1;
         }
         drawLockBadge(ctx, item, view);
         return;
       }
-    }
-    if (item.type === "fileCard") {
-      if (lodMode !== "full") {
-        lodSimplifiedCount += 1;
-        drawFileCardLod(ctx, item, view, isSelected, isHover, {
-          drawSelectionFrame,
-          drawHandles,
-        });
-        drawLockBadge(ctx, item, view);
-        return;
-      }
-      drawFileCard(ctx, item, view, isSelected, isHover, {
-        drawSelectionFrame,
-        drawHandles,
-      });
-      drawLockBadge(ctx, item, view);
-      return;
-    }
-      if (item.type === "mindNode") {
-        if (lodMode !== "full") {
-          lodSimplifiedCount += 1;
-          drawMindNodeLod(ctx, item, view, isSelected, isHover);
-          drawLockBadge(ctx, item, view);
-          return;
-        }
-        drawMindNode(ctx, item, view, isSelected, isHover);
-        drawLockBadge(ctx, item, view);
-        return;
-      }
-      if (isMindSummaryItem(item)) {
-        drawMindSummaryNode(ctx, item, view, isSelected, isHover);
-        drawLockBadge(ctx, item, view);
-        return;
-      }
-    if ((item.type === "text" || item.type === "flowNode") && lodMode !== "full") {
-      lodSimplifiedCount += 1;
-      drawTextElementLod(ctx, item, view, isSelected, isHover);
-      drawLockBadge(ctx, item, view);
-      return;
     }
     drawTextElement(ctx, item, view, isSelected, isHover, editingId === item.id, drawSelectionFrame, drawHandles, {
       renderText: Boolean(renderTextInCanvas),
@@ -1260,7 +1318,7 @@ function drawInteractionLayer(ctx, {
   mindMapDropHint = "",
   selectedItems = [],
 } = {}) {
-  if (hoveredItem && hoveredItem.type !== "mindNode" && !isMindSummaryItem(hoveredItem)) {
+  if (hoveredItem && canvasElementRegistry.resolveElement(hoveredItem)?.capabilities?.visibility !== "mind-map") {
     const bounds = getElementBounds(hoveredItem);
     const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
     const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
@@ -1437,6 +1495,9 @@ function getRenderModeSignature({ renderTextInCanvas = false, viewportInteractio
 
 export function createRenderer({ customRenderers = [] } = {}) {
   const renderers = Array.isArray(customRenderers) ? customRenderers : [];
+  const rendererDispatch = createRendererDispatch();
+  createBuiltinElementRenderers().forEach((renderer) => rendererDispatch.register(renderer));
+  renderers.forEach((renderer) => rendererDispatch.register(renderer));
   const viewportCuller = createViewportCuller();
   const backgroundPatternCache = createBackgroundPatternCache();
   const staticTileLayer = createTileSceneCache();
@@ -1486,6 +1547,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   }
 
   return {
+    registerElementRenderer: (renderer) => rendererDispatch.register(renderer),
     render({
       ctx,
       canvas,
@@ -1522,6 +1584,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       sceneKey = "",
       dirtyState = null,
       layerState = null,
+      frameContext = null,
       forceFreshSurfaces = false,
     }) {
       const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
@@ -1644,7 +1707,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
       let customRendererHandledCount = 0;
       let lodSimplifiedCount = 0;
       const hasConnectionContent = frameVisibleItems.some(
-        (item) => item?.type === "mindNode" || item?.type === "mindSummary" || isMindRelationshipItem(item)
+        (item) => {
+          const capabilities = canvasElementRegistry.resolveElement(item)?.capabilities;
+          return capabilities?.visibility === "mind-map" || capabilities?.layer === "mind-connections";
+        }
       ) || Boolean(relationshipDraft);
       const hasDynamicContent = dynamicItems.length > 0 || Boolean(draftElement);
       const hasEmptyBoardHint = !(Array.isArray(items) && items.length) && !draftElement;
@@ -1743,7 +1809,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     onImageNaturalSize,
                     renderTextInCanvas: effectiveRenderTextInCanvas,
                     allItems,
-                    renderers,
+                    rendererDispatch,
                   }),
               })
             : !liveInteractionMode && staticItems.length
@@ -1761,7 +1827,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   onImageNaturalSize,
                   renderTextInCanvas: effectiveRenderTextInCanvas,
                   allItems,
-                  renderers,
+                  rendererDispatch,
                 })
               : {
                   tileCount: 0,
@@ -1816,7 +1882,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           allowLocalFileAccess,
           onImageNaturalSize,
           renderTextInCanvas: effectiveRenderTextInCanvas,
-          renderers,
+          rendererDispatch,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
         lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
@@ -1869,6 +1935,15 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
       const backgroundStats = backgroundPatternCache.getStats();
       const renderStats = {
+        frameContext: frameContext
+          ? {
+              frameId: frameContext.frameId,
+              sceneRevision: frameContext.sceneRevision,
+              boardRevision: frameContext.boardRevision,
+              registryRevision: frameContext.registryRevision,
+              camera: { ...frameContext.view },
+            }
+          : null,
         frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
         viewport: { width, height },
         pixelBudget: {

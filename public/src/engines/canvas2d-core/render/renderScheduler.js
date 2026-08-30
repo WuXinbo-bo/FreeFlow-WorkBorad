@@ -10,13 +10,15 @@ export function createRenderScheduler({
   const dirtyManager = createDirtyRegionManager();
   const layerState = createLayerState();
   let frameId = 0;
+  let frameRevision = 0;
 
-  function flush() {
+  function flush(timestamp = 0) {
     frameId = 0;
+    frameRevision += 1;
     const dirtyState = dirtyManager.consume();
     const nextLayerState = layerState.applyDirtyState(dirtyState);
     const frameInput = typeof collectFrameInput === "function"
-      ? collectFrameInput({ dirtyState, layerState: nextLayerState })
+      ? collectFrameInput({ dirtyState, layerState: nextLayerState, frameId: frameRevision, timestamp })
       : null;
     if (!frameInput) {
       return null;
@@ -26,6 +28,8 @@ export function createRenderScheduler({
           ...frameInput,
           dirtyState,
           layerState: nextLayerState,
+          frameId: frameRevision,
+          timestamp,
         })
       : null;
   }
@@ -63,5 +67,6 @@ export function createRenderScheduler({
     dispose,
     peekDirtyState: () => dirtyManager.peek(),
     getLayerState: () => layerState.getSnapshot(),
+    getFrameRevision: () => frameRevision,
   };
 }

@@ -451,7 +451,7 @@ function drawExportFallbackPlaceholder(ctx, item, width, height, scale) {
 export function createImageRenderer() {
   const imageCache = new Map();
 
-  return function renderImageElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
+  const renderer = function renderImageElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
     if (item?.type !== "image") {
       return false;
     }
@@ -532,4 +532,20 @@ export function createImageRenderer() {
     }
     return { handled: true, lodSimplified: false };
   };
+  renderer.supportedTypes = ["image"];
+  renderer.syncResources = (items = []) => {
+    const activeKeys = new Set(
+      (Array.isArray(items) ? items : [])
+        .filter((item) => item?.type === "image")
+        .map((item) => resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess: true }) || item.id)
+        .filter(Boolean)
+    );
+    Array.from(imageCache.keys()).forEach((key) => {
+      if (!activeKeys.has(key)) {
+        imageCache.delete(key);
+      }
+    });
+  };
+  renderer.disposeResources = () => imageCache.clear();
+  return renderer;
 }

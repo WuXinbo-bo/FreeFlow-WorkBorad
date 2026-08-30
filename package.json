@@ -23,6 +23,8 @@
     "test:canvas-lod-scale": "node scripts/check-canvas-lod-scale.js",
     "test:overlay-budget": "node scripts/check-overlay-budget.js",
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",
+    "test:element-runtime": "node scripts/check-element-runtime-architecture.js",
+    "test:element-registry": "node scripts/check-builtin-element-registry.js",
     "test:structured-parsers": "node scripts/structured-import/run-parser-unit-tests.cjs",
     "test:structured-renderers": "node scripts/structured-import/run-renderer-element-integration.cjs",
     "test:canvas2d": "node scripts/check-canvas2d-regression.js",

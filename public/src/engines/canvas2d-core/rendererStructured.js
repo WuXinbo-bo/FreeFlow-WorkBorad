@@ -395,7 +395,7 @@ function drawMath(ctx, item, view, selected, hover, helpers) {
 }
 
 export function createStructuredCanvasRenderer() {
-  return function renderStructuredElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
+  const renderer = function renderStructuredElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
     if (!item || !ctx || !view || !helpers) {
       return false;
     }
@@ -425,4 +425,6 @@ export function createStructuredCanvasRenderer() {
     }
     return false;
   };
+  renderer.supportedTypes = ["codeBlock", "table", "mathBlock", "mathInline"];
+  return renderer;
 }

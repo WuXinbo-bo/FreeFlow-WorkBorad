@@ -131,7 +131,7 @@ function drawFlowNode(ctx, node, view, selected, hover, helpers) {
 }
 
 export function createFlowRenderer({ getItemById } = {}) {
-  return function renderFlowElement({ ctx, item, view, selected, hover, helpers }) {
+  const renderer = function renderFlowElement({ ctx, item, view, selected, hover, helpers }) {
     if (item?.type === "flowEdge") {
       const fromNode = getItemById?.(item.fromId);
       const toNode = getItemById?.(item.toId);
@@ -158,4 +158,6 @@ export function createFlowRenderer({ getItemById } = {}) {
     }
     return false;
   };
+  renderer.supportedTypes = ["flowNode", "flowEdge"];
+  return renderer;
 }

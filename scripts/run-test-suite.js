@@ -12,6 +12,8 @@ const CHECKS = [
   "scripts/check-canvas-lod-scale.js",
   "scripts/check-overlay-budget.js",
   "scripts/check-interaction-coordination.js",
+  "scripts/check-element-runtime-architecture.js",
+  "scripts/check-builtin-element-registry.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
 ];
