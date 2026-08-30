@@ -35,24 +35,32 @@ async function main() {
       await waitFrame();
     });
 
-    const root = await page.evaluate(() => {
+    const setup = await page.evaluate(() => {
       const snapshot = window.__canvas2dEngine.getSnapshot();
-      return snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null;
+      return {
+        root: snapshot?.board?.items?.find?.((item) => item.type === "mindNode" && !item.parentId) || null,
+        view: snapshot?.board?.view || { scale: 1, offsetX: 0, offsetY: 0 },
+        editingId: snapshot?.editingId || "",
+      };
     });
+    const { root, view, editingId } = setup;
     if (!root) {
       throw new Error("mindNode root not created");
     }
 
-    const canvas = page.locator("canvas").first();
-    const canvasBox = await canvas.boundingBox();
-    if (!canvasBox) {
-      throw new Error("canvas bounding box unavailable");
-    }
+    if (editingId !== root.id) {
+      const canvas = page.locator("#canvas-office-canvas");
+      const canvasBox = await canvas.boundingBox();
+      if (!canvasBox) {
+        throw new Error("canvas bounding box unavailable");
+      }
 
-    const clickX = canvasBox.x + root.x + root.width / 2;
-    const clickY = canvasBox.y + root.y + root.height / 2;
-    await page.mouse.dblclick(clickX, clickY);
-    await waitFrames(page, 4);
+      const scale = Number(view.scale || 1);
+      const clickX = canvasBox.x + Number(view.offsetX || 0) + (root.x + root.width / 2) * scale;
+      const clickY = canvasBox.y + Number(view.offsetY || 0) + (root.y + root.height / 2) * scale;
+      await page.mouse.dblclick(clickX, clickY);
+      await waitFrames(page, 4);
+    }
 
     await page.evaluate(() => {
       const selection = window.getSelection();
@@ -60,13 +68,11 @@ async function main() {
       if (!(editor instanceof HTMLElement) || !selection) {
         return;
       }
-      const textNode = editor.firstChild;
-      if (textNode) {
-        const range = document.createRange();
-        range.selectNodeContents(textNode);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
+      editor.focus();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
       document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
     });
     await waitFrames(page, 4);
@@ -76,17 +82,20 @@ async function main() {
       const selection = document.querySelector("#canvas2d-rich-selection-toolbar");
       const persistentRow = persistent?.querySelector?.(".canvas2d-rich-toolbar-row-single");
       const selectionRows = selection ? selection.querySelectorAll(".canvas2d-rich-toolbar-row") : [];
-      const buttonTops = persistentRow
-        ? Array.from(persistentRow.querySelectorAll(".canvas2d-rich-btn,.canvas2d-rich-select-wrap,.canvas2d-rich-submenu,[data-role='rich-color-control']")).map((node) =>
-            Math.round(node.getBoundingClientRect().top)
-          )
+      const controlCenters = persistentRow
+        ? Array.from(persistentRow.children)
+            .filter((node) => node instanceof HTMLElement && getComputedStyle(node).display !== "none")
+            .map((node) => {
+              const rect = node.getBoundingClientRect();
+              return Math.round(rect.top + rect.height / 2);
+            })
         : [];
       return {
         persistentVisible: Boolean(persistent && !persistent.classList.contains("is-hidden")),
         persistentWrapped: Boolean(persistent?.classList.contains("is-wrapped")),
         persistentDisplay: persistentRow ? getComputedStyle(persistentRow).display : "",
         persistentFlexWrap: persistentRow ? getComputedStyle(persistentRow).flexWrap : "",
-        persistentDistinctTopCount: Array.from(new Set(buttonTops)).length,
+        persistentDistinctCenterCount: Array.from(new Set(controlCenters)).length,
         selectionVisible: Boolean(selection && !selection.classList.contains("is-hidden")),
         selectionRowCount: selectionRows.length,
         selectionRowDisplays: Array.from(selectionRows).map((row) => getComputedStyle(row).display),
@@ -105,8 +114,8 @@ async function main() {
     if (report.persistentDisplay !== "flex" || report.persistentFlexWrap !== "nowrap") {
       throw new Error(`persistent toolbar row is not single-line flex nowrap: ${report.persistentDisplay} / ${report.persistentFlexWrap}`);
     }
-    if (report.persistentDistinctTopCount !== 1) {
-      throw new Error(`persistent toolbar default layout is not single-line: ${report.persistentDistinctTopCount}`);
+    if (report.persistentDistinctCenterCount !== 1) {
+      throw new Error(`persistent toolbar controls are not vertically aligned: ${report.persistentDistinctCenterCount}`);
     }
     if (!report.selectionVisible) {
       throw new Error("selection toolbar is not visible");
@@ -117,6 +126,33 @@ async function main() {
     if (new Set(report.selectionDistinctTops).size !== 2) {
       throw new Error(`selection toolbar is not rendering as two rows: ${report.selectionDistinctTops.join(",")}`);
     }
+
+    await page.keyboard.press("Escape");
+    await waitFrames(page, 4);
+    const recovered = await page.evaluate(() => ({
+      editingId: window.__canvas2dEngine.getSnapshot()?.editingId || "",
+      persistentHidden: document.querySelector("#canvas2d-rich-toolbar")?.classList.contains("is-hidden"),
+      selectionHidden: document.querySelector("#canvas2d-rich-selection-toolbar")?.classList.contains("is-hidden"),
+    }));
+    if (recovered.editingId || !recovered.persistentHidden || !recovered.selectionHidden) {
+      throw new Error(`rich toolbar state did not recover after editing: ${JSON.stringify(recovered)}`);
+    }
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await page.evaluate(() => window.__canvas2dEngine.addFlowNode());
+      await waitFrames(page, 2);
+      await page.keyboard.press("Escape");
+      await waitFrames(page, 2);
+    }
+    const rapidRecovery = await page.evaluate(() => ({
+      editingId: window.__canvas2dEngine.getSnapshot()?.editingId || "",
+      persistentHidden: document.querySelector("#canvas2d-rich-toolbar")?.classList.contains("is-hidden"),
+      selectionHidden: document.querySelector("#canvas2d-rich-selection-toolbar")?.classList.contains("is-hidden"),
+    }));
+    if (rapidRecovery.editingId || !rapidRecovery.persistentHidden || !rapidRecovery.selectionHidden) {
+      throw new Error(`rich toolbar state did not recover after rapid cycles: ${JSON.stringify(rapidRecovery)}`);
+    }
+    console.log(JSON.stringify({ recovered, rapidCycles: 3, rapidRecovery }, null, 2));
   } finally {
     await browser.close();
   }
