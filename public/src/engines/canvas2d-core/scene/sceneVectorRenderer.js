@@ -240,6 +240,227 @@ function syncMindRelationshipNode(node, relationship, itemById, hoverId, hoverHa
   return true;
 }
 
+function createFlowNodeNode() {
+  const node = createSvgElement("g", "canvas2d-scene-vector-item canvas2d-scene-flow-node-item");
+  node.append(
+    createSvgElement("rect", "canvas2d-scene-flow-node-body"),
+    createSvgElement("g", "canvas2d-scene-flow-node-connectors")
+  );
+  return node;
+}
+
+function syncFlowNodeNode(node, item, selectedIds, hoverId, view, flowDraft) {
+  const body = node.querySelector(".canvas2d-scene-flow-node-body");
+  const connectors = node.querySelector(".canvas2d-scene-flow-node-connectors");
+  if (!(body instanceof SVGElement) || !(connectors instanceof SVGElement)) {
+    return false;
+  }
+  const bounds = getElementBounds(item);
+  const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
+  setAttribute(body, "x", bounds.left);
+  setAttribute(body, "y", bounds.top);
+  setAttribute(body, "width", bounds.width);
+  setAttribute(body, "height", bounds.height);
+  setAttribute(body, "rx", 18 / scale);
+  setAttribute(body, "fill", "rgba(255, 255, 255, 0.98)");
+  setAttribute(body, "stroke", "rgba(148, 163, 184, 0.55)");
+  setAttribute(body, "stroke-width", 1.2 / scale);
+  const selected = selectedIds.has(String(item.id || ""));
+  const hovered = String(hoverId || "") === String(item.id || "");
+  const showConnectors = selected || hovered || String(flowDraft?.fromId || "") === String(item.id || "");
+  connectors.style.display = showConnectors ? "block" : "none";
+  if (showConnectors) {
+    const points = Object.values(getFlowNodeConnectors(item));
+    while (connectors.childElementCount < points.length) {
+      connectors.appendChild(createSvgElement("circle", "canvas2d-scene-flow-node-connector"));
+    }
+    Array.from(connectors.children).forEach((entry, index) => {
+      const point = points[index];
+      entry.style.display = point ? "block" : "none";
+      if (!point) {
+        return;
+      }
+      setAttribute(entry, "cx", point.x);
+      setAttribute(entry, "cy", point.y);
+      setAttribute(entry, "r", 5 / scale);
+      setAttribute(entry, "fill", "rgba(148, 163, 184, 0.9)");
+      setAttribute(entry, "stroke", "rgba(255, 255, 255, 0.9)");
+      setAttribute(entry, "stroke-width", 1.2 / scale);
+    });
+  }
+  return true;
+}
+
+function createFlowDraftNode() {
+  return createSvgElement("line", "canvas2d-scene-flow-draft");
+}
+
+function syncFlowDraftNode(node, flowDraft, itemById) {
+  const fromNode = itemById.get(String(flowDraft?.fromId || ""));
+  if (!fromNode || !flowDraft?.toPoint) {
+    return false;
+  }
+  const fromPoint = getFlowNodeConnectors(fromNode)[flowDraft.fromSide] || getFlowNodeConnectors(fromNode).right;
+  setAttribute(node, "x1", fromPoint.x);
+  setAttribute(node, "y1", fromPoint.y);
+  setAttribute(node, "x2", Number(flowDraft.toPoint.x || 0));
+  setAttribute(node, "y2", Number(flowDraft.toPoint.y || 0));
+  setAttribute(node, "stroke", "rgba(71, 85, 105, 0.9)");
+  setAttribute(node, "stroke-width", 1.8);
+  setAttribute(node, "stroke-linecap", "round");
+  setOptionalAttribute(node, "stroke-dasharray", flowDraft.style === "dashed" ? "8 6" : "");
+  return true;
+}
+
+function createMindNodeNode() {
+  const node = createSvgElement("g", "canvas2d-scene-vector-item canvas2d-scene-mind-node-item");
+  node.append(
+    createSvgElement("rect", "canvas2d-scene-mind-node-body"),
+    createSvgElement("rect", "canvas2d-scene-mind-node-accent"),
+    createSvgElement("g", "canvas2d-scene-mind-node-link"),
+    createSvgElement("g", "canvas2d-scene-mind-node-collapsed")
+  );
+  return node;
+}
+
+function syncMindNodeLink(node, item, bounds, selected, scale) {
+  const links = Array.isArray(item.links) ? item.links : [];
+  node.style.display = links.length && !selected ? "block" : "none";
+  if (!links.length || selected) {
+    return;
+  }
+  if (!node.childElementCount) {
+    node.append(
+      createSvgElement("ellipse", "is-first"),
+      createSvgElement("ellipse", "is-second"),
+      createSvgElement("circle", "is-badge"),
+      createSvgElement("text", "is-count")
+    );
+  }
+  const size = Math.max(8 / scale, Math.min(18 / scale, 14));
+  const inset = Math.max(2 / scale, Math.min(10 / scale, 6));
+  const centerX = bounds.right - inset - size / 2;
+  const centerY = bounds.bottom - inset - size / 2;
+  const first = node.querySelector(".is-first");
+  const second = node.querySelector(".is-second");
+  [first, second].forEach((entry, index) => {
+    setAttribute(entry, "cx", centerX + (index ? 1 : -1) * size * 0.16);
+    setAttribute(entry, "cy", centerY + (index ? -1 : 1) * size * 0.02);
+    setAttribute(entry, "rx", size * 0.34);
+    setAttribute(entry, "ry", size * 0.2);
+    setAttribute(entry, "transform", `rotate(-35 ${centerX} ${centerY})`);
+    setAttribute(entry, "fill", "none");
+    setAttribute(entry, "stroke", "rgba(29, 78, 216, 0.96)");
+    setAttribute(entry, "stroke-width", Math.max(1 / scale, Math.min(2.2 / scale, size * 0.12)));
+  });
+  const badge = node.querySelector(".is-badge");
+  const count = node.querySelector(".is-count");
+  const badgeSize = Math.max(8 / scale, Math.min(14 / scale, 10));
+  const showBadge = links.length > 1;
+  badge.style.display = showBadge ? "block" : "none";
+  count.style.display = showBadge ? "block" : "none";
+  if (showBadge) {
+    const badgeX = bounds.right - inset - badgeSize * 0.38;
+    const badgeY = bounds.bottom - inset - size - badgeSize * 0.18;
+    setAttribute(badge, "cx", badgeX);
+    setAttribute(badge, "cy", badgeY);
+    setAttribute(badge, "r", badgeSize / 2);
+    setAttribute(badge, "fill", "rgba(29, 78, 216, 0.96)");
+    setAttribute(count, "x", badgeX);
+    setAttribute(count, "y", badgeY);
+    setAttribute(count, "fill", "#ffffff");
+    setAttribute(count, "font-size", Math.max(6 / scale, badgeSize * 0.58));
+    setAttribute(count, "font-weight", 700);
+    setAttribute(count, "text-anchor", "middle");
+    setAttribute(count, "dominant-baseline", "central");
+    count.textContent = String(links.length);
+  }
+}
+
+function syncMindCollapsedBadge(node, item, bounds, scale) {
+  const childCount = Math.max(0, Array.isArray(item.childrenIds) ? item.childrenIds.length : 0);
+  node.style.display = item.collapsed && childCount ? "block" : "none";
+  if (!item.collapsed || !childCount) {
+    return;
+  }
+  if (!node.childElementCount) {
+    node.append(
+      createSvgElement("rect", "is-body"),
+      createSvgElement("line", "is-plus-x"),
+      createSvgElement("line", "is-plus-y"),
+      createSvgElement("text", "is-count")
+    );
+  }
+  const height = 20 / scale;
+  const width = (30 + String(childCount).length * 7) / scale;
+  const x = bounds.right - width - 10 / scale;
+  const y = bounds.top + 10 / scale;
+  const body = node.querySelector(".is-body");
+  setAttribute(body, "x", x);
+  setAttribute(body, "y", y);
+  setAttribute(body, "width", width);
+  setAttribute(body, "height", height);
+  setAttribute(body, "rx", height / 2);
+  setAttribute(body, "fill", "rgba(37, 99, 235, 0.96)");
+  const centerX = x + 10 / scale;
+  const centerY = y + height / 2;
+  const arm = 4 / scale;
+  [node.querySelector(".is-plus-x"), node.querySelector(".is-plus-y")].forEach((entry, index) => {
+    setAttribute(entry, "x1", centerX - (index ? 0 : arm));
+    setAttribute(entry, "y1", centerY - (index ? arm : 0));
+    setAttribute(entry, "x2", centerX + (index ? 0 : arm));
+    setAttribute(entry, "y2", centerY + (index ? arm : 0));
+    setAttribute(entry, "stroke", "#ffffff");
+    setAttribute(entry, "stroke-width", 2 / scale);
+  });
+  const count = node.querySelector(".is-count");
+  setAttribute(count, "x", x + 18 / scale);
+  setAttribute(count, "y", centerY);
+  setAttribute(count, "fill", "#ffffff");
+  setAttribute(count, "font-size", 11 / scale);
+  setAttribute(count, "font-weight", 700);
+  setAttribute(count, "dominant-baseline", "central");
+  count.textContent = String(childCount);
+}
+
+function syncMindNodeNode(node, item, selectedIds, view) {
+  const body = node.querySelector(".canvas2d-scene-mind-node-body");
+  const accent = node.querySelector(".canvas2d-scene-mind-node-accent");
+  const link = node.querySelector(".canvas2d-scene-mind-node-link");
+  const collapsed = node.querySelector(".canvas2d-scene-mind-node-collapsed");
+  if (!(body instanceof SVGElement) || !(accent instanceof SVGElement) || !(link instanceof SVGElement) || !(collapsed instanceof SVGElement)) {
+    return false;
+  }
+  const bounds = getElementBounds(item);
+  const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
+  const depth = Math.max(0, Number(item.depth || 0) || 0);
+  const summary = item.type === "mindSummary";
+  const radius = (summary ? 20 : depth === 0 ? 22 : depth === 1 ? 20 : 18) / scale;
+  setAttribute(body, "x", bounds.left);
+  setAttribute(body, "y", bounds.top);
+  setAttribute(body, "width", bounds.width);
+  setAttribute(body, "height", bounds.height);
+  setAttribute(body, "rx", radius);
+  setAttribute(body, "fill", summary ? "rgba(255, 247, 237, 0.98)" : depth === 0 ? "rgba(221, 235, 255, 0.98)" : "rgba(255, 255, 255, 0.995)");
+  setAttribute(body, "stroke", summary ? "rgba(249, 115, 22, 0.72)" : "rgba(37, 99, 235, 0.9)");
+  setAttribute(body, "stroke-width", (summary ? 1.8 : 1.2) / scale);
+  setOptionalAttribute(body, "stroke-dasharray", summary ? `${10 / scale} ${6 / scale}` : "");
+  const accentHeight = depth === 1 && !summary ? 12 / scale : 0;
+  accent.style.display = accentHeight ? "block" : "none";
+  if (accentHeight) {
+    setAttribute(accent, "x", bounds.left);
+    setAttribute(accent, "y", bounds.bottom - accentHeight);
+    setAttribute(accent, "width", bounds.width);
+    setAttribute(accent, "height", accentHeight);
+    setAttribute(accent, "rx", Math.min(radius, accentHeight / 2));
+    setAttribute(accent, "fill", "rgba(37, 99, 235, 0.96)");
+  }
+  const selected = selectedIds.has(String(item.id || ""));
+  syncMindNodeLink(link, item, bounds, selected, scale);
+  syncMindCollapsedBadge(collapsed, item, bounds, scale);
+  return true;
+}
+
 export function createSceneVectorRenderer({ host = null } = {}) {
   const nodes = new Map();
   let ownedIds = new Set();
@@ -277,6 +498,7 @@ export function createSceneVectorRenderer({ host = null } = {}) {
     hoverId = "",
     hoverHandle = "",
     view = null,
+    flowDraft = null,
     canOwnItem = () => true,
   } = {}) {
     if (frozen || !(host instanceof SVGSVGElement)) {
@@ -400,6 +622,37 @@ export function createSceneVectorRenderer({ host = null } = {}) {
         nextOwnedIds.add(itemId);
         return;
       }
+      if (item.type === "flowNode" && visibleIdSet.has(itemId) && Number(view?.scale || 1) > 0.15) {
+        if (!canOwnItem(item)) {
+          return;
+        }
+        const key = `flow-node:${itemId}`;
+        const node = ensureNode(key, createFlowNodeNode);
+        if (!syncFlowNodeNode(node, item, selectedIdSet, hoverId, view, flowDraft)) {
+          return;
+        }
+        node.dataset.id = itemId;
+        activeKeys.add(key);
+        orderedKeys.push(key);
+        nextOwnedIds.add(itemId);
+        return;
+      }
+      if ((item.type === "mindNode" || item.type === "mindSummary") && visibleIdSet.has(itemId) && Number(view?.scale || 1) > 0.15) {
+        if (!canOwnItem(item) || !isMindMapItemVisible(item, allItems)) {
+          return;
+        }
+        const key = `mind-node:${itemId}`;
+        const node = ensureNode(key, createMindNodeNode);
+        if (!syncMindNodeNode(node, item, selectedIdSet, view)) {
+          return;
+        }
+        node.dataset.id = itemId;
+        node.dataset.type = item.type;
+        activeKeys.add(key);
+        orderedKeys.push(key);
+        nextOwnedIds.add(itemId);
+        return;
+      }
       if (item.type === "shape" && visibleIdSet.has(itemId)) {
         if (!canOwnItem(item)) {
           return;
@@ -415,6 +668,15 @@ export function createSceneVectorRenderer({ host = null } = {}) {
         nextOwnedIds.add(itemId);
       }
     });
+
+    if (flowDraft?.fromId && flowDraft?.toPoint) {
+      const key = "flow-draft";
+      const node = ensureNode(key, createFlowDraftNode);
+      if (syncFlowDraftNode(node, flowDraft, itemById)) {
+        activeKeys.add(key);
+        orderedKeys.push(key);
+      }
+    }
 
     nodes.forEach((node, key) => {
       if (!activeKeys.has(key)) {

@@ -838,6 +838,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       createCodeBlockItem("viewport-code", 760, 160, "const stable = true;"),
       createImageItem("viewport-image", 180, 380),
       createTableItem("viewport-table", 560, 360),
+      createFileCardItem("viewport-file", 560, 640, "Architecture Notes.docx"),
       createRectShape("viewport-shape", 1120, 160, 180, 110),
       createFlowNodeItem("viewport-flow-a", 1120, 380, "Flow A"),
       createFlowNodeItem("viewport-flow-b", 1420, 380, "Flow B"),
@@ -854,7 +855,10 @@ async function runViewportInteractionRecoveryCheck(browser) {
       document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]') &&
       document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]') &&
       document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]') &&
+      document.querySelector('.canvas2d-scene-file-card-item[data-id="viewport-file"]') &&
       document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]') &&
+      document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-a"]') &&
+      document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]') &&
       document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]')
     );
     const result = await session.page.evaluate(async () => {
@@ -864,7 +868,10 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]');
       const imageNode = document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]');
       const tableNode = document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]');
+      const fileNode = document.querySelector('.canvas2d-scene-file-card-item[data-id="viewport-file"]');
       const shapeNode = document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]');
+      const flowNodeA = document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-a"]');
+      const flowNodeB = document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]');
       const flowEdgeNode = document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]');
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
       const contentLayer = document.querySelector("#canvas2d-content-layer");
@@ -873,11 +880,12 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
       const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
       const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
+      const initialFileBox = [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height];
       const shapeBody = shapeNode.querySelector(".canvas2d-scene-shape-body");
       const flowEdgeLine = flowEdgeNode.querySelector(".canvas2d-scene-flow-edge-line");
       const initialShapeGeometry = ["x", "y", "width", "height"].map((name) => shapeBody.getAttribute(name));
       const initialFlowEdgeGeometry = ["x1", "y1", "x2", "y2"].map((name) => flowEdgeLine.getAttribute(name));
-      window.__sceneContentTestRefs = { imageNode, tableNode, shapeNode, flowEdgeNode };
+      window.__sceneContentTestRefs = { imageNode, tableNode, fileNode, shapeNode, flowNodeA, flowNodeB, flowEdgeNode };
       for (let index = 0; index < 24; index += 1) {
         canvas.dispatchEvent(new WheelEvent("wheel", {
           bubbles: true,
@@ -903,7 +911,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        filePreserved: fileNode === document.querySelector('.canvas2d-scene-file-card-item[data-id="viewport-file"]'),
         shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowNodesPreserved:
+          flowNodeA === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-a"]') &&
+          flowNodeB === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]'),
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         sceneMatrix: [activeMatrix.a, activeMatrix.d, activeMatrix.e, activeMatrix.f],
         scenePhase: sceneRoot.dataset.presentationPhase,
@@ -911,6 +923,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         codeLocalLeft: Number.parseFloat(codeNode.style.left),
         imageBox: [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height],
         tableBox: [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height],
+        fileBox: [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height],
         shapeGeometry: ["x", "y", "width", "height"].map((name) => shapeBody.getAttribute(name)),
         flowEdgeGeometry: ["x1", "y1", "x2", "y2"].map((name) => flowEdgeLine.getAttribute(name)),
         hostsOwnedByContentLayer:
@@ -927,6 +940,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
           return node.style.display !== "none" && host && getComputedStyle(host).visibility !== "hidden";
         }).length,
         sceneVectorOwnedCount: canvas.__ffRenderStats?.sceneVectorOwnedCount || 0,
+        sceneVectorSubjectCount: document.querySelectorAll(".canvas2d-scene-vector-item[data-id]").length,
         pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
       };
       await new Promise((resolve) => setTimeout(resolve, 220));
@@ -940,7 +954,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        filePreserved: fileNode === document.querySelector('.canvas2d-scene-file-card-item[data-id="viewport-file"]'),
         shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowNodesPreserved:
+          flowNodeA === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-a"]') &&
+          flowNodeB === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]'),
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         scenePhase: sceneRoot.dataset.presentationPhase,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
@@ -957,6 +975,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         initialCodeLocalLeft,
         initialImageBox,
         initialTableBox,
+        initialFileBox,
         initialShapeGeometry,
         initialFlowEdgeGeometry,
         active,
@@ -971,15 +990,20 @@ async function runViewportInteractionRecoveryCheck(browser) {
     result.externalResize = await session.page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
-      const { imageNode, tableNode, shapeNode, flowEdgeNode } = window.__sceneContentTestRefs || {};
+      const { imageNode, tableNode, fileNode, shapeNode, flowNodeA, flowNodeB, flowEdgeNode } = window.__sceneContentTestRefs || {};
       return {
         matrix: getComputedStyle(sceneRoot).transform,
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        filePreserved: fileNode === document.querySelector('.canvas2d-scene-file-card-item[data-id="viewport-file"]'),
         shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowNodesPreserved:
+          flowNodeA === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-a"]') &&
+          flowNodeB === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]'),
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         imageBox: imageNode ? [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height] : [],
         tableBox: tableNode ? [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height] : [],
+        fileBox: fileNode ? [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height] : [],
         shapeGeometry: shapeNode
           ? ["x", "y", "width", "height"].map((name) => shapeNode.querySelector(".canvas2d-scene-shape-body")?.getAttribute(name))
           : [],
@@ -1001,11 +1025,15 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.active.hostsOwnedByContentLayer, "scene content hosts do not share the content layer", result);
     assert(
-      result.active.sceneContentOwnedCount === result.active.sceneOverlayOwnedCount + 2,
+      result.active.sceneContentOwnedCount === result.active.sceneOverlayOwnedCount + 3,
       "visible DOM subjects did not have singular scene ownership",
       result
     );
-    assert(result.active.sceneVectorOwnedCount === 2, "shape and flow edge did not have singular vector ownership", result);
+    assert(
+      result.active.sceneVectorOwnedCount === result.active.sceneVectorSubjectCount,
+      "visible vector subjects did not have singular scene ownership",
+      result
+    );
     assert(
       Math.abs(result.active.richLocalLeft - result.initialRichLocalLeft) < 0.01,
       "rich content local coordinates changed during camera interaction",
@@ -1018,6 +1046,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(JSON.stringify(result.active.imageBox) === JSON.stringify(result.initialImageBox), "image world box changed during camera interaction", result);
     assert(JSON.stringify(result.active.tableBox) === JSON.stringify(result.initialTableBox), "table world box changed during camera interaction", result);
+    assert(JSON.stringify(result.active.fileBox) === JSON.stringify(result.initialFileBox), "file-card world box changed during camera interaction", result);
     assert(JSON.stringify(result.active.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "shape world geometry changed during camera interaction", result);
     assert(JSON.stringify(result.active.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "flow edge world geometry changed during camera interaction", result);
     assert(Math.abs(result.active.sceneMatrix[0] - result.active.view.scale) < 0.0001, "scene scale matrix diverged from camera", result);
@@ -1027,8 +1056,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(["active", "settling"].includes(result.active.scenePhase), "scene presentation did not enter interaction phase", result);
     assert(
       result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved &&
-        result.active.imagePreserved && result.active.tablePreserved &&
-        result.active.shapePreserved && result.active.flowEdgePreserved,
+        result.active.imagePreserved && result.active.tablePreserved && result.active.filePreserved &&
+        result.active.shapePreserved && result.active.flowNodesPreserved && result.active.flowEdgePreserved,
       "viewport interaction destroyed scene content nodes",
       result
     );
@@ -1040,8 +1069,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(
       result.recovered.richPreserved && result.recovered.mathPreserved && result.recovered.codePreserved &&
-        result.recovered.imagePreserved && result.recovered.tablePreserved &&
-        result.recovered.shapePreserved && result.recovered.flowEdgePreserved,
+        result.recovered.imagePreserved && result.recovered.tablePreserved && result.recovered.filePreserved &&
+        result.recovered.shapePreserved && result.recovered.flowNodesPreserved && result.recovered.flowEdgePreserved,
       "scene recovery replaced preserved nodes",
       result
     );
@@ -1051,13 +1080,14 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
     assert(result.externalResize.matrix === result.resizeMatrixBefore, "external viewport resize mutated the scene camera matrix", result);
     assert(
-      result.externalResize.imagePreserved && result.externalResize.tablePreserved &&
-        result.externalResize.shapePreserved && result.externalResize.flowEdgePreserved,
+      result.externalResize.imagePreserved && result.externalResize.tablePreserved && result.externalResize.filePreserved &&
+        result.externalResize.shapePreserved && result.externalResize.flowNodesPreserved && result.externalResize.flowEdgePreserved,
       "external viewport resize replaced scene nodes",
       result
     );
     assert(JSON.stringify(result.externalResize.imageBox) === JSON.stringify(result.initialImageBox), "external resize changed image world box", result);
     assert(JSON.stringify(result.externalResize.tableBox) === JSON.stringify(result.initialTableBox), "external resize changed table world box", result);
+    assert(JSON.stringify(result.externalResize.fileBox) === JSON.stringify(result.initialFileBox), "external resize changed file-card world box", result);
     assert(JSON.stringify(result.externalResize.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "external resize changed shape world geometry", result);
     assert(JSON.stringify(result.externalResize.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "external resize changed flow edge world geometry", result);
     assert(result.externalResize.phase === "steady", "external resize left scene presentation unsettled", result);

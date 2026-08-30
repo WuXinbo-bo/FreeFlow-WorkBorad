@@ -4838,6 +4838,7 @@ let tablePointerSelectionState = {
       hoverId: state.hoverId,
       hoverHandle: state.hoverHandle,
       view: frameView,
+      flowDraft,
       canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
     });
     const sceneContentOwnedIds = sceneContentRenderer.sync({
@@ -4846,6 +4847,8 @@ let tablePointerSelectionState = {
       allowLocalFileAccess: getAllowLocalFileAccess(),
       editingId: state.editingId,
       editingType: state.editingType,
+      view: frameView,
+      canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
     });
     const previousStats = refs.canvas?.__ffRenderStats || null;
     const skipDetailOverlays = Boolean(previousStats?.progressiveRender?.pending);

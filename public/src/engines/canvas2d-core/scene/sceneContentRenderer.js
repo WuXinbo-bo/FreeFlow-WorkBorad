@@ -1,3 +1,5 @@
+import { getMemoLayout } from "../memoLayout.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function clamp(value, min, max) {
@@ -222,6 +224,73 @@ function syncTableNode(node, item, context) {
   return true;
 }
 
+function createFileCardNode() {
+  const node = document.createElement("div");
+  node.className = "canvas2d-scene-content-item canvas2d-scene-file-card-item";
+  const memo = document.createElement("div");
+  memo.className = "canvas2d-scene-file-card-memo";
+  const card = document.createElement("div");
+  card.className = "canvas2d-scene-file-card-body";
+  const tag = document.createElement("div");
+  tag.className = "canvas2d-scene-file-card-tag";
+  const name = document.createElement("div");
+  name.className = "canvas2d-scene-file-card-name";
+  const meta = document.createElement("div");
+  meta.className = "canvas2d-scene-file-card-meta";
+  const mark = document.createElement("div");
+  mark.className = "canvas2d-scene-file-card-mark";
+  card.append(tag, name, meta, mark);
+  node.append(memo, card);
+  return node;
+}
+
+function syncFileCardNode(node, item, context) {
+  if (context.fileMemoEditingId === item.id || context.scale <= 0.15) {
+    return false;
+  }
+  syncWorldBox(node, item);
+  const memo = node.querySelector(".canvas2d-scene-file-card-memo");
+  const tag = node.querySelector(".canvas2d-scene-file-card-tag");
+  const name = node.querySelector(".canvas2d-scene-file-card-name");
+  const meta = node.querySelector(".canvas2d-scene-file-card-meta");
+  const mark = node.querySelector(".canvas2d-scene-file-card-mark");
+  if (
+    !(memo instanceof HTMLDivElement) ||
+    !(tag instanceof HTMLDivElement) ||
+    !(name instanceof HTMLDivElement) ||
+    !(meta instanceof HTMLDivElement) ||
+    !(mark instanceof HTMLDivElement)
+  ) {
+    return false;
+  }
+  const extension = String(item.ext || "").toUpperCase() || "FILE";
+  tag.textContent = extension;
+  name.textContent = String(item.name || item.fileName || "未命名文件");
+  meta.textContent = extension;
+  tag.style.color = String(item.accentTextColor || "#1d4ed8");
+  tag.style.background = String(item.accentSoftColor || "rgba(59, 130, 246, 0.12)");
+  tag.style.borderColor = String(item.accentStrokeColor || "rgba(59, 130, 246, 0.18)");
+  const logicalHeight = Math.max(1, Number(item.height || 1));
+  setStyle(tag, "fontSize", `${Math.min(26, Math.max(10, logicalHeight * 0.12))}px`);
+  setStyle(name, "fontSize", `${Math.min(28, Math.max(10, logicalHeight * 0.15))}px`);
+  setStyle(meta, "fontSize", `${Math.min(24, Math.max(10, logicalHeight * 0.12))}px`);
+  mark.style.display = item.marked ? "block" : "none";
+  memo.style.display = item.memoVisible ? "flex" : "none";
+  if (item.memoVisible) {
+    const layout = getMemoLayout(item, { kind: "fileCard" });
+    memo.textContent = String(item.memo || "");
+    setStyle(memo, "left", `${layout.left - Number(item.x || 0)}px`);
+    setStyle(memo, "top", `${layout.top - Number(item.y || 0)}px`);
+    setStyle(memo, "width", `${layout.width}px`);
+    setStyle(memo, "height", `${layout.height}px`);
+    setStyle(memo, "padding", `${layout.padding}px`);
+    setStyle(memo, "borderRadius", `${layout.radius}px`);
+    setStyle(memo, "fontSize", `${layout.fontSize}px`);
+    setStyle(memo, "lineHeight", `${layout.lineHeight}px`);
+  }
+  return true;
+}
+
 export function createSceneContentRenderer({
   host = null,
   resolveImageSource = () => "",
@@ -233,6 +302,7 @@ export function createSceneContentRenderer({
   const adapters = new Map([
     ["image", { createNode: createImageNode, syncNode: syncImageNode }],
     ["table", { createNode: createTableNode, syncNode: syncTableNode }],
+    ["fileCard", { createNode: createFileCardNode, syncNode: syncFileCardNode }],
   ]);
 
   function setHost(nextHost) {
@@ -245,7 +315,15 @@ export function createSceneContentRenderer({
     ownedIds = new Set();
   }
 
-  function sync({ items = [], frozen = false, allowLocalFileAccess = true, editingId = "", editingType = "" } = {}) {
+  function sync({
+    items = [],
+    frozen = false,
+    allowLocalFileAccess = true,
+    editingId = "",
+    editingType = "",
+    view = null,
+    canOwnItem = () => true,
+  } = {}) {
     if (frozen || !(host instanceof HTMLElement)) {
       return new Set(ownedIds);
     }
@@ -255,6 +333,8 @@ export function createSceneContentRenderer({
       allowLocalFileAccess,
       imageEditingId: editingType === "image" ? editingId : "",
       tableEditingId: editingType === "table" ? editingId : "",
+      fileMemoEditingId: editingType === "file-memo" ? editingId : "",
+      scale: Math.max(0.1, Number(view?.scale || 1) || 1),
       resolveImageSource,
       renderTableCellHtml,
       onImageNaturalSize,
@@ -263,6 +343,9 @@ export function createSceneContentRenderer({
       const adapter = adapters.get(item?.type);
       const itemId = String(item?.id || "");
       if (!adapter || !itemId) {
+        return;
+      }
+      if (!canOwnItem(item)) {
         return;
       }
       activeIds.add(itemId);
