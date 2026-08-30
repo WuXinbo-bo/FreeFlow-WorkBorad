@@ -27,5 +27,7 @@ Editor, overlay, renderer, and resource adapters are stacked per capability key.
 
 All rendering work for a frame receives one immutable frame context containing the camera, scene revision, board revision, registry revision, DPR, and runtime mode. Canvas layers and DOM overlays must use that snapshot rather than reading mutable view state during the frame.
 
+The scene presentation coordinator owns the immutable camera matrix, viewport dimensions, and interaction session. Viewport resize may advance only the viewport revision; it must not mutate the camera or complete a newer interaction session with a stale recovery callback.
+
 Resource adapters are reconciled only when the scene revision changes. They must release resources that no longer belong to an active element and ignore stale asynchronous completions.
 Registering or removing a resource adapter invalidates this revision guard so the active adapter receives the current scene on the next frame.

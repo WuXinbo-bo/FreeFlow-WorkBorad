@@ -15,6 +15,7 @@ export function createFrameContext({
   registryRevision = 0,
   pixelRatio = 1,
   runtimeMode = "steady",
+  presentation = null,
 } = {}) {
   return Object.freeze({
     frameId: Math.max(0, Number(frameId) || 0),
@@ -25,5 +26,6 @@ export function createFrameContext({
     registryRevision: Math.max(0, Number(registryRevision) || 0),
     pixelRatio: Math.max(0.1, Number(pixelRatio) || 1),
     runtimeMode: String(runtimeMode || "steady"),
+    presentation: presentation && typeof presentation === "object" ? presentation : null,
   });
 }

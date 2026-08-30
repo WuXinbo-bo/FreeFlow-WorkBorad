@@ -154,6 +154,7 @@ import {
   resolveSceneIndex,
 } from "./scene/sceneIndex.js";
 import { createSceneRegistry } from "./scene/sceneRegistry.js";
+import { createScenePresentationCoordinator } from "./scene/scenePresentationCoordinator.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
 import { createOverlayBudgetManager } from "./overlay/overlayBudgetManager.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
@@ -3502,6 +3503,7 @@ let tablePointerSelectionState = {
   });
   const overlayBudgetManager = createOverlayBudgetManager();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
+  const scenePresentationCoordinator = createScenePresentationCoordinator();
   const richOverlayDetailPinnedUntil = new Map();
   let fileCardPreviewSurfaceHost = null;
   let fileCardPreviewSurfaceRoot = null;
@@ -4693,6 +4695,13 @@ let tablePointerSelectionState = {
     const viewportHeight = Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1);
     const frameView = createView(state.board.view);
     const viewportBudget = getCurrentViewportBudget();
+    scenePresentationCoordinator.updateCamera(frameView);
+    scenePresentationCoordinator.updateViewport({
+      width: viewportWidth,
+      height: viewportHeight,
+      pixelRatio: viewportBudget.effectiveDpr,
+    });
+    const presentation = scenePresentationCoordinator.getSnapshot();
     const frameContext = createFrameContext({
       frameId,
       timestamp,
@@ -4702,6 +4711,7 @@ let tablePointerSelectionState = {
       registryRevision: canvasElementRegistry.getRevision(),
       pixelRatio: viewportBudget.effectiveDpr,
       runtimeMode: isViewportInteractionActive() ? "viewport-interaction" : state.editingId ? "editing" : "steady",
+      presentation,
     });
     const visibleScene = queryVisibleSceneItems(
       sceneIndex,
@@ -4888,12 +4898,15 @@ let tablePointerSelectionState = {
       interactionRecoveryTimer = 0;
     }
     interactionPriorityGate.activate(reason);
+    scenePresentationCoordinator.beginInteraction(reason);
     hydrationScheduler.setPaused(true);
   }
 
   function releaseInteractionPriority(delayMs = 140) {
     const waitMs = Math.max(0, Number(delayMs || 140) || 140);
     interactionPriorityGate.scheduleRelease(waitMs);
+    const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
+    scenePresentationCoordinator.settleInteraction(presentationSessionId);
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
     }
@@ -4902,6 +4915,7 @@ let tablePointerSelectionState = {
       if (interactionPriorityGate.isActive()) {
         return;
       }
+      scenePresentationCoordinator.finishInteraction(presentationSessionId);
       hydrationScheduler.setPaused(false);
       store.emit();
       scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
@@ -8223,6 +8237,11 @@ let tablePointerSelectionState = {
     });
     const sizeChanged = hasViewportSizeChanged(lastViewportBudget, nextBudget);
     lastViewportBudget = nextBudget;
+    scenePresentationCoordinator.updateViewport({
+      width: nextBudget.cssWidth,
+      height: nextBudget.cssHeight,
+      pixelRatio: nextBudget.effectiveDpr,
+    });
     let backingStoreChanged = false;
     if (refs.canvas.width !== nextBudget.pixelWidth) {
       refs.canvas.width = nextBudget.pixelWidth;
@@ -24420,6 +24439,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       interactionRecoveryTimer = 0;
     }
     interactionPriorityGate.release();
+    scenePresentationCoordinator.reset();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();

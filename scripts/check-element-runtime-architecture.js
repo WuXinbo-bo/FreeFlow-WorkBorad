@@ -19,6 +19,9 @@ async function main() {
   const { createElementAdapterManager } = await import(
     "../public/src/engines/canvas2d-core/runtime/elementAdapterManager.js"
   );
+  const { createScenePresentationCoordinator } = await import(
+    "../public/src/engines/canvas2d-core/scene/scenePresentationCoordinator.js"
+  );
 
   const transitions = [];
   const registry = createElementTypeRegistry({ fallbackType: "text" });
@@ -74,6 +77,33 @@ async function main() {
   });
   assert.strictEqual(Object.isFrozen(frame), true);
   assert.strictEqual(Object.isFrozen(frame.view), true);
+
+  const presentation = createScenePresentationCoordinator({
+    view: { scale: 1, offsetX: 10, offsetY: 20 },
+    viewport: { width: 800, height: 600, pixelRatio: 1 },
+  });
+  const initialPresentation = presentation.getSnapshot();
+  assert.strictEqual(Object.isFrozen(initialPresentation), true);
+  assert.strictEqual(initialPresentation.cameraMatrix.css, "matrix(1, 0, 0, 1, 10, 20)");
+  presentation.updateViewport({ width: 960, height: 640, pixelRatio: 2 });
+  const resizedPresentation = presentation.getSnapshot();
+  assert.strictEqual(resizedPresentation.cameraRevision, initialPresentation.cameraRevision);
+  assert.strictEqual(resizedPresentation.viewportRevision, initialPresentation.viewportRevision + 1);
+  assert.deepStrictEqual(resizedPresentation.camera, initialPresentation.camera);
+  presentation.updateCamera({ scale: 1.25, offsetX: 12, offsetY: 24 });
+  assert.strictEqual(presentation.getSnapshot().cameraRevision, initialPresentation.cameraRevision + 1);
+
+  const firstSession = presentation.beginInteraction("pointer-pan");
+  assert.strictEqual(presentation.getSnapshot().interaction.phase, "active");
+  assert.strictEqual(presentation.settleInteraction(firstSession), true);
+  assert.strictEqual(presentation.getSnapshot().interaction.phase, "settling");
+  const secondSession = presentation.beginInteraction("wheel-zoom");
+  assert.notStrictEqual(secondSession, firstSession);
+  assert.strictEqual(presentation.finishInteraction(firstSession), false);
+  assert.strictEqual(presentation.getSnapshot().interaction.phase, "active");
+  assert.strictEqual(presentation.settleInteraction(secondSession), true);
+  assert.strictEqual(presentation.finishInteraction(secondSession), true);
+  assert.strictEqual(presentation.getSnapshot().interaction.phase, "steady");
 
   const lifecycle = createElementLifecycleManager({ registry });
   const item = { id: "a", type: "text", x: 0, y: 0, width: 10, height: 10 };
