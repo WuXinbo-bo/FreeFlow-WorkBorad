@@ -61,6 +61,18 @@ async function main() {
     "offscreen element was not culled"
   );
 
+  const compactDomPlan = planner.createPlan({
+    items,
+    visibleIds: ["text-small"],
+    view: { scale: 0.2 },
+    revisionKey: "compact-dom",
+  });
+  assert.strictEqual(
+    compactDomPlan.entries["text-small"].representation,
+    PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT,
+    "small DOM element did not use the unified exact-detail representation"
+  );
+
   const lowScalePlan = planner.createPlan({
     items,
     visibleIds: items.map((item) => item.id),
@@ -71,12 +83,13 @@ async function main() {
   assert.strictEqual(lowScalePlan.entries["text-small"].representation, PRESENTATION_REPRESENTATIONS.LIVE_DETAIL);
   assert.strictEqual(lowScalePlan.entries["image-large"].representation, PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT);
 
-  const runtime = createPresentationQualityRuntime({ registry, planner });
+  const runtime = createPresentationQualityRuntime({ registry, planner, mode: "active" });
   const steady = runtime.update(
     { items, visibleIds: items.map((item) => item.id), view: { scale: 1 }, revisionKey: "steady-1" },
     { phase: "steady", sessionId: 0 }
   );
   const lockedPlan = steady.activePlan;
+  assert.strictEqual(steady.mode, "active", "presentation quality runtime did not activate");
   const active = runtime.update(
     { items, visibleIds: items.map((item) => item.id), view: { scale: 0.4 }, revisionKey: "active-1" },
     { phase: "active", sessionId: 1 }

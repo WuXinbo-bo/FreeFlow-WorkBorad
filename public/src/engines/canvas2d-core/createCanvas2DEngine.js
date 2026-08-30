@@ -181,12 +181,12 @@ import { createElementAdapterManager } from "./runtime/elementAdapterManager.js"
 import { createElementResourceManager } from "./runtime/elementResourceManager.js";
 import { createFrameContext } from "./runtime/frameContext.js";
 import { createPresentationQualityRuntime } from "./runtime/presentationQualityRuntime.js";
+import { PRESENTATION_REPRESENTATIONS } from "./runtime/presentationQualityPlanner.js";
 import { invalidationToRenderPatch } from "./runtime/elementInvalidation.js";
 import {
   hasViewportSizeChanged,
   resolveViewportPixelBudget,
 } from "./render/viewportPixelBudget.js";
-import { buildUnifiedPreviewSummaryMarkup } from "./previewSummaryMarkup.js";
 import {
   getCanvasLodScalePercent,
   getOverlayScaleBucket,
@@ -821,16 +821,13 @@ const CLIPBOARD_SEMANTIC_DEGRADE_THRESHOLD = 12000;
 const RICH_OVERLAY_CULL_PADDING_PX = 160;
 const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
 const RICH_OVERLAY_DETAIL_CACHE_LIMIT = 180;
-const RICH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const RICH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const OVERLAY_CANVAS_LOD_EXIT_SCALE = 0.17;
-const RICH_OVERLAY_EDIT_HANDOFF_DETAIL_MS = 900;
-const MATH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const MATH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE = 0.15;
-const CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE = 0.15;
+const CODE_BLOCK_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const MATH_MARKUP_CACHE_LIMIT = 160;
 const OVERLAY_IDLE_TASK_TIMEOUT_MS = 96;
 const OVERLAY_IDLE_MIN_TIME_REMAINING_MS = 4;
@@ -2526,56 +2523,20 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
   node.dataset.mathRenderState = "pending";
 }
 
-function resolveRichOverlaySkeletonLayout({ width = 120, height = 48, isFlowNode = false } = {}) {
-  const safeWidth = Math.max(32, Number(width) || 120);
-  const safeHeight = Math.max(24, Number(height) || 48);
-  const area = safeWidth * safeHeight;
-  const lineCount = area >= 120000 ? 4 : area >= 4200 ? 3 : 2;
-  const aspectRatio = safeWidth / Math.max(1, safeHeight);
-  const clusterWidth = Math.max(
-    isFlowNode ? 28 : 34,
-    Math.min(
-      isFlowNode ? 54 : 60,
-      Math.round(aspectRatio > 1.6 ? (isFlowNode ? 34 : 38) : (isFlowNode ? 44 : 48))
-    )
-  );
-  const lineHeight = area >= 120000 ? 8 : area >= 4200 ? 7 : 6;
-  const gap = lineCount >= 4 ? 8 : 10;
-  const ratios = isFlowNode
-    ? [0.88, 0.62, 0.74, 0.56]
-    : [0.96, 0.7, 0.82, 0.6];
-  return {
-    lineCount,
-    clusterWidth,
-    lineHeight,
-    gap,
-    widths: Array.from({ length: lineCount }, (_, index) => Math.max(18, Math.round(clusterWidth * (ratios[index] || 0.64)))),
-  };
-}
-
-function buildRichOverlaySkeletonMarkup({ width = 120, height = 48, isFlowNode = false, showPanel = false } = {}) {
-  const layout = resolveRichOverlaySkeletonLayout({ width, height, isFlowNode });
-  const widthRatios = layout.widths.map((lineWidth) => {
-    const denominator = Math.max(layout.clusterWidth || 1, lineWidth || 1);
-    return Math.max(0.24, Math.min(0.96, lineWidth / denominator));
-  });
-  return buildUnifiedPreviewSummaryMarkup({
-    width,
-    height,
-    showHeader: showPanel,
-    lineCount: layout.lineCount,
-    widths: widthRatios,
-    align: "left",
-  });
-}
-
-function resolveRichOverlaySummaryMode({ scale = 1, width = 0, height = 0 } = {}) {
-  const normalizedScale = Math.max(0.1, Number(scale) || 1);
-  const area = Math.max(1, Number(width || 0) || 0) * Math.max(1, Number(height || 0) || 0);
-  if (normalizedScale < RICH_OVERLAY_PREVIEW_MIN_SCALE || area < 2600) {
-    return "summary-skeleton";
+function syncOverlayPresentationState(node, frameContext = null, itemId = "") {
+  if (!(node instanceof HTMLElement)) {
+    return;
   }
-  return "detail";
+  const plannedRepresentation = String(
+    frameContext?.quality?.activePlan?.entries?.[String(itemId || "")]?.representation ||
+      PRESENTATION_REPRESENTATIONS.LIVE_DETAIL
+  );
+  if (node.dataset.plannedRepresentation !== plannedRepresentation) {
+    node.dataset.plannedRepresentation = plannedRepresentation;
+  }
+  if (node.dataset.activeRepresentation !== PRESENTATION_REPRESENTATIONS.LIVE_DETAIL) {
+    node.dataset.activeRepresentation = PRESENTATION_REPRESENTATIONS.LIVE_DETAIL;
+  }
 }
 
 function getRichOverlayClassSignature(item) {
@@ -2681,30 +2642,6 @@ function getMathOverlayStyleSignature({
     String(whiteSpace || "normal"),
     String(justifyContent || "center"),
   ].join("|");
-}
-
-function resolveMathOverlaySummaryMode({ scale = 1, width = 0, height = 0, displayMode = false } = {}) {
-  const normalizedScale = Math.max(0.1, Number(scale) || 1);
-  const safeWidth = Math.max(1, Number(width || 0) || 0);
-  const safeHeight = Math.max(1, Number(height || 0) || 0);
-  const area = safeWidth * safeHeight;
-  if (normalizedScale < MATH_OVERLAY_PREVIEW_MIN_SCALE || area < (displayMode ? 2200 : 1200)) {
-    return "summary-skeleton";
-  }
-  return "detail";
-}
-
-function buildMathOverlaySummaryMarkup({
-  displayMode = false,
-  width = 0,
-  height = 0,
-} = {}) {
-  return buildRichOverlaySkeletonMarkup({
-    width: Math.max(24, Number(width || 0) || 0),
-    height: Math.max(18, Number(height || 0) || 0),
-    isFlowNode: false,
-    showPanel: displayMode,
-  });
 }
 
 function readMathOverlayFrame(node, scale = 1) {
@@ -3516,8 +3453,7 @@ let tablePointerSelectionState = {
   const overlayBudgetManager = createOverlayBudgetManager();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
-  const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry });
-  const richOverlayDetailPinnedUntil = new Map();
+  const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry, mode: "active" });
   let fileCardPreviewSurfaceHost = null;
   let fileCardPreviewSurfaceRoot = null;
   let fileCardPreviewSurfaceStyleRoot = null;
@@ -3911,7 +3847,15 @@ let tablePointerSelectionState = {
     });
   }
 
-  function syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds = null) {
+  function syncCodeBlockOverlayNode(
+    item,
+    viewportBounds,
+    scale,
+    offsetX,
+    offsetY,
+    frameContext = null,
+    deferredIds = null
+  ) {
     const itemId = String(item?.id || "");
     if (!itemId) {
       return;
@@ -3932,7 +3876,6 @@ let tablePointerSelectionState = {
     const syntaxHighlighting = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE);
     const showLineNumbers = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE);
     const showHeader = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE);
-    const summaryMode = !isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE);
     if (!isVisible) {
       codeBlockOverlayVirtualizer.hideNode(item.id);
       return;
@@ -3955,6 +3898,7 @@ let tablePointerSelectionState = {
       return;
     }
     codeBlockOverlayVirtualizer.showNode(item.id);
+    syncOverlayPresentationState(node, frameContext, item.id);
     node.style.pointerEvents = isEditing ? "none" : "auto";
     node.style.left = `${Math.round(left)}px`;
     node.style.top = `${Math.round(top)}px`;
@@ -3971,7 +3915,6 @@ let tablePointerSelectionState = {
       String(item.previewMode || "preview"),
     ].join("|");
     const renderSignature = [
-      summaryMode ? 1 : 0,
       syntaxHighlighting ? 1 : 0,
       showLineNumbers ? 1 : 0,
       showHeader ? 1 : 0,
@@ -3986,7 +3929,6 @@ let tablePointerSelectionState = {
         hover: state.hoverId === item.id,
         selected: state.board.selectedIds.includes(item.id),
         editing: isEditing,
-        summaryMode,
         syntaxHighlighting,
         showLineNumbers,
         showHeader,
@@ -11292,8 +11234,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     showOverlayHost(refs.richDisplayHost);
 
-    const interactionPriorityActive = interactionPriorityGate.isActive();
-    const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
     const sceneLayoutView = createView({ scale: 1, offsetX: 0, offsetY: 0 });
@@ -11387,96 +11327,49 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const isFlowNode = item.type === "flowNode";
       const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
       const linkSignature = item.type === "text" || isMindNode ? getLinkSemanticSignature(item) : "";
-      const overlayMode =
-        (!interactionPriorityActive && detailMode) || isRichOverlayDetailPinned(item.id)
-          ? "detail"
-          : resolveRichOverlaySummaryMode({ scale, width: width * scale, height: height * scale });
+      const overlayMode = "detail";
+      syncOverlayPresentationState(node, frameContext, item.id);
       const surfaceLayout = resolveRichTextSurfaceLayout(item, sceneLayoutView, {
         mode: "display",
         overlayMode,
       });
       const detailCacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
       const detailRenderSignature = `${detailCacheKey}|${scaleBucket}`;
-      node.classList.toggle("is-summary-skeleton", overlayMode === "summary-skeleton");
       let contentMutated = false;
-      if (overlayMode === "detail") {
-        node.dataset.detailRenderSignature = detailRenderSignature;
-        const cachedHtml = readRichOverlayDetailHtmlCache(detailCacheKey);
-        if (cachedHtml.trim()) {
-          contentMutated = applyRichOverlayDetailHtmlToNode(node, {
-            detailRenderSignature,
-            html: cachedHtml,
-            item,
-            linkSignature,
-            scale: 1,
-            scaleBucket,
-          }) || contentMutated;
-        } else {
-          cancelPendingRichOverlayDetail(node);
-          const text = item.plainText || item.text || "";
-          if (node.dataset.contentMode !== "detail-pending" || node.dataset.text !== text) {
-            node.textContent = text;
-            node.dataset.text = text;
-            node.dataset.html = "";
-            node.dataset.inlineScaleBucket = "";
-            node.dataset.linkSignature = "";
-            node.dataset.contentMode = "detail-pending";
-            contentMutated = true;
-          }
-          scheduleRichOverlayDetailHtml(node, {
-            cacheKey: detailCacheKey,
-            detailRenderSignature,
-            item,
-            linkSignature,
-            scale: 1,
-            scaleBucket,
-          });
-        }
+      node.dataset.detailRenderSignature = detailRenderSignature;
+      const cachedHtml = readRichOverlayDetailHtmlCache(detailCacheKey);
+      if (cachedHtml.trim()) {
+        contentMutated = applyRichOverlayDetailHtmlToNode(node, {
+          detailRenderSignature,
+          html: cachedHtml,
+          item,
+          linkSignature,
+          scale: 1,
+          scaleBucket,
+        }) || contentMutated;
       } else {
         cancelPendingRichOverlayDetail(node);
-        const logicalSummaryWidth = Math.max(24, Number(item.width || 0) || 24);
-        const logicalSummaryHeight = Math.max(18, Number(item.height || 0) || 18);
-        const logicalSummaryPaddingX = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingX : 0;
-        const logicalSummaryPaddingY = isFlowNode ? FLOW_NODE_TEXT_LAYOUT.paddingY : 0;
-        const reusableDetailHtml = String(node.dataset.html || "").trim();
-        const hasReusableDetail = node.dataset.contentMode === "detail" && reusableDetailHtml;
-        const summarySignature = [
-          overlayMode,
-          isFlowNode ? "flow" : isMindNode ? "mind-node" : "text",
-          Math.round(logicalSummaryWidth),
-          Math.round(logicalSummaryHeight),
-          Math.round(logicalSummaryPaddingX),
-          Math.round(logicalSummaryPaddingY),
-          hashOverlayContent(String(item.plainText || item.text || "")),
-        ].join("|");
-        if (!hasReusableDetail && (node.dataset.contentMode !== overlayMode || node.dataset.text !== summarySignature)) {
-          node.innerHTML = buildRichOverlaySkeletonMarkup({
-            width: Math.max(24, logicalSummaryWidth - logicalSummaryPaddingX * 2),
-            height: Math.max(18, logicalSummaryHeight - logicalSummaryPaddingY * 2),
-            isFlowNode,
-            showPanel: false,
-          });
-          node.dataset.text = summarySignature;
+        const text = item.plainText || item.text || "";
+        if (node.dataset.contentMode !== "detail-pending" || node.dataset.text !== text) {
+          node.textContent = text;
+          node.dataset.text = text;
           node.dataset.html = "";
           node.dataset.inlineScaleBucket = "";
           node.dataset.linkSignature = "";
-          node.dataset.contentMode = overlayMode;
+          node.dataset.contentMode = "detail-pending";
           contentMutated = true;
         }
+        scheduleRichOverlayDetailHtml(node, {
+          cacheKey: detailCacheKey,
+          detailRenderSignature,
+          item,
+          linkSignature,
+          scale: 1,
+          scaleBucket,
+        });
       }
       setStyleIfNeeded(node, "display", "block");
-      const baseBoxStyles = getRichOverlayBoxStyles(item, 1);
-      const boxStyles = overlayMode !== "detail"
-        ? {
-            ...baseBoxStyles,
-            display: "block",
-            widthCss: `${Math.round(width)}px`,
-            heightCss: `${Math.round(height)}px`,
-            minHeightCss: `${Math.round(height)}px`,
-            maxWidthCss: `${Math.round(width)}px`,
-            overflow: "hidden",
-          }
-        : baseBoxStyles;
+      const boxStyles = getRichOverlayBoxStyles(item, 1);
       const styleSignature = getRichOverlayStyleSignature({
         left: surfaceLayout?.left ?? left,
         top: surfaceLayout?.top ?? top,
@@ -11497,7 +11390,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         overflow: boxStyles.overflow,
       });
       if (node.dataset.styleSignature !== styleSignature) {
-        applyRichTextSurfaceLayout(node, surfaceLayout, { includePosition: true, includeBox: overlayMode !== "detail" });
+        applyRichTextSurfaceLayout(node, surfaceLayout, { includePosition: true, includeBox: false });
         setStyleIfNeeded(node, "display", boxStyles.display);
         setStyleIfNeeded(node, "width", boxStyles.widthCss);
         setStyleIfNeeded(node, "height", boxStyles.heightCss);
@@ -11509,7 +11402,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (overlayMode === "detail" && !state.editingId && (item.type === "text" || isMindNode)) {
+      if (!state.editingId && (item.type === "text" || isMindNode)) {
         const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
@@ -11534,14 +11427,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  function pinRichOverlayDetailForHandoff(itemId = "") {
-    const id = String(itemId || "").trim();
-    if (!id) {
-      return;
-    }
-    richOverlayDetailPinnedUntil.set(id, Date.now() + RICH_OVERLAY_EDIT_HANDOFF_DETAIL_MS);
-  }
-
   function prepareRichOverlayDetailHandoff(item, { deferHtmlWarmup = false } = {}) {
     if (!item?.id) {
       return;
@@ -11557,23 +11442,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         resolveCachedRichOverlayDetailHtml(item, linkSignature);
       }
     }
-    pinRichOverlayDetailForHandoff(item.id);
-  }
-
-  function isRichOverlayDetailPinned(itemId = "") {
-    const id = String(itemId || "").trim();
-    if (!id) {
-      return false;
-    }
-    const until = Number(richOverlayDetailPinnedUntil.get(id) || 0);
-    if (!until) {
-      return false;
-    }
-    if (until <= Date.now()) {
-      richOverlayDetailPinnedUntil.delete(id);
-      return false;
-    }
-    return true;
   }
 
   function syncMathOverlays(visibleScene = null, frameContext = null) {
@@ -11644,8 +11512,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     showOverlayHost(refs.mathDisplayHost);
-    const interactionPriorityActive = interactionPriorityGate.isActive();
-    const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
@@ -11714,12 +11580,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       syncNode: (node, { item, left, top, width, height }) => {
       const displayMode = item.displayMode !== false;
       const formula = String(item.formula || "");
-      const overlayMode =
-        !interactionPriorityActive && detailMode
-          ? "detail"
-          : resolveMathOverlaySummaryMode({ scale, width: width * scale, height: height * scale, displayMode });
+      const overlayMode = "detail";
+      syncOverlayPresentationState(node, frameContext, item.id);
       const shouldRetryRender =
-        overlayMode === "detail" &&
         item.mathOverlayReady !== true &&
         canScheduleMathMarkupUpgrade(formula) &&
         node.dataset.mathRenderState !== "pending";
@@ -11727,43 +11590,32 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const fallbackText = String(item.fallbackText || item.formula || "").trim() || (displayMode ? "[公式]" : "[行内公式]");
       const contentSignature = `${getMathOverlaySignature(item)}|${overlayMode}`;
       if (node.dataset.contentSignature !== contentSignature || shouldRetryRender) {
-        if (overlayMode === "detail") {
-          const cacheKey = getMathMarkupCacheKey(formula, displayMode);
-          const cachedMarkup = readMathMarkupCache(cacheKey);
-          if (cachedMarkup && hasRenderedKatexMarkup(cachedMarkup)) {
-            applyMathMarkupToNode(node, contentSignature, cachedMarkup, {
-              fallbackText,
-              state: "ready",
-              transport: "cache",
-            });
-            item.renderState = "ready";
-            item.mathOverlayReady = true;
-          } else {
-            node.textContent = fallbackText;
-            node.dataset.mathRenderState = "pending";
-            node.dataset.mathRenderTransport = "";
-            item.renderState = stateToken === "error" ? "error" : "fallback";
-            item.mathOverlayReady = false;
-            if (canScheduleMathMarkupUpgrade(formula)) {
-              scheduleMathMarkupUpgrade(node, {
-                cacheKey,
-                formula,
-                displayMode,
-                contentSignature,
-                fallbackText,
-                item,
-              });
-            }
-          }
-        } else {
-          cancelPendingMathRender(node);
-          node.innerHTML = buildMathOverlaySummaryMarkup({
-            displayMode,
-            width,
-            height,
+        const cacheKey = getMathMarkupCacheKey(formula, displayMode);
+        const cachedMarkup = readMathMarkupCache(cacheKey);
+        if (cachedMarkup && hasRenderedKatexMarkup(cachedMarkup)) {
+          applyMathMarkupToNode(node, contentSignature, cachedMarkup, {
+            fallbackText,
+            state: "ready",
+            transport: "cache",
           });
-          node.dataset.mathRenderState = "summary";
-          node.dataset.mathRenderTransport = "summary";
+          item.renderState = "ready";
+          item.mathOverlayReady = true;
+        } else {
+          node.textContent = fallbackText;
+          node.dataset.mathRenderState = "pending";
+          node.dataset.mathRenderTransport = "";
+          item.renderState = stateToken === "error" ? "error" : "fallback";
+          item.mathOverlayReady = false;
+          if (canScheduleMathMarkupUpgrade(formula)) {
+            scheduleMathMarkupUpgrade(node, {
+              cacheKey,
+              formula,
+              displayMode,
+              contentSignature,
+              fallbackText,
+              item,
+            });
+          }
         }
         node.dataset.contentSignature = contentSignature;
         node.dataset.contentMode = overlayMode;
@@ -11771,12 +11623,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
       const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, 1);
       setStyleIfNeeded(node, "display", displayMode ? "block" : "inline-flex");
-      const widthCss = overlayMode === "detail" ? "auto" : `${Math.round(width)}px`;
+      const widthCss = "auto";
       const minHeightCss = `${Math.max(1, Math.round(height))}px`;
-      const appliedPaddingX = overlayMode === "detail" ? paddingX : 0;
-      const appliedPaddingY = overlayMode === "detail" ? paddingY : 0;
-      const whiteSpace = overlayMode === "detail" ? (displayMode ? "normal" : "nowrap") : "normal";
-      const justifyContent = overlayMode === "detail" ? (displayMode ? "center" : "flex-start") : "center";
+      const appliedPaddingX = paddingX;
+      const appliedPaddingY = paddingY;
+      const whiteSpace = displayMode ? "normal" : "nowrap";
+      const justifyContent = displayMode ? "center" : "flex-start";
       const styleSignature = getMathOverlayStyleSignature({
         left,
         top,
@@ -11796,7 +11648,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStyleIfNeeded(node, "minHeight", minHeightCss);
         setStyleIfNeeded(node, "padding", `${appliedPaddingY}px ${appliedPaddingX}px`);
         setStyleIfNeeded(node, "fontSize", `${fontSize}px`);
-        setStyleIfNeeded(node, "lineHeight", overlayMode === "detail" && !displayMode ? "1.1" : "normal");
+        setStyleIfNeeded(node, "lineHeight", !displayMode ? "1.1" : "normal");
         setStyleIfNeeded(node, "alignItems", "center");
         setStyleIfNeeded(node, "justifyContent", justifyContent);
         setStyleIfNeeded(node, "whiteSpace", whiteSpace);
@@ -11807,7 +11659,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (node.dataset.layoutWritebackSignature !== contentSignature) {
         node.dataset.layoutWritebackSignature = contentSignature;
       }
-      if (overlayMode === "detail" && node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, 1)) {
+      if (node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, 1)) {
         mathLayoutWritebackChanged = true;
       }
       },
@@ -11867,7 +11719,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     showOverlayHost(refs.codeBlockDisplayHost);
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
-    if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE)) {
+    if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_PREVIEW_MIN_SCALE)) {
       refs.codeBlockDisplayHost.classList.add("is-hidden");
       refs.codeBlockDisplayHost.style.display = "none";
       resetCodeBlockOverlayState({ clearNodes: true });
@@ -11979,7 +11831,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           setStyleIfNeeded(node, "display", "none");
         },
         syncNode: (_, item) => {
-          syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds);
+          syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, frameContext, deferredIds);
         },
       });
     } else {
@@ -12005,7 +11857,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           });
           return;
         }
-        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, deferredIds);
+        syncCodeBlockOverlayNode(item, viewportBounds, scale, offsetX, offsetY, frameContext, deferredIds);
       });
     }
 

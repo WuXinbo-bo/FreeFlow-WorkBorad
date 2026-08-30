@@ -1,7 +1,6 @@
 import { sanitizeText } from "../utils.js";
 import { getCodeBlockSceneMetrics } from "./measureCodeBlockLayout.js";
 import { isMermaidCodeBlock } from "../elements/codeBlock.js";
-import { buildUnifiedPreviewSummaryMarkup } from "../previewSummaryMarkup.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 import {
   getCodeBlockLanguageDisplayLabel,
@@ -52,21 +51,6 @@ function buildCodeLineHtml(code = "", lineCount = 1) {
     .map((_, index) => `<span data-line="${index + 1}"></span>`)
     .concat(Array.from({ length: Math.max(0, lineCount - safeLines.length) }, (_, offset) => `<span data-line="${safeLines.length + offset + 1}"></span>`))
     .join("");
-}
-
-function buildCodeBlockSummaryMarkup(item = {}) {
-  const metrics = getCodeBlockSceneMetrics(item);
-  const lineCount = Math.max(3, Math.min(6, Number(metrics.visibleLineCount || 4) || 4));
-  const lineWidths = [0.74, 0.82, 0.6, 0.7, 0.54, 0.66];
-  return buildUnifiedPreviewSummaryMarkup({
-    width: Math.max(48, Number(item?.width || 0) || 48),
-    height: Math.max(32, Number(item?.height || 0) || 32),
-    showHeader: true,
-    lineCount,
-    widths: lineWidths,
-    align: "left",
-    drawFrame: false,
-  });
 }
 
 function getCodeBlockStateTitle(item = {}, languageLabel = "") {
@@ -437,7 +421,6 @@ function highlightCodeToHtml(code = "", language = "") {
 
 export function buildCodeBlockStaticMarkup(item = {}, options = {}) {
   const code = sanitizeText(item.code ?? item.text ?? item.plainText ?? "");
-  const summaryMode = options.summaryMode === true;
   const language = normalizeCodeBlockLanguageTag(item.language || "");
   const languageLabel = getCodeBlockLanguageDisplayLabel(language);
   const prismLanguage = resolveCodeBlockPrismLanguage(language);
@@ -455,17 +438,12 @@ export function buildCodeBlockStaticMarkup(item = {}, options = {}) {
         <button type="button" class="canvas2d-code-block-copy" data-action="copy-code" title="复制代码" aria-label="复制代码">复制</button>
       </div>
     ` : ""}
-    <div class="canvas2d-code-block-body ${item.wrap ? "is-wrap" : ""} ${summaryMode ? "is-summary" : ""}">
-      ${
-        summaryMode
-          ? buildCodeBlockSummaryMarkup(item)
-          : `
+    <div class="canvas2d-code-block-body ${item.wrap ? "is-wrap" : ""}">
       ${showLineNumbers ? `<div class="canvas2d-code-block-gutter">${buildLineNumberHtml(lineCount)}</div>` : ""}
       <div class="canvas2d-code-block-codewrap">
         <pre class="canvas2d-code-block-pre"><code class="language-${escapeHtml(prismLanguage || "plain")}">${highlightedHtml}</code></pre>
         <div class="canvas2d-code-block-line-proxy" aria-hidden="true">${buildCodeLineHtml(code, lineCount)}</div>
-      </div>`
-      }
+      </div>
     </div>
   `;
 }
@@ -628,7 +606,6 @@ function getMarkupSignature(item = {}, options = {}) {
     item.collapsed ? 1 : 0,
     item.fontSize || 16,
     item.previewMode || "preview",
-    options.summaryMode ? 1 : 0,
     options.showHeader === false ? 0 : 1,
     options.showLineNumbers === false ? 0 : 1,
   ].join("|");
@@ -799,13 +776,11 @@ export function renderCodeBlockStatic(node, item = {}, options = {}) {
   const language = String(item.language || "").trim().toLowerCase();
   const prismLanguage = resolveCodeBlockPrismLanguage(language || "plain");
   const highlightCacheKey = getHighlightCacheKey(code, prismLanguage);
-  const summaryMode = options.summaryMode === true;
   const syntaxHighlighting = options.syntaxHighlighting !== false;
   const showHeader = options.showHeader !== false;
   const showLineNumbers = options.showLineNumbers !== false;
   const mermaidCacheKey = getMermaidCacheKey(code);
   const markupSignature = getMarkupSignature(item, {
-    summaryMode,
     showHeader,
     showLineNumbers,
   });
@@ -825,25 +800,24 @@ export function renderCodeBlockStatic(node, item = {}, options = {}) {
         node.dataset.mermaidState = "empty";
       }
     } else {
-      const cachedHighlightedHtml = syntaxHighlighting && !summaryMode ? readHighlightCache(highlightCacheKey) : "";
+      const cachedHighlightedHtml = syntaxHighlighting ? readHighlightCache(highlightCacheKey) : "";
       node.innerHTML = buildCodeBlockStaticMarkup(item, {
         highlightedHtml:
-          syntaxHighlighting && !summaryMode
+          syntaxHighlighting
             ? cachedHighlightedHtml || escapeHtml(code)
             : escapeHtml(code),
-        showHeader: summaryMode ? false : showHeader,
-        showLineNumbers: summaryMode ? false : showLineNumbers,
-        summaryMode,
+        showHeader,
+        showLineNumbers,
       });
       node.dataset.highlightState =
-        syntaxHighlighting && !summaryMode ? (cachedHighlightedHtml ? "highlighted" : "plain") : "disabled";
-      node.dataset.highlightCacheKey = syntaxHighlighting && !summaryMode ? highlightCacheKey : "";
+        syntaxHighlighting ? (cachedHighlightedHtml ? "highlighted" : "plain") : "disabled";
+      node.dataset.highlightCacheKey = syntaxHighlighting ? highlightCacheKey : "";
       node.dataset.highlightTransport =
-        syntaxHighlighting && !summaryMode ? (cachedHighlightedHtml ? "cache" : "pending") : "disabled";
+        syntaxHighlighting ? (cachedHighlightedHtml ? "cache" : "pending") : "disabled";
       node.dataset.mermaidCacheKey = "";
       node.dataset.mermaidState = "";
       node.dataset.markupSignature = markupSignature;
-      if (syntaxHighlighting && !summaryMode && !cachedHighlightedHtml && code) {
+      if (syntaxHighlighting && !cachedHighlightedHtml && code) {
         scheduleHighlightUpgrade(node, item, markupSignature, highlightCacheKey, prismLanguage, code);
       }
     }
@@ -853,7 +827,7 @@ export function renderCodeBlockStatic(node, item = {}, options = {}) {
       node.dataset.mermaidCacheKey = mermaidCacheKey;
       scheduleMermaidPreviewRender(node, item, markupSignature, mermaidCacheKey, code);
     }
-  } else if (syntaxHighlighting && !summaryMode && (!isMermaidCodeBlock(item) || item.previewMode === "source")) {
+  } else if (syntaxHighlighting && (!isMermaidCodeBlock(item) || item.previewMode === "source")) {
     const cachedHighlightedHtml = readHighlightCache(highlightCacheKey);
     if (cachedHighlightedHtml && node.dataset.highlightState !== "highlighted") {
       applyHighlightedMarkup(node, markupSignature, highlightCacheKey, prismLanguage, cachedHighlightedHtml);
@@ -862,14 +836,6 @@ export function renderCodeBlockStatic(node, item = {}, options = {}) {
       scheduleHighlightUpgrade(node, item, markupSignature, highlightCacheKey, prismLanguage, code);
     }
   } else if (!syntaxHighlighting) {
-    cancelPendingHighlight(node);
-    cancelPendingMermaid(node);
-    node.dataset.highlightState = "disabled";
-    node.dataset.highlightCacheKey = "";
-    node.dataset.highlightTransport = "disabled";
-    node.dataset.mermaidState = "";
-    node.dataset.mermaidCacheKey = "";
-  } else if (summaryMode) {
     cancelPendingHighlight(node);
     cancelPendingMermaid(node);
     node.dataset.highlightState = "disabled";

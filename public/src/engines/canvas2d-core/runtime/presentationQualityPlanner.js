@@ -74,7 +74,7 @@ function resolveRepresentation({
     return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "sufficient-projected-detail" };
   }
   const supportsExactSnapshot = definition?.capabilities?.render === "canvas-dom";
-  if (supportsExactSnapshot && projectedArea >= thresholds.snapshotAreaPx) {
+  if (supportsExactSnapshot) {
     return { representation: PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT, reason: "stable-detail-snapshot" };
   }
   return { representation: PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT, reason: "insufficient-projected-detail" };

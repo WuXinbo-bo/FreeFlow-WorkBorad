@@ -914,6 +914,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialFlowLocalTop = Number.parseFloat(flowTextNode.style.top);
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
       const initialCodeLocalTop = Number.parseFloat(codeNode.style.top);
+      const initialOverlayHtml = [richNode.innerHTML, mathNode.innerHTML, codeNode.innerHTML];
+      const initialOverlayRepresentations = [richNode, mathNode, codeNode].map((node) => ({
+        planned: node.dataset.plannedRepresentation || "",
+        active: node.dataset.activeRepresentation || "",
+      }));
       const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
       const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
       const initialFileBox = [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height];
@@ -956,7 +961,13 @@ async function runViewportInteractionRecoveryCheck(browser) {
         sceneMatrix: [activeMatrix.a, activeMatrix.d, activeMatrix.e, activeMatrix.f],
         scenePhase: sceneRoot.dataset.presentationPhase,
         richLocalLeft: Number.parseFloat(richNode.style.left),
+        mathLocalLeft: Number.parseFloat(mathNode.style.left),
         codeLocalLeft: Number.parseFloat(codeNode.style.left),
+        overlayHtml: [richNode.innerHTML, mathNode.innerHTML, codeNode.innerHTML],
+        overlayRepresentations: [richNode, mathNode, codeNode].map((node) => ({
+          planned: node.dataset.plannedRepresentation || "",
+          active: node.dataset.activeRepresentation || "",
+        })),
         imageBox: [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height],
         tableBox: [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height],
         fileBox: [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height],
@@ -998,6 +1009,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
           flowNodeB === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]'),
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         scenePhase: sceneRoot.dataset.presentationPhase,
+        overlayHtml: [richNode.innerHTML, mathNode.innerHTML, codeNode.innerHTML],
+        overlayRepresentations: [richNode, mathNode, codeNode].map((node) => ({
+          planned: node.dataset.plannedRepresentation || "",
+          active: node.dataset.activeRepresentation || "",
+        })),
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         interaction: readInteractionState(),
       };
@@ -1017,6 +1033,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
         initialFlowLocalTop,
         initialCodeLocalLeft,
         initialCodeLocalTop,
+        initialOverlayHtml,
+        initialOverlayRepresentations,
         initialImageBox,
         initialTableBox,
         initialFileBox,
@@ -1092,8 +1110,28 @@ async function runViewportInteractionRecoveryCheck(browser) {
       result
     );
     assert(
+      Math.abs(result.active.mathLocalLeft - result.initialMathLocalLeft) < 0.01,
+      "math content local coordinates changed during camera interaction",
+      result
+    );
+    assert(
       Math.abs(result.active.codeLocalLeft - result.initialCodeLocalLeft) < 0.01,
       "code content local coordinates changed during camera interaction",
+      result
+    );
+    assert(
+      JSON.stringify(result.active.overlayHtml) === JSON.stringify(result.initialOverlayHtml),
+      "DOM overlay content changed during camera interaction",
+      result
+    );
+    assert(
+      result.initialOverlayRepresentations.every((entry) => entry.planned && entry.active === "live-detail"),
+      "DOM overlays did not resolve the unified plan to real detail",
+      result
+    );
+    assert(
+      JSON.stringify(result.active.overlayRepresentations) === JSON.stringify(result.initialOverlayRepresentations),
+      "DOM overlay representation changed during camera interaction",
       result
     );
     assert(JSON.stringify(result.active.imageBox) === JSON.stringify(result.initialImageBox), "image world box changed during camera interaction", result);
@@ -1138,6 +1176,16 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
     assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
+    assert(
+      JSON.stringify(result.recovered.overlayHtml) === JSON.stringify(result.initialOverlayHtml),
+      "DOM overlay content did not recover after viewport interaction",
+      result
+    );
+    assert(
+      result.recovered.overlayRepresentations.every((entry) => entry.planned && entry.active === "live-detail"),
+      "DOM overlay representation did not recover to real detail",
+      result
+    );
     assert(result.recovered.interaction.paintedPixels > 0, "interaction controls did not recover after viewport interaction", result);
     assert(result.resizeMatrixAfter === result.resizeMatrixBefore, "viewport resize mutated the scene camera matrix", result);
     assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
@@ -2122,12 +2170,15 @@ async function runTextSummaryStabilityCheck(browser) {
       const svg = node?.querySelector(".canvas2d-rich-skeleton-svg");
       return {
         contentMode: node?.dataset.contentMode || "",
+        plannedRepresentation: node?.dataset.plannedRepresentation || "",
+        activeRepresentation: node?.dataset.activeRepresentation || "",
         html: node?.innerHTML || "",
         scrollWidth: Number(node?.scrollWidth || 0),
         clientWidth: Number(node?.clientWidth || 0),
         scrollHeight: Number(node?.scrollHeight || 0),
         clientHeight: Number(node?.clientHeight || 0),
         hasSvg: Boolean(svg),
+        hasLegacyPlaceholder: Boolean(node?.querySelector(".canvas2d-rich-skeleton, .canvas2d-rich-skeleton-svg")),
         padding: node ? getComputedStyle(node).padding : "",
       };
     });
@@ -2158,7 +2209,22 @@ async function runTextSummaryStabilityCheck(browser) {
     assert(hiddenAgain.nodePreserved === true, "text overlay node was destroyed during the LOD transition", result);
     assert(firstRecovered.contentMode === "detail", "text overlay did not recover in detail mode", result);
     assert(secondRecovered.contentMode === "detail", "text overlay did not recover after repeated threshold crossing", result);
-    assert(!firstRecovered.hasSvg && !secondRecovered.hasSvg, "text detail overlay retained a stale summary skeleton", result);
+    assert(
+      firstRecovered.activeRepresentation === "live-detail" && secondRecovered.activeRepresentation === "live-detail",
+      "text overlay did not resolve to real detail after threshold recovery",
+      result
+    );
+    assert(
+      firstRecovered.plannedRepresentation && secondRecovered.plannedRepresentation,
+      "text overlay did not receive the unified presentation plan",
+      result
+    );
+    assert(
+      !firstRecovered.hasSvg && !secondRecovered.hasSvg &&
+        !firstRecovered.hasLegacyPlaceholder && !secondRecovered.hasLegacyPlaceholder,
+      "text detail overlay retained a stale summary skeleton",
+      result
+    );
     assert(firstRecovered.html === secondRecovered.html, "text detail content changed after threshold recovery", result);
     for (const recovered of [firstRecovered, secondRecovered]) {
       assert(recovered.padding === "0px", "text detail host retained unexpected padding", result);
