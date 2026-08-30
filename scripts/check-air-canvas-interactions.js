@@ -67,12 +67,18 @@ async function checkChromeStates(page, viewport) {
     statusIdle,
   });
   for (const [name, surface] of Object.entries({ toolbar, utility, status: statusIdle, zoom })) {
-    assert(Math.abs(surface.rect.height - 36) <= 0.5, `${name} dock height is unstable`, { viewport, surface });
+    const expectedHeight = viewport.width <= 720 ? 36 : 40;
+    assert(Math.abs(surface.rect.height - expectedHeight) <= 0.5, `${name} dock height is unstable`, { viewport, surface });
   }
   assert(Math.abs(utility.rect.right - zoom.rect.right) <= 2, "top and bottom canvas chrome are not right-aligned", {
     viewport,
     utility: utility.rect,
     zoom: zoom.rect,
+  });
+  assert(Math.abs(utility.rect.right - toolbar.rect.right) <= 2, "stacked top canvas controls are not right-aligned", {
+    viewport,
+    toolbar: toolbar.rect,
+    utility: utility.rect,
   });
   assert(Math.abs(viewport.width - statusIdle.rect.right - 18) <= 2, "global settings dock moved away from the viewport edge", {
     viewport,
@@ -188,6 +194,25 @@ async function checkEdgeRails(page, viewport) {
   }));
   assert(!blurred.body && !blurred.resizing && !blurred.panel, "edge drag state did not restore after window blur", { viewport, blurred });
   assert(await panel.isVisible(), "canvas panel disappeared after repeated edge drags", viewport);
+
+  const alignedAfterDrag = await page.evaluate(() => {
+    const stage = document.querySelector(".desktop-clear-stage")?.getBoundingClientRect();
+    const utility = document.querySelector(".canvas-chrome-utility-dock")?.getBoundingClientRect();
+    const zoom = document.querySelector(".canvas-chrome-viewport-dock")?.getBoundingClientRect();
+    if (!stage || !utility || !zoom) return null;
+    return {
+      utilityInset: stage.right - utility.right,
+      zoomInset: stage.right - zoom.right,
+    };
+  });
+  const expectedRightInset = viewport.width <= 720 ? 84 : 8;
+  assert(
+    alignedAfterDrag &&
+      Math.abs(alignedAfterDrag.utilityInset - alignedAfterDrag.zoomInset) <= 2 &&
+      Math.abs(alignedAfterDrag.utilityInset - expectedRightInset) <= 2,
+    "canvas chrome lost its shared right inset after moving the canvas",
+    { viewport, alignedAfterDrag }
+  );
 }
 
 async function checkMinimap(page, viewport) {
@@ -204,6 +229,7 @@ async function checkMinimap(page, viewport) {
       navigatorRight: navigatorRect?.right || 0,
       titleHeight: titleRect?.height || 0,
       canvasHit: Boolean(canvas && hit === canvas),
+      hasDragLabel: Boolean(element.querySelector(".canvas2d-transient-minimap-meta")),
       background: getComputedStyle(element).backgroundColor,
     };
   });
@@ -211,7 +237,7 @@ async function checkMinimap(page, viewport) {
     viewport,
     expanded,
   });
-  assert(expanded.rect.width >= 188 && expanded.titleHeight < 20 && expanded.canvasHit, "current-location minimap is not fully usable", {
+  assert(Math.abs(expanded.rect.width - 164) <= 0.5 && expanded.rect.height <= 134 && expanded.titleHeight < 20 && expanded.canvasHit && !expanded.hasDragLabel, "current-location minimap is not compact and fully usable", {
     viewport,
     expanded,
   });
@@ -223,7 +249,7 @@ async function checkMinimap(page, viewport) {
   await toggle.click();
   await page.waitForTimeout(220);
   const collapsed = await readSurface(page, "#canvas2d-transient-minimap");
-  assert(Math.abs(collapsed.rect.width - 46) <= 0.5 && Math.abs(collapsed.rect.height - 46) <= 0.5, "minimap did not collapse cleanly", {
+  assert(Math.abs(collapsed.rect.width - 38) <= 0.5 && Math.abs(collapsed.rect.height - 38) <= 0.5, "minimap did not collapse cleanly", {
     viewport,
     collapsed,
   });
@@ -253,18 +279,37 @@ async function checkInfoDock(page, viewport) {
   await page.waitForTimeout(260);
   const infoSelector = ".canvas-chrome-info-dock";
   const expanded = await readSurface(page, infoSelector);
+  const expandedMetrics = await page.evaluate(() => {
+    const logo = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-logo")?.getBoundingClientRect();
+    const utility = document.querySelector(".canvas-chrome-utility-dock")?.getBoundingClientRect();
+    const info = document.querySelector(".canvas-chrome-info-dock")?.getBoundingClientRect();
+    return {
+      logoHeight: logo?.height || 0,
+      bottomDelta: info && utility ? info.bottom - utility.bottom : null,
+    };
+  });
   assert(expanded.background === "rgba(255, 255, 255, 0.58)" && expanded.hitInside, "canvas information dock has no usable glass backing", {
     viewport,
     expanded,
   });
+  if (viewport.width > 720) {
+    assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.bottomDelta) <= 1, "expanded canvas information dock is not aligned with the stacked chrome", {
+      viewport,
+      expandedMetrics,
+    });
+  }
 
   const toggle = page.locator(".canvas2d-info-collapse-toggle");
   await toggle.click();
   await moveAway(page, viewport);
   const collapsed = await readSurface(page, infoSelector);
-  assert(collapsed.rect.width <= 78.5 && collapsed.background === expanded.background, "collapsed canvas information dock lost its glass backing", {
+  const collapsedLogoHeight = await page.locator(".canvas-chrome-info-dock .canvas2d-brand-logo").evaluate((logo) => logo.getBoundingClientRect().height);
+  const expectedCollapsedHeight = viewport.width <= 720 ? 36 : 40;
+  const expectedCollapsedLogoHeight = viewport.width <= 720 ? 22 : 24;
+  assert(collapsed.rect.width <= 78.5 && Math.abs(collapsed.rect.height - expectedCollapsedHeight) <= 0.5 && Math.abs(collapsedLogoHeight - expectedCollapsedLogoHeight) <= 0.5 && collapsed.background === expanded.background, "collapsed canvas information dock lost its balanced glass layout", {
     viewport,
     collapsed,
+    collapsedLogoHeight,
   });
   await toggle.click();
   await moveAway(page, viewport);

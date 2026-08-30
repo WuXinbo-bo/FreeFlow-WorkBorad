@@ -1,24 +1,17 @@
 import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
 
-const DEFAULT_WIDTH = 188;
-const DEFAULT_HEIGHT = 124;
+const DEFAULT_WIDTH = 164;
+const DEFAULT_HEIGHT = 96;
 const DEFAULT_PADDING = 12;
 const DEFAULT_HIDE_DELAY_MS = 520;
 const DEFAULT_MARGIN = 18;
-const DEFAULT_SURFACE_FILL = "rgba(255,255,255,0.98)";
-const DEFAULT_SURFACE_BORDER = "1px solid rgba(207, 216, 231, 0.94)";
-const DEFAULT_SURFACE_SHADOW = "0 10px 24px rgba(15, 23, 42, 0.08)";
-const DEFAULT_SURFACE_RING = "0 2px 6px rgba(15, 23, 42, 0.04)";
 const DEFAULT_CANVAS_FILL = "rgba(248,250,252,0.92)";
 const DEFAULT_CANVAS_STROKE = "rgba(207, 216, 231, 0.92)";
-const DEFAULT_LABEL_COLOR = "rgba(71, 85, 105, 0.88)";
-const DEFAULT_META_COLOR = "rgba(100, 116, 139, 0.76)";
 const DEFAULT_VIEWPORT_STROKE = "rgba(37, 99, 235, 0.96)";
 const DEFAULT_VIEWPORT_FILL = "rgba(59, 130, 246, 0.12)";
 const DEFAULT_ITEM_FILL = "rgba(148, 163, 184, 0.34)";
 const DEFAULT_ITEM_STROKE = "rgba(100, 116, 139, 0.78)";
-const DEFAULT_TOGGLE_TEXT_COLOR = "rgba(51, 65, 85, 0.88)";
 
 function createCanvas(width, height) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
@@ -195,11 +188,6 @@ function resolveAnchorRect(host) {
   };
 }
 
-function measureShellWidth(anchor = null) {
-  const preferred = Math.round(Number(anchor?.width || DEFAULT_WIDTH) || DEFAULT_WIDTH);
-  return Math.max(DEFAULT_WIDTH, Math.min(236, preferred));
-}
-
 function drawBoardSnapshot(ctx, items = [], layout) {
   if (!ctx || !layout) {
     return;
@@ -279,12 +267,6 @@ export function createTransientMinimap({
     }
     shell.classList.toggle("is-collapsed", collapsed);
     shell.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    canvas.style.display = collapsed ? "none" : "block";
-    label.style.display = collapsed ? "none" : "flex";
-    shell.style.width = collapsed ? "46px" : `${Math.max(168, Math.round(Number(shell.dataset.expandedWidth || 0) || 0))}px`;
-    shell.style.height = collapsed ? "46px" : `${Math.max(88, Math.round(Number(shell.dataset.expandedHeight || 0) || 0))}px`;
-    shell.style.padding = collapsed ? "0" : "12px";
-    shell.style.borderRadius = collapsed ? "18px" : "20px";
     toggleButton.setAttribute("aria-label", collapsed ? "展开当前位置地图" : "收起当前位置地图");
     toggleButton.setAttribute("title", collapsed ? "展开当前位置地图" : "收起当前位置地图");
     toggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
@@ -328,68 +310,20 @@ export function createTransientMinimap({
       shell.id = "canvas2d-transient-minimap";
       shell.className = "canvas2d-transient-minimap canvas-chrome-surface canvas-chrome-minimap";
       shell.setAttribute("aria-hidden", "false");
-      shell.style.position = "absolute";
-      shell.style.overflow = "hidden";
-      shell.style.padding = "12px";
-      shell.style.borderRadius = "20px";
-      shell.style.background = DEFAULT_SURFACE_FILL;
-      shell.style.backdropFilter = "blur(14px)";
-      shell.style.webkitBackdropFilter = "blur(14px)";
-      shell.style.boxShadow = `${DEFAULT_SURFACE_SHADOW}, ${DEFAULT_SURFACE_RING}`;
-      shell.style.border = DEFAULT_SURFACE_BORDER;
-      shell.style.pointerEvents = "auto";
-      shell.style.opacity = "1";
-      shell.style.transform = "translateY(0) scale(1)";
-      shell.style.transition = "width 180ms ease, height 180ms ease, padding 180ms ease, border-radius 180ms ease";
-      shell.style.zIndex = "52";
-      shell.style.display = "flex";
-      shell.style.flexDirection = "column";
-      shell.style.gap = "9px";
 
       toggleButton = document.createElement("button");
       toggleButton.type = "button";
       toggleButton.className = "canvas2d-transient-minimap-toggle";
-      toggleButton.style.position = "absolute";
-      toggleButton.style.top = "10px";
-      toggleButton.style.right = "10px";
-      toggleButton.style.width = "24px";
-      toggleButton.style.height = "24px";
-      toggleButton.style.border = "1px solid rgba(203, 213, 225, 0.9)";
-      toggleButton.style.borderRadius = "999px";
-      toggleButton.style.background = "rgba(248,250,252,0.92)";
-      toggleButton.style.color = DEFAULT_TOGGLE_TEXT_COLOR;
-      toggleButton.style.fontSize = "15px";
-      toggleButton.style.fontWeight = "800";
-      toggleButton.style.lineHeight = "1";
-      toggleButton.style.cursor = "pointer";
-      toggleButton.style.display = "inline-flex";
-      toggleButton.style.alignItems = "center";
-      toggleButton.style.justifyContent = "center";
-      toggleButton.style.padding = "0";
-      toggleButton.style.userSelect = "none";
       toggleButton.addEventListener("click", handleToggleClick);
       shell.appendChild(toggleButton);
 
       label = document.createElement("div");
       label.className = "canvas2d-transient-minimap-label";
-      label.style.fontSize = "12px";
-      label.style.fontWeight = "700";
-      label.style.letterSpacing = "0";
-      label.style.color = DEFAULT_LABEL_COLOR;
-      label.style.textAlign = "left";
-      label.style.userSelect = "none";
-      label.style.padding = "0 30px 0 2px";
-      label.style.display = "flex";
-      label.style.alignItems = "center";
-      label.style.justifyContent = "space-between";
-      label.style.flexDirection = "row";
-      label.style.gap = "8px";
       label.innerHTML = `
         <span class="canvas2d-transient-minimap-title">
           <span class="canvas2d-transient-minimap-status-dot"></span>
           <span>当前位置</span>
         </span>
-        <span class="canvas2d-transient-minimap-meta">拖拽定位</span>
       `;
       shell.appendChild(label);
 
@@ -398,13 +332,6 @@ export function createTransientMinimap({
         return false;
       }
       canvas.className = "canvas2d-transient-minimap-canvas";
-      canvas.style.borderRadius = "16px";
-      canvas.style.display = "block";
-      canvas.style.border = "1px solid rgba(226, 232, 240, 0.96)";
-      canvas.style.background = "rgba(248,250,252,0.92)";
-      canvas.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,0.88)";
-      canvas.style.alignSelf = "stretch";
-      canvas.style.cursor = "pointer";
       canvas.addEventListener("pointerdown", handleCanvasPointerDown);
       canvas.addEventListener("click", handleCanvasClick);
       shell.appendChild(canvas);
@@ -422,16 +349,15 @@ export function createTransientMinimap({
     if (!(shell instanceof HTMLDivElement) || !(canvas instanceof HTMLCanvasElement) || !(host instanceof HTMLElement)) {
       return;
     }
-    const anchor = resolveAnchorRect(host);
-    const shellWidth = measureShellWidth(anchor);
-    const canvasWidth = shellWidth - 24;
+    const shellWidth = DEFAULT_WIDTH;
+    const canvasWidth = shellWidth - 16;
     const canvasHeight = DEFAULT_HEIGHT;
     lastCanvasWidth = canvasWidth;
     lastCanvasHeight = canvasHeight;
     shell.dataset.expandedWidth = String(shellWidth);
-    shell.dataset.expandedHeight = String(canvasHeight + 48);
-    shell.style.width = `${shellWidth}px`;
-    shell.style.height = `${canvasHeight + 48}px`;
+    shell.dataset.expandedHeight = String(canvasHeight + 38);
+    shell.style.setProperty("--canvas-chrome-minimap-expanded-width", `${shellWidth}px`);
+    shell.style.setProperty("--canvas-chrome-minimap-expanded-height", `${canvasHeight + 38}px`);
     canvas.style.width = `${canvasWidth}px`;
     canvas.style.height = `${canvasHeight}px`;
     setCanvasResolution(canvas, canvasWidth, canvasHeight);
