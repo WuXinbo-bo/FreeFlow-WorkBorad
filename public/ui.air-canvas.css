@@ -959,3 +959,538 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
     display: none !important;
   }
 }
+
+/* Conversation workspace: keep content primary and chrome visually quiet. */
+.conversation-panel,
+body.desktop-mode .conversation-panel {
+  padding: 12px 14px 14px !important;
+}
+
+.conversation-header {
+  margin: 0 !important;
+  padding: 2px 0 10px !important;
+  border-bottom: 1px solid var(--air-line) !important;
+}
+
+.conversation-header-topline {
+  min-height: 34px !important;
+  gap: 8px !important;
+}
+
+.conversation-header-topline .right-panel-window-controls,
+.right-panel-window-controls {
+  gap: 4px !important;
+  overflow: visible !important;
+}
+
+.conversation-header-topline .right-panel-window-strip,
+.right-panel-window-strip {
+  min-height: 34px !important;
+  padding: 2px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+  box-shadow: none !important;
+}
+
+.right-panel-window-slider,
+.right-panel-window-strip.is-compact .right-panel-window-slider,
+.right-panel-window-strip.is-tight .right-panel-window-slider {
+  top: 2px !important;
+  left: 2px !important;
+  height: calc(100% - 4px) !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  background: var(--air-active) !important;
+  box-shadow: none !important;
+}
+
+.right-panel-window-tab,
+.right-panel-window-strip.is-compact .right-panel-window-tab,
+.right-panel-window-strip.is-tight .right-panel-window-tab {
+  min-width: 92px !important;
+  min-height: 28px !important;
+  padding: 5px 9px !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  font-size: 13px !important;
+  transform: none !important;
+}
+
+.right-panel-window-tab:hover,
+.right-panel-window-tab:focus-visible,
+.right-panel-window-tab.is-active {
+  color: var(--air-ink) !important;
+}
+
+.right-panel-switch-lock-btn,
+.right-panel-window-controls.is-compact .right-panel-switch-lock-btn,
+.right-panel-window-controls.is-tight .right-panel-switch-lock-btn {
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-soft) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.right-panel-switch-lock-btn:hover,
+.right-panel-switch-lock-btn:focus-visible,
+.right-panel-switch-lock-btn.is-locked {
+  border-color: var(--air-line) !important;
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+  box-shadow: none !important;
+}
+
+.thread-viewport {
+  padding: 10px 6px calc(var(--composer-offset) + 2px) !important;
+}
+
+.chat-log {
+  gap: 10px !important;
+}
+
+.message-bubble,
+body.desktop-mode .message-bubble {
+  max-width: min(100%, 94%) !important;
+  padding: 10px 12px 12px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--air-ink) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.message.user .message-bubble,
+body.desktop-mode .message.user .message-bubble {
+  max-width: min(82%, 560px) !important;
+  border: 1px solid rgba(53, 106, 230, 0.1) !important;
+  border-radius: 8px !important;
+  background: rgba(232, 238, 252, 0.72) !important;
+}
+
+.message-meta {
+  margin-bottom: 6px !important;
+  color: var(--air-ink-soft) !important;
+}
+
+.message-badge,
+.pill-note,
+.conversation-mode-pill {
+  border-color: var(--air-line) !important;
+  border-radius: 5px !important;
+  color: var(--air-ink-muted) !important;
+  background: var(--air-hover) !important;
+  box-shadow: none !important;
+}
+
+.message-menu-trigger {
+  border-radius: 5px !important;
+  color: var(--air-ink-soft) !important;
+  background: transparent !important;
+}
+
+.message-menu-trigger:hover,
+.message-menu-trigger:focus-visible,
+.message-menu[open] .message-menu-trigger {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.message-menu-panel {
+  padding: 4px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+}
+
+.message-menu-item {
+  border-radius: var(--air-radius-control) !important;
+}
+
+.empty-state-card-guide {
+  gap: 12px !important;
+  min-height: 100% !important;
+  padding: 24px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.composer,
+body.desktop-mode .composer {
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin-top: 10px !important;
+  padding: 8px 10px !important;
+  border: 1px solid var(--air-line-strong) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition: border-color 140ms ease !important;
+}
+
+.composer:focus-within {
+  border-color: rgba(53, 106, 230, 0.38) !important;
+  outline: 2px solid rgba(53, 106, 230, 0.08) !important;
+  outline-offset: 0 !important;
+}
+
+.composer textarea {
+  min-height: 38px !important;
+  padding: 3px 4px 8px !important;
+  color: var(--air-ink) !important;
+}
+
+.composer-bar {
+  gap: 8px !important;
+  padding-top: 8px !important;
+  border-top: 1px solid var(--air-line) !important;
+}
+
+.composer-hint {
+  color: var(--air-ink-soft) !important;
+  font-size: 12px !important;
+}
+
+.composer-actions {
+  gap: 6px !important;
+}
+
+.composer-actions .ghost-btn,
+.composer-actions .primary-btn,
+.composer-thinking-btn {
+  min-width: 58px !important;
+  min-height: 34px !important;
+  padding: 6px 10px !important;
+  border-radius: var(--air-radius-control) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.composer-actions .ghost-btn {
+  border-color: var(--air-line) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.composer-actions .primary-btn {
+  border-color: var(--air-accent) !important;
+  color: #fff !important;
+  background: var(--air-accent) !important;
+}
+
+.composer-attachment-chip {
+  border-color: rgba(53, 106, 230, 0.14) !important;
+  border-radius: var(--air-radius-control) !important;
+  background: var(--air-active) !important;
+}
+
+/* Settings drawer: one surface, with sections separated by rhythm and rules. */
+#insight-drawer {
+  top: 12px !important;
+  right: 12px !important;
+  bottom: 12px !important;
+  width: min(420px, calc(100vw - 24px)) !important;
+  padding: 16px !important;
+  border: 1px solid var(--air-line-strong) !important;
+  border-radius: var(--air-radius-window) !important;
+  color: var(--air-ink) !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.drawer-backdrop,
+.drawer-backdrop.is-open {
+  background: rgba(32, 37, 43, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.drawer-header {
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  padding: 2px 0 14px !important;
+  border-bottom: 1px solid var(--air-line) !important;
+}
+
+#drawer-close-btn {
+  flex: 0 0 auto !important;
+  margin-left: auto !important;
+}
+
+.drawer-header h3 {
+  margin: 4px 0 !important;
+  color: var(--air-ink) !important;
+  font-size: 20px !important;
+  letter-spacing: 0 !important;
+}
+
+.drawer-copy {
+  margin: 0 !important;
+  color: var(--air-ink-muted) !important;
+}
+
+#drawer-close-btn,
+#insight-drawer .ghost-btn,
+#insight-drawer .primary-btn,
+#insight-drawer .conversation-model-config-btn {
+  min-height: 34px !important;
+  padding: 6px 10px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+#drawer-close-btn:hover,
+#drawer-close-btn:focus-visible,
+#insight-drawer .ghost-btn:hover,
+#insight-drawer .ghost-btn:focus-visible,
+#insight-drawer .conversation-model-config-btn:hover,
+#insight-drawer .conversation-model-config-btn:focus-visible {
+  border-color: var(--air-line-strong) !important;
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+#insight-drawer .primary-btn {
+  border-color: var(--air-accent) !important;
+  color: #fff !important;
+  background: var(--air-accent) !important;
+}
+
+.insight-panel {
+  gap: 0 !important;
+  padding: 4px 0 0 !important;
+}
+
+#insight-drawer .drawer-group {
+  gap: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#insight-drawer .drawer-group-summary {
+  min-height: 86px !important;
+  padding: 14px 4px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  background: transparent !important;
+}
+
+#insight-drawer .drawer-group-summary:hover,
+#insight-drawer .drawer-group-summary:focus-visible {
+  background: var(--air-hover) !important;
+}
+
+#insight-drawer .drawer-group[open] > .drawer-group-summary {
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+}
+
+#insight-drawer .drawer-group-body {
+  gap: 12px !important;
+  padding: 14px 4px 18px !important;
+}
+
+#insight-drawer .eyebrow,
+#insight-drawer .conversation-model-group-title {
+  color: var(--air-ink-soft) !important;
+  letter-spacing: 0 !important;
+}
+
+#insight-drawer .panel-title,
+#insight-drawer .section-title {
+  color: var(--air-ink) !important;
+}
+
+#insight-drawer .secondary-menu-indicator {
+  min-height: 26px !important;
+  padding: 0 7px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+#insight-drawer .usage-card,
+#insight-drawer .budget-card,
+#insight-drawer .metric-card,
+#insight-drawer .permission-item,
+#insight-drawer .layout-item {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  color: var(--air-ink) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#insight-drawer .drawer-group-body > .usage-card,
+#insight-drawer .drawer-group-body > #theme-settings-panel-host {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+#insight-drawer .panel-head {
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding-bottom: 10px !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  text-align: left !important;
+}
+
+#insight-drawer .ai-control-grid {
+  grid-template-columns: 1fr !important;
+}
+
+#insight-drawer .settings-field,
+#insight-drawer .model-select-wrap,
+#insight-drawer .compact-select {
+  color: var(--air-ink-muted) !important;
+}
+
+#insight-drawer .model-select-wrap {
+  display: grid !important;
+  grid-template-columns: 64px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+#insight-drawer .model-select-wrap > span {
+  white-space: nowrap !important;
+}
+
+#insight-drawer .panel-input,
+#insight-drawer input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+#insight-drawer textarea,
+#insight-drawer select,
+#insight-drawer .conversation-model-config-input,
+#insight-drawer .conversation-model-config-textarea {
+  border: 1px solid var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink) !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+#insight-drawer .panel-input:focus,
+#insight-drawer input:focus,
+#insight-drawer textarea:focus,
+#insight-drawer select:focus {
+  border-color: rgba(53, 106, 230, 0.38) !important;
+  outline: 2px solid rgba(53, 106, 230, 0.08) !important;
+  outline-offset: 0 !important;
+}
+
+#insight-drawer .conversation-model-panel-inline {
+  border-top-color: var(--air-line) !important;
+}
+
+#insight-drawer .conversation-model-option,
+#insight-drawer .conversation-model-guide,
+#insight-drawer .conversation-model-cloud-config,
+#insight-drawer .ai-control-session-trigger,
+#insight-drawer .ai-control-session-panel {
+  border-color: var(--air-line) !important;
+  border-radius: 8px !important;
+  color: var(--air-ink) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#insight-drawer .conversation-model-option:hover,
+#insight-drawer .conversation-model-option:focus-visible,
+#insight-drawer .conversation-model-option.is-active {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+#insight-drawer .progress-track {
+  height: 6px !important;
+  border: 0 !important;
+  background: var(--air-hover) !important;
+}
+
+#insight-drawer .progress-fill {
+  background: var(--air-accent) !important;
+}
+
+@media (max-width: 680px) {
+  .conversation-panel,
+  body.desktop-mode .conversation-panel {
+    padding: 10px !important;
+  }
+
+  .conversation-header-topline .right-panel-window-strip,
+  .right-panel-window-strip {
+    max-width: calc(100vw - 132px) !important;
+  }
+
+  .right-panel-window-tab,
+  .right-panel-window-strip.is-compact .right-panel-window-tab,
+  .right-panel-window-strip.is-tight .right-panel-window-tab {
+    min-width: 76px !important;
+    padding-inline: 7px !important;
+  }
+
+  .composer,
+  body.desktop-mode .composer {
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+
+  .composer-hint {
+    display: none !important;
+  }
+
+  #insight-drawer {
+    top: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    width: calc(100vw - 16px) !important;
+    padding: 14px !important;
+  }
+
+  #insight-drawer .ai-control-grid,
+  #insight-drawer .budget-grid,
+  #insight-drawer .action-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
