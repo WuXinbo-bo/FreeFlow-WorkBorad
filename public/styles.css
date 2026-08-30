@@ -6251,6 +6251,106 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   border-radius: inherit;
   background: transparent;
   cursor: crosshair;
+  z-index: 0;
+}
+
+.canvas2d-scene-root {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: 0 0;
+  contain: layout style;
+}
+
+.canvas2d-vector-layer,
+.canvas2d-content-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas2d-scene-content-item {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: 0 0;
+  contain: layout style;
+}
+
+.canvas2d-scene-image-frame,
+.canvas2d-scene-image-transform,
+.canvas2d-scene-image-viewport,
+.canvas2d-scene-image-annotations {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.canvas2d-scene-image-frame,
+.canvas2d-scene-image-transform {
+  overflow: visible;
+  transform-origin: center;
+}
+
+.canvas2d-scene-image-viewport {
+  overflow: hidden;
+}
+
+.canvas2d-scene-image-content {
+  position: absolute;
+  display: block;
+  max-width: none;
+  max-height: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.canvas2d-scene-image-annotations {
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas2d-scene-table-item {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.985);
+}
+
+.canvas2d-scene-table {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #0f172a;
+  font: 500 12px "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.canvas2d-scene-table th,
+.canvas2d-scene-table td {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  vertical-align: top;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.canvas2d-scene-table th {
+  font-weight: 700;
+  background: rgba(241, 245, 249, 0.98);
 }
 
 .canvas-text-editor {

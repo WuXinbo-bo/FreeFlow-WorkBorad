@@ -870,6 +870,9 @@ function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
   const screenWidth = Math.max(1, Number(item.width || 1) || 1) * scale;
   const screenHeight = Math.max(1, Number(item.height || 1) || 1) * scale;
   const lodPolicy = canvasElementRegistry.resolveElement(item)?.capabilities?.lod || "full";
+  if (!renderTextInCanvas && ["text", "flow-node", "code-block", "math"].includes(lodPolicy)) {
+    return "full";
+  }
   if (
     lodPolicy === "file-card" &&
     (
@@ -1159,8 +1162,12 @@ function drawVisibleItemsToContext({
   onImageNaturalSize,
   renderTextInCanvas,
   rendererDispatch,
+  sceneContentOwnedIds = null,
 }) {
   const selected = new Set(selectedIds || []);
+  const sceneContentOwned = sceneContentOwnedIds instanceof Set
+    ? sceneContentOwnedIds
+    : new Set(sceneContentOwnedIds || []);
   let customRendererHandledCount = 0;
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
@@ -1173,6 +1180,21 @@ function drawVisibleItemsToContext({
     }
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
+    if (sceneContentOwned.has(String(item.id || ""))) {
+      const bounds = getElementBounds(item);
+      const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
+      const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
+      const left = Math.min(topLeft.x, bottomRight.x);
+      const top = Math.min(topLeft.y, bottomRight.y);
+      const width = Math.max(1, Math.abs(bottomRight.x - topLeft.x));
+      const height = Math.max(1, Math.abs(bottomRight.y - topLeft.y));
+      drawSelectionFrame(ctx, left, top, width, height, isSelected, isHover);
+      if (isSelected) {
+        drawHandles(ctx, item, view);
+      }
+      drawLockBadge(ctx, item, view);
+      return;
+    }
     const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
     const renderContext = {
       ctx,
@@ -1586,6 +1608,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       layerState = null,
       frameContext = null,
       forceFreshSurfaces = false,
+      sceneContentOwnedIds = null,
     }) {
       const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
       const rawDpr = Math.max(1, Number(pixelRatio) || fallbackDpr || 1);
@@ -1621,7 +1644,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       });
       const interactionCompositeMode = runtimeMode.mode === "viewport-interaction";
       const liveInteractionMode = runtimeMode.interactionActive === true;
-      const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas || runtimeMode.viewportInteractionActive);
+      const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas);
       const cullResult =
         !liveInteractionMode && Array.isArray(visibleItems)
           ? {
@@ -1639,6 +1662,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
               editingId,
             });
       const frameVisibleItems = cullResult.items;
+      const sceneContentOwned = sceneContentOwnedIds instanceof Set
+        ? sceneContentOwnedIds
+        : new Set(sceneContentOwnedIds || []);
+      const sceneContentOwnershipSignature = Array.from(sceneContentOwned).sort().join("|");
       const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
       const mindMapDropTarget =
         frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
@@ -1655,11 +1682,8 @@ export function createRenderer({ customRenderers = [] } = {}) {
           .map((item) => String(item?.id || "").trim())
           .filter(Boolean)
       );
-      const staticExclusionSignature = dynamicItems
-        .map((item) => String(item?.id || "").trim())
-        .filter(Boolean)
-        .sort()
-        .join("|");
+      const staticRenderExclusionIds = new Set([...dynamicRenderIdSet, ...sceneContentOwned]);
+      const staticExclusionSignature = Array.from(staticRenderExclusionIds).sort().join("|");
       const dynamicVisualSignature = getDynamicVisualSignature({
         dynamicItems,
         draftElement,
@@ -1681,7 +1705,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const renderModeSignature = getRenderModeSignature({
         renderTextInCanvas: effectiveRenderTextInCanvas,
         viewportInteractionActive,
-      });
+      }) + `|scene-content:${sceneContentOwnershipSignature}`;
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
       const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
@@ -1786,7 +1810,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                 view,
                 viewportWidth: width,
                 viewportHeight: height,
-                excludeIds: Array.from(dynamicRenderIdSet),
+                excludeIds: Array.from(staticRenderExclusionIds),
                 sceneChanged: Boolean(dirtyState?.sceneDirty),
                 dirtyItemIds: Array.isArray(dirtyState?.itemIds) ? dirtyState.itemIds : [],
                 maxColdTiles: deferColdTiles ? LARGE_VIEWPORT_COLD_TILE_BUDGET : Infinity,
@@ -1810,6 +1834,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     renderTextInCanvas: effectiveRenderTextInCanvas,
                     allItems,
                     rendererDispatch,
+                    sceneContentOwnedIds: sceneContentOwned,
                   }),
               })
             : !liveInteractionMode && staticItems.length
@@ -1828,6 +1853,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   renderTextInCanvas: effectiveRenderTextInCanvas,
                   allItems,
                   rendererDispatch,
+                  sceneContentOwnedIds: sceneContentOwned,
                 })
               : {
                   tileCount: 0,
@@ -1883,6 +1909,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           onImageNaturalSize,
           renderTextInCanvas: effectiveRenderTextInCanvas,
           rendererDispatch,
+          sceneContentOwnedIds: sceneContentOwned,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
         lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
@@ -1966,6 +1993,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         },
         culling: cullResult.stats,
         renderedItems: frameVisibleItems.length,
+        sceneContentOwnedCount: sceneContentOwned.size,
         staticRenderedItems: staticItems.length,
         dynamicRenderedItems: dynamicItems.length,
         mindMapConnectionsDrawn: lastMindMapConnectionCount,

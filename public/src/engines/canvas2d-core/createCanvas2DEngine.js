@@ -155,6 +155,7 @@ import {
 } from "./scene/sceneIndex.js";
 import { createSceneRegistry } from "./scene/sceneRegistry.js";
 import { createScenePresentationCoordinator } from "./scene/scenePresentationCoordinator.js";
+import { createSceneContentRenderer } from "./scene/sceneContentRenderer.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
 import { createOverlayBudgetManager } from "./overlay/overlayBudgetManager.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
@@ -3202,6 +3203,11 @@ export function createCanvas2DEngine(options = {}) {
   const dragHandlers = [];
   const commandHandlers = new Map();
   const renderer = createRenderer({ customRenderers: elementRenderers });
+  const sceneContentRenderer = createSceneContentRenderer({
+    resolveImageSource,
+    renderTableCellHtml: (cell) => renderTableCellStaticHtml(cell),
+    onImageNaturalSize: syncImageNaturalSize,
+  });
   const elementLifecycleManager = createElementLifecycleManager({ registry: canvasElementRegistry });
   const overlayAdapterManager = createElementAdapterManager();
   overlayAdapterManager.register("rich", { sync: (visibleScene, frameContext) => syncRichTextOverlays(visibleScene, frameContext) });
@@ -3340,6 +3346,9 @@ export function createCanvas2DEngine(options = {}) {
     canvasLinkBindingHint: null,
     richExternalLinkPanel: null,
     canvas: null,
+    sceneRoot: null,
+    vectorLayer: null,
+    contentLayer: null,
     ctx: null,
     editor: null,
     richEditor: null,
@@ -3903,11 +3912,18 @@ let tablePointerSelectionState = {
     if (!itemId) {
       return;
     }
-    const left = Number(item.x || 0) * scale + offsetX;
-    const top = Number(item.y || 0) * scale + offsetY;
-    const width = Math.max(1, Number(item.width || 1)) * scale;
-    const height = Math.max(1, Number(item.height || 1)) * scale;
-    const isVisible = hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
+    const left = Number(item.x || 0);
+    const top = Number(item.y || 0);
+    const width = Math.max(1, Number(item.width || 1));
+    const height = Math.max(1, Number(item.height || 1));
+    const screenLeft = left * scale + offsetX;
+    const screenTop = top * scale + offsetY;
+    const screenWidth = width * scale;
+    const screenHeight = height * scale;
+    const isVisible = hasScreenRectIntersection(
+      { left: screenLeft, top: screenTop, right: screenLeft + screenWidth, bottom: screenTop + screenHeight },
+      viewportBounds
+    );
     const isEditing = state.editingId === item.id && state.editingType === "code-block";
     const syntaxHighlighting = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE);
     const showLineNumbers = isDetailedOverlayScale(scale, CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE);
@@ -3950,7 +3966,6 @@ let tablePointerSelectionState = {
       String(item.previewMode || "preview"),
     ].join("|");
     const renderSignature = [
-      Math.round(scale * 1000),
       summaryMode ? 1 : 0,
       syntaxHighlighting ? 1 : 0,
       showLineNumbers ? 1 : 0,
@@ -3962,7 +3977,7 @@ let tablePointerSelectionState = {
     ].join("|");
     if (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderSignature !== renderSignature) {
       renderCodeBlockStatic(node, item, {
-        scale,
+        scale: 1,
         hover: state.hoverId === item.id,
         selected: state.board.selectedIds.includes(item.id),
         editing: isEditing,
@@ -4749,7 +4764,29 @@ let tablePointerSelectionState = {
   }
 
   function shouldSuspendCanvasOverlays() {
-    return overlayCanvasLodActive || isViewportInteractionActive();
+    return overlayCanvasLodActive;
+  }
+
+  function isViewportPresentationFrozen(frameContext = null) {
+    return Boolean(
+      frameContext?.runtimeMode === "viewport-interaction" &&
+      frameContext?.presentation?.interaction?.phase !== "steady"
+    );
+  }
+
+  function syncScenePresentation(frameContext = null) {
+    if (!(refs.sceneRoot instanceof HTMLDivElement)) {
+      return;
+    }
+    const presentation = frameContext?.presentation;
+    const matrix = String(presentation?.cameraMatrix?.css || "matrix(1, 0, 0, 1, 0, 0)");
+    if (refs.sceneRoot.dataset.cameraMatrix !== matrix) {
+      refs.sceneRoot.style.transform = matrix;
+      refs.sceneRoot.dataset.cameraMatrix = matrix;
+    }
+    refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
+    refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
+    refs.sceneRoot.dataset.presentationPhase = String(presentation?.interaction?.phase || "steady");
   }
 
   function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null, frameContext = null } = {}) {
@@ -4763,8 +4800,17 @@ let tablePointerSelectionState = {
       (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.backgroundDirty || dirtyState?.reason === "mount")
     );
     const frameView = frameContext?.view || createView(state.board.view);
-    const canvasLodActive = updateOverlayCanvasLodState(frameView);
+    const presentationFrozen = isViewportPresentationFrozen(frameContext);
+    const canvasLodActive = presentationFrozen ? overlayCanvasLodActive : updateOverlayCanvasLodState(frameView);
     const viewportInteractionActive = isViewportInteractionActive();
+    syncScenePresentation(frameContext);
+    const sceneContentOwnedIds = sceneContentRenderer.sync({
+      items: visibleScene?.items || [],
+      frozen: presentationFrozen,
+      allowLocalFileAccess: getAllowLocalFileAccess(),
+      editingId: state.editingId,
+      editingType: state.editingType,
+    });
     const visibleIds = (visibleScene?.items || []).map((item) => String(item?.id || "")).filter(Boolean);
     const interactingIds = viewportInteractionActive
       ? visibleIds
@@ -4821,6 +4867,7 @@ let tablePointerSelectionState = {
       dirtyState,
       layerState,
       frameContext,
+      sceneContentOwnedIds,
     });
     const stats = refs.canvas?.__ffRenderStats || null;
     if (stats?.progressiveRender?.pending) {
@@ -8403,6 +8450,32 @@ let tablePointerSelectionState = {
     refs.canvas.tabIndex = 0;
     refs.canvas.draggable = true;
 
+    refs.sceneRoot = refs.surface.querySelector("#canvas2d-scene-root");
+    if (!(refs.sceneRoot instanceof HTMLDivElement)) {
+      refs.sceneRoot = document.createElement("div");
+      refs.sceneRoot.id = "canvas2d-scene-root";
+      refs.sceneRoot.className = "canvas2d-scene-root";
+      refs.surface.appendChild(refs.sceneRoot);
+    }
+
+    refs.vectorLayer = refs.sceneRoot.querySelector("#canvas2d-vector-layer");
+    if (!(refs.vectorLayer instanceof SVGSVGElement)) {
+      refs.vectorLayer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      refs.vectorLayer.id = "canvas2d-vector-layer";
+      refs.vectorLayer.classList.add("canvas2d-vector-layer");
+      refs.vectorLayer.setAttribute("aria-hidden", "true");
+      refs.sceneRoot.appendChild(refs.vectorLayer);
+    }
+
+    refs.contentLayer = refs.sceneRoot.querySelector("#canvas2d-content-layer");
+    if (!(refs.contentLayer instanceof HTMLDivElement)) {
+      refs.contentLayer = document.createElement("div");
+      refs.contentLayer.id = "canvas2d-content-layer";
+      refs.contentLayer.className = "canvas2d-content-layer";
+      refs.sceneRoot.appendChild(refs.contentLayer);
+    }
+    sceneContentRenderer.setHost(refs.contentLayer);
+
     refs.editor = refs.surface.querySelector("#canvas-text-editor");
     if (!(refs.editor instanceof HTMLTextAreaElement)) {
       refs.editor = document.createElement("textarea");
@@ -8640,7 +8713,9 @@ let tablePointerSelectionState = {
       refs.richDisplayHost = document.createElement("div");
       refs.richDisplayHost.id = "canvas2d-rich-display";
       refs.richDisplayHost.className = "canvas2d-rich-display";
-      refs.surface.appendChild(refs.richDisplayHost);
+      refs.contentLayer.appendChild(refs.richDisplayHost);
+    } else if (refs.richDisplayHost.parentElement !== refs.contentLayer) {
+      refs.contentLayer.appendChild(refs.richDisplayHost);
     }
     if (RENDER_TEXT_IN_CANVAS) {
       refs.richDisplayHost.classList.add("is-hidden");
@@ -8652,7 +8727,9 @@ let tablePointerSelectionState = {
       refs.codeBlockDisplayHost = document.createElement("div");
       refs.codeBlockDisplayHost.id = "canvas2d-code-block-display";
       refs.codeBlockDisplayHost.className = "canvas2d-code-block-display";
-      refs.surface.appendChild(refs.codeBlockDisplayHost);
+      refs.contentLayer.appendChild(refs.codeBlockDisplayHost);
+    } else if (refs.codeBlockDisplayHost.parentElement !== refs.contentLayer) {
+      refs.contentLayer.appendChild(refs.codeBlockDisplayHost);
     }
     refs.codeBlockDisplayHost.classList.add("is-hidden");
     refs.codeBlockDisplayHost.style.display = "none";
@@ -8669,7 +8746,9 @@ let tablePointerSelectionState = {
       refs.mathDisplayHost.style.inset = "0";
       refs.mathDisplayHost.style.pointerEvents = "none";
       refs.mathDisplayHost.style.zIndex = "15";
-      refs.surface.appendChild(refs.mathDisplayHost);
+      refs.contentLayer.appendChild(refs.mathDisplayHost);
+    } else if (refs.mathDisplayHost.parentElement !== refs.contentLayer) {
+      refs.contentLayer.appendChild(refs.mathDisplayHost);
     }
     refs.mathDisplayHost.classList.add("is-hidden");
     refs.mathDisplayHost.style.display = "none";
@@ -11010,6 +11089,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!(refs.richDisplayHost instanceof HTMLDivElement)) {
       return;
     }
+    if (isViewportPresentationFrozen(frameContext)) {
+      return;
+    }
     if (!isInteractiveMode()) {
       hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
         onRemove: (node) => {
@@ -11074,7 +11156,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
-    const scaleBucket = getRichOverlayScaleBucket(scale);
+    const sceneLayoutView = createView(DEFAULT_VIEW);
+    const scaleBucket = getRichOverlayScaleBucket(1);
     const editingId = state.editingId;
     const viewportBounds = getRichOverlayViewportBounds(
       refs.surface,
@@ -11087,17 +11170,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["text", "flowNode", "mindNode", "mindSummary"], { marginPx: 120 });
     candidateRecords.forEach((record) => {
       const item = record.item;
-      const left = Number(item.x || 0) * scale + offsetX;
-      const top = Number(item.y || 0) * scale + offsetY;
-      const width = Math.max(1, Number(item.width || 1)) * scale;
-      const height = Math.max(1, Number(item.height || 1)) * scale;
+      const left = Number(item.x || 0);
+      const top = Number(item.y || 0);
+      const width = Math.max(1, Number(item.width || 1));
+      const height = Math.max(1, Number(item.height || 1));
+      const screenLeft = left * scale + offsetX;
+      const screenTop = top * scale + offsetY;
+      const screenWidth = width * scale;
+      const screenHeight = height * scale;
       visibleItems.push({
         item,
         left,
         top,
         width,
         height,
-        visible: hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds),
+        visible: hasScreenRectIntersection(
+          { left: screenLeft, top: screenTop, right: screenLeft + screenWidth, bottom: screenTop + screenHeight },
+          viewportBounds
+        ),
       });
     });
     const activeOverlayItems = visibleItems.filter(
@@ -11158,8 +11248,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const overlayMode =
         (!interactionPriorityActive && detailMode) || isRichOverlayDetailPinned(item.id)
           ? "detail"
-          : resolveRichOverlaySummaryMode({ scale, width, height });
-      const surfaceLayout = resolveRichTextSurfaceLayout(item, frameView, {
+          : resolveRichOverlaySummaryMode({ scale, width: width * scale, height: height * scale });
+      const surfaceLayout = resolveRichTextSurfaceLayout(item, sceneLayoutView, {
         mode: "display",
         overlayMode,
       });
@@ -11176,7 +11266,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             html: cachedHtml,
             item,
             linkSignature,
-            scale,
+            scale: 1,
             scaleBucket,
           }) || contentMutated;
         } else {
@@ -11196,7 +11286,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             detailRenderSignature,
             item,
             linkSignature,
-            scale,
+            scale: 1,
             scaleBucket,
           });
         }
@@ -11233,7 +11323,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         }
       }
       setStyleIfNeeded(node, "display", "block");
-      const baseBoxStyles = getRichOverlayBoxStyles(item, scale);
+      const baseBoxStyles = getRichOverlayBoxStyles(item, 1);
       const boxStyles = overlayMode !== "detail"
         ? {
             ...baseBoxStyles,
@@ -11248,7 +11338,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const styleSignature = getRichOverlayStyleSignature({
         left: surfaceLayout?.left ?? left,
         top: surfaceLayout?.top ?? top,
-        fontSize: surfaceLayout?.fontSize ?? Math.max(12, Number(item.fontSize || 18)) * scale,
+        fontSize: surfaceLayout?.fontSize ?? Math.max(12, Number(item.fontSize || 18)),
         paddingX: surfaceLayout?.padding?.x ?? 0,
         paddingY: surfaceLayout?.padding?.y ?? 0,
         lineHeightRatio: surfaceLayout?.lineHeightRatio ?? TEXT_LINE_HEIGHT_RATIO,
@@ -11282,7 +11372,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
           node.dataset.layoutWritebackSignature = writebackSignature;
-          if (maybeWritebackTextOverlayFrame(item, node, scale)) {
+          if (maybeWritebackTextOverlayFrame(item, node, 1)) {
             textLayoutWritebackChanged = true;
           }
         }
@@ -11342,6 +11432,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.mathDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
     }
     if (!(refs.mathDisplayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    if (isViewportPresentationFrozen(frameContext)) {
       return;
     }
     if (state.editingType === "table") {
@@ -11419,17 +11512,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     const visibleItems = candidateRecords.map((record) => {
       const item = record.item;
-      const left = Number(item.x || 0) * scale + offsetX;
-      const top = Number(item.y || 0) * scale + offsetY;
-      const width = Math.max(1, Number(item.width || 1)) * scale;
-      const height = Math.max(1, Number(item.height || 1)) * scale;
+      const left = Number(item.x || 0);
+      const top = Number(item.y || 0);
+      const width = Math.max(1, Number(item.width || 1));
+      const height = Math.max(1, Number(item.height || 1));
+      const screenLeft = left * scale + offsetX;
+      const screenTop = top * scale + offsetY;
+      const screenWidth = width * scale;
+      const screenHeight = height * scale;
       return {
         item,
         left,
         top,
         width,
         height,
-        visible: hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds),
+        visible: hasScreenRectIntersection(
+          { left: screenLeft, top: screenTop, right: screenLeft + screenWidth, bottom: screenTop + screenHeight },
+          viewportBounds
+        ),
       };
     });
     const activeMathItems = visibleItems.filter(({ visible }) => visible);
@@ -11467,7 +11567,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const overlayMode =
         !interactionPriorityActive && detailMode
           ? "detail"
-          : resolveMathOverlaySummaryMode({ scale, width, height, displayMode });
+          : resolveMathOverlaySummaryMode({ scale, width: width * scale, height: height * scale, displayMode });
       const shouldRetryRender =
         overlayMode === "detail" &&
         item.mathOverlayReady !== true &&
@@ -11519,7 +11619,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.dataset.contentMode = overlayMode;
       }
 
-      const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, scale);
+      const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, 1);
       setStyleIfNeeded(node, "display", displayMode ? "block" : "inline-flex");
       const widthCss = overlayMode === "detail" ? "auto" : `${Math.round(width)}px`;
       const minHeightCss = `${Math.max(1, Math.round(height))}px`;
@@ -11557,7 +11657,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (node.dataset.layoutWritebackSignature !== contentSignature) {
         node.dataset.layoutWritebackSignature = contentSignature;
       }
-      if (overlayMode === "detail" && node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, scale)) {
+      if (overlayMode === "detail" && node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, 1)) {
         mathLayoutWritebackChanged = true;
       }
       },
@@ -11578,6 +11678,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.codeBlockDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
     }
     if (!(refs.codeBlockDisplayHost instanceof HTMLDivElement)) {
+      return;
+    }
+    if (isViewportPresentationFrozen(frameContext)) {
       return;
     }
     if (state.editingType === "table") {
@@ -24475,6 +24578,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
     transientMinimap.unmount();
+    sceneContentRenderer.clear();
     richTextSession.destroy();
     codeBlockEditor.clear();
     cancelTextEdit();

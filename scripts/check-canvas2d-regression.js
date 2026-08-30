@@ -156,6 +156,37 @@ function createTableItem(id, x, y) {
   };
 }
 
+function createImageItem(id, x, y) {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" fill="#dbeafe"/><path d="M30 145 112 62l54 50 48-40 76 73Z" fill="#2563eb"/><circle cx="254" cy="42" r="18" fill="#f59e0b"/></svg>';
+  return {
+    id,
+    type: "image",
+    name: "scene image",
+    mime: "image/svg+xml",
+    source: "blob",
+    sourcePath: "",
+    dataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+    x,
+    y,
+    width: 320,
+    height: 180,
+    naturalWidth: 320,
+    naturalHeight: 180,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    brightness: 0,
+    contrast: 0,
+    crop: null,
+    annotations: { lines: [], texts: [], rects: [], arrows: [] },
+    memo: "",
+    memoVisible: false,
+    locked: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
 function createRectShape(id, x, y, width, height) {
   return {
     id,
@@ -590,6 +621,7 @@ async function runTableEditorCheck(browser) {
   );
   const session = await createPage(browser, { board });
   try {
+    await session.page.waitForFunction(() => Boolean(document.querySelector('.canvas2d-scene-table-item[data-id="table-check"]')));
     const metrics = await session.page.evaluate(() => {
       const snapshot = window.__canvas2dEngine?.getSnapshot?.() || null;
       const item = snapshot?.board?.items?.find?.((entry) => entry.id === "table-check") || null;
@@ -597,6 +629,7 @@ async function runTableEditorCheck(browser) {
       if (!item) {
         return null;
       }
+      window.__tableSceneNode = document.querySelector('.canvas2d-scene-table-item[data-id="table-check"]');
       const scale = Number(view.scale || 1) || 1;
       return {
         screenCenterX: Number(item.x || 0) * scale + Number(view.offsetX || 0) + Math.max(1, Number(item.width || 1) * scale) / 2,
@@ -627,6 +660,7 @@ async function runTableEditorCheck(browser) {
       const overlayHost = document.querySelector("#canvas-fixed-overlay-host");
       const codeBlockHost = document.querySelector("#canvas2d-code-block-display");
       const contextMenu = document.querySelector("#canvas2d-context-menu");
+      const sceneTableNode = document.querySelector('.canvas2d-scene-table-item[data-id="table-check"]');
       const editorRect = editor?.getBoundingClientRect?.() || null;
       const overlayRect = overlayHost?.getBoundingClientRect?.() || null;
       const toolButtons = Array.from(toolbar?.querySelectorAll("[data-action]") || []).map((button) => ({
@@ -645,6 +679,8 @@ async function runTableEditorCheck(browser) {
         editorVisible: Boolean(editor) && style?.display !== "none",
         toolbarVisible: Boolean(toolbar) && getComputedStyle(toolbar).display !== "none",
         codeBlockHostVisible: Boolean(codeBlockHost) && getComputedStyle(codeBlockHost).display !== "none",
+        sceneTableReleased:
+          sceneTableNode === window.__tableSceneNode && getComputedStyle(sceneTableNode).display === "none",
         editorWidth: Math.round(editor?.getBoundingClientRect?.().width || 0),
         editorHeight: Math.round(editor?.getBoundingClientRect?.().height || 0),
         editorLeft: Math.round(editorRect?.left || 0),
@@ -663,6 +699,7 @@ async function runTableEditorCheck(browser) {
     assert(result.editorVisible === true, "table editor did not enter visible edit mode", result);
     assert(result.toolbarVisible === true, "table toolbar did not enter visible mode", result);
     assert(result.codeBlockHostVisible === false, "codeBlock overlay host should be hidden while table editing", result);
+    assert(result.sceneTableReleased === true, "table scene ownership was not released during editing", result);
     assert(result.editorWidth >= 320, "table editor width is below fixed-frame minimum", { result, metrics });
     assert(result.editorWidth > Math.round(metrics.scaledWidth), "table editor is still following canvas scale", { result, metrics });
     assert(result.editorWidth <= Math.round(metrics.logicalWidth + 24), "table editor width drifted beyond logical size", { result, metrics });
@@ -698,10 +735,14 @@ async function runTableEditorCheck(browser) {
       editorHidden: getComputedStyle(document.querySelector("#canvas-table-editor")).display === "none",
       toolbarHidden: getComputedStyle(document.querySelector("#canvas-table-toolbar")).display === "none",
       codeBlockHostVisible: getComputedStyle(document.querySelector("#canvas2d-code-block-display")).display !== "none",
+      sceneTableRestored:
+        document.querySelector('.canvas2d-scene-table-item[data-id="table-check"]') === window.__tableSceneNode &&
+        getComputedStyle(window.__tableSceneNode).display !== "none",
     }));
     assert(restored.editorHidden === true, "table editor did not exit edit mode", restored);
     assert(restored.toolbarHidden === true, "table toolbar did not exit edit mode", restored);
     assert(restored.codeBlockHostVisible === true, "codeBlock overlay host did not recover after table editing", restored);
+    assert(restored.sceneTableRestored === true, "table scene ownership did not recover after editing", restored);
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await session.page.mouse.dblclick(canvasRect.x + metrics.screenCenterX, canvasRect.y + metrics.screenCenterY);
@@ -762,6 +803,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
       createTextItem("viewport-text", 180, 160, "Viewport interaction text fallback"),
       createMathBlockItem("viewport-math", 460, 160, "x^2 + y^2 = z^2"),
       createCodeBlockItem("viewport-code", 760, 160, "const stable = true;"),
+      createImageItem("viewport-image", 180, 380),
+      createTableItem("viewport-table", 560, 360),
     ],
     [],
     { scale: 0.5, offsetX: 40, offsetY: 40 }
@@ -771,14 +814,25 @@ async function runViewportInteractionRecoveryCheck(browser) {
     await session.page.waitForFunction(() =>
       document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]') &&
       document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]') &&
-      document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]')
+      document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]') &&
+      document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]') &&
+      document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]')
     );
     const result = await session.page.evaluate(async () => {
       const canvas = document.querySelector("#canvas-office-canvas");
       const richNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]');
       const mathNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]');
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]');
+      const imageNode = document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]');
+      const tableNode = document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]');
+      const sceneRoot = document.querySelector("#canvas2d-scene-root");
+      const contentLayer = document.querySelector("#canvas2d-content-layer");
       const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
+      const initialRichLocalLeft = Number.parseFloat(richNode.style.left);
+      const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
+      const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
+      const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
+      window.__sceneContentTestRefs = { imageNode, tableNode };
       for (let index = 0; index < 24; index += 1) {
         canvas.dispatchEvent(new WheelEvent("wheel", {
           bubbles: true,
@@ -793,6 +847,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const activeScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
       const ctx = canvas.getContext("2d");
+      const activeView = window.__canvas2dEngine.getSnapshot().board.view;
+      const activeMatrix = new DOMMatrix(getComputedStyle(sceneRoot).transform);
       const active = {
         richVisibility: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility,
         mathVisibility: getComputedStyle(document.querySelector("#canvas2d-math-display")).visibility,
@@ -800,7 +856,21 @@ async function runViewportInteractionRecoveryCheck(browser) {
         richPreserved: richNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]'),
         mathPreserved: mathNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]'),
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
+        imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
+        tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        sceneMatrix: [activeMatrix.a, activeMatrix.d, activeMatrix.e, activeMatrix.f],
+        scenePhase: sceneRoot.dataset.presentationPhase,
+        richLocalLeft: Number.parseFloat(richNode.style.left),
+        codeLocalLeft: Number.parseFloat(codeNode.style.left),
+        imageBox: [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height],
+        tableBox: [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height],
+        hostsOwnedByContentLayer:
+          document.querySelector("#canvas2d-rich-display")?.parentElement === contentLayer &&
+          document.querySelector("#canvas2d-math-display")?.parentElement === contentLayer &&
+          document.querySelector("#canvas2d-code-block-display")?.parentElement === contentLayer,
+        view: activeView,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
+        sceneContentOwnedCount: canvas.__ffRenderStats?.sceneContentOwnedCount || 0,
         pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
       };
       await new Promise((resolve) => setTimeout(resolve, 220));
@@ -812,31 +882,102 @@ async function runViewportInteractionRecoveryCheck(browser) {
         richPreserved: richNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]'),
         mathPreserved: mathNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]'),
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
+        imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
+        tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        scenePhase: sceneRoot.dataset.presentationPhase,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
       };
+      const resizeMatrixBefore = getComputedStyle(sceneRoot).transform;
       window.__canvas2dEngine.resize({ immediate: true, reason: "interaction-resize-check" });
+      const resizeMatrixAfter = getComputedStyle(sceneRoot).transform;
       const resizePixel = Array.from(ctx.getImageData(2, 2, 1, 1).data);
-      return { startScale, immediateScale, activeScale, active, recovered, resizePixel };
+      return {
+        startScale,
+        immediateScale,
+        activeScale,
+        initialRichLocalLeft,
+        initialCodeLocalLeft,
+        initialImageBox,
+        initialTableBox,
+        active,
+        recovered,
+        resizeMatrixBefore,
+        resizeMatrixAfter,
+        resizePixel,
+      };
+    });
+    await session.page.setViewportSize({ width: 1280, height: 800 });
+    await session.page.waitForTimeout(160);
+    result.externalResize = await session.page.evaluate(() => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const sceneRoot = document.querySelector("#canvas2d-scene-root");
+      const { imageNode, tableNode } = window.__sceneContentTestRefs || {};
+      return {
+        matrix: getComputedStyle(sceneRoot).transform,
+        imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
+        tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        imageBox: imageNode ? [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height] : [],
+        tableBox: tableNode ? [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height] : [],
+        phase: sceneRoot?.dataset.presentationPhase || "",
+        pixel: Array.from(canvas.getContext("2d").getImageData(2, 2, 1, 1).data),
+      };
     });
     assert(session.getErrors().length === 0, "viewport interaction recovery produced page errors", session.getErrors());
     assert(result.immediateScale === result.startScale, "wheel events committed before the animation frame", result);
     assert(result.activeScale !== result.startScale, "batched wheel events did not commit on the next frame", result);
     assert(result.active.runtimeMode?.mode === "viewport-interaction", "wheel frame did not enter viewport interaction mode", result);
     assert(
-      result.active.richVisibility === "hidden" && result.active.mathVisibility === "hidden" && result.active.codeVisibility === "hidden",
-      "DOM overlays remained visible during viewport interaction",
+      result.active.richVisibility === "visible" && result.active.mathVisibility === "visible" && result.active.codeVisibility === "visible",
+      "scene content disappeared during viewport interaction",
       result
     );
-    assert(result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved, "viewport interaction destroyed overlay nodes", result);
+    assert(result.active.hostsOwnedByContentLayer, "scene content hosts do not share the content layer", result);
+    assert(result.active.sceneContentOwnedCount === 2, "image and table did not have singular scene ownership", result);
+    assert(
+      Math.abs(result.active.richLocalLeft - result.initialRichLocalLeft) < 0.01,
+      "rich content local coordinates changed during camera interaction",
+      result
+    );
+    assert(
+      Math.abs(result.active.codeLocalLeft - result.initialCodeLocalLeft) < 0.01,
+      "code content local coordinates changed during camera interaction",
+      result
+    );
+    assert(JSON.stringify(result.active.imageBox) === JSON.stringify(result.initialImageBox), "image world box changed during camera interaction", result);
+    assert(JSON.stringify(result.active.tableBox) === JSON.stringify(result.initialTableBox), "table world box changed during camera interaction", result);
+    assert(Math.abs(result.active.sceneMatrix[0] - result.active.view.scale) < 0.0001, "scene scale matrix diverged from camera", result);
+    assert(Math.abs(result.active.sceneMatrix[1] - result.active.view.scale) < 0.0001, "scene scale matrix is not uniform", result);
+    assert(Math.abs(result.active.sceneMatrix[2] - result.active.view.offsetX) < 0.01, "scene X translation diverged from camera", result);
+    assert(Math.abs(result.active.sceneMatrix[3] - result.active.view.offsetY) < 0.01, "scene Y translation diverged from camera", result);
+    assert(["active", "settling"].includes(result.active.scenePhase), "scene presentation did not enter interaction phase", result);
+    assert(
+      result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved &&
+        result.active.imagePreserved && result.active.tablePreserved,
+      "viewport interaction destroyed scene content nodes",
+      result
+    );
     assert(result.active.pixel[3] === 255, "canvas background became transparent during wheel interaction", result);
     assert(
       result.recovered.richVisibility === "visible" && result.recovered.mathVisibility === "visible" && result.recovered.codeVisibility === "visible",
       "DOM overlays did not recover after viewport interaction",
       result
     );
-    assert(result.recovered.richPreserved && result.recovered.mathPreserved && result.recovered.codePreserved, "overlay recovery replaced preserved nodes", result);
+    assert(
+      result.recovered.richPreserved && result.recovered.mathPreserved && result.recovered.codePreserved &&
+        result.recovered.imagePreserved && result.recovered.tablePreserved,
+      "scene recovery replaced preserved nodes",
+      result
+    );
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
+    assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
+    assert(result.resizeMatrixAfter === result.resizeMatrixBefore, "viewport resize mutated the scene camera matrix", result);
     assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
+    assert(result.externalResize.matrix === result.resizeMatrixBefore, "external viewport resize mutated the scene camera matrix", result);
+    assert(result.externalResize.imagePreserved && result.externalResize.tablePreserved, "external viewport resize replaced scene nodes", result);
+    assert(JSON.stringify(result.externalResize.imageBox) === JSON.stringify(result.initialImageBox), "external resize changed image world box", result);
+    assert(JSON.stringify(result.externalResize.tableBox) === JSON.stringify(result.initialTableBox), "external resize changed table world box", result);
+    assert(result.externalResize.phase === "steady", "external resize left scene presentation unsettled", result);
+    assert(result.externalResize.pixel[3] === 255, "external viewport resize exposed a transparent backing-store frame", result);
     return result;
   } finally {
     await session.page.close();
