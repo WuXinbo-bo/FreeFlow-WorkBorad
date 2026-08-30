@@ -204,7 +204,8 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
 }
 
 .stage-panel-controls {
-  top: 10px !important;
+  top: auto !important;
+  bottom: 10px !important;
   left: 10px !important;
   gap: 2px !important;
   padding: 2px !important;
@@ -338,6 +339,12 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
   background: #fff !important;
 }
 
+body:has(.canvas2d-engine-toolbar-wrap.is-overlay-active) .pane-restore-btn,
+body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 @media (max-width: 900px) {
   .page-shell {
     padding: 8px !important;
@@ -357,5 +364,598 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
 
   .canvas-engine-stage {
     border-radius: 7px !important;
+  }
+}
+
+/* Canvas chrome: content stays present, controls recede until approached. */
+.canvas2d-navigator-panel {
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: min(252px, calc(100vw - 68px)) !important;
+  max-height: none !important;
+  padding: 14px 12px !important;
+  border: 0 !important;
+  border-right: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  color: var(--air-ink) !important;
+  background: rgba(248, 250, 248, 0.96) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-navigator-head {
+  min-height: 34px !important;
+  margin: 0 0 8px !important;
+  padding: 0 2px 8px !important;
+  border-bottom: 1px solid var(--air-line) !important;
+}
+
+.canvas2d-navigator-brand {
+  gap: 6px !important;
+}
+
+.canvas2d-navigator-brand-mark {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 4px !important;
+}
+
+.canvas2d-navigator-head strong {
+  color: var(--air-ink) !important;
+  font-size: 14px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0 !important;
+}
+
+.canvas2d-navigator-head-actions {
+  gap: 1px !important;
+}
+
+.canvas2d-navigator-head-actions button,
+.canvas2d-navigator-entry-actions button,
+.canvas2d-navigator-tree-toggle {
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-soft) !important;
+  background: transparent !important;
+}
+
+.canvas2d-navigator-head-actions button {
+  width: 26px !important;
+  min-width: 26px !important;
+  height: 26px !important;
+}
+
+.canvas2d-navigator-head-actions button:hover,
+.canvas2d-navigator-head-actions button:focus-visible,
+.canvas2d-navigator-entry-actions button:hover,
+.canvas2d-navigator-entry-actions button:focus-visible,
+.canvas2d-navigator-tree-toggle:hover,
+.canvas2d-navigator-tree-toggle:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-navigator-head-actions button.is-active {
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-navigator-search {
+  margin: 4px 0 8px !important;
+}
+
+.canvas2d-navigator-search input {
+  min-height: 32px !important;
+  padding: 6px 8px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink) !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-navigator-search input:focus {
+  border-color: rgba(53, 106, 230, 0.38) !important;
+  outline: 2px solid rgba(53, 106, 230, 0.1) !important;
+  outline-offset: 0 !important;
+}
+
+.canvas2d-navigator-list {
+  gap: 1px !important;
+  max-height: calc(100vh - 74px) !important;
+  padding: 0 !important;
+}
+
+.canvas2d-navigator-entry {
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 6px !important;
+  border-radius: var(--air-radius-control) !important;
+}
+
+.canvas2d-navigator-entry:hover {
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-navigator-entry.is-selected,
+.canvas2d-navigator-entry.is-nav-selected,
+.canvas2d-navigator-entry.is-picking-target,
+.canvas2d-navigator-entry.is-drop-inside {
+  color: var(--air-ink) !important;
+  background: var(--air-active) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-navigator-entry-copy strong,
+.canvas2d-navigator-entry-main,
+.canvas2d-navigator-entry-index {
+  color: var(--air-ink-muted) !important;
+}
+
+.canvas2d-navigator-entry.is-selected .canvas2d-navigator-entry-copy strong,
+.canvas2d-navigator-entry.is-nav-selected .canvas2d-navigator-entry-copy strong,
+.canvas2d-navigator-entry.is-folder .canvas2d-navigator-entry-copy strong {
+  color: var(--air-ink) !important;
+  font-weight: 600 !important;
+}
+
+.canvas2d-navigator-entry-count {
+  min-width: 18px !important;
+  height: 18px !important;
+  padding: 0 5px !important;
+  border-radius: 5px !important;
+  color: var(--air-ink-muted) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-navigator-empty {
+  gap: 5px !important;
+  padding: 12px 6px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-navigator-empty strong {
+  color: var(--air-ink) !important;
+  font-weight: 600 !important;
+}
+
+.canvas2d-navigator-dock-collapse {
+  top: 50% !important;
+  right: 8px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  opacity: 0.46;
+}
+
+.canvas2d-navigator-panel:hover .canvas2d-navigator-dock-collapse,
+.canvas2d-navigator-dock-collapse:focus-visible {
+  opacity: 1;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-navigator-tab {
+  top: 50% !important;
+  left: 10px !important;
+  width: 32px !important;
+  min-height: 40px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: rgba(248, 250, 248, 0.9) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-navigator-tab-icon {
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 5px !important;
+  color: var(--air-accent) !important;
+  background: transparent !important;
+}
+
+.canvas2d-engine-topbar {
+  top: 12px !important;
+  left: 12px !important;
+  right: 88px !important;
+}
+
+.canvas2d-engine-topbar-stack {
+  gap: 4px !important;
+  max-width: calc(100vw - 276px) !important;
+}
+
+.canvas2d-engine-toolbar-wrap {
+  max-width: 100% !important;
+  overflow: visible !important;
+}
+
+.canvas2d-engine-toolbar {
+  gap: 2px !important;
+  max-width: 100% !important;
+  padding: 3px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  color: var(--air-ink-muted) !important;
+  background: rgba(248, 250, 248, 0.78) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow-x: auto !important;
+  scrollbar-width: none;
+}
+
+.canvas2d-engine-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.canvas2d-engine-toolbar-wrap.is-overlay-active .canvas2d-engine-toolbar {
+  overflow: visible !important;
+}
+
+.canvas2d-engine-toolbar:hover,
+.canvas2d-engine-toolbar:focus-within {
+  border-color: var(--air-line) !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+}
+
+.canvas2d-engine-toolbar > .canvas2d-engine-tool,
+.canvas2d-engine-toolbar > .canvas2d-engine-tool-group,
+.canvas2d-engine-tool-group .canvas2d-engine-tool {
+  flex-basis: 32px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+}
+
+.canvas2d-engine-tool {
+  width: 32px !important;
+  height: 32px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  transform: none !important;
+}
+
+.canvas2d-engine-tool:hover,
+.canvas2d-engine-tool:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-engine-tool.is-active {
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-engine-tool-shortcut {
+  display: none !important;
+}
+
+.canvas2d-engine-search-row {
+  gap: 2px !important;
+}
+
+.canvas2d-engine-search-placeholder,
+.canvas2d-engine-export-history-trigger {
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: rgba(248, 250, 248, 0.78) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-engine-search-placeholder:hover,
+.canvas2d-engine-search-placeholder:focus-visible,
+.canvas2d-engine-export-history-trigger:hover,
+.canvas2d-engine-export-history-trigger:focus-visible,
+.canvas2d-engine-export-history-trigger.is-active {
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-floating-card,
+.canvas2d-floating-card-zoom {
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: var(--air-ink) !important;
+  background: rgba(248, 250, 248, 0.82) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-floating-card-zoom {
+  display: flex !important;
+  align-items: center !important;
+  min-width: 0 !important;
+  padding: 4px !important;
+  gap: 4px !important;
+  opacity: 0.62;
+  transition: opacity 140ms ease, background-color 140ms ease !important;
+}
+
+.canvas2d-floating-card-zoom:hover,
+.canvas2d-floating-card-zoom:focus-within {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.94) !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-display {
+  min-width: 46px !important;
+  padding: 0 6px !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-label {
+  display: none !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-display strong {
+  color: var(--air-ink-muted) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-actions {
+  gap: 2px !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-btn {
+  min-width: 28px !important;
+  height: 28px !important;
+  padding: 0 7px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-btn.is-wide {
+  min-width: 0 !important;
+}
+
+.canvas2d-floating-card-zoom .canvas2d-zoom-btn:hover,
+.canvas2d-floating-card-zoom .canvas2d-zoom-btn:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-engine-menu,
+.canvas2d-engine-search-panel,
+.canvas2d-engine-export-history-panel,
+.canvas2d-navigator-context-menu {
+  padding: 6px !important;
+  border: 1px solid var(--air-line) !important;
+  border-radius: 8px !important;
+  color: var(--air-ink) !important;
+  background: #fff !important;
+  box-shadow: var(--air-shadow-float) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.canvas2d-engine-search-panel {
+  right: 0 !important;
+  width: min(430px, calc(100vw - 28px)) !important;
+  min-width: min(430px, calc(100vw - 28px)) !important;
+  gap: 6px !important;
+  overflow: hidden !important;
+}
+
+.canvas2d-engine-search-input-wrap {
+  min-height: 38px !important;
+  padding: 0 4px !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.canvas2d-engine-search-input {
+  color: var(--air-ink) !important;
+  font-weight: 500 !important;
+}
+
+.canvas2d-engine-search-close {
+  width: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-engine-search-close:hover,
+.canvas2d-engine-search-close:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-engine-search-shortcuts span,
+.canvas2d-engine-search-scope-chip {
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  transform: none !important;
+}
+
+.canvas2d-engine-search-scope-chip:hover,
+.canvas2d-engine-search-scope-chip:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+  box-shadow: none !important;
+}
+
+.canvas2d-engine-search-scope-chip.is-active {
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-engine-search-results {
+  gap: 0 !important;
+  padding: 0 !important;
+}
+
+.canvas2d-engine-search-empty {
+  gap: 4px !important;
+  padding: 14px 6px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-engine-search-empty-icon {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-engine-search-result {
+  grid-template-columns: 30px minmax(0, 1fr) auto !important;
+  gap: 9px !important;
+  padding: 10px 6px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--air-line) !important;
+  border-radius: 0 !important;
+  color: var(--air-ink) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-engine-search-result:hover,
+.canvas2d-engine-search-result.is-active {
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-engine-search-result-glyph {
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.canvas2d-engine-menu-item,
+.canvas2d-navigator-context-menu button {
+  min-height: 32px !important;
+  padding: 6px 8px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.canvas2d-engine-menu-item:hover:not(.is-disabled),
+.canvas2d-engine-menu-item:focus-visible,
+.canvas2d-navigator-context-menu button:hover,
+.canvas2d-navigator-context-menu button:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+.canvas2d-engine-menu-item.is-active {
+  color: var(--air-accent) !important;
+  background: var(--air-active) !important;
+}
+
+.canvas2d-engine-menu-title,
+.canvas2d-engine-management-eyebrow {
+  color: var(--air-ink-soft) !important;
+  letter-spacing: 0 !important;
+}
+
+.canvas2d-engine-menu-group {
+  border-left-color: var(--air-line) !important;
+}
+
+.canvas2d-engine-insert-item .canvas2d-engine-menu-icon,
+.canvas2d-engine-menu-about-block {
+  border-color: var(--air-line) !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: transparent !important;
+}
+
+.stage-restore-dock {
+  top: auto !important;
+  bottom: 10px !important;
+}
+
+#stage-restore-btn {
+  min-height: 30px !important;
+  padding: 0 9px !important;
+  border: 0 !important;
+  border-radius: var(--air-radius-control) !important;
+  color: var(--air-ink-muted) !important;
+  background: rgba(248, 250, 248, 0.7) !important;
+  box-shadow: none !important;
+}
+
+#stage-restore-btn:hover,
+#stage-restore-btn:focus-visible {
+  color: var(--air-ink) !important;
+  background: var(--air-hover) !important;
+}
+
+@media (max-width: 980px) {
+  .canvas2d-navigator-panel {
+    width: min(232px, calc(100vw - 58px)) !important;
+  }
+
+  .canvas2d-engine-topbar-stack {
+    max-width: calc(100vw - 254px) !important;
+  }
+
+  .canvas2d-engine-toolbar > .canvas2d-engine-tool,
+  .canvas2d-engine-toolbar > .canvas2d-engine-tool-group,
+  .canvas2d-engine-tool-group .canvas2d-engine-tool {
+    flex-basis: 30px !important;
+    width: 30px !important;
+    min-width: 30px !important;
+  }
+
+  .canvas2d-engine-tool {
+    width: 30px !important;
+    height: 30px !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .canvas2d-navigator-panel {
+    width: min(220px, calc(100vw - 48px)) !important;
+  }
+
+  .canvas2d-engine-topbar-stack {
+    max-width: calc(100vw - 108px) !important;
+  }
+
+  .canvas2d-engine-toolbar-wrap {
+    max-width: calc(100vw - 108px) !important;
+  }
+
+  .canvas2d-floating-card-zoom .canvas2d-zoom-btn.is-wide:first-of-type {
+    display: none !important;
   }
 }
