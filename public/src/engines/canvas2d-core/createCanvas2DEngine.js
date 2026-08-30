@@ -5046,6 +5046,7 @@ let tablePointerSelectionState = {
       reason: String(options.reason || "render").trim() || "render",
       backgroundDirty: Boolean(options.backgroundDirty || invalidationPatch.backgroundDirty),
       sceneDirty: Boolean(options.sceneDirty || invalidationPatch.sceneDirty),
+      cameraDirty: Boolean(options.cameraDirty || options.viewDirty),
       viewDirty: Boolean(options.viewDirty),
       interactionDirty: options.interactionDirty !== false || invalidationPatch.interactionDirty,
       overlayDirty: Boolean(options.overlayDirty || invalidationPatch.overlayDirty),

@@ -1587,6 +1587,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
   let lastRenderModeSignature = "";
+  let lastStaticItemCount = 0;
   const runtimeRendererCounts = new Map();
   let runtimeFallbackRendererCount = 0;
 
@@ -1645,6 +1646,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     lastInteractionVisualSignature = "";
     lastViewVisualSignature = "";
     lastRenderModeSignature = "";
+    lastStaticItemCount = 0;
   }
 
   return {
@@ -1757,12 +1759,13 @@ export function createRenderer({ customRenderers = [] } = {}) {
         : new Set(sceneVectorOwnedIds || []);
       const sceneVectorOwnershipSignature = Array.from(sceneVectorOwned).sort().join("|");
       const sceneOwned = new Set([...sceneContentOwned, ...sceneVectorOwned]);
+      const canvasOwnedItems = frameVisibleItems.filter((item) => !sceneOwned.has(String(item?.id || "")));
       const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
       const mindMapDropTarget =
         frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
         allItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
         null;
-      const { staticItems, dynamicItems } = resolveLayerAssignment(frameVisibleItems, {
+      const { staticItems, dynamicItems } = resolveLayerAssignment(canvasOwnedItems, {
         runtimeMode,
         editingId,
         hoverId,
@@ -1803,11 +1806,13 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
       const forceViewRedraw = viewVisualSignature !== lastViewVisualSignature;
       const forceRenderModeRedraw = renderModeSignature !== lastRenderModeSignature;
+      const staticSurfaceNeedsClear = lastStaticItemCount > 0 && staticItems.length === 0;
       lastStaticExclusionSignature = staticExclusionSignature;
       lastDynamicVisualSignature = dynamicVisualSignature;
       lastInteractionVisualSignature = interactionVisualSignature;
       lastViewVisualSignature = viewVisualSignature;
       lastRenderModeSignature = renderModeSignature;
+      lastStaticItemCount = staticItems.length;
 
       let tileStats = {
         tileCount: 0,
@@ -1832,6 +1837,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         }
       )) || Boolean(relationshipDraft);
       const hasDynamicContent = dynamicItems.length > 0 || Boolean(draftElement);
+      const hasStaticContent = staticItems.length > 0;
       const hasEmptyBoardHint = !(Array.isArray(items) && items.length) && !draftElement;
       const hasInteractionContent = hasEmptyBoardHint || Boolean(
         selectionRect ||
@@ -1843,11 +1849,14 @@ export function createRenderer({ customRenderers = [] } = {}) {
       ) || Boolean(hoveredItem);
       const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
       const effectiveStaticSceneDirty = Boolean(
-        liveInteractionMode ||
-        layerDirty.staticScene ||
-        forceStaticSceneRedraw ||
-        forceViewRedraw ||
-        forceRenderModeRedraw
+        staticSurfaceNeedsClear ||
+        (hasStaticContent && (
+          liveInteractionMode ||
+          layerDirty.staticScene ||
+          forceStaticSceneRedraw ||
+          forceViewRedraw ||
+          forceRenderModeRedraw
+        ))
       );
       const effectiveDynamicSceneDirty = Boolean(
         hasDynamicContent &&
@@ -2093,6 +2102,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         },
         culling: cullResult.stats,
         renderedItems: frameVisibleItems.length,
+        canvasOwnedItems: canvasOwnedItems.length,
         sceneContentOwnedCount: sceneContentOwned.size,
         sceneVectorOwnedCount: sceneVectorOwned.size,
         staticRenderedItems: staticItems.length,
@@ -2115,6 +2125,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
           mode: runtimeMode.mode,
           viewportInteractionActive: runtimeMode.viewportInteractionActive,
           interactionActive: runtimeMode.interactionActive,
+        },
+        invalidation: {
+          cameraDirty: Boolean(dirtyState?.cameraDirty),
+          sceneDirty: Boolean(dirtyState?.sceneDirty),
+          interactionDirty: Boolean(dirtyState?.interactionDirty),
         },
         layerState: layerState
           ? {

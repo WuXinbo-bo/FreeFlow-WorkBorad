@@ -22,6 +22,9 @@ async function main() {
   const { createScenePresentationCoordinator } = await import(
     "../public/src/engines/canvas2d-core/scene/scenePresentationCoordinator.js"
   );
+  const { createLayerState } = await import(
+    "../public/src/engines/canvas2d-core/render/layerState.js"
+  );
 
   const transitions = [];
   const registry = createElementTypeRegistry({ fallbackType: "text" });
@@ -79,6 +82,14 @@ async function main() {
   assert.strictEqual(Object.isFrozen(frame), true);
   assert.strictEqual(Object.isFrozen(frame.view), true);
   assert.strictEqual(frame.quality.mode, "shadow");
+
+  const layers = createLayerState();
+  const cameraLayers = layers.applyDirtyState({ reason: "wheel-pan", cameraDirty: true, viewDirty: true });
+  assert.strictEqual(cameraLayers.dirty.background, true);
+  assert.strictEqual(cameraLayers.dirty.staticScene, false);
+  assert.strictEqual(cameraLayers.dirty.dynamicScene, false);
+  assert.strictEqual(cameraLayers.dirty.interaction, true);
+  assert.strictEqual(cameraLayers.dirty.overlay, false);
 
   const presentation = createScenePresentationCoordinator({
     view: { scale: 1, offsetX: 10, offsetY: 20 },

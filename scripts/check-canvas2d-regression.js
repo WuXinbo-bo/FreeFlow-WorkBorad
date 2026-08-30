@@ -822,7 +822,8 @@ async function runPanRealtimeCheck(browser) {
     const result = { midStats, afterStats };
     assert(session.getErrors().length === 0, "pan check produced page errors", session.getErrors());
     assert(result.midStats?.renderReason === "pointer-pan-move", "pan move did not trigger view render", result);
-    assert(result.midStats?.layerReuse?.staticSceneReused === false, "static layer was incorrectly reused during pan", result);
+    assert(result.midStats?.invalidation?.cameraDirty === true, "pan move did not use camera invalidation", result);
+    assert(result.midStats?.layerReuse?.staticSceneReused === true, "scene-owned static layer redrew during pan", result);
     assert(result.afterStats?.renderReason === "pointer-pan-commit", "pan commit did not flush view state", result);
     return result;
   } finally {
@@ -1191,7 +1192,13 @@ async function runSelectionDragRealtimeCheck(browser) {
     await session.page.mouse.down({ button: "left" });
     await session.page.mouse.move(startX + 96, startY + 48, { steps: 4 });
     await session.page.waitForTimeout(80);
-    const midStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
+    const midState = await session.page.evaluate(() => {
+      const node = document.querySelector('.canvas2d-rich-item[data-id="drag-text"]');
+      return {
+        stats: document.querySelector("#canvas-office-canvas").__ffRenderStats || null,
+        scenePosition: node ? { left: Number.parseFloat(node.style.left), top: Number.parseFloat(node.style.top) } : null,
+      };
+    });
     await session.page.mouse.up({ button: "left" });
     await session.page.waitForTimeout(80);
     const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
@@ -1199,10 +1206,14 @@ async function runSelectionDragRealtimeCheck(browser) {
       const item = window.__canvas2dEngine?.getSnapshot?.()?.board?.items?.find?.((entry) => entry.id === "drag-text");
       return item ? { x: Number(item.x || 0), y: Number(item.y || 0) } : null;
     });
-    const result = { midStats, afterStats, afterPosition };
+    const result = { midStats: midState.stats, midScenePosition: midState.scenePosition, afterStats, afterPosition };
     assert(session.getErrors().length === 0, "selection drag check produced page errors", session.getErrors());
-    assert(result.midStats?.dynamicRenderedItems >= 1, "selection drag did not render active item dynamically", result);
-    assert(result.midStats?.layerReuse?.dynamicSceneReused === false, "dynamic layer was incorrectly reused during drag", result);
+    assert(result.midStats?.sceneContentOwnedCount === 1, "selection drag lost scene ownership", result);
+    assert(result.midStats?.canvasOwnedItems === 0, "selection drag duplicated content into the canvas layer", result);
+    assert(result.midStats?.layerReuse?.dynamicSceneReused === true, "scene-owned drag redrew the canvas content layer", result);
+    assert(result.midStats?.layerReuse?.interactionReused === false, "selection drag did not refresh screen-space interaction", result);
+    assert(Math.abs(result.midScenePosition?.left - 616) <= 2, "scene node did not move horizontally in real time", result);
+    assert(Math.abs(result.midScenePosition?.top - 268) <= 2, "scene node did not move vertically in real time", result);
     assert(Math.abs(result.afterPosition?.x - 616) <= 2, "selection drag did not commit the horizontal position", result);
     assert(Math.abs(result.afterPosition?.y - 268) <= 2, "selection drag did not commit the vertical position", result);
 
@@ -1271,21 +1282,47 @@ async function runLocalizedTileInvalidationCheck(browser) {
   const session = await createPage(browser, { board });
   try {
     const result = await session.page.evaluate(async () => {
+      const readGeometry = () => {
+        const boardItems = window.__canvas2dEngine.getSnapshot().board.items;
+        const entries = ["align-a", "align-b"].map((id) => {
+          const item = boardItems.find((candidate) => candidate.id === id);
+          const node = document.querySelector(`.canvas2d-rich-item[data-id="${id}"]`);
+          return {
+            id,
+            x: Number(item?.x || 0),
+            width: Number(item?.width || 0),
+            nodeLeft: Number.parseFloat(node?.style?.left || "0"),
+          };
+        });
+        return entries;
+      };
       window.__canvas2dEngine.alignSelection("left");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const first = document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
+      const firstGeometry = readGeometry();
       window.__canvas2dEngine.alignSelection("right");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const repeated = document.querySelector("#canvas-office-canvas").__ffRenderStats || null;
-      return { first, repeated };
+      const repeatedGeometry = readGeometry();
+      return { first, firstGeometry, repeated, repeatedGeometry };
     });
     assert(session.getErrors().length === 0, "alignSelection check produced page errors", session.getErrors());
     for (const stats of [result?.first, result?.repeated]) {
       const tileCache = stats?.tileCache || {};
-      assert(tileCache.invalidatedTiles >= 1, "localized tile invalidation did not occur", result);
-      assert(tileCache.rerasterizedDirtyTiles >= 1, "dirty tile was not rerasterized", result);
-      assert(tileCache.reusedVisibleTiles >= 1, "visible tile reuse was lost", result);
+      assert(stats?.canvasOwnedItems === 0, "scene-owned alignment duplicated content into canvas", result);
+      assert(stats?.sceneContentOwnedCount === 3, "scene ownership changed during alignment", result);
+      assert(tileCache.cacheSize === 0, "scene-owned alignment populated the tile cache", result);
+      assert(stats?.layerReuse?.staticSceneReused === true, "scene-owned alignment redrew the static canvas layer", result);
     }
+    assert(result.firstGeometry[0].x === result.firstGeometry[1].x, "left alignment did not update scene geometry", result);
+    assert(result.firstGeometry.every((entry) => entry.nodeLeft === entry.x), "left alignment left stale scene nodes", result);
+    assert(
+      result.repeatedGeometry[0].x + result.repeatedGeometry[0].width ===
+        result.repeatedGeometry[1].x + result.repeatedGeometry[1].width,
+      "right alignment did not update scene geometry",
+      result
+    );
+    assert(result.repeatedGeometry.every((entry) => entry.nodeLeft === entry.x), "right alignment left stale scene nodes", result);
     return result;
   } finally {
     await session.page.close();
@@ -1489,10 +1526,14 @@ async function runMindMapDragConnectionCheck(browser) {
         rootExists: true,
         childExists: true,
         renderedItems: Number(duringDragStats?.renderedItems || 0),
+        canvasOwnedItems: Number(duringDragStats?.canvasOwnedItems || 0),
+        sceneVectorOwnedCount: Number(duringDragStats?.sceneVectorOwnedCount || 0),
         dynamicRenderedItems: Number(duringDragStats?.dynamicRenderedItems || 0),
         staticRenderedItems: Number(duringDragStats?.staticRenderedItems || 0),
         mindMapConnectionsDrawn: Number(duringDragStats?.mindMapConnectionsDrawn || 0),
         afterDynamicRenderedItems: Number(afterDragStats?.dynamicRenderedItems || 0),
+        afterCanvasOwnedItems: Number(afterDragStats?.canvasOwnedItems || 0),
+        afterSceneVectorOwnedCount: Number(afterDragStats?.sceneVectorOwnedCount || 0),
         afterStaticRenderedItems: Number(afterDragStats?.staticRenderedItems || 0),
         afterMindMapConnectionsDrawn: Number(afterDragStats?.mindMapConnectionsDrawn || 0),
         movedBy: {
@@ -1507,10 +1548,14 @@ async function runMindMapDragConnectionCheck(browser) {
     assert(result.rootExists === true, "mind map drag check root was not created", result);
     assert(result.childExists === true, "mind map drag check child was not created", result);
     assert(result.renderedItems >= 2, "mind map drag check rendered item count is invalid", result);
-    assert(result.dynamicRenderedItems === result.renderedItems, "mind map drag check did not enter dynamic interaction mode", result);
+    assert(result.canvasOwnedItems === 0, "mind map drag duplicated scene vectors into canvas", result);
+    assert(result.sceneVectorOwnedCount >= 2, "mind map drag lost scene vector ownership", result);
+    assert(result.dynamicRenderedItems === 0, "mind map drag redrew the dynamic canvas layer", result);
     assert(result.mindMapConnectionsDrawn >= 1, "mind map connection disappeared during drag", result);
     assert(result.afterStaticRenderedItems === 0, "mind map node unexpectedly entered the static tile cache", result);
-    assert(result.afterDynamicRenderedItems === result.renderedItems, "mind map dynamic rendering did not recover after drag", result);
+    assert(result.afterCanvasOwnedItems === 0, "mind map recovery duplicated scene vectors into canvas", result);
+    assert(result.afterSceneVectorOwnedCount >= 2, "mind map scene vector ownership did not recover", result);
+    assert(result.afterDynamicRenderedItems === 0, "mind map recovery redrew the dynamic canvas layer", result);
     assert(result.afterMindMapConnectionsDrawn >= 1, "mind map connection disappeared after drag", result);
     assert(Math.abs(result.movedBy?.x) >= 100, "mind map drag position was not committed", result);
     assert(result.selectedIds.length === 1, "mind map drag left stale multi-selection state", result);

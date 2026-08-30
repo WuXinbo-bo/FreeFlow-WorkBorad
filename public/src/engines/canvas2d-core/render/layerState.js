@@ -6,6 +6,7 @@ function createBaseLayerSnapshot() {
       dynamicScene: 1,
       interaction: 1,
       overlay: 1,
+      camera: 1,
     },
     dirty: {
       background: true,
@@ -13,6 +14,7 @@ function createBaseLayerSnapshot() {
       dynamicScene: true,
       interaction: true,
       overlay: true,
+      camera: true,
     },
     renderReason: "initial",
     reasons: ["initial"],
@@ -25,12 +27,14 @@ export function createLayerState() {
   function applyDirtyState(dirtyState = {}) {
     const renderReason = String(dirtyState.reason || "render");
     const staticOnlyViewDirty = renderReason === "large-viewport-progressive-render";
+    const cameraDirty = Boolean(dirtyState.cameraDirty || dirtyState.viewDirty);
     const nextDirty = {
-      background: Boolean(dirtyState.backgroundDirty || (dirtyState.viewDirty && !staticOnlyViewDirty)),
-      staticScene: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty),
-      dynamicScene: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty || dirtyState.interactionDirty),
-      interaction: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty || dirtyState.interactionDirty),
-      overlay: Boolean(dirtyState.sceneDirty || dirtyState.viewDirty || dirtyState.overlayDirty),
+      background: Boolean(dirtyState.backgroundDirty || (cameraDirty && !staticOnlyViewDirty)),
+      staticScene: Boolean(dirtyState.sceneDirty || (dirtyState.viewDirty && !cameraDirty)),
+      dynamicScene: Boolean(dirtyState.sceneDirty || dirtyState.interactionDirty),
+      interaction: Boolean(dirtyState.sceneDirty || cameraDirty || dirtyState.interactionDirty),
+      overlay: Boolean(dirtyState.sceneDirty || dirtyState.overlayDirty),
+      camera: cameraDirty,
     };
     const nextRevisions = {
       background: snapshot.revisions.background + (nextDirty.background ? 1 : 0),
@@ -38,6 +42,7 @@ export function createLayerState() {
       dynamicScene: snapshot.revisions.dynamicScene + (nextDirty.dynamicScene ? 1 : 0),
       interaction: snapshot.revisions.interaction + (nextDirty.interaction ? 1 : 0),
       overlay: snapshot.revisions.overlay + (nextDirty.overlay ? 1 : 0),
+      camera: snapshot.revisions.camera + (nextDirty.camera ? 1 : 0),
     };
     snapshot = {
       revisions: nextRevisions,
