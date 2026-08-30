@@ -3947,6 +3947,7 @@ let tablePointerSelectionState = {
         allowDuringInteraction: isEditing,
       },
       onDeferred: () => markCodeBlockOverlayDeferred(item.id, deferredIds),
+      stageNewNodes: true,
     });
     if (!node) {
       return;
@@ -4804,7 +4805,7 @@ let tablePointerSelectionState = {
       }
       host.querySelectorAll(selector).forEach((node) => {
         const itemId = String(node.getAttribute("data-id") || "").trim();
-        if (itemId && node.style.display !== "none") {
+        if (itemId && node.style.display !== "none" && node.style.visibility !== "hidden") {
           ownedIds.add(itemId);
         }
       });
@@ -4813,6 +4814,35 @@ let tablePointerSelectionState = {
     collect(refs.codeBlockDisplayHost, ".canvas2d-code-block-item[data-id]");
     collect(refs.mathDisplayHost, ".canvas2d-math-item[data-id]");
     return ownedIds;
+  }
+
+  function finalizeOverlayHydration({
+    virtualizer,
+    overlayType = "",
+    deferredCount = 0,
+    desiredCount = 0,
+    reason = "overlay-budget-deferred",
+  } = {}) {
+    if (overlayBudgetManager.isSuspended?.()) {
+      return { committed: 0, pending: deferredCount > 0 };
+    }
+    const typeLimit = Number(overlayBudgetManager.getLimit?.(overlayType) || 0) || 0;
+    const totalLimit = Number(overlayBudgetManager.getLimit?.("total") || 0) || 0;
+    const activeTypeCount = Number(overlayBudgetManager.getActive?.(overlayType) || 0) || 0;
+    const activeTotalCount = Number(overlayBudgetManager.getActiveTotal?.() || 0) || 0;
+    const targetCount = typeLimit > 0 ? Math.min(typeLimit, desiredCount) : desiredCount;
+    const canContinue =
+      deferredCount > 0 &&
+      activeTypeCount < targetCount &&
+      (!totalLimit || activeTotalCount < totalLimit);
+    if (canContinue) {
+      scheduleRender({ overlayDirty: true, reason });
+      return { committed: 0, pending: true };
+    }
+    return {
+      committed: Number(virtualizer?.commitStaged?.() || 0) || 0,
+      pending: false,
+    };
   }
 
   function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null, frameContext = null } = {}) {
@@ -11225,7 +11255,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
-    const sceneLayoutView = createView(DEFAULT_VIEW);
+    const sceneLayoutView = createView({ scale: 1, offsetX: 0, offsetY: 0 });
     const scaleBucket = getRichOverlayScaleBucket(1);
     const editingId = state.editingId;
     const viewportBounds = getRichOverlayViewportBounds(
@@ -11263,6 +11293,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       ({ item, visible }) => visible || (editingId && editingId === item.id)
     );
 
+    const deferredOverlayIds = new Set();
     richOverlayVirtualizer.syncCollection({
       items: activeOverlayItems,
       activeIds: activeOverlayItems.map(({ item }) => item.id),
@@ -11277,11 +11308,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       },
       budgetManager: overlayBudgetManager,
       overlayType: "rich",
+      stageNewNodes: true,
       getBudgetOptions: ({ item, visible }) => ({
         force: editingId && editingId === item.id,
         allowDuringInteraction: editingId && editingId === item.id,
       }),
-      onDeferred: () => scheduleRender({ overlayDirty: true, reason: "rich-overlay-budget-deferred" }),
+      onDeferred: (itemId) => deferredOverlayIds.add(String(itemId || "")),
       shouldHide: ({ item, visible }) => {
         if (!visible || (editingId && editingId === item.id)) {
           return true;
@@ -11448,6 +11480,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       },
     });
+    finalizeOverlayHydration({
+      virtualizer: richOverlayVirtualizer,
+      overlayType: "rich",
+      deferredCount: deferredOverlayIds.size,
+      desiredCount: activeOverlayItems.length,
+      reason: "rich-overlay-budget-deferred",
+    });
     if (textLayoutWritebackChanged) {
       markSceneGraphDirty();
       syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
@@ -11602,6 +11641,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     const activeMathItems = visibleItems.filter(({ visible }) => visible);
 
+    const deferredOverlayIds = new Set();
     mathOverlayVirtualizer.syncCollection({
       items: activeMathItems,
       activeIds: activeMathItems.map(({ item }) => item.id),
@@ -11616,10 +11656,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       },
       budgetManager: overlayBudgetManager,
       overlayType: "math",
+      stageNewNodes: true,
       getBudgetOptions: () => ({
         allowDuringInteraction: false,
       }),
-      onDeferred: () => scheduleRender({ overlayDirty: true, reason: "math-overlay-budget-deferred" }),
+      onDeferred: (itemId) => deferredOverlayIds.add(String(itemId || "")),
       onRemove: (node) => {
         cancelPendingMathRender(node);
         node.remove?.();
@@ -11729,6 +11770,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         mathLayoutWritebackChanged = true;
       }
       },
+    });
+    finalizeOverlayHydration({
+      virtualizer: mathOverlayVirtualizer,
+      overlayType: "math",
+      deferredCount: deferredOverlayIds.size,
+      desiredCount: activeMathItems.length,
+      reason: "math-overlay-budget-deferred",
     });
 
     if (mathLayoutWritebackChanged) {
@@ -11867,6 +11915,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         },
         budgetManager: overlayBudgetManager,
         overlayType: "code",
+        stageNewNodes: true,
         getBudgetOptions: (item) => ({
           force: state.editingId === item.id && state.editingType === "code-block",
           allowDuringInteraction: state.editingId === item.id && state.editingType === "code-block",
@@ -11918,18 +11967,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           codeBlockOverlayDirtyIds.add(itemId);
         }
       });
-      const codeLimit = Number(overlayBudgetManager.getLimit?.("code") || 0) || 0;
-      const totalLimit = Number(overlayBudgetManager.getLimit?.("total") || 0) || 0;
-      const activeCodeCount = Number(overlayBudgetManager.getActive?.("code") || 0) || 0;
-      const activeTotalCount = Number(overlayBudgetManager.getActiveTotal?.() || 0) || 0;
-      const codeCapacityAvailable = !codeLimit || activeCodeCount < Math.min(codeLimit, activeIds.length);
-      const totalCapacityAvailable = !totalLimit || activeTotalCount < totalLimit;
-      if (codeCapacityAvailable && totalCapacityAvailable) {
-        scheduleRender({ overlayDirty: true, reason: "code-overlay-budget-deferred" });
-      }
     } else {
       codeBlockOverlayDirtyIds.clear();
     }
+    finalizeOverlayHydration({
+      virtualizer: codeBlockOverlayVirtualizer,
+      overlayType: "code",
+      deferredCount: deferredIds.size,
+      desiredCount: activeIds.length,
+      reason: "code-overlay-budget-deferred",
+    });
     codeBlockOverlayNeedsFullRescan = false;
     lastCodeBlockOverlayViewportKey = viewportKey;
     lastCodeBlockOverlayInteractive = interactive;

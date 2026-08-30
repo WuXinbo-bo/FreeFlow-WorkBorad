@@ -122,6 +122,7 @@ export function createOverlayBudgetManager(limits = {}) {
     canCreate,
     getActive,
     getActiveTotal,
+    isSuspended: () => interactionSuspended,
     getLimit: (type = "") => {
       const normalizedType = normalizeType(type);
       if (normalizedType === "total") {

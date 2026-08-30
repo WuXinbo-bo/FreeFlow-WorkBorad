@@ -865,6 +865,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const canvas = document.querySelector("#canvas-office-canvas");
       const richNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]');
       const mathNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]');
+      const flowTextNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-flow-a"]');
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]');
       const imageNode = document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]');
       const tableNode = document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]');
@@ -905,7 +906,13 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialInteraction = readInteractionState();
       const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
       const initialRichLocalLeft = Number.parseFloat(richNode.style.left);
+      const initialRichLocalTop = Number.parseFloat(richNode.style.top);
+      const initialMathLocalLeft = Number.parseFloat(mathNode.style.left);
+      const initialMathLocalTop = Number.parseFloat(mathNode.style.top);
+      const initialFlowLocalLeft = Number.parseFloat(flowTextNode.style.left);
+      const initialFlowLocalTop = Number.parseFloat(flowTextNode.style.top);
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
+      const initialCodeLocalTop = Number.parseFloat(codeNode.style.top);
       const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
       const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
       const initialFileBox = [fileNode.style.left, fileNode.style.top, fileNode.style.width, fileNode.style.height];
@@ -1002,7 +1009,13 @@ async function runViewportInteractionRecoveryCheck(browser) {
         immediateScale,
         activeScale,
         initialRichLocalLeft,
+        initialRichLocalTop,
+        initialMathLocalLeft,
+        initialMathLocalTop,
+        initialFlowLocalLeft,
+        initialFlowLocalTop,
         initialCodeLocalLeft,
+        initialCodeLocalTop,
         initialImageBox,
         initialTableBox,
         initialFileBox,
@@ -1058,6 +1071,10 @@ async function runViewportInteractionRecoveryCheck(browser) {
       result
     );
     assert(result.active.hostsOwnedByContentLayer, "scene content hosts do not share the content layer", result);
+    assert(result.initialRichLocalLeft === 180 && result.initialRichLocalTop === 160, "rich text local geometry diverged from world geometry", result);
+    assert(result.initialMathLocalLeft === 460 && result.initialMathLocalTop === 160, "math text local geometry diverged from world geometry", result);
+    assert(result.initialFlowLocalLeft === 1120 && result.initialFlowLocalTop === 380, "flow text local geometry diverged from world geometry", result);
+    assert(result.initialCodeLocalLeft === 760 && result.initialCodeLocalTop === 160, "code local geometry diverged from world geometry", result);
     assert(
       result.active.sceneContentOwnedCount === result.active.sceneOverlayOwnedCount + 3,
       "visible DOM subjects did not have singular scene ownership",

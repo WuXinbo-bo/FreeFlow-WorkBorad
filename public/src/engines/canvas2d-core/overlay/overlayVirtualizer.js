@@ -16,6 +16,7 @@ function toIdSet(values = []) {
 export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
   const nodes = nodeMap instanceof Map ? nodeMap : new Map();
   const visibleSet = visibleIds instanceof Set ? visibleIds : null;
+  const stagedIds = new Set();
 
   function removeNode(itemId = "", { onRemove, budgetManager, overlayType = "" } = {}) {
     const id = normalizeId(itemId);
@@ -33,6 +34,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
       node.remove();
     }
     nodes.delete(id);
+    stagedIds.delete(id);
     visibleSet?.delete(id);
     budgetManager?.noteRemove?.(overlayType);
     return node;
@@ -46,6 +48,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
       return;
     }
     nodes.clear();
+    stagedIds.clear();
     visibleSet?.clear();
   }
 
@@ -59,7 +62,11 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     return activeSet;
   }
 
-  function ensureNode(itemId = "", createNode, { budgetManager, overlayType = "", budgetOptions = null, onDeferred } = {}) {
+  function ensureNode(
+    itemId = "",
+    createNode,
+    { budgetManager, overlayType = "", budgetOptions = null, onDeferred, stageNewNodes = false } = {}
+  ) {
     const id = normalizeId(itemId);
     if (!id) {
       return null;
@@ -75,10 +82,35 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
       node = createNode(id) || null;
       if (node) {
         nodes.set(id, node);
+        if (stageNewNodes) {
+          stagedIds.add(id);
+          if (node.style) {
+            node.style.visibility = "hidden";
+          }
+        }
         budgetManager?.noteCreate?.(overlayType);
       }
     }
     return node;
+  }
+
+  function commitStaged({ onCommit } = {}) {
+    let committed = 0;
+    Array.from(stagedIds).forEach((id) => {
+      const node = nodes.get(id) || null;
+      stagedIds.delete(id);
+      if (!node) {
+        return;
+      }
+      if (node.style) {
+        node.style.visibility = "";
+      }
+      if (typeof onCommit === "function") {
+        onCommit(node, id);
+      }
+      committed += 1;
+    });
+    return committed;
   }
 
   function hideNode(itemId = "", { onHide } = {}) {
@@ -130,6 +162,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     overlayType = "",
     getBudgetOptions,
     onDeferred,
+    stageNewNodes = false,
   } = {}) {
     const list = Array.isArray(items) ? items : [];
     const resolveId =
@@ -160,6 +193,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
           overlayType,
           budgetOptions: typeof getBudgetOptions === "function" ? getBudgetOptions(item, itemId, index) : null,
           onDeferred,
+          stageNewNodes,
         }
       );
       if (!node) {
@@ -182,6 +216,7 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
 
   return {
     clear,
+    commitStaged,
     ensureNode,
     getNode: (itemId = "") => nodes.get(normalizeId(itemId)) || null,
     hasNode: (itemId = "") => nodes.has(normalizeId(itemId)),
@@ -190,5 +225,6 @@ export function createOverlayVirtualizer({ nodeMap, visibleIds } = {}) {
     showNode,
     syncCollection,
     syncActiveIds,
+    getStagedIds: () => new Set(stagedIds),
   };
 }
