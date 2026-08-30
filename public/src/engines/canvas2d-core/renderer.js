@@ -367,6 +367,26 @@ function drawHandles(ctx, element, view) {
   ctx.restore();
 }
 
+function drawRotateHandle(ctx, x, y, width, height) {
+  const handleOffset = 26;
+  const radius = 8;
+  const centerX = x + width / 2;
+  const centerY = y - handleOffset;
+  ctx.save();
+  ctx.strokeStyle = "rgba(59, 130, 246, 0.9)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(centerX, y);
+  ctx.lineTo(centerX, centerY + radius);
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawMultiSelectionHandles(ctx, view, selectedItems = []) {
   const bounds = getMultiSelectionBounds(selectedItems);
   if (!bounds) {
@@ -1163,11 +1183,16 @@ function drawVisibleItemsToContext({
   renderTextInCanvas,
   rendererDispatch,
   sceneContentOwnedIds = null,
+  sceneVectorOwnedIds = null,
 }) {
   const selected = new Set(selectedIds || []);
   const sceneContentOwned = sceneContentOwnedIds instanceof Set
     ? sceneContentOwnedIds
     : new Set(sceneContentOwnedIds || []);
+  const sceneVectorOwned = sceneVectorOwnedIds instanceof Set
+    ? sceneVectorOwnedIds
+    : new Set(sceneVectorOwnedIds || []);
+  const sceneOwned = new Set([...sceneContentOwned, ...sceneVectorOwned]);
   let customRendererHandledCount = 0;
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
@@ -1180,7 +1205,7 @@ function drawVisibleItemsToContext({
     }
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
-    if (sceneContentOwned.has(String(item.id || ""))) {
+    if (sceneOwned.has(String(item.id || ""))) {
       const bounds = getElementBounds(item);
       const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
       const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
@@ -1191,6 +1216,9 @@ function drawVisibleItemsToContext({
       drawSelectionFrame(ctx, left, top, width, height, isSelected, isHover);
       if (isSelected) {
         drawHandles(ctx, item, view);
+        if (item.type === "image" || (item.type === "shape" && !isLinearShape(item.shapeType))) {
+          drawRotateHandle(ctx, left, top, width, height);
+        }
       }
       drawLockBadge(ctx, item, view);
       return;
@@ -1543,6 +1571,41 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
   let lastRenderModeSignature = "";
+  const runtimeRendererCounts = new Map();
+  let runtimeFallbackRendererCount = 0;
+
+  function registerRuntimeElementRenderer(renderer) {
+    const unregister = rendererDispatch.register(renderer);
+    const supportedTypes = Array.isArray(renderer?.supportedTypes) ? renderer.supportedTypes : [];
+    const resolvedTypes = supportedTypes
+      .map((type) => canvasElementRegistry.resolve(type, { fallback: false })?.type || String(type || ""))
+      .filter(Boolean);
+    if (resolvedTypes.length) {
+      resolvedTypes.forEach((type) => runtimeRendererCounts.set(type, (runtimeRendererCounts.get(type) || 0) + 1));
+    } else {
+      runtimeFallbackRendererCount += 1;
+    }
+    let active = true;
+    return () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      unregister?.();
+      if (resolvedTypes.length) {
+        resolvedTypes.forEach((type) => {
+          const nextCount = Math.max(0, (runtimeRendererCounts.get(type) || 0) - 1);
+          if (nextCount) {
+            runtimeRendererCounts.set(type, nextCount);
+          } else {
+            runtimeRendererCounts.delete(type);
+          }
+        });
+      } else {
+        runtimeFallbackRendererCount = Math.max(0, runtimeFallbackRendererCount - 1);
+      }
+    };
+  }
 
   function resetCachedSurfaces() {
     staticTileLayer.clear();
@@ -1569,7 +1632,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
   }
 
   return {
-    registerElementRenderer: (renderer) => rendererDispatch.register(renderer),
+    registerElementRenderer: registerRuntimeElementRenderer,
+    hasRuntimeElementRenderer: (item) => {
+      const type = canvasElementRegistry.resolveElement(item)?.type || String(item?.type || "");
+      return runtimeFallbackRendererCount > 0 || (runtimeRendererCounts.get(type) || 0) > 0;
+    },
     render({
       ctx,
       canvas,
@@ -1609,6 +1676,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
       frameContext = null,
       forceFreshSurfaces = false,
       sceneContentOwnedIds = null,
+      sceneVectorOwnedIds = null,
+      sceneVectorConnectionsOwned = false,
+      sceneVectorConnectionCount = 0,
     }) {
       const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
       const rawDpr = Math.max(1, Number(pixelRatio) || fallbackDpr || 1);
@@ -1666,6 +1736,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
         ? sceneContentOwnedIds
         : new Set(sceneContentOwnedIds || []);
       const sceneContentOwnershipSignature = Array.from(sceneContentOwned).sort().join("|");
+      const sceneVectorOwned = sceneVectorOwnedIds instanceof Set
+        ? sceneVectorOwnedIds
+        : new Set(sceneVectorOwnedIds || []);
+      const sceneVectorOwnershipSignature = Array.from(sceneVectorOwned).sort().join("|");
+      const sceneOwned = new Set([...sceneContentOwned, ...sceneVectorOwned]);
       const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
       const mindMapDropTarget =
         frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
@@ -1682,7 +1757,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           .map((item) => String(item?.id || "").trim())
           .filter(Boolean)
       );
-      const staticRenderExclusionIds = new Set([...dynamicRenderIdSet, ...sceneContentOwned]);
+      const staticRenderExclusionIds = new Set([...dynamicRenderIdSet, ...sceneOwned]);
       const staticExclusionSignature = Array.from(staticRenderExclusionIds).sort().join("|");
       const dynamicVisualSignature = getDynamicVisualSignature({
         dynamicItems,
@@ -1705,7 +1780,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const renderModeSignature = getRenderModeSignature({
         renderTextInCanvas: effectiveRenderTextInCanvas,
         viewportInteractionActive,
-      }) + `|scene-content:${sceneContentOwnershipSignature}`;
+      }) + `|scene-content:${sceneContentOwnershipSignature}|scene-vector:${sceneVectorOwnershipSignature}`;
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
       const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
@@ -1730,12 +1805,15 @@ export function createRenderer({ customRenderers = [] } = {}) {
       };
       let customRendererHandledCount = 0;
       let lodSimplifiedCount = 0;
-      const hasConnectionContent = frameVisibleItems.some(
+      if (sceneVectorConnectionsOwned) {
+        lastMindMapConnectionCount = 0;
+      }
+      const hasConnectionContent = (!sceneVectorConnectionsOwned && frameVisibleItems.some(
         (item) => {
           const capabilities = canvasElementRegistry.resolveElement(item)?.capabilities;
           return capabilities?.visibility === "mind-map" || capabilities?.layer === "mind-connections";
         }
-      ) || Boolean(relationshipDraft);
+      )) || Boolean(relationshipDraft);
       const hasDynamicContent = dynamicItems.length > 0 || Boolean(draftElement);
       const hasEmptyBoardHint = !(Array.isArray(items) && items.length) && !draftElement;
       const hasInteractionContent = hasEmptyBoardHint || Boolean(
@@ -1835,6 +1913,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     allItems,
                     rendererDispatch,
                     sceneContentOwnedIds: sceneContentOwned,
+                    sceneVectorOwnedIds: sceneVectorOwned,
                   }),
               })
             : !liveInteractionMode && staticItems.length
@@ -1854,6 +1933,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   allItems,
                   rendererDispatch,
                   sceneContentOwnedIds: sceneContentOwned,
+                  sceneVectorOwnedIds: sceneVectorOwned,
                 })
               : {
                   tileCount: 0,
@@ -1886,9 +1966,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
 
       if (effectiveConnectionDirty) {
         clearLayerContext(connectionLayer, width, height);
-        const treeConnectionCount = drawMindMapConnections(connectionLayer.ctx, frameVisibleItems, view);
-        const summaryCount = drawMindMapSummaries(connectionLayer.ctx, frameVisibleItems, view);
-        const relationshipCount = drawMindRelationshipLines(connectionLayer.ctx, frameVisibleItems, view, hoverId, hoverHandle);
+        const treeConnectionCount = sceneVectorConnectionsOwned ? 0 : drawMindMapConnections(connectionLayer.ctx, frameVisibleItems, view);
+        const summaryCount = sceneVectorConnectionsOwned ? 0 : drawMindMapSummaries(connectionLayer.ctx, frameVisibleItems, view);
+        const relationshipCount = sceneVectorConnectionsOwned ? 0 : drawMindRelationshipLines(connectionLayer.ctx, frameVisibleItems, view, hoverId, hoverHandle);
         drawMindRelationshipDraft(connectionLayer.ctx, relationshipDraft, view);
         lastMindMapConnectionCount = treeConnectionCount + summaryCount + relationshipCount;
       }
@@ -1910,6 +1990,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           renderTextInCanvas: effectiveRenderTextInCanvas,
           rendererDispatch,
           sceneContentOwnedIds: sceneContentOwned,
+          sceneVectorOwnedIds: sceneVectorOwned,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
         lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
@@ -1994,9 +2075,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         culling: cullResult.stats,
         renderedItems: frameVisibleItems.length,
         sceneContentOwnedCount: sceneContentOwned.size,
+        sceneVectorOwnedCount: sceneVectorOwned.size,
         staticRenderedItems: staticItems.length,
         dynamicRenderedItems: dynamicItems.length,
-        mindMapConnectionsDrawn: lastMindMapConnectionCount,
+        mindMapConnectionsDrawn: Math.max(0, Number(sceneVectorConnectionCount || 0)) + lastMindMapConnectionCount,
         customRendererHandledCount:
           customRendererHandledCount + Math.max(0, Number(tileStats?.customRendererHandledCount || 0) || 0),
         lodSimplifiedCount:

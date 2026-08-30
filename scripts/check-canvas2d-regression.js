@@ -211,6 +211,39 @@ function createRectShape(id, x, y, width, height) {
   };
 }
 
+function createFlowNodeItem(id, x, y, text) {
+  return {
+    id,
+    type: "flowNode",
+    x,
+    y,
+    width: 220,
+    height: 96,
+    text,
+    plainText: text,
+    html: text,
+    fontSize: 18,
+    color: "#0f172a",
+    wrapMode: "flow",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function createFlowEdgeItem(id, fromId, toId) {
+  return {
+    id,
+    type: "flowEdge",
+    fromId,
+    fromSide: "right",
+    toId,
+    toSide: "left",
+    style: "arrow",
+    arrowDirection: "forward",
+    createdAt: Date.now(),
+  };
+}
+
 function createBoard(items = [], selectedIds = [], view = { scale: 1, offsetX: 0, offsetY: 0 }) {
   return {
     items,
@@ -805,6 +838,10 @@ async function runViewportInteractionRecoveryCheck(browser) {
       createCodeBlockItem("viewport-code", 760, 160, "const stable = true;"),
       createImageItem("viewport-image", 180, 380),
       createTableItem("viewport-table", 560, 360),
+      createRectShape("viewport-shape", 1120, 160, 180, 110),
+      createFlowNodeItem("viewport-flow-a", 1120, 380, "Flow A"),
+      createFlowNodeItem("viewport-flow-b", 1420, 380, "Flow B"),
+      createFlowEdgeItem("viewport-flow-edge", "viewport-flow-a", "viewport-flow-b"),
     ],
     [],
     { scale: 0.5, offsetX: 40, offsetY: 40 }
@@ -816,7 +853,9 @@ async function runViewportInteractionRecoveryCheck(browser) {
       document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]') &&
       document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]') &&
       document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]') &&
-      document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]')
+      document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]') &&
+      document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]') &&
+      document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]')
     );
     const result = await session.page.evaluate(async () => {
       const canvas = document.querySelector("#canvas-office-canvas");
@@ -825,6 +864,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]');
       const imageNode = document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]');
       const tableNode = document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]');
+      const shapeNode = document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]');
+      const flowEdgeNode = document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]');
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
       const contentLayer = document.querySelector("#canvas2d-content-layer");
       const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
@@ -832,7 +873,11 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
       const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
       const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
-      window.__sceneContentTestRefs = { imageNode, tableNode };
+      const shapeBody = shapeNode.querySelector(".canvas2d-scene-shape-body");
+      const flowEdgeLine = flowEdgeNode.querySelector(".canvas2d-scene-flow-edge-line");
+      const initialShapeGeometry = ["x", "y", "width", "height"].map((name) => shapeBody.getAttribute(name));
+      const initialFlowEdgeGeometry = ["x1", "y1", "x2", "y2"].map((name) => flowEdgeLine.getAttribute(name));
+      window.__sceneContentTestRefs = { imageNode, tableNode, shapeNode, flowEdgeNode };
       for (let index = 0; index < 24; index += 1) {
         canvas.dispatchEvent(new WheelEvent("wheel", {
           bubbles: true,
@@ -858,12 +903,16 @@ async function runViewportInteractionRecoveryCheck(browser) {
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         sceneMatrix: [activeMatrix.a, activeMatrix.d, activeMatrix.e, activeMatrix.f],
         scenePhase: sceneRoot.dataset.presentationPhase,
         richLocalLeft: Number.parseFloat(richNode.style.left),
         codeLocalLeft: Number.parseFloat(codeNode.style.left),
         imageBox: [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height],
         tableBox: [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height],
+        shapeGeometry: ["x", "y", "width", "height"].map((name) => shapeBody.getAttribute(name)),
+        flowEdgeGeometry: ["x1", "y1", "x2", "y2"].map((name) => flowEdgeLine.getAttribute(name)),
         hostsOwnedByContentLayer:
           document.querySelector("#canvas2d-rich-display")?.parentElement === contentLayer &&
           document.querySelector("#canvas2d-math-display")?.parentElement === contentLayer &&
@@ -871,6 +920,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         view: activeView,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         sceneContentOwnedCount: canvas.__ffRenderStats?.sceneContentOwnedCount || 0,
+        sceneVectorOwnedCount: canvas.__ffRenderStats?.sceneVectorOwnedCount || 0,
         pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
       };
       await new Promise((resolve) => setTimeout(resolve, 220));
@@ -884,6 +934,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
         codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         scenePhase: sceneRoot.dataset.presentationPhase,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
       };
@@ -899,6 +951,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
         initialCodeLocalLeft,
         initialImageBox,
         initialTableBox,
+        initialShapeGeometry,
+        initialFlowEdgeGeometry,
         active,
         recovered,
         resizeMatrixBefore,
@@ -911,13 +965,21 @@ async function runViewportInteractionRecoveryCheck(browser) {
     result.externalResize = await session.page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
-      const { imageNode, tableNode } = window.__sceneContentTestRefs || {};
+      const { imageNode, tableNode, shapeNode, flowEdgeNode } = window.__sceneContentTestRefs || {};
       return {
         matrix: getComputedStyle(sceneRoot).transform,
         imagePreserved: imageNode === document.querySelector('.canvas2d-scene-image-item[data-id="viewport-image"]'),
         tablePreserved: tableNode === document.querySelector('.canvas2d-scene-table-item[data-id="viewport-table"]'),
+        shapePreserved: shapeNode === document.querySelector('.canvas2d-scene-shape-item[data-id="viewport-shape"]'),
+        flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         imageBox: imageNode ? [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height] : [],
         tableBox: tableNode ? [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height] : [],
+        shapeGeometry: shapeNode
+          ? ["x", "y", "width", "height"].map((name) => shapeNode.querySelector(".canvas2d-scene-shape-body")?.getAttribute(name))
+          : [],
+        flowEdgeGeometry: flowEdgeNode
+          ? ["x1", "y1", "x2", "y2"].map((name) => flowEdgeNode.querySelector(".canvas2d-scene-flow-edge-line")?.getAttribute(name))
+          : [],
         phase: sceneRoot?.dataset.presentationPhase || "",
         pixel: Array.from(canvas.getContext("2d").getImageData(2, 2, 1, 1).data),
       };
@@ -933,6 +995,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.active.hostsOwnedByContentLayer, "scene content hosts do not share the content layer", result);
     assert(result.active.sceneContentOwnedCount === 2, "image and table did not have singular scene ownership", result);
+    assert(result.active.sceneVectorOwnedCount === 2, "shape and flow edge did not have singular vector ownership", result);
     assert(
       Math.abs(result.active.richLocalLeft - result.initialRichLocalLeft) < 0.01,
       "rich content local coordinates changed during camera interaction",
@@ -945,6 +1008,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(JSON.stringify(result.active.imageBox) === JSON.stringify(result.initialImageBox), "image world box changed during camera interaction", result);
     assert(JSON.stringify(result.active.tableBox) === JSON.stringify(result.initialTableBox), "table world box changed during camera interaction", result);
+    assert(JSON.stringify(result.active.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "shape world geometry changed during camera interaction", result);
+    assert(JSON.stringify(result.active.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "flow edge world geometry changed during camera interaction", result);
     assert(Math.abs(result.active.sceneMatrix[0] - result.active.view.scale) < 0.0001, "scene scale matrix diverged from camera", result);
     assert(Math.abs(result.active.sceneMatrix[1] - result.active.view.scale) < 0.0001, "scene scale matrix is not uniform", result);
     assert(Math.abs(result.active.sceneMatrix[2] - result.active.view.offsetX) < 0.01, "scene X translation diverged from camera", result);
@@ -952,7 +1017,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(["active", "settling"].includes(result.active.scenePhase), "scene presentation did not enter interaction phase", result);
     assert(
       result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved &&
-        result.active.imagePreserved && result.active.tablePreserved,
+        result.active.imagePreserved && result.active.tablePreserved &&
+        result.active.shapePreserved && result.active.flowEdgePreserved,
       "viewport interaction destroyed scene content nodes",
       result
     );
@@ -964,7 +1030,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(
       result.recovered.richPreserved && result.recovered.mathPreserved && result.recovered.codePreserved &&
-        result.recovered.imagePreserved && result.recovered.tablePreserved,
+        result.recovered.imagePreserved && result.recovered.tablePreserved &&
+        result.recovered.shapePreserved && result.recovered.flowEdgePreserved,
       "scene recovery replaced preserved nodes",
       result
     );
@@ -973,9 +1040,16 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(result.resizeMatrixAfter === result.resizeMatrixBefore, "viewport resize mutated the scene camera matrix", result);
     assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
     assert(result.externalResize.matrix === result.resizeMatrixBefore, "external viewport resize mutated the scene camera matrix", result);
-    assert(result.externalResize.imagePreserved && result.externalResize.tablePreserved, "external viewport resize replaced scene nodes", result);
+    assert(
+      result.externalResize.imagePreserved && result.externalResize.tablePreserved &&
+        result.externalResize.shapePreserved && result.externalResize.flowEdgePreserved,
+      "external viewport resize replaced scene nodes",
+      result
+    );
     assert(JSON.stringify(result.externalResize.imageBox) === JSON.stringify(result.initialImageBox), "external resize changed image world box", result);
     assert(JSON.stringify(result.externalResize.tableBox) === JSON.stringify(result.initialTableBox), "external resize changed table world box", result);
+    assert(JSON.stringify(result.externalResize.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "external resize changed shape world geometry", result);
+    assert(JSON.stringify(result.externalResize.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "external resize changed flow edge world geometry", result);
     assert(result.externalResize.phase === "steady", "external resize left scene presentation unsettled", result);
     assert(result.externalResize.pixel[3] === 255, "external viewport resize exposed a transparent backing-store frame", result);
     return result;
@@ -1660,6 +1734,7 @@ async function runMindMapSummaryCheck(browser) {
       const summary = snapshot.board.items.find((item) => item.type === "mindSummary") || null;
       const canvas = document.querySelector("#canvas-office-canvas");
       const stats = canvas?.__ffRenderStats || null;
+      const vectorLayer = document.querySelector("#canvas2d-vector-layer");
       return {
         rootExists: true,
         childrenReady: true,
@@ -1669,6 +1744,7 @@ async function runMindMapSummaryCheck(browser) {
         summaryX: Number(summary?.x || 0),
         childrenMaxX: Math.max(...children.map((item) => Number(item.x || 0) + Number(item.width || 0))),
         connectionsDrawn: Number(stats?.mindMapConnectionsDrawn || 0),
+        vectorSummaryPathExists: Boolean(vectorLayer?.querySelector(".canvas2d-scene-mind-summary-path")),
       };
     });
     assert(session.getErrors().length === 0, "mind map summary check produced page errors", session.getErrors());
@@ -1678,6 +1754,7 @@ async function runMindMapSummaryCheck(browser) {
     assert(Array.isArray(result.summarySiblingIds) && result.summarySiblingIds.length >= 2, "mind map summary sibling binding missing", result);
     assert(Boolean(result.summaryOwnerId), "mind map summary owner missing", result);
     assert(result.summaryX > result.childrenMaxX, "mind map summary should be placed outside sibling group", result);
+    assert(result.vectorSummaryPathExists === true, "mind map summary connection did not migrate to vector layer", result);
     return result;
   } finally {
     await session.page.close();
@@ -1714,6 +1791,7 @@ async function runMindMapRelationshipCheck(browser) {
       const relationship = relationships[0] || null;
       const canvas = document.querySelector("#canvas-office-canvas");
       const stats = canvas?.__ffRenderStats || null;
+      const vectorLayer = document.querySelector("#canvas2d-vector-layer");
       return {
         rootExists: true,
         childrenReady: true,
@@ -1726,6 +1804,10 @@ async function runMindMapRelationshipCheck(browser) {
         expectedFromId: "relationship-source",
         expectedToId: children[0].id,
         connectionsDrawn: Number(stats?.mindMapConnectionsDrawn || 0),
+        vectorTreePathCount: vectorLayer?.querySelectorAll(".canvas2d-scene-mind-tree-path").length || 0,
+        vectorRelationshipExists: Boolean(
+          vectorLayer?.querySelector(`.canvas2d-scene-mind-relationship-item[data-id="${relationship?.id || ""}"]`)
+        ),
       };
     });
     assert(session.getErrors().length === 0, "mind map relationship check produced page errors", session.getErrors());
@@ -1737,6 +1819,8 @@ async function runMindMapRelationshipCheck(browser) {
     assert(result.relationshipExists === true, "mind map relationship was not created", result);
     assert(result.fromId === result.expectedFromId && result.toId === result.expectedToId, "mind map relationship endpoints missing", result);
     assert(result.connectionsDrawn >= 3, "mind map relationship should contribute to connection layer rendering", result);
+    assert(result.vectorTreePathCount >= 2, "mind map tree connections did not migrate to vector layer", result);
+    assert(result.vectorRelationshipExists === true, "mind map relationship did not migrate to vector layer", result);
     return result;
   } finally {
     await session.page.close();

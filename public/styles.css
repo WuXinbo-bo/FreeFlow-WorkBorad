@@ -6275,6 +6275,17 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   pointer-events: none;
 }
 
+.canvas2d-vector-layer {
+  display: block;
+  shape-rendering: geometricPrecision;
+}
+
+.canvas2d-scene-vector-item,
+.canvas2d-scene-mind-tree-path,
+.canvas2d-scene-mind-summary-path {
+  pointer-events: none;
+}
+
 .canvas2d-scene-content-item {
   position: absolute;
   box-sizing: border-box;

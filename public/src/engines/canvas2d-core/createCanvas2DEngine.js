@@ -156,6 +156,7 @@ import {
 import { createSceneRegistry } from "./scene/sceneRegistry.js";
 import { createScenePresentationCoordinator } from "./scene/scenePresentationCoordinator.js";
 import { createSceneContentRenderer } from "./scene/sceneContentRenderer.js";
+import { createSceneVectorRenderer } from "./scene/sceneVectorRenderer.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
 import { createOverlayBudgetManager } from "./overlay/overlayBudgetManager.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
@@ -3208,6 +3209,7 @@ export function createCanvas2DEngine(options = {}) {
     renderTableCellHtml: (cell) => renderTableCellStaticHtml(cell),
     onImageNaturalSize: syncImageNaturalSize,
   });
+  const sceneVectorRenderer = createSceneVectorRenderer();
   const elementLifecycleManager = createElementLifecycleManager({ registry: canvasElementRegistry });
   const overlayAdapterManager = createElementAdapterManager();
   overlayAdapterManager.register("rich", { sync: (visibleScene, frameContext) => syncRichTextOverlays(visibleScene, frameContext) });
@@ -4804,6 +4806,16 @@ let tablePointerSelectionState = {
     const canvasLodActive = presentationFrozen ? overlayCanvasLodActive : updateOverlayCanvasLodState(frameView);
     const viewportInteractionActive = isViewportInteractionActive();
     syncScenePresentation(frameContext);
+    const sceneVectorState = sceneVectorRenderer.sync({
+      items: state.board.items,
+      visibleItems: visibleScene?.items || [],
+      frozen: presentationFrozen,
+      selectedIds: state.board.selectedIds,
+      hoverId: state.hoverId,
+      hoverHandle: state.hoverHandle,
+      view: frameView,
+      canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
+    });
     const sceneContentOwnedIds = sceneContentRenderer.sync({
       items: visibleScene?.items || [],
       frozen: presentationFrozen,
@@ -4868,6 +4880,9 @@ let tablePointerSelectionState = {
       layerState,
       frameContext,
       sceneContentOwnedIds,
+      sceneVectorOwnedIds: sceneVectorState.ownedIds,
+      sceneVectorConnectionsOwned: true,
+      sceneVectorConnectionCount: sceneVectorState.connectionCount,
     });
     const stats = refs.canvas?.__ffRenderStats || null;
     if (stats?.progressiveRender?.pending) {
@@ -8466,6 +8481,7 @@ let tablePointerSelectionState = {
       refs.vectorLayer.setAttribute("aria-hidden", "true");
       refs.sceneRoot.appendChild(refs.vectorLayer);
     }
+    sceneVectorRenderer.setHost(refs.vectorLayer);
 
     refs.contentLayer = refs.sceneRoot.querySelector("#canvas2d-content-layer");
     if (!(refs.contentLayer instanceof HTMLDivElement)) {
@@ -24578,6 +24594,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
     transientMinimap.unmount();
+    sceneVectorRenderer.clear();
     sceneContentRenderer.clear();
     richTextSession.destroy();
     codeBlockEditor.clear();
