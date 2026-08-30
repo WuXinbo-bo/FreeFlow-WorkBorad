@@ -1955,7 +1955,6 @@ function hideOverlayHost(host, virtualizer, { onRemove = null, budgetManager = n
     return;
   }
   host.classList.add("is-hidden");
-  host.classList.remove("is-viewport-suspended");
   host.style.display = "none";
   host.style.visibility = "";
   virtualizer?.clear?.({
@@ -1974,12 +1973,11 @@ function showOverlayHost(host) {
   host.style.visibility = "";
 }
 
-function setOverlayHostSuspended(host, suspended) {
+function suspendOverlayHostForCanvasLod(host) {
   if (!(host instanceof HTMLDivElement)) {
     return;
   }
-  host.classList.toggle("is-viewport-suspended", Boolean(suspended));
-  host.style.visibility = suspended ? "hidden" : "";
+  host.style.visibility = "hidden";
 }
 
 function buildOverlayTextPreview(text = "", maxLength = 240) {
@@ -11189,7 +11187,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
     if (shouldSuspendCanvasOverlays()) {
-      setOverlayHostSuspended(refs.richDisplayHost, true);
+      suspendOverlayHostForCanvasLod(refs.richDisplayHost);
       return;
     }
     if (isCanvasLodScale(scale, RICH_OVERLAY_PREVIEW_MIN_SCALE)) {
@@ -11221,7 +11219,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
-    setOverlayHostSuspended(refs.richDisplayHost, false);
     showOverlayHost(refs.richDisplayHost);
 
     const interactionPriorityActive = interactionPriorityGate.isActive();
@@ -11532,7 +11529,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (shouldSuspendCanvasOverlays()) {
-      setOverlayHostSuspended(refs.mathDisplayHost, true);
+      suspendOverlayHostForCanvasLod(refs.mathDisplayHost);
       return;
     }
 
@@ -11566,7 +11563,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
-    setOverlayHostSuspended(refs.mathDisplayHost, false);
     showOverlayHost(refs.mathDisplayHost);
     const interactionPriorityActive = interactionPriorityGate.isActive();
     const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
@@ -11741,10 +11737,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  function clearInlineFileCardPreviewNode() {
-    // Legacy imperative file-card preview DOM was replaced by the React-owned preview surface.
-  }
-
   function syncCodeBlockOverlays(visibleScene = null, frameContext = null) {
     if (refs.codeBlockDisplayHost) {
       refs.codeBlockDisplayHost.dataset.frameId = String(frameContext?.frameId || 0);
@@ -11771,7 +11763,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (shouldSuspendCanvasOverlays()) {
-      setOverlayHostSuspended(refs.codeBlockDisplayHost, true);
+      suspendOverlayHostForCanvasLod(refs.codeBlockDisplayHost);
       return;
     }
     const sceneIndex = getSceneIndexRuntime();
@@ -11783,9 +11775,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastCodeBlockOverlayInteractive = interactive;
       return;
     }
-    refs.codeBlockDisplayHost.classList.remove("is-hidden");
-    refs.codeBlockDisplayHost.style.display = "block";
-    setOverlayHostSuspended(refs.codeBlockDisplayHost, false);
+    showOverlayHost(refs.codeBlockDisplayHost);
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
     if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE)) {
@@ -16091,7 +16081,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     nextRequests.splice(targetIndex, 1);
     state.fileCardPreviewRequests = nextRequests;
     hydrationScheduler.remove(`file-preview-read:${String(targetRequest?.id || "").trim()}`);
-    clearInlineFileCardPreviewNode();
     store.emit();
     scheduleRender({ overlayDirty: true });
     return true;

@@ -1184,7 +1184,6 @@ function drawVisibleItemsToContext({
   rendererDispatch,
   sceneContentOwnedIds = null,
   sceneVectorOwnedIds = null,
-  renderInteractionChrome = false,
 }) {
   const selected = new Set(selectedIds || []);
   const sceneContentOwned = sceneContentOwnedIds instanceof Set
@@ -1207,24 +1206,6 @@ function drawVisibleItemsToContext({
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
     if (sceneOwned.has(String(item.id || ""))) {
-      if (!renderInteractionChrome) {
-        return;
-      }
-      const bounds = getElementBounds(item);
-      const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
-      const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
-      const left = Math.min(topLeft.x, bottomRight.x);
-      const top = Math.min(topLeft.y, bottomRight.y);
-      const width = Math.max(1, Math.abs(bottomRight.x - topLeft.x));
-      const height = Math.max(1, Math.abs(bottomRight.y - topLeft.y));
-      drawSelectionFrame(ctx, left, top, width, height, isSelected, isHover);
-      if (isSelected) {
-        drawHandles(ctx, item, view);
-        if (item.type === "image" || (item.type === "shape" && !isLinearShape(item.shapeType))) {
-          drawRotateHandle(ctx, left, top, width, height);
-        }
-      }
-      drawLockBadge(ctx, item, view);
       return;
     }
     const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
@@ -1237,8 +1218,8 @@ function drawVisibleItemsToContext({
       editing: editingId === item.id,
       lodMode,
       helpers: {
-        drawSelectionFrame: renderInteractionChrome ? drawSelectionFrame : () => {},
-        drawHandles: renderInteractionChrome ? drawHandles : () => {},
+        drawSelectionFrame: () => {},
+        drawHandles: () => {},
         imageEditState,
         flowDraft,
         allowLocalFileAccess,
@@ -1262,9 +1243,6 @@ function drawVisibleItemsToContext({
         if (handled !== true && handled?.lodSimplified) {
           lodSimplifiedCount += 1;
         }
-        if (renderInteractionChrome) {
-          drawLockBadge(ctx, item, view);
-        }
         return;
       }
     }
@@ -1275,13 +1253,10 @@ function drawVisibleItemsToContext({
       isSelected,
       isHover,
       editingId === item.id,
-      renderInteractionChrome ? drawSelectionFrame : () => {},
-      renderInteractionChrome ? drawHandles : () => {},
+      () => {},
+      () => {},
       { renderText: Boolean(renderTextInCanvas) }
     );
-    if (renderInteractionChrome) {
-      drawLockBadge(ctx, item, view);
-    }
   });
   return {
     customRendererHandledCount,
@@ -1754,7 +1729,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
         selectionRect,
         imageEditState,
       });
-      const interactionCompositeMode = runtimeMode.mode === "viewport-interaction";
       const liveInteractionMode = runtimeMode.interactionActive === true;
       const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas);
       const cullResult =
@@ -2033,7 +2007,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
           rendererDispatch,
           sceneContentOwnedIds: sceneContentOwned,
           sceneVectorOwnedIds: sceneVectorOwned,
-          renderInteractionChrome: false,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
         lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
