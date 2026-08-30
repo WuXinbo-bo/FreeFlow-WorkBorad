@@ -74,9 +74,11 @@ async function main() {
     frameId: 7,
     view: { scale: 1.25, offsetX: 12, offsetY: 18 },
     sceneRevision: 4,
+    quality: Object.freeze({ mode: "shadow", generation: 1 }),
   });
   assert.strictEqual(Object.isFrozen(frame), true);
   assert.strictEqual(Object.isFrozen(frame.view), true);
+  assert.strictEqual(frame.quality.mode, "shadow");
 
   const presentation = createScenePresentationCoordinator({
     view: { scale: 1, offsetX: 10, offsetY: 20 },

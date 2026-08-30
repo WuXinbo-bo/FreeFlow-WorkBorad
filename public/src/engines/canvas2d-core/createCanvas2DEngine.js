@@ -180,6 +180,7 @@ import { createElementLifecycleManager } from "./runtime/elementLifecycleManager
 import { createElementAdapterManager } from "./runtime/elementAdapterManager.js";
 import { createElementResourceManager } from "./runtime/elementResourceManager.js";
 import { createFrameContext } from "./runtime/frameContext.js";
+import { createPresentationQualityRuntime } from "./runtime/presentationQualityRuntime.js";
 import { invalidationToRenderPatch } from "./runtime/elementInvalidation.js";
 import {
   hasViewportSizeChanged,
@@ -3515,6 +3516,7 @@ let tablePointerSelectionState = {
   const overlayBudgetManager = createOverlayBudgetManager();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
+  const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry });
   const richOverlayDetailPinnedUntil = new Map();
   let fileCardPreviewSurfaceHost = null;
   let fileCardPreviewSurfaceRoot = null;
@@ -4720,6 +4722,45 @@ let tablePointerSelectionState = {
       pixelRatio: viewportBudget.effectiveDpr,
     });
     const presentation = scenePresentationCoordinator.getSnapshot();
+    const visibleScene = queryVisibleSceneItems(
+      sceneIndex,
+      frameView,
+      viewportWidth,
+      viewportHeight,
+      { marginPx: 220 }
+    );
+    const visibleIds = visibleScene.items.map((item) => String(item?.id || "")).filter(Boolean);
+    const previousStats = refs.canvas?.__ffRenderStats || null;
+    const frameDurationMs = Math.max(0, Number(previousStats?.frameDurationMs) || 0);
+    const presentationPressure = Math.max(
+      0,
+      Math.min(1, Math.max(0, frameDurationMs - 12) / 28 + (previousStats?.progressiveRender?.pending ? 0.25 : 0))
+    );
+    const qualityRevisionKey = [
+      sceneRevision,
+      canvasElementRegistry.getRevision(),
+      Math.round(frameView.scale * 1000),
+      Math.round(presentationPressure * 10),
+      visibleIds.join(","),
+      state.board.selectedIds.join(","),
+      state.hoverId || "",
+      state.editingId || "",
+    ].join("|");
+    const viewportInteractionActive = isViewportInteractionActive();
+    const quality = presentationQualityRuntime.update(
+      {
+        items: visibleScene.items,
+        visibleIds,
+        selectedIds: state.board.selectedIds,
+        interactingIds: viewportInteractionActive ? visibleIds : state.pointer ? state.board.selectedIds : [],
+        editingId: state.editingId,
+        hoverId: state.hoverId,
+        view: frameView,
+        pressure: presentationPressure,
+        revisionKey: qualityRevisionKey,
+      },
+      presentation.interaction
+    );
     const frameContext = createFrameContext({
       frameId,
       timestamp,
@@ -4728,16 +4769,10 @@ let tablePointerSelectionState = {
       boardRevision: state.boardRevision,
       registryRevision: canvasElementRegistry.getRevision(),
       pixelRatio: viewportBudget.effectiveDpr,
-      runtimeMode: isViewportInteractionActive() ? "viewport-interaction" : state.editingId ? "editing" : "steady",
+      runtimeMode: viewportInteractionActive ? "viewport-interaction" : state.editingId ? "editing" : "steady",
       presentation,
+      quality,
     });
-    const visibleScene = queryVisibleSceneItems(
-      sceneIndex,
-      frameContext.view,
-      viewportWidth,
-      viewportHeight,
-      { marginPx: 220 }
-    );
     const viewportPrediction = resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState);
     visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
     return {
@@ -4790,6 +4825,11 @@ let tablePointerSelectionState = {
     refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
     refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
     refs.sceneRoot.dataset.presentationPhase = String(presentation?.interaction?.phase || "steady");
+    refs.sceneRoot.dataset.qualityMode = String(frameContext?.quality?.mode || "off");
+    refs.sceneRoot.dataset.qualityGeneration = String(frameContext?.quality?.generation || 0);
+    if (typeof window !== "undefined") {
+      window.__ffPresentationQuality = frameContext?.quality || null;
+    }
   }
 
   function collectSceneOverlayOwnedIds() {
@@ -24659,6 +24699,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     interactionPriorityGate.release();
     scenePresentationCoordinator.reset();
+    presentationQualityRuntime.reset();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();
