@@ -756,6 +756,93 @@ async function runPanRealtimeCheck(browser) {
   }
 }
 
+async function runViewportInteractionRecoveryCheck(browser) {
+  const board = createBoard(
+    [
+      createTextItem("viewport-text", 180, 160, "Viewport interaction text fallback"),
+      createMathBlockItem("viewport-math", 460, 160, "x^2 + y^2 = z^2"),
+      createCodeBlockItem("viewport-code", 760, 160, "const stable = true;"),
+    ],
+    [],
+    { scale: 0.5, offsetX: 40, offsetY: 40 }
+  );
+  const session = await createPage(browser, { board });
+  try {
+    await session.page.waitForFunction(() =>
+      document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]') &&
+      document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]') &&
+      document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]')
+    );
+    const result = await session.page.evaluate(async () => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const richNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]');
+      const mathNode = document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]');
+      const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]');
+      const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
+      for (let index = 0; index < 24; index += 1) {
+        canvas.dispatchEvent(new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          clientX: 520,
+          clientY: 320,
+          deltaY: 2,
+        }));
+      }
+      const immediateScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const activeScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
+      const ctx = canvas.getContext("2d");
+      const active = {
+        richVisibility: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility,
+        mathVisibility: getComputedStyle(document.querySelector("#canvas2d-math-display")).visibility,
+        codeVisibility: getComputedStyle(document.querySelector("#canvas2d-code-block-display")).visibility,
+        richPreserved: richNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]'),
+        mathPreserved: mathNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]'),
+        codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
+        runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
+        pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
+      };
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const recovered = {
+        richVisibility: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility,
+        mathVisibility: getComputedStyle(document.querySelector("#canvas2d-math-display")).visibility,
+        codeVisibility: getComputedStyle(document.querySelector("#canvas2d-code-block-display")).visibility,
+        richPreserved: richNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-text"]'),
+        mathPreserved: mathNode === document.querySelector('.canvas2d-rich-item[data-id="viewport-math"]'),
+        codePreserved: codeNode === document.querySelector('.canvas2d-code-block-item[data-id="viewport-code"]'),
+        runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
+      };
+      window.__canvas2dEngine.resize({ immediate: true, reason: "interaction-resize-check" });
+      const resizePixel = Array.from(ctx.getImageData(2, 2, 1, 1).data);
+      return { startScale, immediateScale, activeScale, active, recovered, resizePixel };
+    });
+    assert(session.getErrors().length === 0, "viewport interaction recovery produced page errors", session.getErrors());
+    assert(result.immediateScale === result.startScale, "wheel events committed before the animation frame", result);
+    assert(result.activeScale !== result.startScale, "batched wheel events did not commit on the next frame", result);
+    assert(result.active.runtimeMode?.mode === "viewport-interaction", "wheel frame did not enter viewport interaction mode", result);
+    assert(
+      result.active.richVisibility === "hidden" && result.active.mathVisibility === "hidden" && result.active.codeVisibility === "hidden",
+      "DOM overlays remained visible during viewport interaction",
+      result
+    );
+    assert(result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved, "viewport interaction destroyed overlay nodes", result);
+    assert(result.active.pixel[3] === 255, "canvas background became transparent during wheel interaction", result);
+    assert(
+      result.recovered.richVisibility === "visible" && result.recovered.mathVisibility === "visible" && result.recovered.codeVisibility === "visible",
+      "DOM overlays did not recover after viewport interaction",
+      result
+    );
+    assert(result.recovered.richPreserved && result.recovered.mathPreserved && result.recovered.codePreserved, "overlay recovery replaced preserved nodes", result);
+    assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
+    assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
+    return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
 async function runSelectionDragRealtimeCheck(browser) {
   const board = createBoard(
     [createTextItem("drag-text", 520, 220, "Drag Realtime")],
@@ -1614,7 +1701,7 @@ async function runLowZoomOverlaySummaryCheck(browser) {
       const mathNode = document.querySelector('.canvas2d-rich-item[data-id="math-lod"]');
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="code-lod"]');
       const canvas = document.querySelector("#canvas-office-canvas");
-      const hostHidden = (selector) => getComputedStyle(document.querySelector(selector)).display === "none";
+      const hostHidden = (selector) => getComputedStyle(document.querySelector(selector)).visibility === "hidden";
       return {
         richExists: Boolean(richNode),
         mathExists: Boolean(mathNode),
@@ -1626,7 +1713,7 @@ async function runLowZoomOverlaySummaryCheck(browser) {
       };
     });
     assert(session.getErrors().length === 0, "low zoom overlay summary check produced page errors", session.getErrors());
-    assert(!result.richExists && !result.mathExists && !result.codeExists, "low zoom DOM overlays were not unloaded", result);
+    assert(!result.richExists && !result.mathExists && !result.codeExists, "low zoom created unnecessary DOM overlays", result);
     assert(result.richHostHidden && result.mathHostHidden && result.codeHostHidden, "low zoom overlay hosts were not hidden", result);
     assert(result.stats?.renderedItems === 3, "low zoom canvas did not render every item", result);
     assert(result.stats?.lodSimplifiedCount >= 3, "low zoom canvas did not use simplified rendering", result);
@@ -1640,25 +1727,23 @@ async function runTextSummaryStabilityCheck(browser) {
   const board = createBoard(
     [createTextItem("text-stability", 180, 160, "占位骨架稳定性检查，缩放时内容不应跳变。")],
     [],
-    { scale: 0.12, offsetX: 40, offsetY: 32 }
+    { scale: 0.12, offsetX: 680, offsetY: 440 }
   );
   const session = await createPage(browser, { board });
   try {
     await session.page.waitForTimeout(240);
     const beforeHidden = await session.page.evaluate(() => ({
       nodeMissing: !document.querySelector('.canvas2d-rich-item[data-id="text-stability"]'),
-      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).display === "none",
+      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility === "hidden",
     }));
     const firstRecoveredScale = await session.page.evaluate(async () => {
-      window.__canvas2dEngine.zoomIn();
-      window.__canvas2dEngine.zoomIn();
-      window.__canvas2dEngine.zoomIn();
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      for (let index = 0; index < 4; index += 1) {
+        window.__canvas2dEngine.zoomIn();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
       return window.__canvas2dEngine.getSnapshot().board.view.scale;
     });
-    await session.page.waitForFunction(() =>
-      document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')?.dataset.contentMode === "detail"
-    );
+    await session.page.waitForTimeout(800);
     const readRecovered = () => session.page.evaluate(() => {
       const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
       const svg = node?.querySelector(".canvas2d-rich-skeleton-svg");
@@ -1674,24 +1759,30 @@ async function runTextSummaryStabilityCheck(browser) {
       };
     });
     const firstRecovered = await readRecovered();
-    await session.page.evaluate(() => window.__canvas2dEngine.zoomOut());
-    await session.page.waitForFunction(() => !document.querySelector('.canvas2d-rich-item[data-id="text-stability"]'));
+    await session.page.evaluate(async () => {
+      for (let index = 0; index < 2; index += 1) {
+        window.__canvas2dEngine.zoomOut();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
+    });
+    await session.page.waitForTimeout(300);
     const hiddenAgain = await session.page.evaluate(() => ({
-      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).display === "none",
+      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility === "hidden",
+      nodePreserved: Boolean(document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')),
       scale: window.__canvas2dEngine.getSnapshot().board.view.scale,
     }));
-    const secondRecoveredScale = await session.page.evaluate(() => {
+    const secondRecoveredScale = await session.page.evaluate(async () => {
       window.__canvas2dEngine.zoomIn();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return window.__canvas2dEngine.getSnapshot().board.view.scale;
     });
-    await session.page.waitForFunction(() =>
-      document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')?.dataset.contentMode === "detail"
-    );
+    await session.page.waitForTimeout(800);
     const secondRecovered = await readRecovered();
     const result = { beforeHidden, firstRecoveredScale, firstRecovered, hiddenAgain, secondRecoveredScale, secondRecovered };
     assert(session.getErrors().length === 0, "text summary stability check produced page errors", session.getErrors());
     assert(beforeHidden.nodeMissing && beforeHidden.hostHidden, "text overlay was not hidden below the LOD threshold", result);
     assert(hiddenAgain.hostHidden === true, "text overlay did not hide after crossing below the LOD threshold", result);
+    assert(hiddenAgain.nodePreserved === true, "text overlay node was destroyed during the LOD transition", result);
     assert(firstRecovered.contentMode === "detail", "text overlay did not recover in detail mode", result);
     assert(secondRecovered.contentMode === "detail", "text overlay did not recover after repeated threshold crossing", result);
     assert(!firstRecovered.hasSvg && !secondRecovered.hasSvg, "text detail overlay retained a stale summary skeleton", result);
@@ -1931,6 +2022,7 @@ async function main() {
     report.checks.mathOverlayStandalone = await runMathOverlayStandaloneCheck(browser);
     report.checks.tableEditor = await runTableEditorCheck(browser);
     report.checks.panRealtime = await runPanRealtimeCheck(browser);
+    report.checks.viewportInteractionRecovery = await runViewportInteractionRecoveryCheck(browser);
     report.checks.selectionDragRealtime = await runSelectionDragRealtimeCheck(browser);
     report.checks.marqueeMultiSelect = await runMarqueeMultiSelectCheck(browser);
     report.checks.localizedTileInvalidation = await runLocalizedTileInvalidationCheck(browser);

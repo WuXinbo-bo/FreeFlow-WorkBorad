@@ -299,6 +299,67 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, assistantGlass }
   );
 
+  const layoutBeforeLongInput = await page.evaluate(() => {
+    const rect = (selector) => {
+      const value = document.querySelector(selector).getBoundingClientRect();
+      return { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height };
+    };
+    return { stage: rect(".desktop-clear-stage"), panel: rect(".conversation-panel") };
+  });
+  await page.locator("#prompt-input").fill("长文本布局隔离检查".repeat(500));
+  await page.waitForTimeout(80);
+  const longInputLayout = await page.evaluate(() => {
+    const rect = (selector) => {
+      const value = document.querySelector(selector).getBoundingClientRect();
+      return { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height };
+    };
+    const input = document.querySelector("#prompt-input");
+    return {
+      stage: rect(".desktop-clear-stage"),
+      panel: rect(".conversation-panel"),
+      composer: rect("#chat-form"),
+      input: rect("#prompt-input"),
+      inputClientHeight: input.clientHeight,
+      inputScrollHeight: input.scrollHeight,
+      inputOverflowY: getComputedStyle(input).overflowY,
+    };
+  });
+  const allowedInputHeight = Math.max(72, Math.min(220, Math.floor(longInputLayout.panel.height * 0.32))) + 2;
+  assert(
+    Math.abs(longInputLayout.stage.width - layoutBeforeLongInput.stage.width) <= 1 &&
+      Math.abs(longInputLayout.stage.height - layoutBeforeLongInput.stage.height) <= 1 &&
+      Math.abs(longInputLayout.stage.left - layoutBeforeLongInput.stage.left) <= 1,
+    "long composer input changed the canvas frame",
+    { viewport, layoutBeforeLongInput, longInputLayout }
+  );
+  assert(
+    longInputLayout.input.height <= allowedInputHeight &&
+      longInputLayout.inputScrollHeight > longInputLayout.inputClientHeight &&
+      longInputLayout.inputOverflowY === "auto" &&
+      longInputLayout.composer.top >= longInputLayout.panel.top &&
+      longInputLayout.composer.bottom <= longInputLayout.panel.bottom + 1,
+    "long composer input escaped its internal scroll boundary",
+    { viewport, allowedInputHeight, longInputLayout }
+  );
+  await page.locator("#prompt-input").fill("");
+  await page.waitForTimeout(80);
+  const layoutAfterLongInput = await page.evaluate(() => {
+    const stage = document.querySelector(".desktop-clear-stage").getBoundingClientRect();
+    const input = document.querySelector("#prompt-input").getBoundingClientRect();
+    return {
+      stage: { left: stage.left, width: stage.width, height: stage.height },
+      inputHeight: input.height,
+    };
+  });
+  assert(
+    Math.abs(layoutAfterLongInput.stage.width - layoutBeforeLongInput.stage.width) <= 1 &&
+      Math.abs(layoutAfterLongInput.stage.height - layoutBeforeLongInput.stage.height) <= 1 &&
+      Math.abs(layoutAfterLongInput.stage.left - layoutBeforeLongInput.stage.left) <= 1 &&
+      layoutAfterLongInput.inputHeight <= 40,
+    "composer layout did not recover after clearing long input",
+    { viewport, layoutBeforeLongInput, layoutAfterLongInput }
+  );
+
   const lockButton = page.locator("#right-panel-switch-lock-btn");
   await lockButton.click();
   await page.waitForFunction(() => document.querySelector("#right-panel-switch-lock-btn")?.getAttribute("aria-pressed") === "true");

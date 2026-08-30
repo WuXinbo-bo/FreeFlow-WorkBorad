@@ -713,7 +713,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     };
   }
 
-  function embedExternalWindow({ sourceId = "", bounds = null, layout = null } = {}) {
+  function embedExternalWindow({ sourceId = "", targetId = "", bounds = null, layout = null, syncSessionId = "" } = {}) {
     const hwnd = parseWindowSourceHandle(sourceId);
     if (!hwnd || hwnd === ZERO_HANDLE) {
       throw new Error("只能嵌入窗口类型的映射目标");
@@ -739,6 +739,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
 
       embeddedWindow = {
         sourceId,
+        targetId: String(targetId || "").trim(),
         hwnd,
         hostHwnd: host.hwnd,
         originalParent,
@@ -751,6 +752,8 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         minimized: false,
         interactive: false,
         lastFocusedHwnd: ZERO_HANDLE,
+        syncSessionId: String(syncSessionId || "").trim(),
+        lastSyncRevision: 0,
       };
     }
 
@@ -770,12 +773,42 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     };
   }
 
-  function syncEmbeddedWindowBounds({ bounds = null, layout = null } = {}) {
+  function syncEmbeddedWindowBounds({
+    bounds = null,
+    layout = null,
+    sourceId = "",
+    targetId = "",
+    syncSessionId = "",
+    syncRevision = 0,
+  } = {}) {
     if (!embeddedWindow) {
       return {
         ok: true,
         active: false,
       };
+    }
+
+    const requestedSourceId = String(sourceId || "").trim();
+    const requestedTargetId = String(targetId || "").trim();
+    const requestedSessionId = String(syncSessionId || "").trim();
+    const requestedRevision = Math.max(0, Number(syncRevision) || 0);
+    if (
+      (requestedSourceId && requestedSourceId !== String(embeddedWindow.sourceId || "").trim()) ||
+      (requestedTargetId && embeddedWindow.targetId && requestedTargetId !== embeddedWindow.targetId) ||
+      (requestedSessionId && embeddedWindow.syncSessionId && requestedSessionId !== embeddedWindow.syncSessionId) ||
+      (requestedSessionId && requestedRevision <= Number(embeddedWindow.lastSyncRevision || 0))
+    ) {
+      return {
+        ok: true,
+        active: true,
+        stale: true,
+        sourceId: embeddedWindow.sourceId,
+        hostBounds: embeddedWindow.lastBounds,
+      };
+    }
+    if (requestedSessionId) {
+      embeddedWindow.syncSessionId = requestedSessionId;
+      embeddedWindow.lastSyncRevision = requestedRevision;
     }
 
     ensureValidHandle(embeddedWindow.hwnd);

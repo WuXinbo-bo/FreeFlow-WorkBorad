@@ -183,6 +183,7 @@ import {
   getOverlayScaleBucket,
   isCanvasLodScale,
   isDetailedOverlayScale,
+  resolveCanvasLodHysteresis,
 } from "./lodScale.js";
 import {
   buildFileCardContextMenuHtml,
@@ -813,6 +814,7 @@ const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
 const RICH_OVERLAY_DETAIL_CACHE_LIMIT = 180;
 const RICH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const RICH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
+const OVERLAY_CANVAS_LOD_EXIT_SCALE = 0.17;
 const RICH_OVERLAY_EDIT_HANDOFF_DETAIL_MS = 900;
 const MATH_OVERLAY_DETAIL_MIN_SCALE = 0.15;
 const MATH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
@@ -1945,7 +1947,9 @@ function hideOverlayHost(host, virtualizer, { onRemove = null, budgetManager = n
     return;
   }
   host.classList.add("is-hidden");
+  host.classList.remove("is-viewport-suspended");
   host.style.display = "none";
+  host.style.visibility = "";
   virtualizer?.clear?.({
     removeNodes: true,
     onRemove,
@@ -1959,6 +1963,15 @@ function showOverlayHost(host) {
   }
   host.classList.remove("is-hidden");
   host.style.display = "block";
+  host.style.visibility = "";
+}
+
+function setOverlayHostSuspended(host, suspended) {
+  if (!(host instanceof HTMLDivElement)) {
+    return;
+  }
+  host.classList.toggle("is-viewport-suspended", Boolean(suspended));
+  host.style.visibility = suspended ? "hidden" : "";
 }
 
 function buildOverlayTextPreview(text = "", maxLength = 240) {
@@ -3325,6 +3338,7 @@ export function createCanvas2DEngine(options = {}) {
     }),
     getSceneRevision: () => sceneRevision,
     onNavigate: (scenePoint) => {
+      finishPendingWheelSession({ persist: false });
       const rect = getCanvasRect();
       if (!rect?.width || !rect?.height) {
         return;
@@ -3348,6 +3362,12 @@ export function createCanvas2DEngine(options = {}) {
   let mounted = false;
   let temporaryPanPreviousTool = "";
   let renderScheduler = null;
+  let overlayCanvasLodActive = false;
+  let pendingWheelView = null;
+  let pendingWheelReason = "";
+  let pendingWheelFrame = 0;
+  let wheelCommitTimer = 0;
+  let interactionRecoveryTimer = 0;
   let lastContextMenuPoint = null;
   let lastContextMenuTargetId = null;
   let lastContextMenuSource = "canvas";
@@ -4656,6 +4676,25 @@ let tablePointerSelectionState = {
     };
   }
 
+  function isViewportInteractionActive() {
+    const snapshot = interactionPriorityGate.getSnapshot();
+    const reason = String(snapshot?.reason || "");
+    return Boolean(snapshot?.active && (reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan"));
+  }
+
+  function updateOverlayCanvasLodState() {
+    overlayCanvasLodActive = resolveCanvasLodHysteresis(state.board.view?.scale, {
+      active: overlayCanvasLodActive,
+      enterScale: RICH_OVERLAY_PREVIEW_MIN_SCALE,
+      exitScale: OVERLAY_CANVAS_LOD_EXIT_SCALE,
+    });
+    return overlayCanvasLodActive;
+  }
+
+  function shouldSuspendCanvasOverlays() {
+    return overlayCanvasLodActive || isViewportInteractionActive();
+  }
+
   function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
@@ -4666,6 +4705,8 @@ let tablePointerSelectionState = {
       !largeViewportProgressivePending &&
       (dirtyState?.sceneDirty || dirtyState?.viewDirty || dirtyState?.backgroundDirty || dirtyState?.reason === "mount")
     );
+    const canvasLodActive = updateOverlayCanvasLodState();
+    const viewportInteractionActive = isViewportInteractionActive();
     renderer.render({
       ctx: refs.ctx,
       canvas: refs.canvas,
@@ -4693,7 +4734,8 @@ let tablePointerSelectionState = {
         fill: "#ffffff",
         pattern: getBoardBackgroundPattern(),
       },
-      renderTextInCanvas: RENDER_TEXT_IN_CANVAS,
+      renderTextInCanvas: RENDER_TEXT_IN_CANVAS || canvasLodActive,
+      viewportInteractionActive,
       pixelRatio: viewportBudget.effectiveDpr,
       viewportBudget,
       deferColdTiles: shouldDeferColdTiles,
@@ -4718,9 +4760,8 @@ let tablePointerSelectionState = {
     } else {
       largeViewportProgressivePending = false;
     }
-    const interactionPriorityActive = interactionPriorityGate.isActive();
     const skipDetailOverlays = Boolean(stats?.progressiveRender?.pending);
-    const overlaySuspended = Boolean(skipDetailOverlays);
+    const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive || canvasLodActive);
     overlayBudgetManager.reconcile({
       rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
       math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
@@ -4775,20 +4816,29 @@ let tablePointerSelectionState = {
   }
 
   function activateInteractionPriority(reason = "interaction") {
+    if (interactionRecoveryTimer) {
+      window.clearTimeout(interactionRecoveryTimer);
+      interactionRecoveryTimer = 0;
+    }
     interactionPriorityGate.activate(reason);
     hydrationScheduler.setPaused(true);
   }
 
   function releaseInteractionPriority(delayMs = 140) {
-    interactionPriorityGate.scheduleRelease(delayMs);
-    window.setTimeout(() => {
+    const waitMs = Math.max(0, Number(delayMs || 140) || 140);
+    interactionPriorityGate.scheduleRelease(waitMs);
+    if (interactionRecoveryTimer) {
+      window.clearTimeout(interactionRecoveryTimer);
+    }
+    interactionRecoveryTimer = window.setTimeout(() => {
+      interactionRecoveryTimer = 0;
       if (interactionPriorityGate.isActive()) {
         return;
       }
       hydrationScheduler.setPaused(false);
       store.emit();
       scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
-    }, Math.max(0, Number(delayMs || 140) || 140));
+    }, waitMs);
   }
 
   function getInteractionPrioritySnapshot() {
@@ -8106,19 +8156,27 @@ let tablePointerSelectionState = {
     });
     const sizeChanged = hasViewportSizeChanged(lastViewportBudget, nextBudget);
     lastViewportBudget = nextBudget;
+    let backingStoreChanged = false;
     if (refs.canvas.width !== nextBudget.pixelWidth) {
       refs.canvas.width = nextBudget.pixelWidth;
+      backingStoreChanged = true;
     }
     if (refs.canvas.height !== nextBudget.pixelHeight) {
       refs.canvas.height = nextBudget.pixelHeight;
+      backingStoreChanged = true;
     }
-    scheduleRender({
+    const renderPatch = {
       reason: sizeChanged ? reason : `${reason}-sync`,
       backgroundDirty: true,
       viewDirty: true,
       interactionDirty: true,
       overlayDirty: true,
-    });
+    };
+    if (backingStoreChanged) {
+      ensureRenderScheduler().flushNow(renderPatch);
+    } else {
+      scheduleRender(renderPatch);
+    }
     transientMinimap.resize();
   }
 
@@ -10886,6 +10944,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    if (shouldSuspendCanvasOverlays()) {
+      setOverlayHostSuspended(refs.richDisplayHost, true);
+      return;
+    }
     if (isCanvasLodScale(scale, RICH_OVERLAY_PREVIEW_MIN_SCALE)) {
       hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
         onRemove: (node) => {
@@ -10915,10 +10977,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
+    setOverlayHostSuspended(refs.richDisplayHost, false);
     showOverlayHost(refs.richDisplayHost);
 
     const interactionPriorityActive = interactionPriorityGate.isActive();
-    const detailMode = isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
+    const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, RICH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
     const scaleBucket = getRichOverlayScaleBucket(scale);
@@ -11210,6 +11273,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
+    if (shouldSuspendCanvasOverlays()) {
+      setOverlayHostSuspended(refs.mathDisplayHost, true);
+      return;
+    }
 
     const sceneIndex = getSceneIndexRuntime();
     const items = [
@@ -11240,9 +11307,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
+    setOverlayHostSuspended(refs.mathDisplayHost, false);
     showOverlayHost(refs.mathDisplayHost);
     const interactionPriorityActive = interactionPriorityGate.isActive();
-    const detailMode = isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
+    const detailMode = !overlayCanvasLodActive && isDetailedOverlayScale(scale, MATH_OVERLAY_DETAIL_MIN_SCALE);
     const offsetX = Number(state.board.view.offsetX || 0);
     const offsetY = Number(state.board.view.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
@@ -11430,6 +11498,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastCodeBlockOverlayInteractive = interactive;
       return;
     }
+    if (shouldSuspendCanvasOverlays()) {
+      setOverlayHostSuspended(refs.codeBlockDisplayHost, true);
+      return;
+    }
     const sceneIndex = getSceneIndexRuntime();
     const items = (sceneIndex.recordsByType.get("codeBlock") || []).map((record) => record.item);
     if (!items.length) {
@@ -11441,6 +11513,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     refs.codeBlockDisplayHost.classList.remove("is-hidden");
     refs.codeBlockDisplayHost.style.display = "block";
+    setOverlayHostSuspended(refs.codeBlockDisplayHost, false);
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
     if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_SUMMARY_MIN_SCALE)) {
       refs.codeBlockDisplayHost.classList.add("is-hidden");
@@ -18639,6 +18712,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!isInteractiveMode() || (event.button !== 0 && event.button !== 1 && event.button !== 2)) {
       return;
     }
+    flushPendingWheelView({ persist: false });
     if (matchesBlockedCanvasPointerDown(event)) {
       event.preventDefault();
       clearBlockedCanvasPointerDown();
@@ -19735,22 +19809,84 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
+  function flushPendingWheelView({ persist = false } = {}) {
+    if (pendingWheelFrame) {
+      cancelAnimationFrame(pendingWheelFrame);
+      pendingWheelFrame = 0;
+    }
+    if (!pendingWheelView) {
+      return false;
+    }
+    state.board.view = pendingWheelView;
+    pendingWheelView = null;
+    const reason = pendingWheelReason || "wheel-view";
+    syncBoard({
+      persist,
+      emit: true,
+      sceneChange: false,
+      viewChange: true,
+      fullOverlayRescan: false,
+      reason,
+    });
+    return true;
+  }
+
+  function finishPendingWheelSession({ persist = false } = {}) {
+    if (wheelCommitTimer) {
+      window.clearTimeout(wheelCommitTimer);
+      wheelCommitTimer = 0;
+    }
+    const reason = pendingWheelReason || "wheel-view";
+    const flushed = flushPendingWheelView({ persist });
+    if (persist && !flushed && pendingWheelReason) {
+      syncBoard({
+        persist: true,
+        emit: true,
+        sceneChange: false,
+        viewChange: true,
+        fullOverlayRescan: false,
+        reason: `${reason}-commit`,
+      });
+    }
+    pendingWheelReason = "";
+    return flushed;
+  }
+
   function onWheel(event) {
     if (!isInteractiveMode()) {
       return;
     }
     event.preventDefault();
-    activateInteractionPriority(event.ctrlKey || event.metaKey ? "wheel-zoom" : "wheel-pan");
+    const zooming = Boolean(event.ctrlKey || event.metaKey);
+    const reason = zooming ? "wheel-zoom" : "wheel-pan";
+    activateInteractionPriority(reason);
     releaseInteractionPriority(140);
-    if (event.ctrlKey || event.metaKey) {
-      const focusPoint = toScenePoint(event.clientX, event.clientY);
+    const baseView = pendingWheelView || state.board.view;
+    if (zooming) {
+      const focusPoint = screenToScene(
+        baseView,
+        { x: Number(event.clientX || 0), y: Number(event.clientY || 0) },
+        getCanvasRect()
+      );
       const zoomFactor = Math.exp(-event.deltaY * 0.0015);
-      state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * zoomFactor, focusPoint);
-      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "wheel-zoom" });
-      return;
+      pendingWheelView = zoomAtScenePoint(baseView, baseView.scale * zoomFactor, focusPoint);
+    } else {
+      pendingWheelView = panView(baseView, -event.deltaX, -event.deltaY);
     }
-    state.board.view = panView(state.board.view, -event.deltaX, -event.deltaY);
-    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "wheel-pan" });
+    pendingWheelReason = reason;
+    if (!pendingWheelFrame) {
+      pendingWheelFrame = requestAnimationFrame(() => {
+        pendingWheelFrame = 0;
+        flushPendingWheelView({ persist: false });
+      });
+    }
+    if (wheelCommitTimer) {
+      window.clearTimeout(wheelCommitTimer);
+    }
+    wheelCommitTimer = window.setTimeout(() => {
+      wheelCommitTimer = 0;
+      finishPendingWheelSession({ persist: true });
+    }, 160);
   }
 
   function onDragOver(event) {
@@ -24209,6 +24345,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function unmount() {
+    finishPendingWheelSession({ persist: true });
+    if (interactionRecoveryTimer) {
+      window.clearTimeout(interactionRecoveryTimer);
+      interactionRecoveryTimer = 0;
+    }
+    interactionPriorityGate.release();
+    hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();
       cancelPendingHydrationSync = null;
@@ -24257,6 +24400,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     renderScheduler = null;
     lastViewportBudget = null;
     largeViewportProgressivePending = false;
+    overlayCanvasLodActive = false;
+    pendingWheelView = null;
+    pendingWheelReason = "";
     fileCardIdHydrationQueue.clear();
     fileCardSourceHydrationQueue.clear();
     urlMetaHydrationQueue.clear();
@@ -24295,22 +24441,26 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function zoomIn() {
+    finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * 1.12, getCenterScenePoint());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-in" });
   }
 
   function zoomOut() {
+    finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale / 1.12, getCenterScenePoint());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-out" });
   }
 
   function zoomToFit() {
+    finishPendingWheelSession({ persist: false });
     state.board.view = getZoomToFitView(state.board.items, getCanvasRect());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-to-fit" });
     setStatus("已回到内容");
   }
 
   function resetView() {
+    finishPendingWheelSession({ persist: false });
     state.board.view = createView(DEFAULT_VIEW);
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "reset-view" });
     setStatus("已重置视图");
@@ -24326,6 +24476,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function animateViewTo(nextView, options = {}) {
+    finishPendingWheelSession({ persist: false });
     cancelFocusAnimation();
     const startView = createView(state.board.view);
     const targetView = createView(nextView);

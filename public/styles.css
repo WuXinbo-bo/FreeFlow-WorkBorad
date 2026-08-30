@@ -1283,7 +1283,7 @@ body.is-resizing * {
   --composer-offset: 164px;
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   padding: 14px;
   overflow: hidden;
@@ -2361,7 +2361,12 @@ body.is-resizing * {
   right: 18px;
   bottom: 18px;
   width: auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: min(50vh, 360px);
   padding: 10px 12px;
+  overflow: hidden;
+  contain: layout paint;
   border-radius: 26px;
   border: 1px solid var(--line-soft);
   background:
@@ -2378,6 +2383,8 @@ body.is-resizing * {
   display: grid;
   gap: 10px;
   width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .color-input {
@@ -2436,8 +2443,13 @@ body.is-resizing * {
 
 .composer textarea {
   width: 100%;
+  max-width: 100%;
   min-height: 40px;
   max-height: 220px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   resize: none;
   border: 0;
   outline: 0;

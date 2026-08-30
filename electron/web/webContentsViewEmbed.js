@@ -199,13 +199,15 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
     entry.hidden = false;
   }
 
-  async function attachTarget({ targetId = "", bounds = null } = {}) {
+  async function attachTarget({ targetId = "", bounds = null, syncSessionId = "" } = {}) {
     const meta = getTargetMeta(targetId);
     if (!meta) {
       throw new Error("不支持的 AI 镜像目标");
     }
 
     const entry = await ensureViewForTarget(meta);
+    entry.syncSessionId = String(syncSessionId || "").trim();
+    entry.lastSyncRevision = 0;
     attachEntry(entry, bounds || {});
 
     return {
@@ -225,12 +227,27 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
     };
   }
 
-  function syncBounds({ bounds = null } = {}) {
+  function syncBounds({ bounds = null, targetId = "", syncSessionId = "", syncRevision = 0 } = {}) {
     if (!activeEntry) {
       return {
         ok: true,
         active: false,
       };
+    }
+
+    const requestedTargetId = String(targetId || "").trim();
+    const requestedSessionId = String(syncSessionId || "").trim();
+    const requestedRevision = Math.max(0, Number(syncRevision) || 0);
+    if (
+      (requestedTargetId && requestedTargetId !== activeEntry.targetId) ||
+      (requestedSessionId && activeEntry.syncSessionId && requestedSessionId !== activeEntry.syncSessionId) ||
+      (requestedSessionId && requestedRevision <= Number(activeEntry.lastSyncRevision || 0))
+    ) {
+      return { ok: true, active: true, stale: true, bounds: { ...activeEntry.bounds } };
+    }
+    if (requestedSessionId) {
+      activeEntry.syncSessionId = requestedSessionId;
+      activeEntry.lastSyncRevision = requestedRevision;
     }
 
     const nextBounds = normalizeBounds(bounds || activeEntry.bounds);

@@ -11,6 +11,7 @@ const CHECKS = [
   "scripts/check-electron-ipc-security.js",
   "scripts/check-canvas-lod-scale.js",
   "scripts/check-overlay-budget.js",
+  "scripts/check-interaction-coordination.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
 ];

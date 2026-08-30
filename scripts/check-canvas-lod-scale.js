@@ -6,6 +6,7 @@ async function main() {
     getOverlayScaleBucket,
     isCanvasLodScale,
     isDetailedOverlayScale,
+    resolveCanvasLodHysteresis,
   } = await import("../public/src/engines/canvas2d-core/lodScale.js");
 
   assert(getCanvasLodScalePercent(0.15) === 15, "LOD percent changed at the low-zoom boundary");
@@ -14,6 +15,9 @@ async function main() {
   assert(!isCanvasLodScale(0.16, 0.15), "scale above the boundary remained in Canvas LOD");
   assert(!isDetailedOverlayScale(0.5, 0.5), "exact overlay boundary became detailed");
   assert(isDetailedOverlayScale(0.51, 0.5), "scale above the overlay boundary did not recover detail");
+  assert(resolveCanvasLodHysteresis(0.15, { active: false }), "LOD hysteresis did not enter at the low boundary");
+  assert(resolveCanvasLodHysteresis(0.16, { active: true }), "LOD hysteresis exited inside the recovery band");
+  assert(!resolveCanvasLodHysteresis(0.17, { active: true }), "LOD hysteresis did not recover at the exit boundary");
 
   const firstBucket = getOverlayScaleBucket(0.501, 0.02);
   const repeatedBucket = getOverlayScaleBucket(0.501, 0.02);

@@ -1907,6 +1907,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
         },
         renderReason: String(layerState?.renderReason || dirtyState?.reason || "render"),
         renderReasons: Array.isArray(layerState?.reasons) ? layerState.reasons.slice() : [],
+        runtimeMode: {
+          mode: runtimeMode.mode,
+          viewportInteractionActive: runtimeMode.viewportInteractionActive,
+          interactionActive: runtimeMode.interactionActive,
+        },
         layerState: layerState
           ? {
               revisions: { ...(layerState.revisions || {}) },

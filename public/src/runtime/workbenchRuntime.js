@@ -44,6 +44,7 @@ import {
 import { mountGlobalTutorialHost } from "./tutorial-system/index.js";
 import { createUiSettingsRuntimeBridge } from "./settings/createUiSettingsRuntimeBridge.js";
 import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js";
+import { createLatestAsyncCommitter } from "../utils/latestAsyncCommitter.js";
 
 const state = createInitialState();
 const APP_CLIPBOARD_TTL_MS = 120000;
@@ -1499,6 +1500,10 @@ let desktopSurfaceSyncPromise = Promise.resolve();
 const desktopClearStageEl = document.querySelector(".desktop-clear-stage");
 let bootShapeUnlockTimer = 0;
 let screenSourceEmbedSyncFrame = 0;
+let screenSourceEmbedSessionSequence = 0;
+let screenSourceEmbedSessionId = "";
+let screenSourceEmbedSyncRevision = 0;
+let screenSourceBoundsCommitError = null;
 let screenSourceToolbarSyncFrame = 0;
 let rightPanelWindowSliderFrame = 0;
 let screenSourceHeaderMenuLayoutFrame = 0;
@@ -1509,6 +1514,22 @@ let screenSourceHeaderPanelLastPosition = null;
 let activeClipboardZone = "";
 let embeddedWindowOverlayHidden = false;
 let screenSourceActivationOverlayEl = null;
+
+function createScreenSourceEmbedSession() {
+  screenSourceEmbedSessionSequence += 1;
+  screenSourceEmbedSessionId = `${Date.now().toString(36)}-${screenSourceEmbedSessionSequence.toString(36)}`;
+  screenSourceEmbedSyncRevision = 0;
+  screenSourceBoundsCommitError = null;
+  screenSourceBoundsCommitter.reset();
+  return screenSourceEmbedSessionId;
+}
+
+function clearScreenSourceEmbedSession() {
+  screenSourceEmbedSessionId = "";
+  screenSourceEmbedSyncRevision = 0;
+  screenSourceBoundsCommitError = null;
+  screenSourceBoundsCommitter.reset();
+}
 
 function ensureScreenSourceActivationOverlay() {
   if (!screenSourcePreviewShellEl) {
@@ -2757,26 +2778,71 @@ function getCurrentScreenSourceEmbedLayout(sourceId = "") {
   };
 }
 
-async function syncEmbeddedScreenSourceBounds() {
+function getEmbeddedScreenSourceSyncFingerprint(payload = {}) {
+  const bounds = payload?.bounds || {};
+  return [
+    payload.mode,
+    payload.syncSessionId,
+    payload.targetId,
+    payload.sourceId,
+    Math.round(Number(bounds.x) || 0),
+    Math.round(Number(bounds.y) || 0),
+    Math.round(Number(bounds.width) || 0),
+    Math.round(Number(bounds.height) || 0),
+    payload?.layout?.fitMode,
+  ].join("|");
+}
+
+async function commitEmbeddedScreenSourceBounds(syncPayload) {
+  const response = syncPayload.mode === "win32"
+    ? await DESKTOP_SHELL.syncExternalWindowBounds(syncPayload)
+    : await DESKTOP_SHELL.syncAiMirrorWebContentsViewBounds(syncPayload);
+  if (!response?.ok) {
+    throw new Error(response?.error || "同步嵌入窗口位置失败");
+  }
+  screenSourceBoundsCommitError = null;
+  return response;
+}
+
+const screenSourceBoundsCommitter = createLatestAsyncCommitter({
+  commit: commitEmbeddedScreenSourceBounds,
+  getFingerprint: getEmbeddedScreenSourceSyncFingerprint,
+  onError: (error) => {
+    screenSourceBoundsCommitError = error;
+  },
+});
+
+function syncEmbeddedScreenSourceBounds({ waitForCommit = false } = {}) {
   if (
     !isEmbeddedScreenSourceActive() ||
     !isScreenSourcePreviewAvailable() ||
     !IS_DESKTOP_APP ||
     state.desktopShellState.fullClickThrough
   ) {
-    return;
+    return waitForCommit ? Promise.resolve(0) : 0;
   }
 
+  screenSourceEmbedSyncRevision += 1;
   const syncPayload = {
+    mode: isWin32EmbeddedScreenSourceActive() ? "win32" : "webcontentsview",
+    targetId: String(state.screenSource.activeTargetId || "").trim(),
+    sourceId: String(state.screenSource.embeddedSourceId || "").trim(),
+    syncSessionId: screenSourceEmbedSessionId,
+    syncRevision: screenSourceEmbedSyncRevision,
     bounds: getScreenSourcePreviewBounds(),
     layout: getCurrentScreenSourceEmbedLayout(state.screenSource.activeTargetId || state.screenSource.embeddedSourceId),
   };
-  const response = isWin32EmbeddedScreenSourceActive()
-    ? await DESKTOP_SHELL.syncExternalWindowBounds(syncPayload)
-    : await DESKTOP_SHELL.syncAiMirrorWebContentsViewBounds(syncPayload);
-  if (!response?.ok) {
-    throw new Error(response?.error || "同步嵌入窗口位置失败");
+  screenSourceBoundsCommitError = null;
+  const sequence = screenSourceBoundsCommitter.submit(syncPayload);
+  if (!waitForCommit) {
+    return sequence;
   }
+  return screenSourceBoundsCommitter.whenIdle().then(() => {
+    if (screenSourceBoundsCommitError) {
+      throw screenSourceBoundsCommitError;
+    }
+    return sequence;
+  });
 }
 
 async function focusEmbeddedScreenSourceWindow() {
@@ -2806,7 +2872,7 @@ async function focusEmbeddedScreenSourceWindow() {
   }
 }
 
-function scheduleEmbeddedScreenSourceSync() {
+function scheduleEmbeddedScreenSourceSync({ immediate = false } = {}) {
   if (
     !isEmbeddedScreenSourceActive() ||
     !isScreenSourcePreviewAvailable() ||
@@ -2816,20 +2882,29 @@ function scheduleEmbeddedScreenSourceSync() {
     return;
   }
 
+  if (immediate) {
+    if (screenSourceEmbedSyncFrame) {
+      window.cancelAnimationFrame(screenSourceEmbedSyncFrame);
+      screenSourceEmbedSyncFrame = 0;
+    }
+    syncEmbeddedScreenSourceBounds();
+    return;
+  }
+
   if (screenSourceEmbedSyncFrame) {
-    window.cancelAnimationFrame(screenSourceEmbedSyncFrame);
+    return;
   }
 
   screenSourceEmbedSyncFrame = window.requestAnimationFrame(() => {
     screenSourceEmbedSyncFrame = 0;
-    syncEmbeddedScreenSourceBounds()
-      .catch(() => {});
+    syncEmbeddedScreenSourceBounds();
   });
 }
 
 async function stopScreenSourceCapture({ announce = true, statusText = "画面映射已停止" } = {}) {
   const stream = state.screenSource.stream;
   const activeTargetId = String(state.screenSource.activeTargetId || state.screenSource.selectedSourceId || "").trim();
+  clearScreenSourceEmbedSession();
   if (stream) {
     for (const track of stream.getTracks()) {
       try {
@@ -2985,8 +3060,10 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
 
     if (IS_DESKTOP_APP && renderMode === "webcontentsview" && canUseWebContentsViewScreenSource() && source?.id) {
       await waitForScreenSourceLayoutStability();
+      const syncSessionId = createScreenSourceEmbedSession();
       const response = await DESKTOP_SHELL.attachAiMirrorWebContentsView({
         targetId: source.id,
+        syncSessionId,
         bounds: getScreenSourcePreviewBounds(),
         layout: getCurrentScreenSourceEmbedLayout(source.id),
       });
@@ -3019,8 +3096,11 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
     ) {
       const preparedTarget = await prepareAiMirrorTarget(source.id);
       await waitForScreenSourceLayoutStability();
+      const syncSessionId = createScreenSourceEmbedSession();
       const response = await DESKTOP_SHELL.embedExternalWindow({
         sourceId: preparedTarget?.projection?.sourceId,
+        targetId: source.id,
+        syncSessionId,
         bounds: getScreenSourcePreviewBounds(),
         layout: getCurrentScreenSourceEmbedLayout(source.id),
       });
@@ -3129,6 +3209,7 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       return stream;
     })
     .catch((error) => {
+      clearScreenSourceEmbedSession();
       state.screenSource.startPromise = null;
       state.screenSource.statusText = `映射失败：${error.message}`;
       renderScreenSourceState();
@@ -6009,7 +6090,7 @@ function syncPanelDependentUi(side, { syncShape = false } = {}) {
   syncEmbeddedWindowOverlayVisibility();
 
   if (side === "right") {
-    scheduleEmbeddedScreenSourceSync();
+    scheduleEmbeddedScreenSourceSync({ immediate: true });
   }
 
   if (syncShape) {
@@ -6137,7 +6218,7 @@ function beginStagePanelMove(side, event) {
     panelState.mode = "normal";
     clampPanelLayoutSideToWorkspace(side);
     renderPanelLayoutSide(side);
-    schedulePanelDependentUiSync(side, { syncShape: false });
+    syncPanelDependentUi(side, { syncShape: false });
   };
 
   const handleMove = (moveEvent) => {
@@ -6450,9 +6531,14 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(PANEL_LAYOUT_MIN_HEIGHT, workspaceHeight));
   const maxHeight = Math.max(minHeight, workspaceHeight - panel.y);
 
-  const handleMove = (event) => {
-    const deltaX = event.clientX - startX;
-    const deltaY = event.clientY - startY;
+  let latestClientX = startX;
+  let latestClientY = startY;
+  let resizeFrame = 0;
+
+  const flushResize = () => {
+    resizeFrame = 0;
+    const deltaX = latestClientX - startX;
+    const deltaY = latestClientY - startY;
     panel.width = clampPaneWidth(initialWidth + deltaX, minWidth, maxWidth);
     panel.height = clampPaneWidth(initialHeight + deltaY, minHeight, maxHeight);
     panel.collapsed = false;
@@ -6460,12 +6546,24 @@ function beginPaneResize(side, startX, startY, pointerId) {
     panel.mode = "normal";
     clampPanelLayoutSideToWorkspace(side);
     renderPanelLayoutSide(side);
-    schedulePanelDependentUiSync(side, { syncShape: true });
+    syncPanelDependentUi(side, { syncShape: true });
+  };
+
+  const handleMove = (event) => {
+    latestClientX = event.clientX;
+    latestClientY = event.clientY;
+    if (!resizeFrame) {
+      resizeFrame = window.requestAnimationFrame(flushResize);
+    }
   };
 
   const handleUp = () => {
     document.removeEventListener("pointermove", handleMove);
     document.removeEventListener("pointerup", handleUp);
+    if (resizeFrame) {
+      window.cancelAnimationFrame(resizeFrame);
+      flushResize();
+    }
     resizerEl?.releasePointerCapture?.(pointerId);
     document.body.classList.remove("is-resizing");
     savePanelLayoutState();
@@ -8984,7 +9082,7 @@ screenSourceFitModeSelectEl?.addEventListener("change", async () => {
 
   if (state.screenSource.activeTargetId === sourceId && isWin32EmbeddedScreenSourceActive()) {
     try {
-      await syncEmbeddedScreenSourceBounds();
+      await syncEmbeddedScreenSourceBounds({ waitForCommit: true });
       setStatus(`已切换嵌入适配模式：${screenSourceFitModeSelectEl.selectedOptions?.[0]?.textContent || nextFitMode}`, "success");
     } catch (error) {
       setStatus(`切换嵌入适配模式失败：${error.message}`, "warning");
@@ -11173,8 +11271,12 @@ function scrollThreadToBottom() {
 }
 
 function autoresize() {
+  const panelHeight = Math.max(1, Number(conversationPanel?.clientHeight || window.innerHeight || 1));
+  const maxInputHeight = Math.max(72, Math.min(220, Math.floor(panelHeight * 0.32)));
   promptInput.style.height = "auto";
-  promptInput.style.height = `${Math.min(promptInput.scrollHeight, 220)}px`;
+  const nextHeight = Math.min(promptInput.scrollHeight, maxInputHeight);
+  promptInput.style.height = `${nextHeight}px`;
+  promptInput.style.overflowY = promptInput.scrollHeight > maxInputHeight ? "auto" : "hidden";
   syncComposerOffset();
 }
 
