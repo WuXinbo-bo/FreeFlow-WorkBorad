@@ -844,7 +844,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       createFlowNodeItem("viewport-flow-b", 1420, 380, "Flow B"),
       createFlowEdgeItem("viewport-flow-edge", "viewport-flow-a", "viewport-flow-b"),
     ],
-    [],
+    ["viewport-image"],
     { scale: 0.5, offsetX: 40, offsetY: 40 }
   );
   const session = await createPage(browser, { board });
@@ -875,6 +875,34 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const flowEdgeNode = document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]');
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
       const contentLayer = document.querySelector("#canvas2d-content-layer");
+      const interactionCanvas = document.querySelector("#canvas2d-interaction-canvas");
+      const readInteractionState = () => {
+        const interactionStyle = getComputedStyle(interactionCanvas);
+        const sceneStyle = getComputedStyle(sceneRoot);
+        const pixels = interactionCanvas.getContext("2d").getImageData(
+          0,
+          0,
+          interactionCanvas.width,
+          interactionCanvas.height
+        ).data;
+        let paintedPixels = 0;
+        for (let index = 3; index < pixels.length; index += 4) {
+          if (pixels[index] > 0) {
+            paintedPixels += 1;
+          }
+        }
+        return {
+          width: interactionCanvas.width,
+          height: interactionCanvas.height,
+          mainWidth: canvas.width,
+          mainHeight: canvas.height,
+          pointerEvents: interactionStyle.pointerEvents,
+          zIndex: Number(interactionStyle.zIndex || 0),
+          sceneZIndex: Number(sceneStyle.zIndex || 0),
+          paintedPixels,
+        };
+      };
+      const initialInteraction = readInteractionState();
       const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
       const initialRichLocalLeft = Number.parseFloat(richNode.style.left);
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
@@ -941,6 +969,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         }).length,
         sceneVectorOwnedCount: canvas.__ffRenderStats?.sceneVectorOwnedCount || 0,
         sceneVectorSubjectCount: document.querySelectorAll(".canvas2d-scene-vector-item[data-id]").length,
+        interaction: readInteractionState(),
         pixel: Array.from(ctx.getImageData(2, 2, 1, 1).data),
       };
       await new Promise((resolve) => setTimeout(resolve, 220));
@@ -962,6 +991,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         scenePhase: sceneRoot.dataset.presentationPhase,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
+        interaction: readInteractionState(),
       };
       const resizeMatrixBefore = getComputedStyle(sceneRoot).transform;
       window.__canvas2dEngine.resize({ immediate: true, reason: "interaction-resize-check" });
@@ -978,6 +1008,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         initialFileBox,
         initialShapeGeometry,
         initialFlowEdgeGeometry,
+        initialInteraction,
         active,
         recovered,
         resizeMatrixBefore,
@@ -989,6 +1020,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     await session.page.waitForTimeout(160);
     result.externalResize = await session.page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");
+      const interactionCanvas = document.querySelector("#canvas2d-interaction-canvas");
       const sceneRoot = document.querySelector("#canvas2d-scene-root");
       const { imageNode, tableNode, fileNode, shapeNode, flowNodeA, flowNodeB, flowEdgeNode } = window.__sceneContentTestRefs || {};
       return {
@@ -1011,6 +1043,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
           ? ["x1", "y1", "x2", "y2"].map((name) => flowEdgeNode.querySelector(".canvas2d-scene-flow-edge-line")?.getAttribute(name))
           : [],
         phase: sceneRoot?.dataset.presentationPhase || "",
+        interactionSizeMatches:
+          interactionCanvas?.width === canvas.width && interactionCanvas?.height === canvas.height,
         pixel: Array.from(canvas.getContext("2d").getImageData(2, 2, 1, 1).data),
       };
     });
@@ -1062,6 +1096,16 @@ async function runViewportInteractionRecoveryCheck(browser) {
       result
     );
     assert(result.active.pixel[3] === 255, "canvas background became transparent during wheel interaction", result);
+    assert(result.initialInteraction.pointerEvents === "none", "screen-space interaction layer captures pointer events", result);
+    assert(result.initialInteraction.zIndex > result.initialInteraction.sceneZIndex, "screen-space interaction layer is below scene subjects", result);
+    assert(
+      result.initialInteraction.width === result.initialInteraction.mainWidth &&
+        result.initialInteraction.height === result.initialInteraction.mainHeight,
+      "screen-space interaction backing store does not match the main canvas",
+      result
+    );
+    assert(result.initialInteraction.paintedPixels > 0, "selected element controls were not drawn on the interaction layer", result);
+    assert(result.active.interaction.paintedPixels > 0, "interaction controls disappeared during viewport interaction", result);
     assert(
       result.recovered.richVisibility === "visible" && result.recovered.mathVisibility === "visible" && result.recovered.codeVisibility === "visible",
       "DOM overlays did not recover after viewport interaction",
@@ -1076,6 +1120,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
     assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
+    assert(result.recovered.interaction.paintedPixels > 0, "interaction controls did not recover after viewport interaction", result);
     assert(result.resizeMatrixAfter === result.resizeMatrixBefore, "viewport resize mutated the scene camera matrix", result);
     assert(result.resizePixel[3] === 255, "canvas resize exposed a transparent backing-store frame", result);
     assert(result.externalResize.matrix === result.resizeMatrixBefore, "external viewport resize mutated the scene camera matrix", result);
@@ -1091,6 +1136,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(JSON.stringify(result.externalResize.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "external resize changed shape world geometry", result);
     assert(JSON.stringify(result.externalResize.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "external resize changed flow edge world geometry", result);
     assert(result.externalResize.phase === "steady", "external resize left scene presentation unsettled", result);
+    assert(result.externalResize.interactionSizeMatches === true, "external resize desynchronized canvas backing stores", result);
     assert(result.externalResize.pixel[3] === 255, "external viewport resize exposed a transparent backing-store frame", result);
     return result;
   } finally {

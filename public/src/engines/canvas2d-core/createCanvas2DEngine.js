@@ -3348,10 +3348,12 @@ export function createCanvas2DEngine(options = {}) {
     canvasLinkBindingHint: null,
     richExternalLinkPanel: null,
     canvas: null,
+    interactionCanvas: null,
     sceneRoot: null,
     vectorLayer: null,
     contentLayer: null,
     ctx: null,
+    interactionCtx: null,
     editor: null,
     richEditor: null,
     richToolbar: null,
@@ -4891,6 +4893,7 @@ let tablePointerSelectionState = {
     renderer.render({
       ctx: refs.ctx,
       canvas: refs.canvas,
+      interactionCtx: refs.interactionCtx,
       view: frameView,
       items: state.board.items,
       visibleItems: visibleScene?.items || [],
@@ -8343,6 +8346,16 @@ let tablePointerSelectionState = {
       refs.canvas.height = nextBudget.pixelHeight;
       backingStoreChanged = true;
     }
+    if (refs.interactionCanvas) {
+      if (refs.interactionCanvas.width !== nextBudget.pixelWidth) {
+        refs.interactionCanvas.width = nextBudget.pixelWidth;
+        backingStoreChanged = true;
+      }
+      if (refs.interactionCanvas.height !== nextBudget.pixelHeight) {
+        refs.interactionCanvas.height = nextBudget.pixelHeight;
+        backingStoreChanged = true;
+      }
+    }
     const renderPatch = {
       reason: sizeChanged ? reason : `${reason}-sync`,
       backgroundDirty: true,
@@ -8521,6 +8534,15 @@ let tablePointerSelectionState = {
       refs.sceneRoot.appendChild(refs.contentLayer);
     }
     sceneContentRenderer.setHost(refs.contentLayer);
+
+    refs.interactionCanvas = refs.surface.querySelector("#canvas2d-interaction-canvas");
+    if (!(refs.interactionCanvas instanceof HTMLCanvasElement)) {
+      refs.interactionCanvas = document.createElement("canvas");
+      refs.interactionCanvas.id = "canvas2d-interaction-canvas";
+      refs.interactionCanvas.className = "canvas2d-interaction-canvas";
+      refs.interactionCanvas.setAttribute("aria-hidden", "true");
+      refs.surface.appendChild(refs.interactionCanvas);
+    }
 
     refs.editor = refs.surface.querySelector("#canvas-text-editor");
     if (!(refs.editor instanceof HTMLTextAreaElement)) {
@@ -8880,6 +8902,10 @@ let tablePointerSelectionState = {
     refs.ctx = refs.canvas.getContext("2d", { alpha: true });
     if (!refs.ctx) {
       throw new Error("无法获取 Canvas2D 上下文");
+    }
+    refs.interactionCtx = refs.interactionCanvas.getContext("2d", { alpha: true });
+    if (!refs.interactionCtx) {
+      throw new Error("无法获取画布交互层上下文");
     }
     syncCanvasLinkBindingUi();
   }

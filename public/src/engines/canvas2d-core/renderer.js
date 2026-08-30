@@ -1184,6 +1184,7 @@ function drawVisibleItemsToContext({
   rendererDispatch,
   sceneContentOwnedIds = null,
   sceneVectorOwnedIds = null,
+  renderInteractionChrome = false,
 }) {
   const selected = new Set(selectedIds || []);
   const sceneContentOwned = sceneContentOwnedIds instanceof Set
@@ -1206,6 +1207,9 @@ function drawVisibleItemsToContext({
     const isSelected = selected.has(item.id);
     const isHover = hoverId === item.id && !isSelected;
     if (sceneOwned.has(String(item.id || ""))) {
+      if (!renderInteractionChrome) {
+        return;
+      }
       const bounds = getElementBounds(item);
       const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
       const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
@@ -1233,8 +1237,8 @@ function drawVisibleItemsToContext({
       editing: editingId === item.id,
       lodMode,
       helpers: {
-        drawSelectionFrame,
-        drawHandles,
+        drawSelectionFrame: renderInteractionChrome ? drawSelectionFrame : () => {},
+        drawHandles: renderInteractionChrome ? drawHandles : () => {},
         imageEditState,
         flowDraft,
         allowLocalFileAccess,
@@ -1258,14 +1262,26 @@ function drawVisibleItemsToContext({
         if (handled !== true && handled?.lodSimplified) {
           lodSimplifiedCount += 1;
         }
-        drawLockBadge(ctx, item, view);
+        if (renderInteractionChrome) {
+          drawLockBadge(ctx, item, view);
+        }
         return;
       }
     }
-    drawTextElement(ctx, item, view, isSelected, isHover, editingId === item.id, drawSelectionFrame, drawHandles, {
-      renderText: Boolean(renderTextInCanvas),
-    });
-    drawLockBadge(ctx, item, view);
+    drawTextElement(
+      ctx,
+      item,
+      view,
+      isSelected,
+      isHover,
+      editingId === item.id,
+      renderInteractionChrome ? drawSelectionFrame : () => {},
+      renderInteractionChrome ? drawHandles : () => {},
+      { renderText: Boolean(renderTextInCanvas) }
+    );
+    if (renderInteractionChrome) {
+      drawLockBadge(ctx, item, view);
+    }
   });
   return {
     customRendererHandledCount,
@@ -1367,6 +1383,7 @@ function drawInteractionLayer(ctx, {
   mindMapDropTarget = null,
   mindMapDropHint = "",
   selectedItems = [],
+  lockedItems = [],
 } = {}) {
   if (hoveredItem && canvasElementRegistry.resolveElement(hoveredItem)?.capabilities?.visibility !== "mind-map") {
     const bounds = getElementBounds(hoveredItem);
@@ -1423,9 +1440,27 @@ function drawInteractionLayer(ctx, {
     ctx.restore();
   }
   drawSelectionRect(ctx, view, selectionRect);
-  if (Array.isArray(selectedItems) && selectedItems.length >= 2) {
+  if (Array.isArray(selectedItems) && selectedItems.length === 1) {
+    const selectedItem = selectedItems[0];
+    const bounds = getElementBounds(selectedItem);
+    const topLeft = sceneToScreen(view, { x: bounds.left, y: bounds.top });
+    const bottomRight = sceneToScreen(view, { x: bounds.right, y: bounds.bottom });
+    const left = Math.min(topLeft.x, bottomRight.x);
+    const top = Math.min(topLeft.y, bottomRight.y);
+    const frameWidth = Math.max(1, Math.abs(bottomRight.x - topLeft.x));
+    const frameHeight = Math.max(1, Math.abs(bottomRight.y - topLeft.y));
+    drawSelectionFrame(ctx, left, top, frameWidth, frameHeight, true, false);
+    const handlePolicy = canvasElementRegistry.resolveElement(selectedItem)?.capabilities?.handles || "bounds";
+    if (handlePolicy !== "none" && handlePolicy !== "relationship") {
+      drawHandles(ctx, selectedItem, view);
+    }
+    if (selectedItem.type === "image" || (selectedItem.type === "shape" && !isLinearShape(selectedItem.shapeType))) {
+      drawRotateHandle(ctx, left, top, frameWidth, frameHeight);
+    }
+  } else if (Array.isArray(selectedItems) && selectedItems.length >= 2) {
     drawMultiSelectionHandles(ctx, view, selectedItems);
   }
+  (Array.isArray(lockedItems) ? lockedItems : []).forEach((item) => drawLockBadge(ctx, item, view));
   drawAlignmentSnapGuides(ctx, alignmentSnap, alignmentSnapConfig, width, height);
   if (!(Array.isArray(items) && items.length) && !draftElement) {
     drawHint(ctx, width, height);
@@ -1507,6 +1542,7 @@ function getInteractionVisualSignature({
   mindMapDropTarget = null,
   mindMapDropHint = "",
   selectedIds = [],
+  lockedItems = [],
 } = {}) {
   const guides = Array.isArray(alignmentSnap?.guides) ? alignmentSnap.guides : [];
   const guideSignature = guides
@@ -1525,6 +1561,11 @@ function getInteractionVisualSignature({
     String(mindMapDropTarget?.id || ""),
     String(mindMapDropHint || ""),
     Array.isArray(selectedIds) ? selectedIds.map((id) => String(id || "")).filter(Boolean).sort().join("|") : "",
+    (Array.isArray(lockedItems) ? lockedItems : [])
+      .map((item) => String(item?.id || ""))
+      .filter(Boolean)
+      .sort()
+      .join("|"),
     alignmentSnap?.active ? "active" : "",
     guideSignature,
     hintVisible,
@@ -1640,6 +1681,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     render({
       ctx,
       canvas,
+      interactionCtx = null,
       view,
       items,
       allItems = items,
@@ -1775,6 +1817,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         mindMapDropTarget,
         mindMapDropHint,
         selectedIds,
+        lockedItems: frameVisibleItems.filter((item) => item?.locked),
       });
       const viewVisualSignature = getViewVisualSignature(view);
       const renderModeSignature = getRenderModeSignature({
@@ -1821,8 +1864,9 @@ export function createRenderer({ customRenderers = [] } = {}) {
         alignmentSnap?.active ||
         (mindMapDropTarget && mindMapDropHint) ||
         mindMapDropHint ||
-        (Array.isArray(selectedIds) && selectedIds.length >= 2)
-      ) || Boolean(hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")));
+        (Array.isArray(selectedIds) && selectedIds.length >= 1) ||
+        frameVisibleItems.some((item) => item?.locked)
+      ) || Boolean(hoveredItem);
       const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
       const effectiveStaticSceneDirty = Boolean(
         liveInteractionMode ||
@@ -1861,13 +1905,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
       const connectionLayer = hasConnectionContent ? layerStore.ensure("mindConnections", width, height, dpr) : null;
       const dynamicLayer = hasDynamicContent ? layerStore.ensure("dynamicScene", width, height, dpr) : null;
-      const interactionLayer = hasInteractionContent ? layerStore.ensure("interaction", width, height, dpr) : null;
       if (
         !backgroundLayer ||
         !staticLayer ||
         (hasConnectionContent && !connectionLayer) ||
-        (hasDynamicContent && !dynamicLayer) ||
-        (hasInteractionContent && !interactionLayer)
+        (hasDynamicContent && !dynamicLayer)
       ) {
         return null;
       }
@@ -1991,6 +2033,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           rendererDispatch,
           sceneContentOwnedIds: sceneContentOwned,
           sceneVectorOwnedIds: sceneVectorOwned,
+          renderInteractionChrome: false,
         });
         customRendererHandledCount = Number(dynamicStats?.customRendererHandledCount || 0) || 0;
         lodSimplifiedCount = Number(dynamicStats?.lodSimplifiedCount || 0) || 0;
@@ -2004,26 +2047,32 @@ export function createRenderer({ customRenderers = [] } = {}) {
         lodSimplifiedCount = Number(lastDynamicStats.lodSimplifiedCount || 0) || 0;
       }
 
-      if (effectiveInteractionDirty) {
+      if (interactionCtx && (effectiveInteractionDirty || !hasInteractionContent)) {
         const selectedIdSet = new Set(Array.isArray(selectedIds) ? selectedIds : []);
-        clearLayerContext(interactionLayer, width, height);
-        drawInteractionLayer(interactionLayer.ctx, {
-          view,
-          width,
-          height,
-          selectionRect,
-          alignmentSnap,
-          alignmentSnapConfig,
-          items,
-          draftElement,
-          hoveredItem: hoveredItem && !dynamicRenderIdSet.has(String(hoveredItem.id || "")) ? hoveredItem : null,
-          mindMapDropTarget,
-          mindMapDropHint,
-          selectedItems:
-            Array.isArray(selectedIds) && selectedIds.length >= 2
-              ? frameVisibleItems.filter((item) => selectedIdSet.has(item.id))
-              : [],
-        });
+        interactionCtx.save();
+        interactionCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        interactionCtx.clearRect(0, 0, width, height);
+        if (hasInteractionContent) {
+          drawInteractionLayer(interactionCtx, {
+            view,
+            width,
+            height,
+            selectionRect,
+            alignmentSnap,
+            alignmentSnapConfig,
+            items,
+            draftElement,
+            hoveredItem:
+              hoveredItem && !selectedIdSet.has(String(hoveredItem.id || ""))
+                ? hoveredItem
+                : null,
+            mindMapDropTarget,
+            mindMapDropHint,
+            selectedItems: frameVisibleItems.filter((item) => selectedIdSet.has(item.id)),
+            lockedItems: frameVisibleItems.filter((item) => item?.locked),
+          });
+        }
+        interactionCtx.restore();
       }
 
       ctx.save();
@@ -2036,9 +2085,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
       }
       if (hasDynamicContent) {
         ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
-      }
-      if (hasInteractionContent) {
-        ctx.drawImage(interactionLayer.canvas, 0, 0, width, height);
       }
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
       const backgroundStats = backgroundPatternCache.getStats();

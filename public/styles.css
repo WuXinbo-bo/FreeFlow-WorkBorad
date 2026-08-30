@@ -6264,6 +6264,16 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   contain: layout style;
 }
 
+.canvas2d-interaction-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
 .canvas2d-vector-layer,
 .canvas2d-content-layer {
   position: absolute;
