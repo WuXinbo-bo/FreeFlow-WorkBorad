@@ -5336,6 +5336,12 @@ let tablePointerSelectionState = {
         if (canvasPerformanceRuntime.finishRecovery(recovery.performanceSessionId)) {
           scenePresentationCoordinator.finishInteraction(recovery.presentationSessionId);
           pendingPerformanceRecovery = null;
+          scheduleRender({
+            lane: CANVAS_PERFORMANCE_LANES.BACKGROUND,
+            reason: "interaction-recovery-steady",
+            overlayDirty: true,
+            interactionDirty: false,
+          });
           renderScheduler?.resume?.();
         }
       },
@@ -5462,6 +5468,17 @@ let tablePointerSelectionState = {
 
   function getInteractionPrioritySnapshot() {
     return canvasPerformanceRuntime.getInteractionSnapshot();
+  }
+
+  function getCanvasPerformanceSnapshot() {
+    return canvasPerformanceRuntime.getSnapshot();
+  }
+
+  function getCanvasPerformanceLifecycleSnapshot() {
+    return Object.freeze({
+      ...canvasPerformanceRuntime.getLifecycleSnapshot(),
+      prewarm: canvasPerformanceRuntime.getPrewarmSnapshot(),
+    });
   }
 
   function syncBoard({
@@ -25960,6 +25977,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     subscribe: store.subscribe,
     getSnapshot: store.getSnapshot,
     getInteractionPrioritySnapshot,
+    getCanvasPerformanceSnapshot,
+    getCanvasPerformanceLifecycleSnapshot,
     setTool,
     setMode,
     setStatus,

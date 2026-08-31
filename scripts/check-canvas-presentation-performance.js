@@ -110,10 +110,33 @@ async function main() {
           state: current,
         };
       };
+      const waitForPerformanceState = async (predicate, timeoutMs) => {
+        const startedAt = performance.now();
+        let current = engine.getCanvasPerformanceLifecycleSnapshot();
+        while (!predicate(current) && performance.now() - startedAt < timeoutMs) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          current = engine.getCanvasPerformanceLifecycleSnapshot();
+        }
+        return {
+          converged: Boolean(predicate(current)),
+          elapsedMs: performance.now() - startedAt,
+          state: current,
+        };
+      };
       const baseline = await waitForPresentationState(
         (current) => current.phase === "steady" && current.plannedFrozenCount > 0 && current.activeFrozenCount > 0,
         3000
       );
+      const performanceBaseline = await waitForPerformanceState(
+        (current) => current.phase === "steady" && !current.prewarm.paused && current.prewarm.queued === 0,
+        3000
+      );
+      const sceneRoot = document.querySelector("#canvas2d-scene-root");
+      const compositorBaseline = {
+        willChange: getComputedStyle(sceneRoot).willChange,
+        inlineWillChange: sceneRoot?.style.willChange || "",
+        transform: sceneRoot?.style.transform || "",
+      };
       let storeEmissionCount = 0;
       let formalViewUpdateCount = 0;
       let lastFormalViewSignature = JSON.stringify(engine.getSnapshot().board.view);
@@ -141,9 +164,12 @@ async function main() {
       const fallbackChecks = [];
       let maxSnapshotCloneCount = 0;
       let cameraFastPathFrames = 0;
+      let prewarmPausedFrames = 0;
+      let firstWheelFrame = null;
       let previousFrameTime = performance.now();
 
       for (let index = 0; index < 36; index += 1) {
+        const wheelStartedAt = performance.now();
         canvas.dispatchEvent(new WheelEvent("wheel", {
           bubbles: true,
           cancelable: true,
@@ -158,6 +184,7 @@ async function main() {
         previousFrameTime = currentFrameTime;
         const stats = canvas.__ffRenderStats || null;
         if (stats?.cameraFastPath?.active) cameraFastPathFrames += 1;
+        if (engine.getCanvasPerformanceLifecycleSnapshot().prewarm.paused) prewarmPausedFrames += 1;
         frameDurations.push(Number(stats?.frameDurationMs || 0));
         tileCounts.push(Number(stats?.tileCache?.tileCount || 0));
         tileCacheBytes.push(Number(stats?.tileCache?.cacheByteSize || 0));
@@ -166,6 +193,19 @@ async function main() {
           maxSnapshotCloneCount,
           document.querySelectorAll(".html2canvas-container").length
         );
+        if (index === 0) {
+          const runtime = engine.getCanvasPerformanceLifecycleSnapshot();
+          firstWheelFrame = {
+            inputToRafMs: currentFrameTime - wheelStartedAt,
+            frameDurationMs: Number(stats?.frameDurationMs || 0),
+            phase: runtime.phase,
+            prewarmPaused: runtime.prewarm.paused,
+            fastPathCandidate: Boolean(stats?.cameraFastPath?.candidate),
+            retainedPresented: Boolean(stats?.cameraFastPath?.retainedPresented),
+            fallbackRendered: Boolean(stats?.cameraFastPath?.fallbackRendered),
+            missReason: String(stats?.cameraFastPath?.missReason || ""),
+          };
+        }
 
         const target = engine.getSnapshot().board.items.find((item) => item.id === "stress-text-119");
         const node = document.querySelector('.canvas2d-rich-item[data-id="stress-text-119"]');
@@ -210,12 +250,50 @@ async function main() {
           current.activeFrozenCount > 0,
         1500
       );
+      const recoveredPerformance = await waitForPerformanceState(
+        (current) =>
+          current.phase === "steady" &&
+          !current.prewarm.paused &&
+          current.prewarm.queued === 0 &&
+          !current.prewarm.scheduled,
+        3000
+      );
+      unsubscribeStore();
+      const firstBurstSessionId = engine.getCanvasPerformanceLifecycleSnapshot().sessionId;
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 720,
+        clientY: 460,
+        deltaX: 4,
+        deltaY: 1,
+      }));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const firstBurst = engine.getCanvasPerformanceLifecycleSnapshot();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 720,
+        clientY: 460,
+        deltaX: -2,
+        deltaY: 1,
+      }));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const repeatedBurst = engine.getCanvasPerformanceLifecycleSnapshot();
+      const repeatedBurstRecovery = await waitForPerformanceState(
+        (current) => current.phase === "steady" && !current.prewarm.paused,
+        3000
+      );
+      const repeatedPresentationRecovery = await waitForPresentationState(
+        (current) => current.phase === "steady" && current.scenePhase === "steady",
+        3000
+      );
       const recoveredSnapshot = engine.getSnapshot();
       const recoveredGeometry = Object.fromEntries(
         recoveredSnapshot.board.items.map((item) => [item.id, [item.x, item.y, item.width, item.height]])
       );
       const overlayNodes = Array.from(document.querySelectorAll(".canvas2d-rich-item[data-id]"));
-      unsubscribeStore();
       const countLineBands = (node) => {
         if (!node) return 0;
         const rows = [];
@@ -230,7 +308,17 @@ async function main() {
       };
       return {
         baseline,
+        performanceBaseline,
+        compositorBaseline,
         recovery,
+        recoveredPerformance,
+        firstWheelFrame,
+        prewarmPausedFrames,
+        firstBurstSessionId,
+        firstBurst,
+        repeatedBurst,
+        repeatedBurstRecovery,
+        repeatedPresentationRecovery,
         frameDurations,
         rafIntervals,
         recoveryRafIntervals,
@@ -270,6 +358,9 @@ async function main() {
       tileCacheBudgetBytes: Math.max(...result.tileCacheBudgets),
       maxSnapshotCloneCount: result.maxSnapshotCloneCount,
       cameraFastPathFrames: result.cameraFastPathFrames,
+      firstWheelInputToRafMs: Number(result.firstWheelFrame.inputToRafMs.toFixed(2)),
+      firstWheelFrameDurationMs: Number(result.firstWheelFrame.frameDurationMs.toFixed(2)),
+      prewarmPausedFrames: result.prewarmPausedFrames,
       storeEmissionCount: result.storeEmissionCount,
       activeStoreEmissionCount: result.activeStoreEmissionCount,
       activeFormalViewUpdateCount: result.activeFormalViewUpdateCount,
@@ -292,6 +383,26 @@ async function main() {
       summary
     );
     assert(summary.maxSnapshotCloneCount === 0, "frozen detail started a main-thread snapshot capture", summary);
+    assert(result.performanceBaseline.converged, "performance runtime did not establish a steady baseline", result.performanceBaseline);
+    assert(
+      result.compositorBaseline.willChange.includes("transform") &&
+        result.compositorBaseline.inlineWillChange.includes("transform") &&
+        result.compositorBaseline.transform.startsWith("matrix("),
+      "scene root was not compositor-ready before first input",
+      result.compositorBaseline
+    );
+    assert(summary.firstWheelInputToRafMs <= 60, "first wheel input stalled before presentation", summary);
+    assert(summary.firstWheelFrameDurationMs <= 40, "first wheel frame exceeded the render budget", summary);
+    assert(
+      result.firstWheelFrame.phase === "active" &&
+        result.firstWheelFrame.prewarmPaused &&
+        result.firstWheelFrame.fastPathCandidate &&
+        (result.firstWheelFrame.retainedPresented !== result.firstWheelFrame.fallbackRendered) &&
+        (result.firstWheelFrame.retainedPresented || Boolean(result.firstWheelFrame.missReason)),
+      "first wheel frame neither presented retained pixels nor reported an honest fallback",
+      result.firstWheelFrame
+    );
+    assert(summary.prewarmPausedFrames === 36, "continuous input allowed background prewarm work", summary);
     assert(summary.cameraFastPathFrames >= 30, "camera-only frames did not consistently use the fast path", summary);
     assert(summary.activeFormalViewUpdateCount === 0, "camera interaction changed the formal view on the hot path", summary);
     assert(summary.formalViewUpdateCount === 1, "camera interaction committed the formal view more than once", summary);
@@ -302,6 +413,24 @@ async function main() {
       summary
     );
     assert(result.recovery.converged, "frozen detail did not recover within the presentation deadline", result.recovery);
+    assert(result.recoveredPerformance.converged, "performance runtime did not resume prewarm after recovery", result.recoveredPerformance);
+    assert(
+      result.firstBurst.phase === "active" &&
+        result.repeatedBurst.phase === "active" &&
+        result.firstBurst.sessionId === result.repeatedBurst.sessionId &&
+        result.firstBurst.sessionId > result.firstBurstSessionId &&
+        result.repeatedBurst.prewarm.paused &&
+        result.repeatedBurstRecovery.converged &&
+        result.repeatedPresentationRecovery.converged,
+      "rapid repeated input did not preserve one active session and recover cleanly",
+      {
+        firstBurstSessionId: result.firstBurstSessionId,
+        firstBurst: result.firstBurst,
+        repeatedBurst: result.repeatedBurst,
+        repeatedBurstRecovery: result.repeatedBurstRecovery,
+        repeatedPresentationRecovery: result.repeatedPresentationRecovery,
+      }
+    );
     assert(summary.frozenDetailCount > 0, "frozen detail did not recover after interaction", result.recovery);
     assert(result.sampleLineBands >= 2, "recovered text collapsed into a single line", { summary, sampleLineBands: result.sampleLineBands });
     assert(JSON.stringify(result.initialGeometry) === JSON.stringify(result.recoveredGeometry), "camera interaction changed model geometry", summary);

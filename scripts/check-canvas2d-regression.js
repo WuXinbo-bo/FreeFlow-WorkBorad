@@ -823,9 +823,17 @@ async function runPanRealtimeCheck(browser) {
       document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats || null
     );
     await session.page.mouse.up({ button: "middle" });
-    await session.page.waitForTimeout(80);
+    await session.page.waitForFunction(
+      ({ expectedOffsetX, expectedOffsetY }) => {
+        const view = window.__canvas2dEngine?.getSnapshot?.()?.board?.view;
+        const runtime = window.__canvas2dEngine?.getCanvasPerformanceLifecycleSnapshot?.();
+        return view?.offsetX === expectedOffsetX && view?.offsetY === expectedOffsetY && runtime?.phase === "steady";
+      },
+      { expectedOffsetX: deltaX, expectedOffsetY: deltaY }
+    );
     const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
-    const result = { midStats, afterStats, minimapBefore, minimapMid };
+    const committedView = await session.page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view);
+    const result = { midStats, afterStats, committedView, minimapBefore, minimapMid };
     assert(session.getErrors().length === 0, "pan check produced page errors", session.getErrors());
     assert(result.midStats?.renderReason === "pointer-pan-move", "pan move did not trigger view render", result);
     assert(result.midStats?.invalidation?.cameraDirty === true, "pan move did not use camera invalidation", result);
@@ -842,7 +850,13 @@ async function runPanRealtimeCheck(browser) {
       "minimap viewport frame did not follow pan",
       result
     );
-    assert(result.afterStats?.renderReason === "pointer-pan-commit", "pan commit did not flush view state", result);
+    assert(
+      result.committedView?.offsetX === deltaX &&
+        result.committedView?.offsetY === deltaY &&
+        result.afterStats?.performanceRuntime?.phase === "steady",
+      "pan commit did not flush and recover the view state",
+      result
+    );
     return result;
   } finally {
     await session.page.close();
@@ -1247,7 +1261,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
     assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
-    assert(result.recovered.sceneWillChange === "auto", "scene transform promotion was not released after recovery", result);
+    assert(result.recovered.sceneWillChange === "transform", "scene root lost compositor readiness after recovery", result);
     assert(
       result.recovered.overlayHtml.every((html) => Boolean(String(html || "").trim())),
       "DOM overlay content did not recover after viewport interaction",
