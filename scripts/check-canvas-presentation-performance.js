@@ -114,6 +114,21 @@ async function main() {
         (current) => current.phase === "steady" && current.plannedFrozenCount > 0 && current.activeFrozenCount > 0,
         3000
       );
+      let storeEmissionCount = 0;
+      let formalViewUpdateCount = 0;
+      let lastFormalViewSignature = JSON.stringify(engine.getSnapshot().board.view);
+      const unsubscribeStore = engine.subscribe((snapshot) => {
+        storeEmissionCount += 1;
+        const nextSignature = JSON.stringify(snapshot.board.view);
+        if (nextSignature !== lastFormalViewSignature) {
+          formalViewUpdateCount += 1;
+          lastFormalViewSignature = nextSignature;
+        }
+      });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      storeEmissionCount = 0;
+      formalViewUpdateCount = 0;
+      lastFormalViewSignature = JSON.stringify(engine.getSnapshot().board.view);
       const initialGeometry = Object.fromEntries(
         engine.getSnapshot().board.items.map((item) => [item.id, [item.x, item.y, item.width, item.height]])
       );
@@ -150,7 +165,7 @@ async function main() {
         const node = document.querySelector('.canvas2d-rich-item[data-id="stress-text-119"]');
         const nodeVisible = Boolean(node && getComputedStyle(node).visibility !== "hidden" && getComputedStyle(node).display !== "none");
         if (!nodeVisible && target) {
-          const view = engine.getSnapshot().board.view;
+          const view = canvas.__ffRenderStats?.frameContext?.camera || engine.getSnapshot().board.view;
           const dpr = canvas.width / Math.max(1, canvas.clientWidth);
           const left = Math.max(0, Math.floor((target.x * view.scale + view.offsetX) * dpr));
           const top = Math.max(0, Math.floor((target.y * view.scale + view.offsetY) * dpr));
@@ -166,6 +181,8 @@ async function main() {
           fallbackChecks.push({ index, dark });
         }
       }
+      const activeStoreEmissionCount = storeEmissionCount;
+      const activeFormalViewUpdateCount = formalViewUpdateCount;
 
       let previousRecoveryFrameTime = performance.now();
       for (let index = 0; index < 90; index += 1) {
@@ -192,6 +209,7 @@ async function main() {
         recoveredSnapshot.board.items.map((item) => [item.id, [item.x, item.y, item.width, item.height]])
       );
       const overlayNodes = Array.from(document.querySelectorAll(".canvas2d-rich-item[data-id]"));
+      unsubscribeStore();
       const countLineBands = (node) => {
         if (!node) return 0;
         const rows = [];
@@ -213,6 +231,10 @@ async function main() {
         tileCounts,
         fallbackChecks,
         maxSnapshotCloneCount,
+        storeEmissionCount,
+        activeStoreEmissionCount,
+        activeFormalViewUpdateCount,
+        formalViewUpdateCount,
         initialGeometry,
         recoveredGeometry,
         recoveredRuntimeMode: canvas.__ffRenderStats?.runtimeMode || null,
@@ -236,6 +258,10 @@ async function main() {
       recoveryRafP95Ms: Number(percentile(result.recoveryRafIntervals, 0.95).toFixed(2)),
       maxTileCount: Math.max(...result.tileCounts),
       maxSnapshotCloneCount: result.maxSnapshotCloneCount,
+      storeEmissionCount: result.storeEmissionCount,
+      activeStoreEmissionCount: result.activeStoreEmissionCount,
+      activeFormalViewUpdateCount: result.activeFormalViewUpdateCount,
+      formalViewUpdateCount: result.formalViewUpdateCount,
       minimumFallbackPixels: Math.min(...result.fallbackChecks.map((entry) => entry.dark)),
       visibleOverlayCount: result.visibleOverlayCount,
       frozenDetailCount: result.frozenDetailCount,
@@ -249,6 +275,8 @@ async function main() {
     assert(summary.recoveryRafP95Ms <= 60, "snapshot recovery stalled animation frames", summary);
     assert(summary.maxTileCount <= 32, "continuous camera interaction expanded into excessive tiles", summary);
     assert(summary.maxSnapshotCloneCount === 0, "frozen detail started a main-thread snapshot capture", summary);
+    assert(summary.activeFormalViewUpdateCount === 0, "camera interaction changed the formal view on the hot path", summary);
+    assert(summary.formalViewUpdateCount === 1, "camera interaction committed the formal view more than once", summary);
     assert(result.baseline.converged, "frozen detail did not establish a stable baseline", result.baseline);
     assert(
       result.fallbackChecks.every((entry) => entry.dark > 0),

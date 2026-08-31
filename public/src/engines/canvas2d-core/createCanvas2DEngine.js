@@ -178,6 +178,7 @@ import {
   isScenePointInsideBounds as isPointInsideMultiSelectionBounds,
 } from "./multiSelectionTransform.js";
 import { createRenderScheduler } from "./render/renderScheduler.js";
+import { createCameraInteractionRuntime } from "./runtime/cameraInteractionRuntime.js";
 import { createElementLifecycleManager } from "./runtime/elementLifecycleManager.js";
 import { createElementAdapterManager } from "./runtime/elementAdapterManager.js";
 import { createElementResourceManager } from "./runtime/elementResourceManager.js";
@@ -3353,9 +3354,10 @@ export function createCanvas2DEngine(options = {}) {
     fileImportInput: null,
     imageImportInput: null,
   };
+  let visualCameraView = null;
   const transientMinimap = createTransientMinimap({
     getItems: () => state.board.items,
-    getView: () => state.board.view,
+    getView: () => visualCameraView || state.board.view,
     getViewportSize: () => ({
       width: Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1),
       height: Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1),
@@ -3387,9 +3389,6 @@ export function createCanvas2DEngine(options = {}) {
   let temporaryPanPreviousTool = "";
   let renderScheduler = null;
   let overlayCanvasLodActive = false;
-  let pendingWheelView = null;
-  let pendingWheelReason = "";
-  let pendingWheelFrame = 0;
   let wheelCommitTimer = 0;
   let interactionRecoveryTimer = 0;
   let presentationQualityTimer = 0;
@@ -3498,6 +3497,22 @@ let tablePointerSelectionState = {
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
   const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry, mode: "active" });
+  const cameraInteractionRuntime = createCameraInteractionRuntime({
+    getView: () => visualCameraView || state.board.view,
+    presentView: (nextView, metadata) => {
+      visualCameraView = createView(nextView);
+      transientMinimap.refreshViewport();
+      ensureRenderScheduler().flushNow(
+        {
+          reason: String(metadata?.reason || "camera-interaction"),
+          cameraDirty: true,
+          viewDirty: true,
+          interactionDirty: false,
+        },
+        metadata?.timestamp
+      );
+    },
+  });
   let fileCardPreviewSurfaceHost = null;
   let fileCardPreviewSurfaceRoot = null;
   let fileCardPreviewSurfaceStyleRoot = null;
@@ -4679,7 +4694,8 @@ let tablePointerSelectionState = {
   }
 
   function resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState = null) {
-    const bounds = getSceneViewportBounds(state.board.view, viewportWidth, viewportHeight, 0);
+    const cameraView = visualCameraView || state.board.view;
+    const bounds = getSceneViewportBounds(cameraView, viewportWidth, viewportHeight, 0);
     const nowMs =
       typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
     const centerX = Number(bounds.left || 0) + Number(bounds.width || 0) / 2;
@@ -4689,7 +4705,7 @@ let tablePointerSelectionState = {
       time: nowMs,
       centerX,
       centerY,
-      scale: Number(state.board.view?.scale || 1) || 1,
+      scale: Number(cameraView?.scale || 1) || 1,
     };
     const reason = String(dirtyState?.reason || "").trim();
     const predictiveMotion =
@@ -4736,7 +4752,7 @@ let tablePointerSelectionState = {
     const sceneKey = "board-scene-cache-v3";
     const viewportWidth = Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1);
     const viewportHeight = Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1);
-    const frameView = createView(state.board.view);
+    const frameView = createView(visualCameraView || state.board.view);
     const viewportBudget = getCurrentViewportBudget();
     scenePresentationCoordinator.updateCamera(frameView);
     scenePresentationCoordinator.updateViewport({
@@ -5113,7 +5129,7 @@ let tablePointerSelectionState = {
     }, Math.ceil(waitMs));
   }
 
-  function releaseInteractionPriority(delayMs = 140) {
+  function releaseInteractionPriority(delayMs = 140, { emit = true } = {}) {
     const waitMs = Math.max(0, Number(delayMs || 140) || 140);
     const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
     scenePresentationCoordinator.settleInteraction(presentationSessionId);
@@ -5126,7 +5142,9 @@ let tablePointerSelectionState = {
       scenePresentationCoordinator.finishInteraction(presentationSessionId);
       presentationSnapshotController.setPaused(false);
       hydrationScheduler.setPaused(false);
-      store.emit();
+      if (emit) {
+        store.emit();
+      }
       scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
     }, waitMs);
   }
@@ -19087,7 +19105,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!isInteractiveMode() || (event.button !== 0 && event.button !== 1 && event.button !== 2)) {
       return;
     }
-    flushPendingWheelView({ persist: false });
+    finishPendingWheelSession({ persist: false });
     if (matchesBlockedCanvasPointerDown(event)) {
       event.preventDefault();
       clearBlockedCanvasPointerDown();
@@ -19553,9 +19571,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const deltaY = Number(event.clientY || 0) - Number(pointer.lastClientY || 0);
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
-      state.board.view = panView(state.board.view, deltaX, deltaY);
-      transientMinimap.handlePanMove();
-      scheduleRender({ reason: "pointer-pan-move", viewDirty: true, interactionDirty: false });
+      cameraInteractionRuntime.update((view) => panView(view, deltaX, deltaY), "pointer-pan-move");
       return;
     }
 
@@ -19571,9 +19587,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const deltaY = Number(event.clientY || 0) - Number(pointer.lastClientY || 0);
       pointer.lastClientX = Number(event.clientX || 0);
       pointer.lastClientY = Number(event.clientY || 0);
-      state.board.view = panView(state.board.view, deltaX, deltaY);
       transientMinimap.handlePanStart();
-      scheduleRender({ reason: "pointer-pan-start", viewDirty: true, interactionDirty: false });
+      cameraInteractionRuntime.update((view) => panView(view, deltaX, deltaY), "pointer-pan-start");
       return;
     }
 
@@ -19898,7 +19913,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     updateLastPointerPoint(scenePoint);
     refs.canvas?.releasePointerCapture?.(event.pointerId);
     state.pointer = null;
-    releaseInteractionPriority(140);
+    releaseInteractionPriority(140, { emit: pointer.type !== "pan" });
     clearAlignmentSnap("pointer-up");
     suppressNativeDrag = false;
 
@@ -19908,6 +19923,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     if (pointer.type === "pan") {
+      const cameraResult = cameraInteractionRuntime.finish();
+      if (cameraResult.changed) {
+        state.board.view = createView(cameraResult.view);
+      }
+      visualCameraView = null;
       transientMinimap.handlePanEnd();
       syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "pointer-pan-commit" });
       return;
@@ -20100,14 +20120,29 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.pointer) {
       return;
     }
+    const pointer = state.pointer;
     refs.canvas?.releasePointerCapture?.(event.pointerId);
     suppressNativeDrag = false;
-    releaseInteractionPriority(140);
+    releaseInteractionPriority(140, { emit: pointer?.type !== "pan" });
     if (state.pointer?.type === "image-crop") {
       lightImageEditor.clearTransientState();
     }
+    if (pointer?.type === "pan") {
+      const cameraResult = cameraInteractionRuntime.finish();
+      if (cameraResult.changed) {
+        state.board.view = createView(cameraResult.view);
+      }
+      visualCameraView = null;
+    }
     clearTransientState();
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({
+      persist: pointer?.type === "pan",
+      emit: true,
+      sceneChange: false,
+      viewChange: pointer?.type === "pan",
+      fullOverlayRescan: false,
+      reason: pointer?.type === "pan" ? "pointer-pan-cancel-commit" : "pointer-cancel",
+    });
   }
 
   function onPointerEnter() {
@@ -20119,7 +20154,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onPointerLeave() {
     pointerOverCanvas = false;
-    releaseInteractionPriority(140);
+    releaseInteractionPriority(140, { emit: state.pointer?.type !== "pan" });
     if (state.hoverId || state.hoverHandle) {
       state.hoverId = null;
       state.hoverHandle = null;
@@ -20169,47 +20204,27 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  function flushPendingWheelView({ persist = false } = {}) {
-    if (pendingWheelFrame) {
-      cancelAnimationFrame(pendingWheelFrame);
-      pendingWheelFrame = 0;
-    }
-    if (!pendingWheelView) {
-      return false;
-    }
-    state.board.view = pendingWheelView;
-    pendingWheelView = null;
-    const reason = pendingWheelReason || "wheel-view";
-    syncBoard({
-      persist,
-      emit: true,
-      sceneChange: false,
-      viewChange: true,
-      fullOverlayRescan: false,
-      reason,
-    });
-    return true;
-  }
-
   function finishPendingWheelSession({ persist = false } = {}) {
     if (wheelCommitTimer) {
       window.clearTimeout(wheelCommitTimer);
       wheelCommitTimer = 0;
     }
-    const reason = pendingWheelReason || "wheel-view";
-    const flushed = flushPendingWheelView({ persist });
-    if (persist && !flushed && pendingWheelReason) {
+    const result = cameraInteractionRuntime.finish();
+    if (result.active && result.changed) {
+      state.board.view = createView(result.view);
+    }
+    visualCameraView = null;
+    if (persist && result.active && result.changed) {
       syncBoard({
         persist: true,
         emit: true,
         sceneChange: false,
         viewChange: true,
         fullOverlayRescan: false,
-        reason: `${reason}-commit`,
+        reason: `${result.reason || "wheel-view"}-commit`,
       });
     }
-    pendingWheelReason = "";
-    return flushed;
+    return result.changed;
   }
 
   function onWheel(event) {
@@ -20220,8 +20235,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const zooming = Boolean(event.ctrlKey || event.metaKey);
     const reason = zooming ? "wheel-zoom" : "wheel-pan";
     activateInteractionPriority(reason);
-    releaseInteractionPriority(140);
-    const baseView = pendingWheelView || state.board.view;
+    releaseInteractionPriority(140, { emit: false });
+    const baseView = cameraInteractionRuntime.getCurrentView();
     if (zooming) {
       const focusPoint = screenToScene(
         baseView,
@@ -20229,16 +20244,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         getCanvasRect()
       );
       const zoomFactor = Math.exp(-event.deltaY * 0.0015);
-      pendingWheelView = zoomAtScenePoint(baseView, baseView.scale * zoomFactor, focusPoint);
+      cameraInteractionRuntime.update(
+        () => zoomAtScenePoint(baseView, baseView.scale * zoomFactor, focusPoint),
+        reason
+      );
     } else {
-      pendingWheelView = panView(baseView, -event.deltaX, -event.deltaY);
-    }
-    pendingWheelReason = reason;
-    if (!pendingWheelFrame) {
-      pendingWheelFrame = requestAnimationFrame(() => {
-        pendingWheelFrame = 0;
-        flushPendingWheelView({ persist: false });
-      });
+      cameraInteractionRuntime.update(() => panView(baseView, -event.deltaX, -event.deltaY), reason);
     }
     if (wheelCommitTimer) {
       window.clearTimeout(wheelCommitTimer);
@@ -24771,11 +24782,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     elementResourceManager.sync([], { sceneRevision: sceneRevision + 1 });
     renderScheduler?.dispose?.();
     renderScheduler = null;
+    cameraInteractionRuntime.cancel();
+    visualCameraView = null;
     lastViewportBudget = null;
     largeViewportProgressivePending = false;
     overlayCanvasLodActive = false;
-    pendingWheelView = null;
-    pendingWheelReason = "";
     fileCardIdHydrationQueue.clear();
     fileCardSourceHydrationQueue.clear();
     urlMetaHydrationQueue.clear();

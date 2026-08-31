@@ -23,6 +23,7 @@
     "test:canvas-lod-scale": "node scripts/check-canvas-lod-scale.js",
     "test:overlay-budget": "node scripts/check-overlay-budget.js",
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",
+    "test:camera-interaction-runtime": "node scripts/check-camera-interaction-runtime.js",
     "test:presentation-quality": "node scripts/check-presentation-quality-runtime.js",
     "test:canvas-performance-policy": "node scripts/check-canvas-performance-policy.js",
     "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",

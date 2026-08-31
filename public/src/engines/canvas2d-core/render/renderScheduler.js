@@ -42,7 +42,7 @@ export function createRenderScheduler({
     return frameId;
   }
 
-  function flushNow(patch = null) {
+  function flushNow(patch = null, timestamp = 0) {
     if (patch && typeof patch === "object") {
       dirtyManager.merge(patch);
     }
@@ -50,7 +50,7 @@ export function createRenderScheduler({
       cancelFrame(frameId);
       frameId = 0;
     }
-    return flush();
+    return flush(timestamp);
   }
 
   function dispose() {

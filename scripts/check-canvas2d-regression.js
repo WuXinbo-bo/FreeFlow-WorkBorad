@@ -906,6 +906,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       };
       const initialInteraction = readInteractionState();
       const startScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
+      const startBoardRevision = canvas.__ffRenderStats?.frameContext?.boardRevision || 0;
       const initialRichLocalLeft = Number.parseFloat(richNode.style.left);
       const initialRichLocalTop = Number.parseFloat(richNode.style.top);
       const initialMathLocalLeft = Number.parseFloat(mathNode.style.left);
@@ -939,7 +940,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         }));
       }
       const immediateScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
       const activeScale = window.__canvas2dEngine.getSnapshot().board.view.scale;
       const ctx = canvas.getContext("2d");
       const activeView = window.__canvas2dEngine.getSnapshot().board.view;
@@ -981,6 +982,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
           document.querySelector("#canvas2d-math-display")?.parentElement === contentLayer &&
           document.querySelector("#canvas2d-code-block-display")?.parentElement === contentLayer,
         view: activeView,
+        frameContext: canvas.__ffRenderStats?.frameContext || null,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         sceneContentOwnedCount: canvas.__ffRenderStats?.sceneContentOwnedCount || 0,
         sceneOverlayOwnedCount: Array.from(document.querySelectorAll(
@@ -1019,6 +1021,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
           active: node.dataset.activeRepresentation || "",
           hasSnapshot: Boolean(node.querySelector(".canvas2d-presentation-snapshot")),
         })),
+        frameContext: canvas.__ffRenderStats?.frameContext || null,
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         interaction: readInteractionState(),
       };
@@ -1028,6 +1031,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const resizePixel = Array.from(ctx.getImageData(2, 2, 1, 1).data);
       return {
         startScale,
+        startBoardRevision,
         immediateScale,
         activeScale,
         initialRichLocalLeft,
@@ -1087,7 +1091,26 @@ async function runViewportInteractionRecoveryCheck(browser) {
     });
     assert(session.getErrors().length === 0, "viewport interaction recovery produced page errors", session.getErrors());
     assert(result.immediateScale === result.startScale, "wheel events committed before the animation frame", result);
-    assert(result.activeScale !== result.startScale, "batched wheel events did not commit on the next frame", result);
+    assert(
+      result.active.frameContext?.camera?.scale !== result.startScale,
+      "batched wheel events did not present in one animation frame",
+      result
+    );
+    assert(
+      result.activeScale === result.startScale,
+      "visual wheel input leaked into the formal board snapshot before commit",
+      result
+    );
+    assert(
+      result.active.frameContext?.boardRevision === result.startBoardRevision,
+      "wheel interaction changed the document revision before commit",
+      result
+    );
+    assert(
+      result.recovered.frameContext?.boardRevision === result.startBoardRevision + 1,
+      "wheel interaction did not commit exactly one document revision",
+      result
+    );
     assert(result.active.runtimeMode?.mode === "viewport-interaction", "wheel frame did not enter viewport interaction mode", result);
     assert(
       result.active.richVisibility === "visible" && result.active.mathVisibility === "visible" && result.active.codeVisibility === "visible",
@@ -1152,10 +1175,26 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(JSON.stringify(result.active.fileBox) === JSON.stringify(result.initialFileBox), "file-card world box changed during camera interaction", result);
     assert(JSON.stringify(result.active.shapeGeometry) === JSON.stringify(result.initialShapeGeometry), "shape world geometry changed during camera interaction", result);
     assert(JSON.stringify(result.active.flowEdgeGeometry) === JSON.stringify(result.initialFlowEdgeGeometry), "flow edge world geometry changed during camera interaction", result);
-    assert(Math.abs(result.active.sceneMatrix[0] - result.active.view.scale) < 0.0001, "scene scale matrix diverged from camera", result);
-    assert(Math.abs(result.active.sceneMatrix[1] - result.active.view.scale) < 0.0001, "scene scale matrix is not uniform", result);
-    assert(Math.abs(result.active.sceneMatrix[2] - result.active.view.offsetX) < 0.01, "scene X translation diverged from camera", result);
-    assert(Math.abs(result.active.sceneMatrix[3] - result.active.view.offsetY) < 0.01, "scene Y translation diverged from camera", result);
+    assert(
+      Math.abs(result.active.sceneMatrix[0] - result.active.frameContext.camera.scale) < 0.0001,
+      "scene scale matrix diverged from visual camera",
+      result
+    );
+    assert(
+      Math.abs(result.active.sceneMatrix[1] - result.active.frameContext.camera.scale) < 0.0001,
+      "scene scale matrix is not uniform",
+      result
+    );
+    assert(
+      Math.abs(result.active.sceneMatrix[2] - result.active.frameContext.camera.offsetX) < 0.01,
+      "scene X translation diverged from visual camera",
+      result
+    );
+    assert(
+      Math.abs(result.active.sceneMatrix[3] - result.active.frameContext.camera.offsetY) < 0.01,
+      "scene Y translation diverged from visual camera",
+      result
+    );
     assert(["active", "settling"].includes(result.active.scenePhase), "scene presentation did not enter interaction phase", result);
     assert(result.active.sceneWillChange === "transform", "scene transform was not promoted during viewport interaction", result);
     assert(
