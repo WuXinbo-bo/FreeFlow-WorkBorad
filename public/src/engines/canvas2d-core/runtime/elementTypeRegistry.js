@@ -22,6 +22,14 @@ function assertDefinition(definition = {}) {
   });
 }
 
+function freezeUxDefinition(ux = {}) {
+  return Object.freeze({
+    ...ux,
+    commands: Object.freeze([...(Array.isArray(ux.commands) ? ux.commands : [])]),
+    acceptance: Object.freeze([...(Array.isArray(ux.acceptance) ? ux.acceptance : [])]),
+  });
+}
+
 export function createElementTypeRegistry({ fallbackType = "text" } = {}) {
   const definitions = new Map();
   const aliases = new Map();
@@ -48,6 +56,7 @@ export function createElementTypeRegistry({ fallbackType = "text" } = {}) {
       aliases: normalizedAliases,
       capabilities: Object.freeze({ ...(definition.capabilities || {}) }),
       lifecycle: Object.freeze({ ...(definition.lifecycle || {}) }),
+      ux: freezeUxDefinition(definition.ux || {}),
     });
     if (replace) {
       Array.from(aliases.entries()).forEach(([alias, owner]) => {
@@ -78,6 +87,7 @@ export function createElementTypeRegistry({ fallbackType = "text" } = {}) {
         aliases: patch.aliases || current.aliases,
         capabilities: { ...current.capabilities, ...(patch.capabilities || {}) },
         lifecycle: { ...current.lifecycle, ...(patch.lifecycle || {}) },
+        ux: { ...current.ux, ...(patch.ux || {}) },
       },
       { replace: true }
     );

@@ -4,28 +4,28 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.subscribe?.(listener) || (() => {});
     },
     setTool(tool) {
-      engine?.setTool?.(tool);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("tool.set", tool) : engine?.setTool?.(tool);
     },
     undo() {
-      engine?.undo?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.undo") : engine?.undo?.();
     },
     redo() {
-      engine?.redo?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.redo") : engine?.redo?.();
     },
     zoomIn() {
-      engine?.zoomIn?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("view.zoom-in") : engine?.zoomIn?.();
     },
     zoomOut() {
-      engine?.zoomOut?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("view.zoom-out") : engine?.zoomOut?.();
     },
     resetView() {
-      engine?.resetView?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("view.reset") : engine?.resetView?.();
     },
     focusOnBounds(bounds, options) {
       return engine?.focusOnBounds?.(bounds, options);
     },
     zoomToFit() {
-      engine?.zoomToFit?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("view.fit") : engine?.zoomToFit?.();
     },
     startCanvasCapture() {
       return engine?.startCanvasCapture?.();
@@ -236,6 +236,24 @@ export function createCanvas2DReactBridge(engine) {
     },
     toggleLocalFileAccess() {
       engine?.toggleLocalFileAccess?.();
+    },
+    runCommand(name, ...args) {
+      return engine?.runCommand?.(name, ...args);
+    },
+    listCommands(context) {
+      return engine?.listCommands?.(context) || [];
+    },
+    getCommandState(name, context) {
+      return engine?.getCommandState?.(name, context) || null;
+    },
+    getCanvasUiRuntimeSnapshot(context) {
+      return engine?.getCanvasUiRuntimeSnapshot?.(context) || null;
+    },
+    getElementUxSnapshot() {
+      return engine?.getElementUxSnapshot?.() || [];
+    },
+    getInputCapabilities() {
+      return engine?.getInputCapabilities?.() || null;
     },
   };
 }

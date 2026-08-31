@@ -172,6 +172,7 @@ import {
   timeAssetTask,
 } from "./perf/canvasRuntimeStats.js";
 import { createTransientMinimap } from "./ui/createTransientMinimap.js";
+import { createCanvasUiRuntime } from "./uiRuntime/canvasUiRuntime.js";
 import {
   computeMultiSelectionResizedBounds,
   getHandleCursorKey,
@@ -3182,7 +3183,7 @@ export function createCanvas2DEngine(options = {}) {
   ];
   const pasteHandlers = [];
   const dragHandlers = [];
-  const commandHandlers = new Map();
+  const canvasUiRuntime = createCanvasUiRuntime({ elementRegistry: canvasElementRegistry });
   const renderer = createRenderer({ customRenderers: elementRenderers });
   const presentationSnapshotController = createPresentationSnapshotController();
   const sceneContentRenderer = createSceneContentRenderer({
@@ -25954,20 +25955,79 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!key || typeof handler !== "function") {
       return () => {};
     }
-    commandHandlers.set(key, handler);
-    return () => {
-      commandHandlers.delete(key);
-    };
+    return canvasUiRuntime.commands.register(
+      { id: key, label: key, execute: (_context, ...args) => handler(...args) },
+      null,
+      { replace: true }
+    );
   }
 
   function runCommand(name, ...args) {
-    const key = String(name || "").trim();
-    const handler = commandHandlers.get(key);
-    if (typeof handler === "function") {
-      return handler(...args);
-    }
-    return null;
+    return canvasUiRuntime.commands.run(name, getCanvasCommandContext(), ...args);
   }
+
+  function getCanvasCommandContext(extra = {}) {
+    const selectedItems = getSelectedItemsFast();
+    return {
+      engine: api,
+      mode: state.mode,
+      tool: state.tool,
+      editingId: state.editingId,
+      editingType: state.editingType,
+      selectedItems,
+      selectedIds: selectedItems.map((item) => item.id),
+      selectedTypes: Array.from(new Set(selectedItems.map((item) => item.type))),
+      selectedCount: selectedItems.length,
+      canUndo: state.history.undo.length > 0,
+      canRedo: state.history.redo.length > 0,
+      anchorPoint: state.lastPointerScenePoint || getCenterScenePoint(),
+      ...extra,
+    };
+  }
+
+  function registerBuiltinCanvasCommands() {
+    const register = (definition, execute) => canvasUiRuntime.commands.register(
+      { ...definition, execute },
+      null,
+      { replace: true }
+    );
+    const hasSelection = (context) => context.selectedCount > 0;
+    const hasMultipleSelection = (context) => context.selectedCount > 1;
+    register({ id: "canvas.undo", label: "撤销", category: "history", shortcuts: ["Ctrl+Z"], when: (context) => context.canUndo }, () => undo());
+    register({ id: "canvas.redo", label: "重做", category: "history", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"], when: (context) => context.canRedo }, () => redo());
+    register({ id: "canvas.save", label: "保存", category: "file", shortcuts: ["Ctrl+S"] }, () => saveBoard());
+    register({ id: "view.zoom-in", label: "放大", category: "view" }, () => zoomIn());
+    register({ id: "view.zoom-out", label: "缩小", category: "view" }, () => zoomOut());
+    register({ id: "view.reset", label: "重置视图", category: "view" }, () => resetView());
+    register({ id: "view.fit", label: "适配内容", category: "view" }, () => zoomToFit());
+    register({ id: "tool.set", label: "切换工具", category: "tool" }, (_context, tool) => setTool(tool));
+    register({ id: "selection.copy", label: "复制", category: "selection", shortcuts: ["Ctrl+C"], when: hasSelection }, () => copySelection());
+    register({ id: "selection.cut", label: "剪切", category: "selection", shortcuts: ["Ctrl+X"], when: hasSelection }, () => cutSelection());
+    register({ id: "selection.paste", label: "粘贴", category: "selection", shortcuts: ["Ctrl+V"] }, (context, anchorPoint) => pasteFromSystemClipboard(anchorPoint || context.anchorPoint));
+    register({ id: "selection.delete", label: "删除", category: "selection", shortcuts: ["Delete", "Backspace"], destructive: true, when: hasSelection }, () => removeSelected());
+    register({ id: "selection.toggle-lock", label: "锁定/解锁", category: "selection", shortcuts: ["Ctrl+L"], when: hasSelection }, () => toggleLockOnSelection());
+    register({ id: "selection.group", label: "组合", category: "arrange", when: hasMultipleSelection }, () => groupSelection());
+    register({ id: "selection.ungroup", label: "取消组合", category: "arrange", when: hasSelection }, () => ungroupSelection());
+    register({ id: "selection.group-toggle", label: "组合/取消组合", category: "arrange", when: hasSelection }, (context) => context.selectedItems.some((item) => item.groupId) ? ungroupSelection() : groupSelection());
+    ["left", "right", "top", "bottom", "center", "middle"].forEach((direction) => {
+      register({ id: `selection.align-${direction}`, label: `对齐 ${direction}`, category: "arrange", when: hasMultipleSelection }, () => alignSelection(direction));
+    });
+    register({ id: "selection.distribute-horizontal", label: "水平等距", category: "arrange", when: hasMultipleSelection }, () => distributeSelection("horizontal"));
+    register({ id: "selection.distribute-vertical", label: "垂直等距", category: "arrange", when: hasMultipleSelection }, () => distributeSelection("vertical"));
+    register({ id: "selection.layer-front", label: "置于顶层", category: "arrange", when: hasSelection }, () => moveSelectionToFront());
+    register({ id: "selection.layer-back", label: "置于底层", category: "arrange", when: hasSelection }, () => moveSelectionToBack());
+    register({ id: "selection.layer-up", label: "上移一层", category: "arrange", when: hasSelection }, () => moveSelectionByStep("up"));
+    register({ id: "selection.layer-down", label: "下移一层", category: "arrange", when: hasSelection }, () => moveSelectionByStep("down"));
+    register({ id: "element.edit", label: "编辑", category: "element", when: (context) => context.selectedCount === 1 }, (context) => beginElementEdit(context.selectedItems[0], { explicit: true }));
+    register({ id: "file.preview", label: "预览文件", category: "file-card", elementTypes: ["fileCard"], when: (context) => context.selectedCount === 1 && context.selectedTypes[0] === "fileCard" }, (context) => openFileCardPreview(context.selectedItems[0]));
+    register({ id: "mind.child", label: "添加子节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindChildNode(nodeId));
+    register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindSiblingNode(nodeId));
+    register({ id: "mind.promote", label: "提升节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => promoteMindNode(nodeId));
+    register({ id: "mind.demote", label: "降低节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => demoteMindNode(nodeId));
+    register({ id: "mind.collapse", label: "折叠/展开节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => toggleMindNodeCollapsed(nodeId));
+  }
+
+  registerBuiltinCanvasCommands();
 
   const api = {
     mount,
@@ -26110,6 +26170,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     registerDragHandler,
     registerCommand,
     runCommand,
+    listCommands(context = {}) {
+      return canvasUiRuntime.commands.list(getCanvasCommandContext(context));
+    },
+    getCommandState(name, context = {}) {
+      const commandContext = getCanvasCommandContext(context);
+      const command = canvasUiRuntime.commands.resolve(name);
+      return command
+        ? { id: command.id, enabled: canvasUiRuntime.commands.canRun(name, commandContext) }
+        : null;
+    },
+    getCanvasUiRuntimeSnapshot(context = {}) {
+      return canvasUiRuntime.getSnapshot(getCanvasCommandContext(context));
+    },
+    getElementUxSnapshot: canvasUiRuntime.getElementUxSnapshot,
+    getInputCapabilities: canvasUiRuntime.getInputCapabilities,
     getSnapshotData() {
       return clone(state.board);
     },

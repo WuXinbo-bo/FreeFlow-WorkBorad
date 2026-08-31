@@ -26,6 +26,7 @@ const CHECKS = [
   "scripts/check-compact-presentation-runtime.js",
   "scripts/check-element-runtime-architecture.js",
   "scripts/check-builtin-element-registry.js",
+  "scripts/check-canvas-ui-runtime.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
 ];

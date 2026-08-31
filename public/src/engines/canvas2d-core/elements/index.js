@@ -21,6 +21,7 @@ import { MATH_MIN_HEIGHT, MATH_MIN_WIDTH } from "./math.js";
 import { buildTextElementFromMathElement } from "./mathText.js";
 import { normalizeCanvasNavigator } from "../canvasNavigator.js";
 import { createElementTypeRegistry } from "../runtime/elementTypeRegistry.js";
+import { getBuiltinElementUx } from "../uiRuntime/builtinElementUx.js";
 
 function getRectBounds(element = {}) {
   const left = Number(element.x || 0);
@@ -212,6 +213,7 @@ function createDefinition(type, options = {}) {
     translate: options.translate || translateRectElement,
     resize: options.resize || resizeRectElement,
     getPresentationCost: options.getPresentationCost,
+    ux: options.ux || getBuiltinElementUx(type),
     capabilities: {
       render: "canvas",
       lod: "full",
