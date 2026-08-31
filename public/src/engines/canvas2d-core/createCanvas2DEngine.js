@@ -3355,6 +3355,8 @@ export function createCanvas2DEngine(options = {}) {
     imageImportInput: null,
   };
   let visualCameraView = null;
+  let cameraFrameCache = null;
+  let cachedOverlayOwnedIds = new Set();
   const transientMinimap = createTransientMinimap({
     getItems: () => state.board.items,
     getView: () => visualCameraView || state.board.view,
@@ -4744,11 +4746,32 @@ let tablePointerSelectionState = {
     };
   }
 
+  function boundsContain(outerBounds, innerBounds) {
+    return Boolean(
+      outerBounds &&
+      innerBounds &&
+      Number(innerBounds.left) >= Number(outerBounds.left) &&
+      Number(innerBounds.top) >= Number(outerBounds.top) &&
+      Number(innerBounds.right) <= Number(outerBounds.right) &&
+      Number(innerBounds.bottom) <= Number(outerBounds.bottom)
+    );
+  }
+
+  function createHeldQualitySnapshot(quality, interaction) {
+    return Object.freeze({
+      ...(quality || {}),
+      sessionId: Math.max(0, Number(interaction?.sessionId) || 0),
+      phase: String(interaction?.phase || "active"),
+      candidatePlan: null,
+      pendingTransitions: 0,
+      nextEvaluationInMs: 0,
+    });
+  }
+
   function collectRenderFrameInput({ dirtyState = null, layerState = null, frameId = 0, timestamp = 0 } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
-    const sceneIndex = getSceneIndexRuntime();
     const sceneKey = "board-scene-cache-v3";
     const viewportWidth = Math.max(1, Number(refs.canvas?.clientWidth || refs.canvas?.width || 0) || 1);
     const viewportHeight = Math.max(1, Number(refs.canvas?.clientHeight || refs.canvas?.height || 0) || 1);
@@ -4761,54 +4784,95 @@ let tablePointerSelectionState = {
       pixelRatio: viewportBudget.effectiveDpr,
     });
     const presentation = scenePresentationCoordinator.getSnapshot();
-    const visibleScene = queryVisibleSceneItems(
-      sceneIndex,
-      frameView,
-      viewportWidth,
-      viewportHeight,
-      { marginPx: 220 }
-    );
-    const visibleIds = visibleScene.items.map((item) => String(item?.id || "")).filter(Boolean);
     const previousStats = refs.canvas?.__ffRenderStats || null;
     framePerformanceWindow.record(previousStats);
     const performanceWindow = framePerformanceWindow.getSnapshot();
     const presentationPressure = performanceWindow.pressure;
-    const qualityRevisionKey = [
-      sceneRevision,
-      canvasElementRegistry.getRevision(),
-      Math.round(frameView.scale * 1000),
-      Math.round(presentationPressure * 10),
-      visibleIds.join(","),
-      state.board.selectedIds.join(","),
-      state.hoverId || "",
-      state.editingId || "",
-    ].join("|");
     const viewportInteractionActive = isViewportInteractionActive();
-    const quality = presentationQualityRuntime.update(
-      {
-        items: visibleScene.items,
-        visibleIds,
-        selectedIds: state.board.selectedIds,
-        interactingIds: state.pointer ? state.board.selectedIds : [],
-        editingId: state.editingId,
-        hoverId: state.hoverId,
-        view: frameView,
-        pressure: presentationPressure,
-        revisionKey: qualityRevisionKey,
-        nowMs: timestamp,
-      },
-      presentation.interaction
+    const registryRevision = canvasElementRegistry.getRevision();
+    const currentViewportBounds = getSceneViewportBounds(frameView, viewportWidth, viewportHeight, 0);
+    const cameraOnlyDirty = Boolean(
+      viewportInteractionActive &&
+      dirtyState?.viewDirty &&
+      !dirtyState?.sceneDirty &&
+      !dirtyState?.surfaceDirty &&
+      !dirtyState?.overlayDirty &&
+      !dirtyState?.hitTestDirty &&
+      !dirtyState?.fullOverlayRescan
     );
-    schedulePresentationQualityReevaluation(
-      quality.phase === "steady" ? quality.nextEvaluationInMs : 0
+    const cameraFastPath = Boolean(
+      cameraOnlyDirty &&
+      cameraFrameCache &&
+      cameraFrameCache.sceneRevision === sceneRevision &&
+      cameraFrameCache.registryRevision === registryRevision &&
+      cameraFrameCache.viewportWidth === viewportWidth &&
+      cameraFrameCache.viewportHeight === viewportHeight &&
+      boundsContain(cameraFrameCache.visibleScene?.bounds, currentViewportBounds)
     );
+    let sceneIndex;
+    let visibleScene;
+    let quality;
+    if (cameraFastPath) {
+      sceneIndex = cameraFrameCache.sceneIndex;
+      visibleScene = cameraFrameCache.visibleScene;
+      quality = createHeldQualitySnapshot(cameraFrameCache.quality, presentation.interaction);
+      schedulePresentationQualityReevaluation(0);
+    } else {
+      sceneIndex = getSceneIndexRuntime();
+      visibleScene = queryVisibleSceneItems(
+        sceneIndex,
+        frameView,
+        viewportWidth,
+        viewportHeight,
+        { marginPx: 640 }
+      );
+      const visibleIds = visibleScene.items.map((item) => String(item?.id || "")).filter(Boolean);
+      const qualityRevisionKey = [
+        sceneRevision,
+        registryRevision,
+        Math.round(frameView.scale * 1000),
+        Math.round(presentationPressure * 10),
+        visibleIds.join(","),
+        state.board.selectedIds.join(","),
+        state.hoverId || "",
+        state.editingId || "",
+      ].join("|");
+      quality = presentationQualityRuntime.update(
+        {
+          items: visibleScene.items,
+          visibleIds,
+          selectedIds: state.board.selectedIds,
+          interactingIds: state.pointer ? state.board.selectedIds : [],
+          editingId: state.editingId,
+          hoverId: state.hoverId,
+          view: frameView,
+          pressure: presentationPressure,
+          revisionKey: qualityRevisionKey,
+          nowMs: timestamp,
+        },
+        presentation.interaction
+      );
+      schedulePresentationQualityReevaluation(
+        quality.phase === "steady" ? quality.nextEvaluationInMs : 0
+      );
+      visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
+      cameraFrameCache = {
+        sceneIndex,
+        visibleScene,
+        quality,
+        sceneRevision,
+        registryRevision,
+        viewportWidth,
+        viewportHeight,
+      };
+    }
     const frameContext = createFrameContext({
       frameId,
       timestamp,
       view: frameView,
       sceneRevision,
       boardRevision: state.boardRevision,
-      registryRevision: canvasElementRegistry.getRevision(),
+      registryRevision,
       pixelRatio: viewportBudget.effectiveDpr,
       runtimeMode: viewportInteractionActive ? "viewport-interaction" : state.editingId ? "editing" : "steady",
       presentation,
@@ -4816,7 +4880,6 @@ let tablePointerSelectionState = {
       performance: performanceWindow,
     });
     const viewportPrediction = resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState);
-    visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
     return {
       sceneIndex,
       sceneKey,
@@ -4825,6 +4888,7 @@ let tablePointerSelectionState = {
       dirtyState,
       layerState,
       frameContext,
+      cameraFastPath,
     };
   }
 
@@ -4925,7 +4989,16 @@ let tablePointerSelectionState = {
     };
   }
 
-  function performRenderFrame({ sceneIndex, sceneKey, visibleScene, viewportPrediction = null, dirtyState = null, layerState = null, frameContext = null } = {}) {
+  function performRenderFrame({
+    sceneIndex,
+    sceneKey,
+    visibleScene,
+    viewportPrediction = null,
+    dirtyState = null,
+    layerState = null,
+    frameContext = null,
+    cameraFastPath = false,
+  } = {}) {
     if (!refs.canvas || !refs.ctx) {
       return null;
     }
@@ -4940,45 +5013,55 @@ let tablePointerSelectionState = {
     const canvasLodActive = presentationFrozen ? overlayCanvasLodActive : updateOverlayCanvasLodState(frameView);
     const viewportInteractionActive = isViewportInteractionActive();
     syncScenePresentation(frameContext);
-    const sceneVectorState = sceneVectorRenderer.sync({
-      items: state.board.items,
-      visibleItems: visibleScene?.items || [],
-      frozen: presentationFrozen,
-      selectedIds: state.board.selectedIds,
-      hoverId: state.hoverId,
-      hoverHandle: state.hoverHandle,
-      view: frameView,
-      flowDraft,
-      canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
-    });
-    const sceneContentOwnedIds = sceneContentRenderer.sync({
-      items: visibleScene?.items || [],
-      frozen: presentationFrozen,
-      allowLocalFileAccess: getAllowLocalFileAccess(),
-      editingId: state.editingId,
-      editingType: state.editingType,
-      view: frameView,
-      canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
-    });
+    const sceneVectorState = cameraFastPath
+      ? {
+          ownedIds: sceneVectorRenderer.getOwnedIds(),
+          connectionCount: sceneVectorRenderer.getConnectionCount(),
+        }
+      : sceneVectorRenderer.sync({
+          items: state.board.items,
+          visibleItems: visibleScene?.items || [],
+          frozen: presentationFrozen,
+          selectedIds: state.board.selectedIds,
+          hoverId: state.hoverId,
+          hoverHandle: state.hoverHandle,
+          view: frameView,
+          flowDraft,
+          canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
+        });
+    const sceneContentOwnedIds = cameraFastPath
+      ? sceneContentRenderer.getOwnedIds()
+      : sceneContentRenderer.sync({
+          items: visibleScene?.items || [],
+          frozen: presentationFrozen,
+          allowLocalFileAccess: getAllowLocalFileAccess(),
+          editingId: state.editingId,
+          editingType: state.editingType,
+          view: frameView,
+          canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
+        });
     const previousStats = refs.canvas?.__ffRenderStats || null;
     const skipDetailOverlays = Boolean(previousStats?.progressiveRender?.pending);
     const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive);
-    overlayBudgetManager.reconcile({
-      rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
-      math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
-      code: refs.codeBlockDisplayHost?.querySelectorAll?.(".canvas2d-code-block-item[data-id]").length || 0,
-    });
-    overlayBudgetManager.beginFrame({
-      suspended: overlaySuspended,
-      reason: String(dirtyState?.reason || "render"),
-    });
-    if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
-      hydrationScheduler.bumpGeneration();
+    if (!cameraFastPath) {
+      overlayBudgetManager.reconcile({
+        rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
+        math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
+        code: refs.codeBlockDisplayHost?.querySelectorAll?.(".canvas2d-code-block-item[data-id]").length || 0,
+      });
+      overlayBudgetManager.beginFrame({
+        suspended: overlaySuspended,
+        reason: String(dirtyState?.reason || "render"),
+      });
+      if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
+        hydrationScheduler.bumpGeneration();
+      }
+      syncEditorLayout();
+      syncRichTextToolbar();
+      overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
+      cachedOverlayOwnedIds = collectSceneOverlayOwnedIds();
     }
-    syncEditorLayout();
-    syncRichTextToolbar();
-    overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
-    const overlayOwnedIds = collectSceneOverlayOwnedIds();
+    const overlayOwnedIds = cameraFastPath ? new Set(cachedOverlayOwnedIds) : cachedOverlayOwnedIds;
     const presentationOwnedIds = new Set([...sceneContentOwnedIds, ...overlayOwnedIds]);
     const visibleIds = (visibleScene?.items || []).map((item) => String(item?.id || "")).filter(Boolean);
     const interactingIds = viewportInteractionActive
@@ -4986,18 +5069,20 @@ let tablePointerSelectionState = {
       : state.pointer && state.board.selectedIds.length
         ? state.board.selectedIds
         : [];
-    elementLifecycleManager.reconcile({
-      items: state.board.items,
-      visibleIds,
-      editingId: state.editingId,
-      interactingIds,
-      frameContext,
-      sceneRevision: frameContext?.sceneRevision || sceneRevision,
-    });
-    elementResourceManager.sync(state.board.items, {
-      sceneRevision: frameContext?.sceneRevision || sceneRevision,
-      frameContext,
-    });
+    if (!cameraFastPath) {
+      elementLifecycleManager.reconcile({
+        items: state.board.items,
+        visibleIds,
+        editingId: state.editingId,
+        interactingIds,
+        frameContext,
+        sceneRevision: frameContext?.sceneRevision || sceneRevision,
+      });
+      elementResourceManager.sync(state.board.items, {
+        sceneRevision: frameContext?.sceneRevision || sceneRevision,
+        frameContext,
+      });
+    }
     renderer.render({
       ctx: refs.ctx,
       canvas: refs.canvas,
@@ -5044,6 +5129,15 @@ let tablePointerSelectionState = {
       sceneVectorConnectionCount: sceneVectorState.connectionCount,
     });
     const stats = refs.canvas?.__ffRenderStats || null;
+    if (stats) {
+      stats.cameraFastPath = Object.freeze({
+        active: Boolean(cameraFastPath),
+        visibleSceneReused: Boolean(cameraFastPath),
+        presentationPlanReused: Boolean(cameraFastPath),
+        sceneDomSyncSkipped: Boolean(cameraFastPath),
+        lifecycleSyncSkipped: Boolean(cameraFastPath),
+      });
+    }
     if (stats?.progressiveRender?.pending) {
       if (!largeViewportProgressivePending) {
         largeViewportProgressivePending = true;
@@ -5059,11 +5153,13 @@ let tablePointerSelectionState = {
       largeViewportProgressivePending = false;
     }
     // File-card Word previews are rendered by the Canvas2D React UI from state.
-    syncCodeBlockToolbar();
-    syncImageToolbar();
-    syncMindNodeChrome();
-    syncCanvasCursor();
-    elementLifecycleManager.finishSettling(frameContext);
+    if (!cameraFastPath) {
+      syncCodeBlockToolbar();
+      syncImageToolbar();
+      syncMindNodeChrome();
+      syncCanvasCursor();
+      elementLifecycleManager.finishSettling(frameContext);
+    }
     return refs.canvas?.__ffRenderStats || null;
   }
 
@@ -24784,6 +24880,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     renderScheduler = null;
     cameraInteractionRuntime.cancel();
     visualCameraView = null;
+    cameraFrameCache = null;
+    cachedOverlayOwnedIds = new Set();
     lastViewportBudget = null;
     largeViewportProgressivePending = false;
     overlayCanvasLodActive = false;

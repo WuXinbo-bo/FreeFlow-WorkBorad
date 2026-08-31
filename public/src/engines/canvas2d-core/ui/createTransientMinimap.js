@@ -250,6 +250,7 @@ export function createTransientMinimap({
   let host = null;
   let shell = null;
   let canvas = null;
+  let snapshotCanvas = null;
   let label = null;
   let toggleButton = null;
   let mounted = false;
@@ -260,6 +261,19 @@ export function createTransientMinimap({
   let lastViewportBounds = null;
   let lastCanvasWidth = DEFAULT_WIDTH;
   let lastCanvasHeight = DEFAULT_HEIGHT;
+  let snapshotRenderCount = 0;
+  let viewportRenderCount = 0;
+
+  function syncDebugStats() {
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return;
+    }
+    canvas.__ffMinimapStats = Object.freeze({
+      snapshotRenderCount,
+      viewportRenderCount,
+      sceneRevision: lastSceneRevision,
+    });
+  }
 
   function applyCollapsedState() {
     if (!(shell instanceof HTMLDivElement) || !(canvas instanceof HTMLCanvasElement) || !(label instanceof HTMLDivElement) || !(toggleButton instanceof HTMLButtonElement)) {
@@ -335,12 +349,14 @@ export function createTransientMinimap({
       canvas.addEventListener("pointerdown", handleCanvasPointerDown);
       canvas.addEventListener("click", handleCanvasClick);
       shell.appendChild(canvas);
+      snapshotCanvas = createCanvas(DEFAULT_WIDTH, DEFAULT_HEIGHT);
 
       host.appendChild(shell);
     } else {
       canvas = shell.querySelector("canvas");
       label = shell.querySelector(".canvas2d-transient-minimap-label");
       toggleButton = shell.querySelector(".canvas2d-transient-minimap-toggle");
+      snapshotCanvas = createCanvas(canvas?.width || DEFAULT_WIDTH, canvas?.height || DEFAULT_HEIGHT);
     }
     return canvas instanceof HTMLCanvasElement;
   }
@@ -361,6 +377,7 @@ export function createTransientMinimap({
     canvas.style.width = `${canvasWidth}px`;
     canvas.style.height = `${canvasHeight}px`;
     setCanvasResolution(canvas, canvasWidth, canvasHeight);
+    setCanvasResolution(snapshotCanvas, canvasWidth, canvasHeight);
     applyCollapsedState();
   }
 
@@ -384,7 +401,7 @@ export function createTransientMinimap({
   }
 
   function renderSnapshotIfNeeded(force = false) {
-    if (!(canvas instanceof HTMLCanvasElement)) {
+    if (!(canvas instanceof HTMLCanvasElement) || !(snapshotCanvas instanceof HTMLCanvasElement)) {
       return;
     }
     const sceneRevision = Math.max(0, Number(getSceneRevision?.() || 0) || 0);
@@ -395,16 +412,18 @@ export function createTransientMinimap({
     lastSceneRevision = sceneRevision;
     lastBoardBounds = resolveBoardBounds(items);
     lastLayout = computeMinimapLayout(lastBoardBounds, lastCanvasWidth, lastCanvasHeight);
-    const ctx = clearCanvas(canvas);
+    const ctx = clearCanvas(snapshotCanvas);
     drawBoardSnapshot(ctx, items, lastLayout);
+    snapshotRenderCount += 1;
+    syncDebugStats();
   }
 
   function renderViewportFrame() {
-    if (!(canvas instanceof HTMLCanvasElement) || !lastLayout) {
+    if (!(canvas instanceof HTMLCanvasElement) || !(snapshotCanvas instanceof HTMLCanvasElement) || !lastLayout) {
       return;
     }
     const ctx = clearCanvas(canvas);
-    drawBoardSnapshot(ctx, Array.isArray(getItems?.()) ? getItems() : [], lastLayout);
+    ctx.drawImage(snapshotCanvas, 0, 0);
     const viewport = getViewportSize?.();
     const view = getView?.();
     lastViewportBounds = normalizeBounds(
@@ -416,6 +435,8 @@ export function createTransientMinimap({
       )
     );
     drawViewportFrame(ctx, lastViewportBounds, lastLayout);
+    viewportRenderCount += 1;
+    syncDebugStats();
   }
 
   function update(forceSnapshot = false) {
@@ -439,6 +460,8 @@ export function createTransientMinimap({
       }
       mounted = true;
       lastSceneRevision = -1;
+      snapshotRenderCount = 0;
+      viewportRenderCount = 0;
       syncShellMetrics();
       update(true);
       applyCollapsedState();
@@ -456,6 +479,7 @@ export function createTransientMinimap({
       host = null;
       shell = null;
       canvas = null;
+      snapshotCanvas = null;
       label = null;
       toggleButton = null;
     },
@@ -478,13 +502,21 @@ export function createTransientMinimap({
       if (!mounted) {
         return;
       }
-      update(false);
+      renderSnapshotIfNeeded(false);
+      renderViewportFrame();
     },
     resize() {
       if (!mounted) {
         return;
       }
       update(true);
+    },
+    getStats() {
+      return {
+        snapshotRenderCount,
+        viewportRenderCount,
+        sceneRevision: lastSceneRevision,
+      };
     },
   };
 }

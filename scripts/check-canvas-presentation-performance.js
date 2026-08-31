@@ -138,6 +138,7 @@ async function main() {
       const tileCounts = [];
       const fallbackChecks = [];
       let maxSnapshotCloneCount = 0;
+      let cameraFastPathFrames = 0;
       let previousFrameTime = performance.now();
 
       for (let index = 0; index < 36; index += 1) {
@@ -154,6 +155,7 @@ async function main() {
         rafIntervals.push(currentFrameTime - previousFrameTime);
         previousFrameTime = currentFrameTime;
         const stats = canvas.__ffRenderStats || null;
+        if (stats?.cameraFastPath?.active) cameraFastPathFrames += 1;
         frameDurations.push(Number(stats?.frameDurationMs || 0));
         tileCounts.push(Number(stats?.tileCache?.tileCount || 0));
         maxSnapshotCloneCount = Math.max(
@@ -231,6 +233,7 @@ async function main() {
         tileCounts,
         fallbackChecks,
         maxSnapshotCloneCount,
+        cameraFastPathFrames,
         storeEmissionCount,
         activeStoreEmissionCount,
         activeFormalViewUpdateCount,
@@ -258,6 +261,7 @@ async function main() {
       recoveryRafP95Ms: Number(percentile(result.recoveryRafIntervals, 0.95).toFixed(2)),
       maxTileCount: Math.max(...result.tileCounts),
       maxSnapshotCloneCount: result.maxSnapshotCloneCount,
+      cameraFastPathFrames: result.cameraFastPathFrames,
       storeEmissionCount: result.storeEmissionCount,
       activeStoreEmissionCount: result.activeStoreEmissionCount,
       activeFormalViewUpdateCount: result.activeFormalViewUpdateCount,
@@ -275,6 +279,7 @@ async function main() {
     assert(summary.recoveryRafP95Ms <= 60, "snapshot recovery stalled animation frames", summary);
     assert(summary.maxTileCount <= 32, "continuous camera interaction expanded into excessive tiles", summary);
     assert(summary.maxSnapshotCloneCount === 0, "frozen detail started a main-thread snapshot capture", summary);
+    assert(summary.cameraFastPathFrames >= 30, "camera-only frames did not consistently use the fast path", summary);
     assert(summary.activeFormalViewUpdateCount === 0, "camera interaction changed the formal view on the hot path", summary);
     assert(summary.formalViewUpdateCount === 1, "camera interaction committed the formal view more than once", summary);
     assert(result.baseline.converged, "frozen detail did not establish a stable baseline", result.baseline);

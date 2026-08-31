@@ -810,20 +810,38 @@ async function runPanRealtimeCheck(browser) {
     const centerY = rect.y + rect.height / 2;
     const deltaX = 96;
     const deltaY = 64;
+    const minimapBefore = await session.page.evaluate(() =>
+      document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats || null
+    );
 
     await session.page.mouse.move(centerX, centerY);
     await session.page.mouse.down({ button: "middle" });
     await session.page.mouse.move(centerX + deltaX, centerY + deltaY, { steps: 4 });
     await session.page.waitForTimeout(80);
     const midStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
+    const minimapMid = await session.page.evaluate(() =>
+      document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats || null
+    );
     await session.page.mouse.up({ button: "middle" });
     await session.page.waitForTimeout(80);
     const afterStats = await session.page.evaluate(() => document.querySelector("#canvas-office-canvas").__ffRenderStats || null);
-    const result = { midStats, afterStats };
+    const result = { midStats, afterStats, minimapBefore, minimapMid };
     assert(session.getErrors().length === 0, "pan check produced page errors", session.getErrors());
     assert(result.midStats?.renderReason === "pointer-pan-move", "pan move did not trigger view render", result);
     assert(result.midStats?.invalidation?.cameraDirty === true, "pan move did not use camera invalidation", result);
     assert(result.midStats?.layerReuse?.staticSceneReused === true, "scene-owned static layer redrew during pan", result);
+    assert(result.midStats?.cameraFastPath?.active === true, "pan move did not use the camera fast path", result);
+    assert(result.minimapBefore && result.minimapMid, "minimap runtime stats were unavailable", result);
+    assert(
+      result.minimapMid.snapshotRenderCount === result.minimapBefore.snapshotRenderCount,
+      "minimap redrew its static scene during pan",
+      result
+    );
+    assert(
+      result.minimapMid.viewportRenderCount > result.minimapBefore.viewportRenderCount,
+      "minimap viewport frame did not follow pan",
+      result
+    );
     assert(result.afterStats?.renderReason === "pointer-pan-commit", "pan commit did not flush view state", result);
     return result;
   } finally {
