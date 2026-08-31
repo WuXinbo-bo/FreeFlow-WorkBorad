@@ -2,6 +2,10 @@ import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
+import { createByteBudgetLru } from "./perf/byteBudgetLru.js";
+
+const DEFAULT_IMAGE_CACHE_BYTES = 192 * 1024 * 1024;
+const DEFAULT_IMAGE_CACHE_ENTRIES = 256;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -403,8 +407,21 @@ function drawExportFallbackPlaceholder(ctx, item, width, height, scale) {
   ctx.restore();
 }
 
-export function createImageRenderer() {
-  const imageCache = new Map();
+export function createImageRenderer({
+  maxCacheBytes = DEFAULT_IMAGE_CACHE_BYTES,
+  maxCacheEntries = DEFAULT_IMAGE_CACHE_ENTRIES,
+} = {}) {
+  const imageCache = createByteBudgetLru({
+    maxEntries: maxCacheEntries,
+    maxBytes: maxCacheBytes,
+    estimateSize: (entry) => Number(entry?.byteSize || 0) || 0,
+    onEvict: (entry) => {
+      if (!entry?.image) return;
+      entry.image.onload = null;
+      entry.image.onerror = null;
+      entry.image.src = "";
+    },
+  });
   let resourceGeneration = 0;
 
   function createImageEntry(cacheKey, source, itemId, helpers) {
@@ -414,11 +431,14 @@ export function createImageRenderer() {
       source,
       generation: ++resourceGeneration,
       status: "loading",
+      byteSize: 0,
     };
     image.crossOrigin = "anonymous";
     image.onload = () => {
       if (imageCache.get(cacheKey) !== entry) return;
       entry.status = "ready";
+      entry.byteSize = Math.max(1, Number(image.naturalWidth || 0)) * Math.max(1, Number(image.naturalHeight || 0)) * 4;
+      imageCache.set(cacheKey, entry);
       helpers?.onImageResourceStateChange?.(itemId, "ready", entry.generation);
     };
     image.onerror = () => {
@@ -510,5 +530,6 @@ export function createImageRenderer() {
     });
   };
   renderer.disposeResources = () => imageCache.clear();
+  renderer.getResourceStats = () => imageCache.getStats();
   return renderer;
 }

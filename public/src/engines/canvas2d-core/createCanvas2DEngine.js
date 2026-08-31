@@ -138,7 +138,7 @@ import {
   takeHistorySnapshot,
   undoHistory,
 } from "./history.js";
-import { hitTestElement, hitTestHandle, invalidateHitTestSpatialIndex } from "./hitTest.js";
+import { hitTestElement, hitTestHandle } from "./hitTest.js";
 import {
   getElementScreenBounds,
   getStructuredTableSceneGrid,
@@ -4120,14 +4120,11 @@ let tablePointerSelectionState = {
   }
 
   function flushPendingSceneGraphInvalidation() {
-    if (pendingSceneIndexInvalidation) {
+    if (pendingSceneIndexInvalidation || pendingHitTestInvalidation) {
       invalidateSceneIndex(state.board.items);
-      pendingSceneIndexInvalidation = false;
     }
-    if (pendingHitTestInvalidation) {
-      invalidateHitTestSpatialIndex(state.board.items);
-      pendingHitTestInvalidation = false;
-    }
+    pendingSceneIndexInvalidation = false;
+    pendingHitTestInvalidation = false;
   }
 
   function markSceneGraphDirty({ hitTest = true } = {}) {
@@ -5136,6 +5133,10 @@ let tablePointerSelectionState = {
         presentationPlanReused: Boolean(cameraFastPath),
         sceneDomSyncSkipped: Boolean(cameraFastPath),
         lifecycleSyncSkipped: Boolean(cameraFastPath),
+      });
+      stats.resourceCaches = Object.freeze({
+        image: imageRenderer.getResourceStats?.() || null,
+        presentationSnapshot: presentationSnapshotController.getCacheStats(),
       });
     }
     if (stats?.progressiveRender?.pending) {

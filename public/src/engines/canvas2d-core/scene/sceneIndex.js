@@ -8,6 +8,8 @@ import { screenToScene } from "../camera.js";
 
 const DEFAULT_GRID_CELL_SIZE = 384;
 const CACHE_GUARD_SAMPLE_SIZE = 6;
+const DEFAULT_MAX_CELLS_PER_RECORD = 256;
+const DEFAULT_MAX_QUERY_CELLS = 4096;
 
 const indexCache = new WeakMap();
 
@@ -60,9 +62,18 @@ function getCellKey(cellX, cellY) {
   return `${cellX}:${cellY}`;
 }
 
-function addRecordToGrid(grid, recordIndex, bounds, cellSize) {
+function getCellCount(xRange, yRange) {
+  return Math.max(0, xRange.max - xRange.min + 1) * Math.max(0, yRange.max - yRange.min + 1);
+}
+
+function addRecordToGrid(grid, largeRecordIndexes, recordIndex, bounds, cellSize, maxCellsPerRecord) {
   const xRange = getCellRange(bounds.left, bounds.right, cellSize);
   const yRange = getCellRange(bounds.top, bounds.bottom, cellSize);
+  if (getCellCount(xRange, yRange) > maxCellsPerRecord) {
+    largeRecordIndexes.push(recordIndex);
+    return 0;
+  }
+  let gridEntryCount = 0;
   for (let cellX = xRange.min; cellX <= xRange.max; cellX += 1) {
     for (let cellY = yRange.min; cellY <= yRange.max; cellY += 1) {
       const key = getCellKey(cellX, cellY);
@@ -72,8 +83,10 @@ function addRecordToGrid(grid, recordIndex, bounds, cellSize) {
       } else {
         grid.set(key, [recordIndex]);
       }
+      gridEntryCount += 1;
     }
   }
+  return gridEntryCount;
 }
 
 function getGuardRefs(items) {
@@ -112,14 +125,14 @@ function getGuardSignature(items = []) {
     .join("|");
 }
 
-function isCacheGuardValid(index, items, revision = 0) {
+function isCacheGuardValid(index, items, revision = 0, checkRevision = true) {
   if (!index || !Array.isArray(items)) {
     return false;
   }
   if (index.length !== items.length) {
     return false;
   }
-  if (Number(index.revision || 0) !== Number(revision || 0)) {
+  if (checkRevision && Number(index.revision || 0) !== Number(revision || 0)) {
     return false;
   }
   const currentRefs = getGuardRefs(items);
@@ -158,6 +171,7 @@ function buildFlowEdgeRecord(item, itemIndex, itemById) {
     itemType: String(item.type || ""),
     zIndex: itemIndex,
     bounds: baseBounds,
+    baseBounds,
     queryBounds: baseBounds,
     anchors: null,
     geometry: {
@@ -186,6 +200,7 @@ function buildMindRelationshipRecord(item, itemIndex, itemById) {
     itemType: String(item.type || ""),
     zIndex: itemIndex,
     bounds: baseBounds,
+    baseBounds,
     queryBounds: baseBounds,
     anchors: null,
     geometry,
@@ -208,6 +223,7 @@ function buildLinearShapeRecord(item, itemIndex) {
     itemType: String(item.type || ""),
     zIndex: itemIndex,
     bounds: baseBounds,
+    baseBounds,
     queryBounds: baseBounds,
     anchors: null,
     geometry: {
@@ -249,6 +265,7 @@ function buildGenericRecord(item, itemIndex) {
     itemType: String(item.type || ""),
     zIndex: itemIndex,
     bounds,
+    baseBounds: bounds,
     queryBounds,
     anchors: buildAnchors(bounds),
     geometry: memoBounds ? { memoBounds } : null,
@@ -275,11 +292,17 @@ function buildRecord(item, itemIndex, itemById) {
 export function buildSceneIndex(items, options = {}) {
   const sourceItems = Array.isArray(items) ? items : [];
   const cellSize = Math.max(64, Number(options.cellSize || DEFAULT_GRID_CELL_SIZE) || DEFAULT_GRID_CELL_SIZE);
+  const maxCellsPerRecord = Math.max(
+    1,
+    Math.floor(Number(options.maxCellsPerRecord || DEFAULT_MAX_CELLS_PER_RECORD) || DEFAULT_MAX_CELLS_PER_RECORD)
+  );
   const grid = new Map();
+  const largeRecordIndexes = [];
   const records = [];
   const itemById = new Map();
   const recordById = new Map();
   const recordsByType = new Map();
+  let gridEntryCount = 0;
 
   for (let index = 0; index < sourceItems.length; index += 1) {
     const item = sourceItems[index];
@@ -302,7 +325,14 @@ export function buildSceneIndex(items, options = {}) {
     const typeBucket = recordsByType.get(record.itemType) || [];
     typeBucket.push(record);
     recordsByType.set(record.itemType, typeBucket);
-    addRecordToGrid(grid, recordIndex, record.queryBounds, cellSize);
+    gridEntryCount += addRecordToGrid(
+      grid,
+      largeRecordIndexes,
+      recordIndex,
+      record.queryBounds,
+      cellSize,
+      maxCellsPerRecord
+    );
   }
 
   return {
@@ -310,7 +340,10 @@ export function buildSceneIndex(items, options = {}) {
     length: sourceItems.length,
     revision: Number(options.revision || 0) || 0,
     cellSize,
+    maxCellsPerRecord,
     grid,
+    gridEntryCount,
+    largeRecordIndexes,
     records,
     itemById,
     recordById,
@@ -323,10 +356,11 @@ export function buildSceneIndex(items, options = {}) {
 export function resolveSceneIndex(items, options = {}) {
   const sourceItems = Array.isArray(items) ? items : [];
   const revision = Number(options.revision || 0) || 0;
+  const checkRevision = Object.prototype.hasOwnProperty.call(options, "revision");
   const forceRebuild = Boolean(options.forceRebuild);
   if (!forceRebuild) {
     const cached = indexCache.get(sourceItems);
-    if (cached && isCacheGuardValid(cached, sourceItems, revision)) {
+    if (cached && isCacheGuardValid(cached, sourceItems, revision, checkRevision)) {
       return cached;
     }
   }
@@ -354,6 +388,28 @@ export function querySceneIndex(index, bounds, options = {}) {
   const excludeIds = Array.isArray(options.excludeIds) && options.excludeIds.length ? new Set(options.excludeIds.map((entry) => String(entry || ""))) : null;
   const results = [];
 
+  function visitRecord(recordIndex) {
+    if (visited.has(recordIndex)) return;
+    visited.add(recordIndex);
+    const record = index.records[recordIndex];
+    if (!record) return;
+    if (includeTypes && !includeTypes.has(record.itemType)) return;
+    if (excludeIds && excludeIds.has(record.itemId)) return;
+    if (!intersectsBounds(record.queryBounds, queryBounds)) return;
+    results.push(record);
+  }
+
+  const maxQueryCells = Math.max(
+    1,
+    Math.floor(Number(options.maxQueryCells || DEFAULT_MAX_QUERY_CELLS) || DEFAULT_MAX_QUERY_CELLS)
+  );
+  if (getCellCount(xRange, yRange) > maxQueryCells) {
+    for (let recordIndex = 0; recordIndex < index.records.length; recordIndex += 1) {
+      visitRecord(recordIndex);
+    }
+    return results;
+  }
+
   for (let cellX = xRange.min; cellX <= xRange.max; cellX += 1) {
     for (let cellY = yRange.min; cellY <= yRange.max; cellY += 1) {
       const bucket = index.grid.get(getCellKey(cellX, cellY));
@@ -361,28 +417,12 @@ export function querySceneIndex(index, bounds, options = {}) {
         continue;
       }
       for (let bucketIndex = 0; bucketIndex < bucket.length; bucketIndex += 1) {
-        const recordIndex = bucket[bucketIndex];
-        if (visited.has(recordIndex)) {
-          continue;
-        }
-        visited.add(recordIndex);
-        const record = index.records[recordIndex];
-        if (!record) {
-          continue;
-        }
-        if (includeTypes && !includeTypes.has(record.itemType)) {
-          continue;
-        }
-        if (excludeIds && excludeIds.has(record.itemId)) {
-          continue;
-        }
-        if (!intersectsBounds(record.queryBounds, queryBounds)) {
-          continue;
-        }
-        results.push(record);
+        visitRecord(bucket[bucketIndex]);
       }
     }
   }
+
+  (Array.isArray(index.largeRecordIndexes) ? index.largeRecordIndexes : []).forEach(visitRecord);
 
   return results;
 }

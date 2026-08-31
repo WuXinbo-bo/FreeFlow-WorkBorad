@@ -15,6 +15,15 @@ async function main() {
   const { resolveTileScaleLevel, resolveTileSceneSize } = await import(
     "../public/src/engines/canvas2d-core/render/tileSceneCache.js"
   );
+  const { createByteBudgetLru } = await import(
+    "../public/src/engines/canvas2d-core/perf/byteBudgetLru.js"
+  );
+  const { buildSceneIndex, querySceneIndex, resolveSceneIndex } = await import(
+    "../public/src/engines/canvas2d-core/scene/sceneIndex.js"
+  );
+  const { invalidateHitTestSpatialIndex, queryHitTestSpatialIndex, resolveHitTestSpatialIndex } = await import(
+    "../public/src/engines/canvas2d-core/hitTestSpatialIndex.js"
+  );
 
   const window = createFramePerformanceWindow({ maxSamples: 40, minSamples: 8 });
   assert.strictEqual(window.getSnapshot().pressure, 0, "empty performance window created pressure");
@@ -57,6 +66,60 @@ async function main() {
   assert.strictEqual(resolveTileSceneSize(0.1), 10240, "low zoom did not preserve a stable tile pixel size");
   assert.strictEqual(resolveTileSceneSize(1), 1024, "1x tile scene size changed unexpectedly");
   assert.strictEqual(resolveTileSceneSize(2), 512, "high zoom tile scene size did not shrink with raster scale");
+
+  const items = [
+    { id: "small", type: "shape", shapeType: "rect", x: 0, y: 0, width: 120, height: 80 },
+    { id: "huge", type: "shape", shapeType: "rect", x: -5_000_000, y: -5_000_000, width: 10_000_000, height: 10_000_000 },
+  ];
+  const boundedIndex = buildSceneIndex(items, { revision: 7, cellSize: 320, maxCellsPerRecord: 8 });
+  assert.strictEqual(boundedIndex.largeRecordIndexes.length, 1, "huge element expanded across the spatial grid");
+  assert(boundedIndex.gridEntryCount <= 8, "spatial grid exceeded the configured per-record cell budget");
+  assert(
+    querySceneIndex(boundedIndex, { left: 4_000_000, top: 4_000_000, right: 4_000_100, bottom: 4_000_100 })
+      .some((record) => record.itemId === "huge"),
+    "overflow record was omitted from a bounded scene query"
+  );
+  assert.strictEqual(
+    querySceneIndex(boundedIndex, { left: -6_000_000, top: -6_000_000, right: 6_000_000, bottom: 6_000_000 }).length,
+    2,
+    "large query fallback omitted indexed records"
+  );
+  const sharedSceneIndex = resolveSceneIndex(items, { revision: 7 });
+  const sharedHitTestIndex = resolveHitTestSpatialIndex(items);
+  assert.strictEqual(sharedHitTestIndex, sharedSceneIndex, "scene and hit testing rebuilt separate spatial indexes");
+  assert.strictEqual(
+    queryHitTestSpatialIndex(sharedHitTestIndex, { left: 10, top: 10, right: 11, bottom: 11 }).length,
+    2,
+    "shared hit-test index did not retain overflow candidates"
+  );
+  invalidateHitTestSpatialIndex(items);
+  assert.notStrictEqual(
+    resolveSceneIndex(items, { revision: 7 }),
+    sharedSceneIndex,
+    "hit-test invalidation did not invalidate the shared scene index"
+  );
+
+  const evicted = [];
+  const byteCache = createByteBudgetLru({
+    maxEntries: 3,
+    maxBytes: 10,
+    estimateSize: (entry) => entry.bytes,
+    onEvict: (_, key, reason) => evicted.push(`${key}:${reason}`),
+  });
+  byteCache.set("a", { bytes: 4 });
+  byteCache.set("b", { bytes: 4 });
+  byteCache.set("c", { bytes: 4 });
+  assert.deepStrictEqual(byteCache.getStats(), {
+    size: 2,
+    byteSize: 8,
+    maxEntries: 3,
+    maxBytes: 10,
+    evictionCount: 1,
+  }, "byte cache did not enforce its memory budget");
+  byteCache.get("b");
+  byteCache.set("d", { bytes: 4 });
+  assert.deepStrictEqual(Array.from(byteCache.keys()), ["b", "d"], "byte cache did not preserve LRU order");
+  assert(evicted.includes("a:budget") && evicted.includes("c:budget"), "byte cache did not report budget evictions");
 
   console.log("[check-canvas-performance-policy] ok");
 }

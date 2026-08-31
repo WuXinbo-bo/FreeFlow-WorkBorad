@@ -1,9 +1,11 @@
 import { PRESENTATION_REPRESENTATIONS } from "../runtime/presentationQualityPlanner.js";
 import html2canvas from "../../../../assets/vendor/html2canvas/html2canvas.esm.min.js";
+import { createByteBudgetLru } from "../perf/byteBudgetLru.js";
 
 const DEFAULT_CACHE_LIMIT = 96;
 const DEFAULT_MAX_PIXELS = 1_500_000;
 const DEFAULT_MAX_CONCURRENT_CAPTURES = 1;
+const DEFAULT_CACHE_BYTES = 96 * 1024 * 1024;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
@@ -114,11 +116,19 @@ function scheduleIdleWork(callback) {
 export function createPresentationSnapshotController({
   capture = captureElementSnapshot,
   cacheLimit = DEFAULT_CACHE_LIMIT,
+  maxCacheBytes = DEFAULT_CACHE_BYTES,
   maxPixels = DEFAULT_MAX_PIXELS,
   maxConcurrentCaptures = DEFAULT_MAX_CONCURRENT_CAPTURES,
   scheduleWork = scheduleIdleWork,
 } = {}) {
-  const cache = new Map();
+  const cache = createByteBudgetLru({
+    maxEntries: Math.max(1, Number(cacheLimit) || DEFAULT_CACHE_LIMIT),
+    maxBytes: Math.max(1, Number(maxCacheBytes) || DEFAULT_CACHE_BYTES),
+    estimateSize: (snapshot) => Math.max(
+      Number(snapshot?.pixelWidth || 0) * Number(snapshot?.pixelHeight || 0) * 4,
+      String(snapshot?.dataUrl || "").length * 2
+    ),
+  });
   const pendingByKey = new Map();
   const nodeStates = new WeakMap();
   const captureQueue = [];
@@ -172,20 +182,12 @@ export function createPresentationSnapshotController({
   }
 
   function readCache(key) {
-    if (!key || !cache.has(key)) return null;
-    const value = cache.get(key);
-    cache.delete(key);
-    cache.set(key, value);
-    return value;
+    return key ? cache.get(key) || null : null;
   }
 
   function writeCache(key, value) {
     if (!key || !value) return;
-    cache.delete(key);
     cache.set(key, value);
-    while (cache.size > Math.max(1, Number(cacheLimit) || DEFAULT_CACHE_LIMIT)) {
-      cache.delete(cache.keys().next().value);
-    }
   }
 
   function restoreLive(node) {
@@ -413,5 +415,9 @@ export function createPresentationSnapshotController({
     });
   }
 
-  return Object.freeze({ prepare, commit, remove, clear, setPaused, getSnapshot });
+  function getCacheStats() {
+    return cache.getStats();
+  }
+
+  return Object.freeze({ prepare, commit, remove, clear, setPaused, getSnapshot, getCacheStats });
 }

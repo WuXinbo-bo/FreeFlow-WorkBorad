@@ -1,4 +1,5 @@
 import { getSceneViewportBounds, querySceneIndex } from "../scene/sceneIndex.js";
+import { createByteBudgetLru } from "../perf/byteBudgetLru.js";
 
 function createRenderCanvas(width, height) {
   if (typeof OffscreenCanvas !== "undefined") {
@@ -15,6 +16,7 @@ function createRenderCanvas(width, height) {
 
 const SCALE_LEVELS_PER_OCTAVE = 8;
 const DEFAULT_TILE_PIXEL_SIZE = 1024;
+const DEFAULT_TILE_CACHE_BYTES = 128 * 1024 * 1024;
 
 export function resolveTileScaleLevel(scale = 1, { exact = false } = {}) {
   const normalizedScale = Math.max(0.1, Number(scale || 1) || 1);
@@ -141,8 +143,32 @@ function getTileTier(tileBounds, primaryBounds, preloadBounds) {
   return "overscan";
 }
 
-export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEntries = 96 } = {}) {
-  const cache = new Map();
+function createTileDrawable(canvas) {
+  if (!canvas || typeof canvas.transferToImageBitmap !== "function") return canvas;
+  try {
+    return canvas.transferToImageBitmap();
+  } catch {
+    return canvas;
+  }
+}
+
+function disposeTileEntry(entry) {
+  if (entry?.canvas && typeof entry.canvas.close === "function") {
+    entry.canvas.close();
+  }
+}
+
+export function createTileSceneCache({
+  tileSize = DEFAULT_TILE_PIXEL_SIZE,
+  maxEntries = 96,
+  maxBytes = DEFAULT_TILE_CACHE_BYTES,
+} = {}) {
+  const cache = createByteBudgetLru({
+    maxEntries,
+    maxBytes,
+    estimateSize: (entry) => Number(entry?.byteSize || 0) || 0,
+    onEvict: disposeTileEntry,
+  });
   const lastBoundsById = new Map();
 
   function getExcludeSignature(excludeIds = []) {
@@ -151,18 +177,6 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
 
   function getTileKey(sceneKey, scaleBucket, tileX, tileY, excludeIds = []) {
     return `${sceneKey}|${scaleBucket}|${tileX}|${tileY}|${getExcludeSignature(excludeIds)}`;
-  }
-
-  function touchEntry(key, entry) {
-    cache.delete(key);
-    cache.set(key, entry);
-    while (cache.size > maxEntries) {
-      const oldestKey = cache.keys().next().value;
-      if (!oldestKey) {
-        break;
-      }
-      cache.delete(oldestKey);
-    }
   }
 
   function invalidateTilesForBounds(sceneKey, bounds) {
@@ -249,15 +263,16 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
       view: tileView,
     }) || null;
     const entry = {
-      canvas: tileCanvas,
+      canvas: createTileDrawable(tileCanvas),
       sceneKey,
       tileBounds,
       tileX,
       tileY,
       itemCount: records.length,
+      byteSize: renderWidth * renderHeight * 4,
       drawStats: drawStats && typeof drawStats === "object" ? { ...drawStats } : null,
     };
-    touchEntry(getTileKey(sceneKey, scaleKey, tileX, tileY, excludeIds), entry);
+    cache.set(getTileKey(sceneKey, scaleKey, tileX, tileY, excludeIds), entry);
     return entry;
   }
 
@@ -290,6 +305,8 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
         coldRenderedTiles: 0,
         dirtyVisibleTiles: 0,
         predictedPreloadTiles: 0,
+        cacheByteSize: cache.byteSize,
+        cacheMaxBytes: cache.getStats().maxBytes,
       };
     }
     const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
@@ -417,7 +434,6 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
       if (entry) {
         cacheHits += 1;
         reusedVisibleTiles += 1;
-        touchEntry(key, entry);
       } else {
         cacheMisses += 1;
         if (tier === "overscan" && coldRenderedTiles >= coldTileBudget) {
@@ -474,6 +490,9 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
       rasterScale,
       sceneTileSize,
       tilePixelSize: tileSize,
+      cacheByteSize: cache.byteSize,
+      cacheMaxBytes: cache.getStats().maxBytes,
+      cacheEvictionCount: cache.getStats().evictionCount,
     };
   }
 
@@ -485,6 +504,9 @@ export function createTileSceneCache({ tileSize = DEFAULT_TILE_PIXEL_SIZE, maxEn
     },
     getSize() {
       return cache.size;
+    },
+    getStats() {
+      return cache.getStats();
     },
   };
 }

@@ -136,6 +136,8 @@ async function main() {
       const rafIntervals = [];
       const recoveryRafIntervals = [];
       const tileCounts = [];
+      const tileCacheBytes = [];
+      const tileCacheBudgets = [];
       const fallbackChecks = [];
       let maxSnapshotCloneCount = 0;
       let cameraFastPathFrames = 0;
@@ -158,6 +160,8 @@ async function main() {
         if (stats?.cameraFastPath?.active) cameraFastPathFrames += 1;
         frameDurations.push(Number(stats?.frameDurationMs || 0));
         tileCounts.push(Number(stats?.tileCache?.tileCount || 0));
+        tileCacheBytes.push(Number(stats?.tileCache?.cacheByteSize || 0));
+        tileCacheBudgets.push(Number(stats?.tileCache?.cacheMaxBytes || 0));
         maxSnapshotCloneCount = Math.max(
           maxSnapshotCloneCount,
           document.querySelectorAll(".html2canvas-container").length
@@ -231,6 +235,8 @@ async function main() {
         rafIntervals,
         recoveryRafIntervals,
         tileCounts,
+        tileCacheBytes,
+        tileCacheBudgets,
         fallbackChecks,
         maxSnapshotCloneCount,
         cameraFastPathFrames,
@@ -260,6 +266,8 @@ async function main() {
       rafP95Ms: Number(percentile(result.rafIntervals, 0.95).toFixed(2)),
       recoveryRafP95Ms: Number(percentile(result.recoveryRafIntervals, 0.95).toFixed(2)),
       maxTileCount: Math.max(...result.tileCounts),
+      maxTileCacheBytes: Math.max(...result.tileCacheBytes),
+      tileCacheBudgetBytes: Math.max(...result.tileCacheBudgets),
       maxSnapshotCloneCount: result.maxSnapshotCloneCount,
       cameraFastPathFrames: result.cameraFastPathFrames,
       storeEmissionCount: result.storeEmissionCount,
@@ -278,6 +286,11 @@ async function main() {
     assert(summary.rafP95Ms <= 60, "continuous camera interaction stalled animation frames", summary);
     assert(summary.recoveryRafP95Ms <= 60, "snapshot recovery stalled animation frames", summary);
     assert(summary.maxTileCount <= 32, "continuous camera interaction expanded into excessive tiles", summary);
+    assert(
+      summary.maxTileCacheBytes <= summary.tileCacheBudgetBytes,
+      "tile cache exceeded its byte budget",
+      summary
+    );
     assert(summary.maxSnapshotCloneCount === 0, "frozen detail started a main-thread snapshot capture", summary);
     assert(summary.cameraFastPathFrames >= 30, "camera-only frames did not consistently use the fast path", summary);
     assert(summary.activeFormalViewUpdateCount === 0, "camera interaction changed the formal view on the hot path", summary);

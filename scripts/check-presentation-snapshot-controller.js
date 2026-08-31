@@ -152,6 +152,8 @@ async function main() {
   }), true, "cached snapshot was not reused");
   assert.strictEqual(node.dataset.activeRepresentation, "exact-snapshot", "cached snapshot was not committed synchronously");
   assert.strictEqual(controller.getSnapshot().cacheSize, 2, "snapshot cache limit was not enforced");
+  assert(controller.getCacheStats().byteSize > 0, "snapshot cache did not account for retained bytes");
+  assert.strictEqual(controller.getCacheStats().maxEntries, 2, "snapshot cache lost its entry budget");
 
   controller.prepare(node, {
     plannedRepresentation: "frozen-detail",
