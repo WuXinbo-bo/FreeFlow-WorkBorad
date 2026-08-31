@@ -17,6 +17,7 @@ export function createFrameContext({
   runtimeMode = "steady",
   presentation = null,
   quality = null,
+  performance = null,
 } = {}) {
   return Object.freeze({
     frameId: Math.max(0, Number(frameId) || 0),
@@ -29,5 +30,6 @@ export function createFrameContext({
     runtimeMode: String(runtimeMode || "steady"),
     presentation: presentation && typeof presentation === "object" ? presentation : null,
     quality: quality && typeof quality === "object" ? quality : null,
+    performance: performance && typeof performance === "object" ? performance : null,
   });
 }

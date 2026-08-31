@@ -164,6 +164,7 @@ import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBrid
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
 import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
 import { createInteractionPriorityGate } from "./perf/interactionPriorityGate.js";
+import { createFramePerformanceWindow } from "./perf/framePerformanceWindow.js";
 import {
   recordAssetStats,
   timeAssetTask,
@@ -3476,6 +3477,7 @@ let tablePointerSelectionState = {
   });
   const overlayBudgetManager = createOverlayBudgetManager();
   const presentationSnapshotController = createPresentationSnapshotController();
+  const framePerformanceWindow = createFramePerformanceWindow();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
   const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry, mode: "active" });
@@ -4735,11 +4737,9 @@ let tablePointerSelectionState = {
     );
     const visibleIds = visibleScene.items.map((item) => String(item?.id || "")).filter(Boolean);
     const previousStats = refs.canvas?.__ffRenderStats || null;
-    const frameDurationMs = Math.max(0, Number(previousStats?.frameDurationMs) || 0);
-    const presentationPressure = Math.max(
-      0,
-      Math.min(1, Math.max(0, frameDurationMs - 12) / 28 + (previousStats?.progressiveRender?.pending ? 0.25 : 0))
-    );
+    framePerformanceWindow.record(previousStats);
+    const performanceWindow = framePerformanceWindow.getSnapshot();
+    const presentationPressure = performanceWindow.pressure;
     const qualityRevisionKey = [
       sceneRevision,
       canvasElementRegistry.getRevision(),
@@ -4776,6 +4776,7 @@ let tablePointerSelectionState = {
       runtimeMode: viewportInteractionActive ? "viewport-interaction" : state.editingId ? "editing" : "steady",
       presentation,
       quality,
+      performance: performanceWindow,
     });
     const viewportPrediction = resolveViewportPrediction(viewportWidth, viewportHeight, dirtyState);
     visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
@@ -24669,6 +24670,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     scenePresentationCoordinator.reset();
     presentationQualityRuntime.reset();
     presentationSnapshotController.clear();
+    framePerformanceWindow.clear();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();

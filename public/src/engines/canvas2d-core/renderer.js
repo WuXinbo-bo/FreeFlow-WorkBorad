@@ -870,7 +870,6 @@ function resolveRenderRuntimeMode({
 }
 
 function resolveLayerAssignment(frameVisibleItems = [], {
-  runtimeMode = null,
   editingId = "",
   hoverId = "",
   selectedIds = [],
@@ -879,12 +878,6 @@ function resolveLayerAssignment(frameVisibleItems = [], {
   const hoveredFlowNode = (Array.isArray(frameVisibleItems) ? frameVisibleItems : []).find(
     (item) => String(item?.id || "") === String(hoverId || "") && item?.type === "flowNode"
   );
-  if (runtimeMode?.mode === "viewport-interaction") {
-    return {
-      staticItems: [],
-      dynamicItems: Array.isArray(frameVisibleItems) ? frameVisibleItems.slice() : [],
-    };
-  }
   [
     editingId,
     ...(hoveredFlowNode ? [hoverId] : []),
@@ -1681,10 +1674,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         selectionRect,
         imageEditState,
       });
-      const liveInteractionMode = runtimeMode.interactionActive === true;
+      const elementInteractionMode = runtimeMode.mode === "element-interaction";
       const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas);
       const cullResult =
-        !liveInteractionMode && Array.isArray(visibleItems)
+        !elementInteractionMode && Array.isArray(visibleItems)
           ? {
               items: visibleItems,
               stats: {
@@ -1716,7 +1709,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
         allItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
         null;
       const { staticItems, dynamicItems } = resolveLayerAssignment(canvasOwnedItems, {
-        runtimeMode,
         editingId,
         hoverId,
         selectedIds,
@@ -1801,7 +1793,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const effectiveStaticSceneDirty = Boolean(
         staticSurfaceNeedsClear ||
         (hasStaticContent && (
-          liveInteractionMode ||
           layerDirty.staticScene ||
           forceStaticSceneRedraw ||
           forceViewRedraw ||
@@ -1855,7 +1846,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       if (effectiveStaticSceneDirty) {
         clearLayerContext(staticLayer, width, height);
         tileStats =
-              !liveInteractionMode && staticItems.length && sceneIndex && sceneKey
+              staticItems.length && sceneIndex && sceneKey
             ? staticTileLayer.draw({
                 ctx: staticLayer.ctx,
                 sceneIndex,
@@ -1871,6 +1862,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                 preloadMarginPx: preloadSceneMarginPx,
                 overscanMarginPx: visibleSceneMarginPx,
                 viewportPrediction,
+                preferExactScale: !viewportInteractionActive,
                 drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
                   drawVisibleItemsToContext({
                     ctx: tileCtx,
@@ -1894,7 +1886,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     sceneVectorOwnedIds: sceneVectorOwned,
                   }),
               })
-            : !liveInteractionMode && staticItems.length
+            : staticItems.length
               ? drawVisibleItemsToContext({
                   ctx: staticLayer.ctx,
                   items: staticItems,
@@ -2040,6 +2032,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
             }
           : null,
         frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
+        performanceWindow: frameContext?.performance || null,
         viewport: { width, height },
         pixelBudget: {
           cssWidth: Number(resolvedBudget.cssWidth || width),

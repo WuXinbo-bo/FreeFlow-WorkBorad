@@ -1480,7 +1480,59 @@ async function runLargeViewportPixelBudgetCheck(browser) {
     assert(budget.effectiveDpr < result.devicePixelRatio, "effective DPR was not reduced under large viewport", result);
     assert(stats.progressiveRender?.enabled === true || stats.progressiveRender?.pending === true, "large viewport did not enable progressive render", result);
     assert(Number(stats.tileCache?.tileCount || 0) >= 1, "large viewport did not render visible tiles", result);
+    assert(stats.tileCache?.scaleMode === "exact", "settled large viewport did not use exact tile scale", result);
+    const performanceWindow = stats.performanceWindow || {};
+    assert(Number(performanceWindow.p50Ms || 0) <= Number(performanceWindow.p95Ms || 0), "performance P50 exceeded P95", result);
+    assert(Number(performanceWindow.p95Ms || 0) <= Number(performanceWindow.p99Ms || 0), "performance P95 exceeded P99", result);
     return result;
+  } finally {
+    await session.page.close();
+  }
+}
+
+async function runTileScaleRecoveryCheck(browser) {
+  const board = createBoard(createLargeBoard(320), [], { scale: 0.12, offsetX: 160, offsetY: 120 });
+  const session = await createPage(browser, { board });
+  try {
+    const canvasBox = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
+    assert(canvasBox, "tile scale recovery canvas was not measurable");
+    const cycles = [];
+    for (let index = 0; index < 3; index += 1) {
+      await session.page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+      await session.page.keyboard.down("Control");
+      await session.page.mouse.wheel(0, 40);
+      await session.page.keyboard.up("Control");
+      await session.page.waitForTimeout(50);
+      const active = await session.page.evaluate(() =>
+        document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null
+      );
+      await session.page.waitForTimeout(220);
+      const recovered = await session.page.evaluate(() =>
+        document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null
+      );
+      cycles.push({ active, recovered });
+    }
+    assert(session.getErrors().length === 0, "tile scale recovery produced page errors", session.getErrors());
+    cycles.forEach(({ active, recovered }, index) => {
+      assert(active?.runtimeMode?.viewportInteractionActive === true, `cycle ${index} did not enter viewport interaction`, cycles);
+      assert(active?.tileCache?.scaleMode === "bucket", `cycle ${index} did not use a bucketed interaction scale`, cycles);
+      assert(
+        Number(active?.tileCache?.rasterScale || 0) >= Number(active?.tileCache?.requestedScale || 0),
+        `cycle ${index} undersampled the interaction tile scale`,
+        cycles
+      );
+      assert(recovered?.runtimeMode?.mode === "steady", `cycle ${index} did not recover to steady mode`, cycles);
+      assert(recovered?.tileCache?.scaleMode === "exact", `cycle ${index} did not restore exact tile scale`, cycles);
+      assert(
+        Math.abs(Number(recovered?.tileCache?.rasterScale || 0) - Number(recovered?.tileCache?.requestedScale || 0)) <= 0.001,
+        `cycle ${index} did not rebuild the settled exact scale`,
+        cycles
+      );
+    });
+    return { cycles: cycles.map(({ active, recovered }) => ({
+      active: active?.tileCache || null,
+      recovered: recovered?.tileCache || null,
+    })) };
   } finally {
     await session.page.close();
   }
@@ -2678,6 +2730,7 @@ async function main() {
     report.checks.localizedTileInvalidation = await runLocalizedTileInvalidationCheck(browser);
     report.checks.backgroundLayerReuse = await runBackgroundLayerReuseCheck(browser);
     report.checks.largeViewportPixelBudget = await runLargeViewportPixelBudgetCheck(browser);
+    report.checks.tileScaleRecovery = await runTileScaleRecoveryCheck(browser);
     report.checks.undoPatch = await runUndoPatchCheck(browser);
     report.checks.mindMapBasic = await runMindMapBasicCheck(browser);
     report.checks.mindMapDragConnection = await runMindMapDragConnectionCheck(browser);
