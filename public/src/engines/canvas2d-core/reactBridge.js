@@ -54,6 +54,15 @@ export function createCanvas2DReactBridge(engine) {
     setFileCardPreviewZoom(requestId, zoom) {
       return engine?.setFileCardPreviewZoom?.(requestId, zoom);
     },
+    retryFileCardPreview(requestId) {
+      return engine?.retryFileCardPreview?.(requestId);
+    },
+    getDocumentPreviewSessionData(sessionId, generation) {
+      return engine?.getDocumentPreviewSessionData?.(sessionId, generation) || null;
+    },
+    getDocumentPreviewRuntimeSnapshot() {
+      return engine?.getDocumentPreviewRuntimeSnapshot?.() || null;
+    },
     addMindMapRoot() {
       return engine?.addMindMapRoot?.();
     },

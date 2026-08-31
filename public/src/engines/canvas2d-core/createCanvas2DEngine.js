@@ -173,6 +173,7 @@ import {
 } from "./perf/canvasRuntimeStats.js";
 import { createTransientMinimap } from "./ui/createTransientMinimap.js";
 import { createCanvasUiRuntime } from "./uiRuntime/canvasUiRuntime.js";
+import { createDocumentPreviewRuntime } from "./documentPreview/documentPreviewRuntime.js";
 import {
   computeMultiSelectionResizedBounds,
   getHandleCursorKey,
@@ -3502,6 +3503,7 @@ let tablePointerSelectionState = {
   });
   const overlayBudgetManager = createOverlayBudgetManager();
   const canvasPerformanceRuntime = createCanvasPerformanceRuntime({ interactionCooldownMs: 140 });
+  const documentPreviewRuntime = createDocumentPreviewRuntime();
   canvasPerformanceRuntime.registerResource({
     id: "background-pattern",
     priority: 5,
@@ -3514,6 +3516,13 @@ let tablePointerSelectionState = {
     minimumBytes: 8 * 1024 * 1024,
     getStats: () => presentationSnapshotController.getCacheStats(),
     trimToBytes: (maxBytes) => presentationSnapshotController.trimCacheToBytes(maxBytes),
+  });
+  canvasPerformanceRuntime.registerResource({
+    id: "document-preview",
+    priority: 15,
+    minimumBytes: 8 * 1024 * 1024,
+    getStats: () => documentPreviewRuntime.getStats(),
+    trimToBytes: (maxBytes) => documentPreviewRuntime.trimToBytes(maxBytes),
   });
   canvasPerformanceRuntime.registerResource({
     id: "tile",
@@ -16632,6 +16641,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     nextRequests.splice(targetIndex, 1);
     state.fileCardPreviewRequests = nextRequests;
     hydrationScheduler.remove(`file-preview-read:${String(targetRequest?.id || "").trim()}`);
+    documentPreviewRuntime.closeSession(String(targetRequest?.previewSessionId || targetRequest?.id || "").trim());
     store.emit();
     scheduleRender({ overlayDirty: true });
     return true;
@@ -16671,6 +16681,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     return timeAssetTask("file-preview-read", async () => {
       const current = findFileCardPreviewRequest(activeRequestId);
+      const previewGeneration = Number(current?.previewGeneration || 0) || 0;
       const previewSpec = current?.previewKind ? {
         kind: String(current.previewKind || "").trim().toLowerCase(),
         mimeType: String(current.previewMime || "").trim().toLowerCase(),
@@ -16716,42 +16727,58 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         };
       }
       const latestRequest = findFileCardPreviewRequest(activeRequestId);
-      if (!latestRequest) {
+      if (!latestRequest || Number(latestRequest.previewGeneration || 0) !== previewGeneration) {
         return false;
       }
       const mime = String(result?.mime || "").trim().toLowerCase();
       const fileBase64 = String(result?.data || "").trim();
       const expectedMime = String(previewSpec?.mimeType || "").trim().toLowerCase();
       const mimeAccepted = !mime || mime === expectedMime || mime === "application/octet-stream";
+      const previewHandle = result?.ok && fileBase64 && mimeAccepted
+        ? documentPreviewRuntime.commit(activeRequestId, previewGeneration, {
+            base64: fileBase64,
+            kind: previewSpec?.kind,
+            mime: expectedMime,
+          })
+        : documentPreviewRuntime.fail(
+            activeRequestId,
+            previewGeneration,
+            String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览"
+          );
+      const previewReady = Boolean(previewHandle?.status === "ready");
       patchFileCardPreviewRequest(activeRequestId, {
-        previewStatus: result?.ok && fileBase64 && mimeAccepted ? "ready" : "failed",
+        previewStatus: previewReady ? "ready" : "failed",
         previewMessage:
-          result?.ok && fileBase64 && mimeAccepted
+          previewReady
             ? `${previewSpec?.fileLabel || "文件"}预览已加载`
             : String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览",
-        previewFileBase64: result?.ok && mimeAccepted ? fileBase64 : "",
+        previewSessionId: previewHandle?.id || activeRequestId,
+        previewGeneration: previewHandle?.generation || previewGeneration,
+        previewByteLength: previewHandle?.byteLength || 0,
         previewMime: mimeAccepted ? expectedMime : "",
         previewDiagnostics: buildFileCardPreviewDiagnostics({
-          loadState: result?.ok && fileBase64 && mimeAccepted ? "文档已加载" : "加载失败",
+          loadState: previewReady ? "文档已加载" : "加载失败",
           parseState: "待开始",
           pageCount: 0,
           contentNodeCount: 0,
-          runtimeLabel: result?.ok && fileBase64 && mimeAccepted ? "加载中" : "渲染失败",
+          runtimeLabel: previewReady ? "加载中" : "渲染失败",
         }),
       });
       store.emit();
       scheduleRender({ overlayDirty: true });
-      if (!(result?.ok && fileBase64 && mimeAccepted)) {
+      if (!previewReady) {
         setStatus(String(result?.error || "当前文件暂不支持预览").trim() || "当前文件暂不支持预览", "warning");
       }
-      return Boolean(result?.ok && fileBase64 && mimeAccepted);
+      return previewReady;
     }).catch((error) => {
       const current = findFileCardPreviewRequest(activeRequestId);
       if (current) {
+        const previewGeneration = Number(current.previewGeneration || 0) || 0;
+        documentPreviewRuntime.fail(activeRequestId, previewGeneration, error?.message || "文件预览加载失败");
         patchFileCardPreviewRequest(activeRequestId, {
           previewStatus: "failed",
           previewMessage: String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败",
-          previewFileBase64: "",
+          previewByteLength: 0,
           previewDiagnostics: buildFileCardPreviewDiagnostics({
             loadState: "加载失败",
             parseState: "否",
@@ -16781,6 +16808,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const hasDesktopFileBridge = typeof globalThis?.desktopShell?.readFileBase64 === "function";
     const requestId = createId("file-card-preview");
+    const previewSession = documentPreviewRuntime.createSession({
+      id: requestId,
+      kind: previewSpec.kind,
+      mime: previewSpec.mimeType,
+      sourcePath,
+      fileName: String(item.fileName || item.name || "未命名文件").trim() || "未命名文件",
+    });
     const restoreMemoVisible = Boolean(item.memoVisible);
     if (restoreMemoVisible) {
       item.memoVisible = false;
@@ -16816,7 +16850,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       previewKind: previewSpec.kind,
       previewBadgeLabel: previewSpec.badgeLabel,
       previewMime: previewSpec.mimeType,
-      previewFileBase64: "",
+      previewSessionId: previewSession.id,
+      previewGeneration: previewSession.generation,
+      previewByteLength: 0,
       expanded: false,
       previewZoom: 0.82,
       restoreMemoVisible,
@@ -16824,6 +16860,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (existingIndex >= 0) {
       const nextRequests = requests.slice();
       const existingRequest = nextRequests[existingIndex];
+      hydrationScheduler.remove(`file-preview-read:${String(existingRequest?.id || "").trim()}`);
+      documentPreviewRuntime.closeSession(String(existingRequest?.previewSessionId || existingRequest?.id || "").trim());
       nextRequests[existingIndex] = {
         ...existingRequest,
         ...nextRequest,
@@ -16882,6 +16920,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     store.emit();
     scheduleRender({ overlayDirty: true });
+    return true;
+  }
+
+  function retryFileCardPreview(requestId = "") {
+    const expectedRequestId = String(requestId || "").trim();
+    const request = findFileCardPreviewRequest(expectedRequestId);
+    if (!request) return false;
+    const session = documentPreviewRuntime.retry(String(request.previewSessionId || request.id || "").trim());
+    if (!session) return false;
+    patchFileCardPreviewRequest(expectedRequestId, {
+      previewStatus: "loading",
+      previewMessage: "正在重新加载文件预览...",
+      previewRenderState: "loading",
+      previewRenderMessage: "正在重新准备文件预览...",
+      previewGeneration: session.generation,
+      previewByteLength: 0,
+    });
+    store.emit();
+    hydrationScheduler.remove(`file-preview-read:${expectedRequestId}`);
+    hydrationScheduler.enqueue(
+      `file-preview-read:${expectedRequestId}`,
+      () => hydrateFileCardPreviewFile(expectedRequestId, request.sourcePath),
+      { priority: "selected", type: "file-preview-read" }
+    );
     return true;
   }
 
@@ -25209,6 +25271,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     scenePresentationCoordinator.reset();
     presentationQualityRuntime.reset();
     presentationSnapshotController.clear();
+    documentPreviewRuntime.dispose();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();
@@ -26062,6 +26125,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     closeFileCardPreview: clearFileCardPreviewRequest,
     toggleFileCardPreviewExpanded,
     setFileCardPreviewZoom,
+    retryFileCardPreview,
+    getDocumentPreviewSessionData(sessionId, generation) {
+      return documentPreviewRuntime.getData(sessionId, generation);
+    },
+    getDocumentPreviewRuntimeSnapshot() {
+      return documentPreviewRuntime.getStats();
+    },
     addMindMapRoot() {
       const created = createMindNode(getCenterScenePoint());
       if (created) {

@@ -20,6 +20,7 @@ import { getElementBounds } from "../elements/index.js";
 import { getFileCardPreviewBounds } from "../elements/fileCard.js";
 import { timeAssetTask } from "../perf/canvasRuntimeStats.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
+import { createPdfVisiblePageRenderer } from "../documentPreview/pdfVisiblePageRenderer.js";
 import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../../../tutorial-core/tutorialTypes.js";
 
@@ -998,19 +999,6 @@ function resolveFileCardElementPlacement(item = null, board = null) {
   };
 }
 
-function decodeBase64ToByteArray(base64 = "") {
-  const normalized = String(base64 || "").trim();
-  if (!normalized) {
-    return null;
-  }
-  const binary = globalThis.atob(normalized);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
 function buildFilePreviewInteractionSkeletonMarkup({ kind = "docx" } = {}) {
   const pageCount = kind === "pdf" ? 2 : 1;
   return Array.from({ length: pageCount }, (_, index) => {
@@ -1073,18 +1061,28 @@ function getPreviewDisplayLabel(request = null) {
   };
 }
 
-function FileCardPreviewPlaceholder({ request = null, board = null, item = null, renderState = null, previewLabel = null, previewStatus = "" }) {
+function FileCardPreviewPlaceholder({
+  request = null,
+  board = null,
+  item = null,
+  renderState = null,
+  previewLabel = null,
+  previewStatus = "",
+  bridge = null,
+}) {
   const placement = useMemo(() => resolveFileCardElementPlacement(item, board), [board, item]);
   if (!request?.open || !placement?.style) {
     return null;
   }
-  const isFailed = String(renderState?.status || "").trim() === "failed";
+  const normalizedStatus = String(previewStatus || renderState?.status || "loading").trim() || "loading";
+  const isFailed = normalizedStatus === "failed" || normalizedStatus === "unavailable";
   const kind = String(request?.previewKind || "docx").trim().toLowerCase();
   const title = isFailed ? previewLabel?.unavailableText : `${previewLabel?.noun || "文档"}预览`;
   const message =
     !item
       ? "文件卡锚点缺失"
-      : String(renderState?.message || "").trim() || (isFailed ? previewLabel?.failedText : previewLabel?.generatingText);
+      : String(request?.previewMessage || renderState?.message || "").trim() ||
+        (isFailed ? previewLabel?.failedText : previewLabel?.generatingText);
   const badge = String(request?.previewBadgeLabel || previewLabel?.badge || "DOCX");
   const runtimeLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState?.status);
   return (
@@ -1103,8 +1101,16 @@ function FileCardPreviewPlaceholder({ request = null, board = null, item = null,
         dangerouslySetInnerHTML={{ __html: buildFilePreviewInteractionSkeletonMarkup({ kind }) }}
       />
       <div className="canvas2d-file-preview-placeholder-card-foot">
-        <strong>{title}</strong>
-        <span>{message}</span>
+        <div>
+          <strong>{title}</strong>
+          <span>{message}</span>
+        </div>
+        <div className="canvas2d-file-preview-placeholder-card-actions">
+          {isFailed ? (
+            <button type="button" onClick={() => bridge?.retryFileCardPreview?.(request.id)}>重试</button>
+          ) : null}
+          <button type="button" onClick={() => bridge?.closeFileCardPreview?.(request.id)}>关闭</button>
+        </div>
       </div>
     </div>
   );
@@ -1112,11 +1118,11 @@ function FileCardPreviewPlaceholder({ request = null, board = null, item = null,
 
 function FileCardAttachedPreview({ request = null, board = null, bridge = null }) {
   const hostRef = useRef(null);
-  const styleRef = useRef(null);
   const scrollRef = useRef(null);
   const frameRef = useRef(null);
+  const docxFrameRef = useRef(null);
   const zoomRef = useRef(FILE_CARD_PREVIEW_DEFAULT_ZOOM);
-  const previewLabel = useMemo(() => getPreviewDisplayLabel(request), [request]);
+  const previewLabel = useMemo(() => getPreviewDisplayLabel(request), [request?.previewKind]);
   const [fitScale, setFitScale] = useState(1);
   const [contentHeight, setContentHeight] = useState(1123);
   const [renderState, setRenderState] = useState({
@@ -1167,8 +1173,15 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
 
   const previewKind = String(request?.previewKind || "docx").trim().toLowerCase();
   const previewMime = String(request?.previewMime || "").trim().toLowerCase();
-  const fileBase64 = String(request?.previewFileBase64 || "").trim();
   const previewStatus = String(request?.previewStatus || "").trim();
+  const previewSessionData = useMemo(() => {
+    if (previewStatus !== "ready") return null;
+    return bridge?.getDocumentPreviewSessionData?.(
+      String(request?.previewSessionId || request?.id || "").trim(),
+      Number(request?.previewGeneration || 0) || 0
+    ) || null;
+  }, [bridge, previewStatus, request?.id, request?.previewGeneration, request?.previewSessionId]);
+  const fileBytes = previewSessionData?.bytes instanceof Uint8Array ? previewSessionData.bytes : null;
   const previewBaseWidth = previewKind === "pdf" ? FILE_CARD_PREVIEW_PDF_PAGE_WIDTH : FILE_CARD_PREVIEW_DOCX_PAGE_WIDTH;
   const previewZoom = clamp(
     Number(request?.previewZoom || FILE_CARD_PREVIEW_DEFAULT_ZOOM) || FILE_CARD_PREVIEW_DEFAULT_ZOOM,
@@ -1176,7 +1189,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     FILE_CARD_PREVIEW_ZOOM_MAX
   );
   const placeholderMode =
-    !item || livePreviewSuppressed || previewStatus !== "ready" || !fileBase64;
+    !item || livePreviewSuppressed || previewStatus !== "ready" || !fileBytes?.byteLength;
 
   useEffect(() => {
     zoomRef.current = previewZoom;
@@ -1203,9 +1216,8 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
   }, [previewBaseWidth, request?.expanded, request?.id, request?.open, style?.width]);
 
   useEffect(() => {
-    const host = hostRef.current;
-    const styleHost = styleRef.current;
-    if (!(host instanceof HTMLElement) || !(styleHost instanceof HTMLElement)) {
+    const host = previewKind === "docx" ? docxFrameRef.current : hostRef.current;
+    if (!(host instanceof HTMLElement)) {
       return undefined;
     }
     if (!request?.open) {
@@ -1215,8 +1227,11 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       ? request.previewDiagnostics
       : {};
     if (livePreviewSuppressed) {
-      host.innerHTML = "";
-      styleHost.innerHTML = "";
+      if (previewKind === "docx") {
+        if (host.contentDocument?.body) host.contentDocument.body.innerHTML = "";
+      } else {
+        host.innerHTML = "";
+      }
       setRenderState({
         status: "suppressed",
         message: previewLabel.suppressedText,
@@ -1229,9 +1244,12 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       setContentHeight(1123);
       return undefined;
     }
-    if (previewStatus !== "ready" || !fileBase64) {
-      host.innerHTML = "";
-      styleHost.innerHTML = "";
+    if (previewStatus !== "ready" || !fileBytes?.byteLength) {
+      if (previewKind === "docx") {
+        if (host.contentDocument?.body) host.contentDocument.body.innerHTML = "";
+      } else {
+        host.innerHTML = "";
+      }
       setContentHeight(1123);
       setRenderState({
         status: previewStatus || "loading",
@@ -1247,7 +1265,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
 
     let cancelled = false;
     let pdfLoadingTask = null;
-    let activePdfRenderTask = null;
+    let pdfPageRenderer = null;
     setRenderState({
       status: "rendering",
       message: previewLabel.renderingText,
@@ -1259,13 +1277,13 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     });
 
     const render = async () => timeAssetTask("file-preview-render", async () => {
-      const bytes = decodeBase64ToByteArray(fileBase64);
+      // PDF.js may transfer its typed array to a worker. Keep the session copy attached
+      // so React state updates cannot accidentally switch the preview back to placeholder mode.
+      const bytes = fileBytes.slice();
       if (!bytes?.length) {
         throw new Error("预览文档为空");
       }
-      host.innerHTML = "";
-      styleHost.innerHTML = "";
-      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      if (previewKind !== "docx") host.innerHTML = "";
       let pages = 0;
       let nodes = 0;
       if (previewKind === "pdf") {
@@ -1288,44 +1306,62 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         pdfLoadingTask = loadingTask;
         const pdfDocument = await loadingTask.promise;
         pages = Number(pdfDocument.numPages || 0) || 0;
-        for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
-          if (cancelled) {
-            break;
-          }
-          const page = await pdfDocument.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1 });
-          const pageShell = document.createElement("div");
-          pageShell.className = "canvas2d-file-preview-react-pdf-page";
-          pageShell.style.width = `${Math.round(viewport.width)}px`;
-          pageShell.style.height = `${Math.round(viewport.height)}px`;
-          const canvas = document.createElement("canvas");
-          canvas.className = "canvas2d-file-preview-react-pdf-canvas";
-          canvas.width = Math.max(1, Math.floor(viewport.width));
-          canvas.height = Math.max(1, Math.floor(viewport.height));
-          canvas.style.width = `${Math.round(viewport.width)}px`;
-          canvas.style.height = `${Math.round(viewport.height)}px`;
-          pageShell.appendChild(canvas);
-          host.appendChild(pageShell);
-          const context = canvas.getContext("2d", { alpha: false });
-          if (!context) {
-            throw new Error("PDF 预览画布上下文不可用");
-          }
-          activePdfRenderTask = page.render({
-            canvasContext: context,
-            viewport,
-          });
-          await activePdfRenderTask.promise;
-          activePdfRenderTask = null;
-          nodes += 1;
-        }
+        pdfPageRenderer = await createPdfVisiblePageRenderer({
+          pdfDocument,
+          host,
+          scrollRoot: scrollRef.current,
+          preloadRadius: 1,
+          retentionRadius: 4,
+          onStats: (stats) => {
+            if (cancelled) return;
+            setRenderState((current) => ({
+              ...current,
+              pageCount: stats.pageCount,
+              contentNodeCount: stats.renderedCount,
+            }));
+          },
+        });
+        nodes = pdfPageRenderer.getStats().renderedCount;
         setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
       } else {
-        const module = await loadVendorEsmModule("docx-preview");
+        const iframe = host;
+        const doc = iframe.contentDocument;
+        const win = iframe.contentWindow;
+        if (!doc || !win) {
+          throw new Error("Word 预览窗口初始化失败");
+        }
+        const jszipUrl = new URL("../../../../assets/vendor/jszip/jszip.min.js", import.meta.url).toString();
+        const previewUrl = new URL("../../../../assets/vendor/docx-preview/docx-preview.mjs", import.meta.url).toString();
+        doc.open();
+        doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+          html,body{margin:0;padding:0;width:794px;min-height:1123px;overflow:hidden;background:transparent}
+          .preview-host{width:794px;min-height:1123px}
+          .preview-host .docx-wrapper{background:transparent!important;padding:0!important}
+          .preview-host section.docx{box-sizing:border-box;width:794px!important;min-height:1123px!important;margin:0 auto 14px!important;border:1px solid rgba(203,213,225,.9);border-radius:4px;background:#fff!important;box-shadow:0 12px 28px rgba(15,23,42,.12);overflow:hidden}
+          .preview-host section.docx>article{background:#fff!important}
+          .preview-host header,.preview-host footer{background:transparent!important;border:0!important;box-shadow:none!important}
+          .preview-host section.docx:last-child{margin-bottom:0!important}
+        </style></head><body><div id="preview-host" class="preview-host"></div></body></html>`);
+        doc.close();
+        const jszipScript = doc.createElement("script");
+        jszipScript.src = jszipUrl;
+        await new Promise((resolve, reject) => {
+          jszipScript.onload = resolve;
+          jszipScript.onerror = () => reject(new Error("Word 预览依赖加载失败"));
+          doc.head.appendChild(jszipScript);
+        });
+        const module = await win.eval(`import("${previewUrl}")`);
         const renderAsync = module?.renderAsync;
         if (typeof renderAsync !== "function") {
           throw new Error("docx-preview 未提供 renderAsync");
         }
-        await renderAsync(buffer, host, styleHost, {
+        const docxHost = doc.getElementById("preview-host");
+        if (!docxHost) {
+          throw new Error("Word 预览容器缺失");
+        }
+        const iframeBytes = new win.Uint8Array(bytes.length);
+        iframeBytes.set(bytes);
+        await renderAsync(iframeBytes.buffer, docxHost, null, {
           className: "canvas2d-file-card-docx-preview-document",
           inWrapper: true,
           ignoreWidth: false,
@@ -1336,11 +1372,14 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           renderFootnotes: true,
           useBase64URL: true,
         });
-        setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
-        pages = host.querySelectorAll(
+        if (cancelled) return;
+        const docxHeight = Math.max(1123, Number(doc.documentElement?.scrollHeight || doc.body?.scrollHeight || 0) || 1123);
+        iframe.style.height = `${docxHeight}px`;
+        setContentHeight(docxHeight);
+        pages = docxHost.querySelectorAll(
           "section.docx, section.canvas2d-file-card-docx-preview-document, .docx-wrapper section.docx, .canvas2d-file-card-docx-preview-document-wrapper section.canvas2d-file-card-docx-preview-document"
         ).length;
-        nodes = host.querySelectorAll(
+        nodes = docxHost.querySelectorAll(
           "article, p, table, ul, ol, li, img, svg, canvas, .docx-wrapper *, section.docx *, .canvas2d-file-card-docx-preview-document-wrapper *, section.canvas2d-file-card-docx-preview-document *"
         ).length;
       }
@@ -1367,15 +1406,15 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       const pages =
         previewKind === "pdf"
           ? host.querySelectorAll(".canvas2d-file-preview-react-pdf-page").length
-          : host.querySelectorAll(
+          : host.contentDocument?.querySelectorAll(
               "section.docx, section.canvas2d-file-card-docx-preview-document, .docx-wrapper section.docx, .canvas2d-file-card-docx-preview-document-wrapper section.canvas2d-file-card-docx-preview-document"
-            ).length;
+            ).length || 0;
       const nodes =
         previewKind === "pdf"
           ? host.querySelectorAll(".canvas2d-file-preview-react-pdf-canvas").length
-          : host.querySelectorAll(
+          : host.contentDocument?.querySelectorAll(
               "article, p, table, ul, ol, li, img, svg, canvas, .docx-wrapper *, section.docx *, .canvas2d-file-card-docx-preview-document-wrapper *, section.canvas2d-file-card-docx-preview-document *"
-            ).length;
+            ).length || 0;
       setRenderState({
         status: "failed",
         message: String(error?.message || previewLabel.failedText).trim() || previewLabel.failedText,
@@ -1389,18 +1428,17 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
 
     return () => {
       cancelled = true;
-      try {
-        activePdfRenderTask?.cancel?.();
-      } catch {
-        // Ignore pdf.js cancellation differences across builds.
-      }
+      pdfPageRenderer?.dispose?.();
       try {
         pdfLoadingTask?.destroy?.();
       } catch {
         // Ignore pdf.js cleanup failures.
       }
+      if (previewKind === "docx" && host.contentDocument?.body) {
+        host.contentDocument.body.innerHTML = "";
+      }
     };
-  }, [bridge, fileBase64, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open, request?.previewDiagnostics, request?.previewMessage, request?.previewRenderState]);
+  }, [bridge, fileBytes, livePreviewSuppressed, previewKind, previewLabel, previewMime, previewStatus, request?.id, request?.open]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1451,6 +1489,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         renderState={renderState}
         previewLabel={previewLabel}
         previewStatus={previewStatus}
+        bridge={bridge}
       />
     );
   }
@@ -1464,8 +1503,8 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     transformOrigin: "top left",
   };
   const missingAnchor = !item || !style;
-  const statusLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState.status);
   const showPlaceholder = false;
+  const fileName = String(request?.fileName || item?.fileName || item?.name || "未命名文件").trim() || "未命名文件";
 
   return (
     <div
@@ -1475,9 +1514,9 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       data-preview-kernel={previewKind === "pdf" ? "react-pdfjs-v1" : "react-docx-v2"}
     >
       <div className="canvas2d-file-preview-react-head">
-        <div className="canvas2d-file-preview-react-kicker">
-          <span>{String(request?.previewBadgeLabel || previewLabel.badge)}</span>
-          <span>文档预览</span>
+        <div className="canvas2d-file-preview-react-title">
+          <strong title={fileName}>{fileName}</strong>
+          <span>{previewLabel.noun} 打印预览</span>
         </div>
         <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览">
           ×
@@ -1494,16 +1533,18 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         </button>
       </div>
       <div className="canvas2d-file-preview-react-shell">
-        <div className="canvas2d-file-preview-react-diagnostics">
-          <span>加载文档 <strong>{renderState.loadState}</strong></span>
-          <span>解析成功 <strong>{renderState.parseState}</strong></span>
-          <span>正文节点数 <strong>{renderState.contentNodeCount}</strong></span>
-          <span>当前状态 <strong>{statusLabel}</strong></span>
-        </div>
-        <div ref={styleRef} className="canvas2d-file-preview-react-style-root" />
         <div ref={scrollRef} className="canvas2d-file-preview-react-scroll" tabIndex={0} aria-label={previewLabel.scrollAriaLabel}>
           <div ref={frameRef} className={`canvas2d-file-preview-react-frame${previewKind === "pdf" ? " is-pdf" : " is-docx"}`}>
-            <div ref={hostRef} className={`canvas2d-file-preview-react-content${previewKind === "pdf" ? " is-pdf" : " is-docx"}`} />
+            {previewKind === "pdf" ? (
+              <div ref={hostRef} className="canvas2d-file-preview-react-content is-pdf" />
+            ) : (
+              <iframe
+                ref={docxFrameRef}
+                className="canvas2d-file-preview-react-content is-docx"
+                title={`${fileName} Word 预览`}
+                sandbox="allow-same-origin allow-scripts"
+              />
+            )}
           </div>
         </div>
         {showPlaceholder ? (

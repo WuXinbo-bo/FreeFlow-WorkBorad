@@ -11088,7 +11088,7 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-file-preview-react-head,
-.canvas2d-file-preview-react-kicker,
+.canvas2d-file-preview-react-title,
 .canvas2d-file-preview-react-actions,
 .canvas2d-file-preview-react-diagnostics {
   display: flex;
@@ -11100,22 +11100,25 @@ body.is-office-embedded #right-pane-resizer {
   min-width: 0;
 }
 
-.canvas2d-file-preview-react-kicker {
-  gap: 8px;
+.canvas2d-file-preview-react-title {
+  display: grid;
+  gap: 2px;
   min-width: 0;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
 }
 
-.canvas2d-file-preview-react-kicker span:first-child {
-  min-width: 44px;
-  padding: 4px 9px;
-  border: 1px solid rgba(59, 130, 246, 0.14);
-  border-radius: 999px;
-  background: rgba(59, 130, 246, 0.08);
-  color: #285ea8;
-  text-align: center;
+.canvas2d-file-preview-react-title strong {
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas2d-file-preview-react-title span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .canvas2d-file-preview-react-close,
@@ -11156,16 +11159,12 @@ body.is-office-embedded #right-pane-resizer {
   background: #f8fafc;
 }
 
-.canvas2d-file-preview-react-style-root {
-  display: none;
-}
-
 .canvas2d-file-preview-react-scroll {
   position: absolute;
   inset: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 82px 18px 26px;
+  padding: 18px 18px 26px;
   background: #f8fafc;
   scrollbar-gutter: stable both-edges;
   box-sizing: border-box;
@@ -11193,29 +11192,10 @@ body.is-office-embedded #right-pane-resizer {
   transform-origin: top left;
 }
 
-.canvas2d-file-preview-react-content.is-docx .docx-wrapper,
-.canvas2d-file-preview-react-content.is-docx .canvas2d-file-card-docx-preview-document-wrapper,
-.canvas2d-file-preview-react-content.is-docx section.docx,
-.canvas2d-file-preview-react-content.is-docx section.canvas2d-file-card-docx-preview-document {
-  max-width: 100%;
-}
-
-.canvas2d-file-preview-react-content.is-docx .docx-wrapper,
-.canvas2d-file-preview-react-content.is-docx .canvas2d-file-card-docx-preview-document-wrapper {
-  background: transparent !important;
-  padding: 0 !important;
-}
-
-.canvas2d-file-preview-react-content.is-docx section.docx,
-.canvas2d-file-preview-react-content.is-docx section.canvas2d-file-card-docx-preview-document {
-  box-sizing: border-box;
-  width: 794px !important;
-  min-height: 1123px !important;
-  margin: 0 auto 14px !important;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  background: #fff !important;
-  box-shadow: none;
-  overflow: hidden;
+iframe.canvas2d-file-preview-react-content.is-docx {
+  display: block;
+  border: 0;
+  background: transparent;
 }
 
 .canvas2d-file-preview-react-content.is-pdf {
@@ -11230,7 +11210,7 @@ body.is-office-embedded #right-pane-resizer {
   margin: 0 auto;
   border: 1px solid rgba(226, 232, 240, 0.92);
   background: #fff;
-  box-shadow: none;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
   overflow: hidden;
 }
 
@@ -11305,7 +11285,7 @@ body.is-office-embedded #right-pane-resizer {
   box-shadow: 0 8px 18px rgba(148, 163, 184, 0.14);
   box-sizing: border-box;
   overflow: hidden;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .canvas2d-file-preview-placeholder-card-head {
@@ -11314,6 +11294,36 @@ body.is-office-embedded #right-pane-resizer {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+}
+
+.canvas2d-file-preview-placeholder-card-foot {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.canvas2d-file-preview-placeholder-card-foot > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.canvas2d-file-preview-placeholder-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.canvas2d-file-preview-placeholder-card-actions button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(203, 213, 225, 0.96);
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .canvas2d-file-preview-placeholder-card-badge,

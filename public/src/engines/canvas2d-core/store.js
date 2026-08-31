@@ -332,6 +332,8 @@ export function createCanvas2DStore({
               JSON.parse(
                 JSON.stringify({
                   ...entry,
+                  previewFileBase64: undefined,
+                  previewDocxBase64: undefined,
                 })
               )
             )

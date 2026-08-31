@@ -27,6 +27,7 @@ const CHECKS = [
   "scripts/check-element-runtime-architecture.js",
   "scripts/check-builtin-element-registry.js",
   "scripts/check-canvas-ui-runtime.js",
+  "scripts/check-document-preview-runtime.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
 ];
@@ -101,6 +102,9 @@ async function main() {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas-presentation-performance.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
+    await runNodeScript("scripts/check-document-preview-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas2d-regression.js", {
