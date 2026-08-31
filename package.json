@@ -28,6 +28,7 @@
     "test:canvas-performance-policy": "node scripts/check-canvas-performance-policy.js",
     "test:canvas-state-history": "node scripts/check-canvas-state-history.js",
     "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",
+    "test:canvas-large-scene": "node scripts/check-canvas-large-scene-runtime.js",
     "test:presentation-snapshots": "node scripts/check-presentation-snapshot-controller.js",
     "test:canvas-presentation-snapshots": "node scripts/check-canvas-presentation-snapshots.js",
     "test:compact-presentation": "node scripts/check-compact-presentation-runtime.js",
