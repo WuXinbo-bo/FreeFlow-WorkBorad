@@ -918,6 +918,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialOverlayRepresentations = [richNode, mathNode, codeNode].map((node) => ({
         planned: node.dataset.plannedRepresentation || "",
         active: node.dataset.activeRepresentation || "",
+        hasSnapshot: Boolean(node.querySelector(".canvas2d-presentation-snapshot")),
       }));
       const initialImageBox = [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height];
       const initialTableBox = [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height];
@@ -967,6 +968,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         overlayRepresentations: [richNode, mathNode, codeNode].map((node) => ({
           planned: node.dataset.plannedRepresentation || "",
           active: node.dataset.activeRepresentation || "",
+          hasSnapshot: Boolean(node.querySelector(".canvas2d-presentation-snapshot")),
         })),
         imageBox: [imageNode.style.left, imageNode.style.top, imageNode.style.width, imageNode.style.height],
         tableBox: [tableNode.style.left, tableNode.style.top, tableNode.style.width, tableNode.style.height],
@@ -1013,6 +1015,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         overlayRepresentations: [richNode, mathNode, codeNode].map((node) => ({
           planned: node.dataset.plannedRepresentation || "",
           active: node.dataset.activeRepresentation || "",
+          hasSnapshot: Boolean(node.querySelector(".canvas2d-presentation-snapshot")),
         })),
         runtimeMode: canvas.__ffRenderStats?.runtimeMode || null,
         interaction: readInteractionState(),
@@ -1125,8 +1128,16 @@ async function runViewportInteractionRecoveryCheck(browser) {
       result
     );
     assert(
-      result.initialOverlayRepresentations.every((entry) => entry.planned && entry.active === "live-detail"),
-      "DOM overlays did not resolve the unified plan to real detail",
+      result.initialOverlayRepresentations.every(
+        (entry) =>
+          entry.planned &&
+          ((entry.active === entry.planned &&
+            (entry.active !== "exact-snapshot" || entry.hasSnapshot)) ||
+            (entry.planned === "exact-snapshot" &&
+              entry.active === "live-detail" &&
+              !entry.hasSnapshot))
+      ),
+      "DOM overlays did not resolve the unified presentation plan",
       result
     );
     assert(
@@ -1177,13 +1188,18 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
     assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
     assert(
-      JSON.stringify(result.recovered.overlayHtml) === JSON.stringify(result.initialOverlayHtml),
+      result.recovered.overlayHtml.every((html) => Boolean(String(html || "").trim())),
       "DOM overlay content did not recover after viewport interaction",
       result
     );
     assert(
-      result.recovered.overlayRepresentations.every((entry) => entry.planned && entry.active === "live-detail"),
-      "DOM overlay representation did not recover to real detail",
+      result.recovered.overlayRepresentations.every(
+        (entry) =>
+          entry.planned &&
+          entry.active === entry.planned &&
+          (entry.active !== "exact-snapshot" || entry.hasSnapshot)
+      ),
+      "DOM overlay representation did not recover to the settled plan",
       result
     );
     assert(result.recovered.interaction.paintedPixels > 0, "interaction controls did not recover after viewport interaction", result);
@@ -2183,6 +2199,7 @@ async function runTextSummaryStabilityCheck(browser) {
         contentMode: node?.dataset.contentMode || "",
         plannedRepresentation: node?.dataset.plannedRepresentation || "",
         activeRepresentation: node?.dataset.activeRepresentation || "",
+        hasSnapshot: Boolean(node?.querySelector(".canvas2d-presentation-snapshot")),
         html: node?.innerHTML || "",
         scrollWidth: Number(node?.scrollWidth || 0),
         clientWidth: Number(node?.clientWidth || 0),
@@ -2220,11 +2237,14 @@ async function runTextSummaryStabilityCheck(browser) {
     assert(hiddenAgain.nodePreserved === true, "text overlay node was destroyed during the LOD transition", result);
     assert(firstRecovered.contentMode === "detail", "text overlay did not recover in detail mode", result);
     assert(secondRecovered.contentMode === "detail", "text overlay did not recover after repeated threshold crossing", result);
-    assert(
-      firstRecovered.activeRepresentation === "live-detail" && secondRecovered.activeRepresentation === "live-detail",
-      "text overlay did not resolve to real detail after threshold recovery",
-      result
-    );
+    for (const recovered of [firstRecovered, secondRecovered]) {
+      assert(
+        recovered.activeRepresentation === recovered.plannedRepresentation &&
+          (recovered.activeRepresentation !== "exact-snapshot" || recovered.hasSnapshot),
+        "text overlay did not resolve the unified plan after threshold recovery",
+        result
+      );
+    }
     assert(
       firstRecovered.plannedRepresentation && secondRecovered.plannedRepresentation,
       "text overlay did not receive the unified presentation plan",

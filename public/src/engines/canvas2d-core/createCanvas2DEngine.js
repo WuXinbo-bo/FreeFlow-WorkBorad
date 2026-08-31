@@ -159,6 +159,7 @@ import { createSceneContentRenderer } from "./scene/sceneContentRenderer.js";
 import { createSceneVectorRenderer } from "./scene/sceneVectorRenderer.js";
 import { createOverlayVirtualizer } from "./overlay/overlayVirtualizer.js";
 import { createOverlayBudgetManager } from "./overlay/overlayBudgetManager.js";
+import { createPresentationSnapshotController } from "./overlay/presentationSnapshotController.js";
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
 import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
@@ -2525,18 +2526,41 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
 
 function syncOverlayPresentationState(node, frameContext = null, itemId = "") {
   if (!(node instanceof HTMLElement)) {
-    return;
+    return Object.freeze({
+      plannedRepresentation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+      generation: 0,
+    });
   }
+  const activePlan = frameContext?.quality?.activePlan || null;
   const plannedRepresentation = String(
-    frameContext?.quality?.activePlan?.entries?.[String(itemId || "")]?.representation ||
+    activePlan?.entries?.[String(itemId || "")]?.representation ||
       PRESENTATION_REPRESENTATIONS.LIVE_DETAIL
   );
   if (node.dataset.plannedRepresentation !== plannedRepresentation) {
     node.dataset.plannedRepresentation = plannedRepresentation;
   }
-  if (node.dataset.activeRepresentation !== PRESENTATION_REPRESENTATIONS.LIVE_DETAIL) {
+  if (!node.dataset.activeRepresentation) {
     node.dataset.activeRepresentation = PRESENTATION_REPRESENTATIONS.LIVE_DETAIL;
   }
+  return Object.freeze({
+    plannedRepresentation,
+    generation: Math.max(0, Number(activePlan?.generation) || 0),
+  });
+}
+
+function getOverlaySnapshotContext(frameContext = null) {
+  const pixelRatio = Math.max(
+    0.5,
+    Number(frameContext?.pixelRatio) || Number(globalThis?.devicePixelRatio) || 1
+  );
+  const density = Math.max(1, Math.min(1.5, Math.round(pixelRatio * 4) / 4));
+  const theme = String(
+    globalThis?.document?.documentElement?.dataset?.theme ||
+      globalThis?.document?.body?.dataset?.theme ||
+      globalThis?.document?.documentElement?.style?.colorScheme ||
+      "default"
+  );
+  return Object.freeze({ density, qualityKey: `${density}|${theme}` });
 }
 
 function getRichOverlayClassSignature(item) {
@@ -3451,6 +3475,7 @@ let tablePointerSelectionState = {
     timeout: 96,
   });
   const overlayBudgetManager = createOverlayBudgetManager();
+  const presentationSnapshotController = createPresentationSnapshotController();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
   const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry, mode: "active" });
@@ -3898,7 +3923,6 @@ let tablePointerSelectionState = {
       return;
     }
     codeBlockOverlayVirtualizer.showNode(item.id);
-    syncOverlayPresentationState(node, frameContext, item.id);
     node.style.pointerEvents = isEditing ? "none" : "auto";
     node.style.left = `${Math.round(left)}px`;
     node.style.top = `${Math.round(top)}px`;
@@ -3923,7 +3947,25 @@ let tablePointerSelectionState = {
       item.locked === true ? 1 : 0,
       isEditing ? 1 : 0,
     ].join("|");
-    if (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderSignature !== renderSignature) {
+    const presentation = syncOverlayPresentationState(node, frameContext, item.id);
+    const snapshotContext = getOverlaySnapshotContext(frameContext);
+    const snapshotSignature = [
+      "code",
+      item.id,
+      contentSignature,
+      renderSignature,
+      Math.round(width * 100) / 100,
+      Math.round(height * 100) / 100,
+      snapshotContext.qualityKey,
+    ].join("|");
+    const snapshotState = presentationSnapshotController.prepare(node, {
+      ...presentation,
+      signature: snapshotSignature,
+    });
+    if (
+      !snapshotState.snapshotActive &&
+      (node.dataset.renderContentSignature !== contentSignature || node.dataset.renderSignature !== renderSignature)
+    ) {
       renderCodeBlockStatic(node, item, {
         scale: 1,
         hover: state.hoverId === item.id,
@@ -3938,6 +3980,12 @@ let tablePointerSelectionState = {
     }
     node.style.pointerEvents = isEditing ? "none" : "auto";
     node.style.opacity = isEditing ? "0.82" : "1";
+    presentationSnapshotController.commit(node, {
+      ...presentation,
+      signature: snapshotSignature,
+      density: snapshotContext.density,
+      ready: !snapshotState.snapshotActive,
+    });
   }
 
   const codeBlockEditor = createCodeBlockEditor(null, {
@@ -11323,6 +11371,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       },
       onRemove: (node) => {
         cancelPendingRichOverlayDetail(node);
+        presentationSnapshotController.remove(node);
         node.remove?.();
       },
       onHide: (node) => {
@@ -11345,47 +11394,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
       const linkSignature = item.type === "text" || isMindNode ? getLinkSemanticSignature(item) : "";
       const overlayMode = "detail";
-      syncOverlayPresentationState(node, frameContext, item.id);
       const surfaceLayout = resolveRichTextSurfaceLayout(item, sceneLayoutView, {
         mode: "display",
         overlayMode,
       });
       const detailCacheKey = getRichOverlayDetailHtmlCacheKey(item, linkSignature);
       const detailRenderSignature = `${detailCacheKey}|${scaleBucket}`;
-      let contentMutated = false;
-      node.dataset.detailRenderSignature = detailRenderSignature;
-      const cachedHtml = readRichOverlayDetailHtmlCache(detailCacheKey);
-      if (cachedHtml.trim()) {
-        contentMutated = applyRichOverlayDetailHtmlToNode(node, {
-          detailRenderSignature,
-          html: cachedHtml,
-          item,
-          linkSignature,
-          scale: 1,
-          scaleBucket,
-        }) || contentMutated;
-      } else {
-        cancelPendingRichOverlayDetail(node);
-        const text = item.plainText || item.text || "";
-        if (node.dataset.contentMode !== "detail-pending" || node.dataset.text !== text) {
-          node.textContent = text;
-          node.dataset.text = text;
-          node.dataset.html = "";
-          node.dataset.inlineScaleBucket = "";
-          node.dataset.linkSignature = "";
-          node.dataset.contentMode = "detail-pending";
-          contentMutated = true;
-        }
-        scheduleRichOverlayDetailHtml(node, {
-          cacheKey: detailCacheKey,
-          detailRenderSignature,
-          item,
-          linkSignature,
-          scale: 1,
-          scaleBucket,
-        });
-      }
-      setStyleIfNeeded(node, "display", "block");
       const boxStyles = getRichOverlayBoxStyles(item, 1);
       const styleSignature = getRichOverlayStyleSignature({
         left: surfaceLayout?.left ?? left,
@@ -11406,6 +11420,57 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         overflowWrap: boxStyles.overflowWrap,
         overflow: boxStyles.overflow,
       });
+      const presentation = syncOverlayPresentationState(node, frameContext, item.id);
+      const snapshotContext = getOverlaySnapshotContext(frameContext);
+      const snapshotSignature = [
+        "rich",
+        detailRenderSignature,
+        classSignature,
+        styleSignature,
+        Math.round(width * 100) / 100,
+        Math.round(height * 100) / 100,
+        snapshotContext.qualityKey,
+      ].join("|");
+      const snapshotState = presentationSnapshotController.prepare(node, {
+        ...presentation,
+        signature: snapshotSignature,
+      });
+      let contentMutated = false;
+      if (!snapshotState.snapshotActive) {
+        node.dataset.detailRenderSignature = detailRenderSignature;
+        const cachedHtml = readRichOverlayDetailHtmlCache(detailCacheKey);
+        if (cachedHtml.trim()) {
+          contentMutated = applyRichOverlayDetailHtmlToNode(node, {
+            detailRenderSignature,
+            html: cachedHtml,
+            item,
+            linkSignature,
+            scale: 1,
+            scaleBucket,
+          }) || contentMutated;
+        } else {
+          cancelPendingRichOverlayDetail(node);
+          const text = item.plainText || item.text || "";
+          if (node.dataset.contentMode !== "detail-pending" || node.dataset.text !== text) {
+            node.textContent = text;
+            node.dataset.text = text;
+            node.dataset.html = "";
+            node.dataset.inlineScaleBucket = "";
+            node.dataset.linkSignature = "";
+            node.dataset.contentMode = "detail-pending";
+            contentMutated = true;
+          }
+          scheduleRichOverlayDetailHtml(node, {
+            cacheKey: detailCacheKey,
+            detailRenderSignature,
+            item,
+            linkSignature,
+            scale: 1,
+            scaleBucket,
+          });
+        }
+      }
+      setStyleIfNeeded(node, "display", "block");
       if (node.dataset.styleSignature !== styleSignature) {
         applyRichTextSurfaceLayout(node, surfaceLayout, { includePosition: true, includeBox: false });
         setStyleIfNeeded(node, "display", boxStyles.display);
@@ -11419,7 +11484,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (!state.editingId && (item.type === "text" || isMindNode)) {
+      if (!snapshotState.snapshotActive && !state.editingId && (item.type === "text" || isMindNode)) {
         const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
@@ -11429,6 +11494,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           }
         }
       }
+      presentationSnapshotController.commit(node, {
+        ...presentation,
+        signature: snapshotSignature,
+        density: snapshotContext.density,
+        ready: !snapshotState.snapshotActive && node.dataset.contentMode === "detail",
+      });
       },
     });
     finalizeOverlayHydration({
@@ -11587,6 +11658,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       onDeferred: (itemId) => deferredOverlayIds.add(String(itemId || "")),
       onRemove: (node) => {
         cancelPendingMathRender(node);
+        presentationSnapshotController.remove(node);
         node.remove?.();
       },
       shouldHide: ({ visible }) => !visible,
@@ -11598,15 +11670,47 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const displayMode = item.displayMode !== false;
       const formula = String(item.formula || "");
       const overlayMode = "detail";
-      syncOverlayPresentationState(node, frameContext, item.id);
-      const shouldRetryRender =
-        item.mathOverlayReady !== true &&
-        canScheduleMathMarkupUpgrade(formula) &&
-        node.dataset.mathRenderState !== "pending";
       const stateToken = normalizeMathRenderState(item);
       const fallbackText = String(item.fallbackText || item.formula || "").trim() || (displayMode ? "[公式]" : "[行内公式]");
       const contentSignature = `${getMathOverlaySignature(item)}|${overlayMode}`;
-      if (node.dataset.contentSignature !== contentSignature || shouldRetryRender) {
+      const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, 1);
+      const widthCss = "auto";
+      const minHeightCss = `${Math.max(1, Math.round(height))}px`;
+      const appliedPaddingX = paddingX;
+      const appliedPaddingY = paddingY;
+      const whiteSpace = displayMode ? "normal" : "nowrap";
+      const justifyContent = displayMode ? "center" : "flex-start";
+      const styleSignature = getMathOverlayStyleSignature({
+        left,
+        top,
+        fontSize,
+        paddingX: appliedPaddingX,
+        paddingY: appliedPaddingY,
+        widthCss,
+        minHeightCss,
+        whiteSpace,
+        justifyContent,
+      });
+      const presentation = syncOverlayPresentationState(node, frameContext, item.id);
+      const snapshotContext = getOverlaySnapshotContext(frameContext);
+      const snapshotSignature = [
+        "math",
+        contentSignature,
+        styleSignature,
+        Math.round(width * 100) / 100,
+        Math.round(height * 100) / 100,
+        snapshotContext.qualityKey,
+      ].join("|");
+      const snapshotState = presentationSnapshotController.prepare(node, {
+        ...presentation,
+        signature: snapshotSignature,
+      });
+      const shouldRetryRender =
+        !snapshotState.snapshotActive &&
+        item.mathOverlayReady !== true &&
+        canScheduleMathMarkupUpgrade(formula) &&
+        node.dataset.mathRenderState !== "pending";
+      if (!snapshotState.snapshotActive && (node.dataset.contentSignature !== contentSignature || shouldRetryRender)) {
         const cacheKey = getMathMarkupCacheKey(formula, displayMode);
         const cachedMarkup = readMathMarkupCache(cacheKey);
         if (cachedMarkup && hasRenderedKatexMarkup(cachedMarkup)) {
@@ -11638,25 +11742,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.dataset.contentMode = overlayMode;
       }
 
-      const { fontSize, paddingX, paddingY } = getMathOverlayTypography(item, 1);
       setStyleIfNeeded(node, "display", displayMode ? "block" : "inline-flex");
-      const widthCss = "auto";
-      const minHeightCss = `${Math.max(1, Math.round(height))}px`;
-      const appliedPaddingX = paddingX;
-      const appliedPaddingY = paddingY;
-      const whiteSpace = displayMode ? "normal" : "nowrap";
-      const justifyContent = displayMode ? "center" : "flex-start";
-      const styleSignature = getMathOverlayStyleSignature({
-        left,
-        top,
-        fontSize,
-        paddingX: appliedPaddingX,
-        paddingY: appliedPaddingY,
-        widthCss,
-        minHeightCss,
-        whiteSpace,
-        justifyContent,
-      });
       if (node.dataset.styleSignature !== styleSignature) {
         setStyleIfNeeded(node, "position", "absolute");
         setStyleIfNeeded(node, "left", `${left}px`);
@@ -11673,12 +11759,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.dataset.styleSignature = styleSignature;
       }
 
-      if (node.dataset.layoutWritebackSignature !== contentSignature) {
+      if (!snapshotState.snapshotActive && node.dataset.layoutWritebackSignature !== contentSignature) {
         node.dataset.layoutWritebackSignature = contentSignature;
       }
-      if (node.dataset.mathRenderState === "ready" && maybeWritebackMathOverlayFrame(item, node, 1)) {
+      if (
+        !snapshotState.snapshotActive &&
+        node.dataset.mathRenderState === "ready" &&
+        maybeWritebackMathOverlayFrame(item, node, 1)
+      ) {
         mathLayoutWritebackChanged = true;
       }
+      presentationSnapshotController.commit(node, {
+        ...presentation,
+        signature: snapshotSignature,
+        density: snapshotContext.density,
+        ready:
+          !snapshotState.snapshotActive &&
+          (node.dataset.mathRenderState === "ready" || !canScheduleMathMarkupUpgrade(formula)),
+      });
       },
     });
     finalizeOverlayHydration({
@@ -24570,6 +24668,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     interactionPriorityGate.release();
     scenePresentationCoordinator.reset();
     presentationQualityRuntime.reset();
+    presentationSnapshotController.clear();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();

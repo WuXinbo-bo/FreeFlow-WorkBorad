@@ -11,6 +11,15 @@ const PRISM_COMPONENTS_DIR = path.join(ROOT_DIR, "node_modules", "prismjs", "com
 const PRISM_VENDOR_DIR = path.join(PUBLIC_DIR, "vendor", "prismjs", "components");
 const MERMAID_DIST_DIR = path.join(ROOT_DIR, "node_modules", "mermaid", "dist");
 const MERMAID_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "mermaid");
+const HTML2CANVAS_ENTRY_FILE = path.join(
+  ROOT_DIR,
+  "node_modules",
+  "html2canvas",
+  "dist",
+  "html2canvas.esm.js"
+);
+const HTML2CANVAS_VENDOR_DIR = path.join(PUBLIC_DIR, "assets", "vendor", "html2canvas");
+const HTML2CANVAS_VENDOR_FILE = path.join(HTML2CANVAS_VENDOR_DIR, "html2canvas.esm.min.js");
 const SKIP_VENDOR_SYNC = process.env.FREEFLOW_SKIP_VENDOR_SYNC === "1";
 const PRISM_COMPONENT_FILES = [
   "prism-core.min.js",
@@ -93,11 +102,34 @@ async function copyMermaidVendorAssets() {
   );
 }
 
+async function buildHtml2CanvasVendorAsset() {
+  try {
+    await fs.access(HTML2CANVAS_ENTRY_FILE);
+  } catch {
+    return;
+  }
+  await ensureDir(HTML2CANVAS_VENDOR_DIR);
+  await esbuild.build({
+    entryPoints: [HTML2CANVAS_ENTRY_FILE],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: ["es2022"],
+    minify: true,
+    legalComments: "none",
+    banner: {
+      js: "/*! html2canvas 1.4.1 | MIT License | https://html2canvas.hertzen.com */",
+    },
+    outfile: HTML2CANVAS_VENDOR_FILE,
+  });
+}
+
 async function main() {
   await ensureDir(OUT_DIR);
   if (!SKIP_VENDOR_SYNC) {
     await copyPrismVendorAssets();
     await copyMermaidVendorAssets();
+    await buildHtml2CanvasVendorAsset();
   }
 
   await esbuild.build({
