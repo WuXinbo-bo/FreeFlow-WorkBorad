@@ -162,9 +162,11 @@ import { createPresentationSnapshotController } from "./overlay/presentationSnap
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
 import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
-import { createInteractionPriorityGate } from "./perf/interactionPriorityGate.js";
-import { createFramePerformanceWindow } from "./perf/framePerformanceWindow.js";
-import { createResourceBudgetRuntime } from "./perf/resourceBudgetRuntime.js";
+import {
+  CANVAS_PERFORMANCE_LANES,
+  CANVAS_PERFORMANCE_PHASES,
+  createCanvasPerformanceRuntime,
+} from "./perf/canvasPerformanceRuntime.js";
 import {
   recordAssetStats,
   timeAssetTask,
@@ -3395,8 +3397,8 @@ export function createCanvas2DEngine(options = {}) {
   let temporaryPanPreviousTool = "";
   let renderScheduler = null;
   let overlayCanvasLodActive = false;
-  let wheelCommitTimer = 0;
   let interactionRecoveryTimer = 0;
+  let pendingPerformanceRecovery = null;
   let presentationQualityTimer = 0;
   let presentationQualityDeadline = 0;
   let lastContextMenuPoint = null;
@@ -3498,46 +3500,44 @@ let tablePointerSelectionState = {
     timeout: 96,
   });
   const overlayBudgetManager = createOverlayBudgetManager();
-  const resourceBudgetRuntime = createResourceBudgetRuntime();
-  resourceBudgetRuntime.register({
+  const canvasPerformanceRuntime = createCanvasPerformanceRuntime({ interactionCooldownMs: 140 });
+  canvasPerformanceRuntime.registerResource({
     id: "background-pattern",
     priority: 5,
     getStats: () => renderer.getResourceStats().backgroundPattern,
     trimToBytes: (maxBytes) => renderer.trimBackgroundPatternCacheToBytes(maxBytes),
   });
-  resourceBudgetRuntime.register({
+  canvasPerformanceRuntime.registerResource({
     id: "presentation-snapshot",
     priority: 10,
     minimumBytes: 8 * 1024 * 1024,
     getStats: () => presentationSnapshotController.getCacheStats(),
     trimToBytes: (maxBytes) => presentationSnapshotController.trimCacheToBytes(maxBytes),
   });
-  resourceBudgetRuntime.register({
+  canvasPerformanceRuntime.registerResource({
     id: "tile",
     priority: 20,
     minimumBytes: 16 * 1024 * 1024,
     getStats: () => renderer.getResourceStats().tile,
     trimToBytes: (maxBytes) => renderer.trimTileCacheToBytes(maxBytes),
   });
-  resourceBudgetRuntime.register({
+  canvasPerformanceRuntime.registerResource({
     id: "image",
     priority: 30,
     minimumBytes: 32 * 1024 * 1024,
     getStats: () => imageRenderer.getResourceStats?.() || {},
     trimToBytes: (maxBytes) => imageRenderer.trimResources?.(maxBytes) || 0,
   });
-  resourceBudgetRuntime.register({
+  canvasPerformanceRuntime.registerResource({
     id: "live-layers",
     reclaimable: false,
     getStats: () => renderer.getResourceStats().liveLayers,
   });
-  resourceBudgetRuntime.register({
+  canvasPerformanceRuntime.registerResource({
     id: "retained-frame",
     reclaimable: false,
     getStats: () => renderer.getResourceStats().retainedFrame,
   });
-  const framePerformanceWindow = createFramePerformanceWindow();
-  const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
   const presentationQualityRuntime = createPresentationQualityRuntime({ registry: canvasElementRegistry, mode: "active" });
   const cameraInteractionRuntime = createCameraInteractionRuntime({
@@ -3547,6 +3547,7 @@ let tablePointerSelectionState = {
       transientMinimap.refreshViewport();
       ensureRenderScheduler().flushNow(
         {
+          lane: CANVAS_PERFORMANCE_LANES.INPUT,
           reason: String(metadata?.reason || "camera-interaction"),
           cameraDirty: true,
           viewDirty: true,
@@ -4853,8 +4854,8 @@ let tablePointerSelectionState = {
     });
     const presentation = scenePresentationCoordinator.getSnapshot();
     const previousStats = refs.canvas?.__ffRenderStats || null;
-    framePerformanceWindow.record(previousStats);
-    const performanceWindow = framePerformanceWindow.getSnapshot();
+    canvasPerformanceRuntime.recordFrame(previousStats);
+    const performanceWindow = canvasPerformanceRuntime.getPerformanceSnapshot();
     const presentationPressure = performanceWindow.pressure;
     const viewportInteractionActive = isViewportInteractionActive();
     const registryRevision = canvasElementRegistry.getRevision();
@@ -4961,9 +4962,12 @@ let tablePointerSelectionState = {
   }
 
   function isViewportInteractionActive() {
-    const snapshot = interactionPriorityGate.getSnapshot();
+    const snapshot = canvasPerformanceRuntime.getLifecycleSnapshot();
     const reason = String(snapshot?.reason || "");
-    return Boolean(snapshot?.active && (reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan"));
+    return Boolean(
+      snapshot?.interactionCritical &&
+      (reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan")
+    );
   }
 
   function updateOverlayCanvasLodState(view = state.board.view) {
@@ -5207,18 +5211,19 @@ let tablePointerSelectionState = {
         sceneDomSyncSkipped: Boolean(cameraFastPath),
         lifecycleSyncSkipped: Boolean(cameraFastPath),
       });
-      resourceBudgetRuntime.setInteractionActive(viewportInteractionActive);
-      resourceBudgetRuntime.requestReconcile();
+      canvasPerformanceRuntime.requestResourceReconcile();
       stats.resourceCaches = Object.freeze({
         image: imageRenderer.getResourceStats?.() || null,
         presentationSnapshot: presentationSnapshotController.getCacheStats(),
-        unified: resourceBudgetRuntime.getSnapshot(),
+        unified: canvasPerformanceRuntime.getResourceSnapshot(),
       });
+      stats.performanceRuntime = canvasPerformanceRuntime.getLifecycleSnapshot();
     }
     if (stats?.progressiveRender?.pending) {
       if (!largeViewportProgressivePending) {
         largeViewportProgressivePending = true;
         scheduleRender({
+          lane: CANVAS_PERFORMANCE_LANES.BACKGROUND,
           reason: "large-viewport-progressive-render",
           sceneDirty: false,
           viewDirty: true,
@@ -5247,6 +5252,32 @@ let tablePointerSelectionState = {
     renderScheduler = createRenderScheduler({
       collectFrameInput: collectRenderFrameInput,
       renderFrame: performRenderFrame,
+      canRunLane: (lane) => {
+        const snapshot = canvasPerformanceRuntime.getLifecycleSnapshot();
+        if (lane === CANVAS_PERFORMANCE_LANES.INPUT) return true;
+        if (lane === CANVAS_PERFORMANCE_LANES.BACKGROUND) {
+          return snapshot.phase === CANVAS_PERFORMANCE_PHASES.STEADY;
+        }
+        if (lane === CANVAS_PERFORMANCE_LANES.RECOVERY) {
+          return snapshot.phase === CANVAS_PERFORMANCE_PHASES.RECOVERING ||
+            snapshot.phase === CANVAS_PERFORMANCE_PHASES.STEADY;
+        }
+        return !(
+          snapshot.phase === CANVAS_PERFORMANCE_PHASES.ACTIVE &&
+          snapshot.viewportIntentActive
+        );
+      },
+      onFrameComplete: ({ lane }) => {
+        if (lane !== CANVAS_PERFORMANCE_LANES.RECOVERY || !pendingPerformanceRecovery) {
+          return;
+        }
+        const recovery = pendingPerformanceRecovery;
+        if (canvasPerformanceRuntime.finishRecovery(recovery.performanceSessionId)) {
+          scenePresentationCoordinator.finishInteraction(recovery.presentationSessionId);
+          pendingPerformanceRecovery = null;
+          renderScheduler?.resume?.();
+        }
+      },
     });
     return renderScheduler;
   }
@@ -5257,6 +5288,7 @@ let tablePointerSelectionState = {
     }
     const invalidationPatch = invalidationToRenderPatch(options.invalidation);
     return ensureRenderScheduler().schedule({
+      lane: options.lane || CANVAS_PERFORMANCE_LANES.COMMIT,
       reason: String(options.reason || "render").trim() || "render",
       backgroundDirty: Boolean(options.backgroundDirty || invalidationPatch.backgroundDirty),
       sceneDirty: Boolean(options.sceneDirty || invalidationPatch.sceneDirty),
@@ -5276,7 +5308,11 @@ let tablePointerSelectionState = {
       window.clearTimeout(interactionRecoveryTimer);
       interactionRecoveryTimer = 0;
     }
-    interactionPriorityGate.activate(reason);
+    pendingPerformanceRecovery = null;
+    canvasPerformanceRuntime.beginInteraction(reason);
+    canvasPerformanceRuntime.setViewportIntent(
+      reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan"
+    );
     scenePresentationCoordinator.beginInteraction(reason);
     store.setPersistencePaused?.(true);
     presentationSnapshotController.setPaused(true);
@@ -5299,33 +5335,72 @@ let tablePointerSelectionState = {
     presentationQualityTimer = window.setTimeout(() => {
       presentationQualityTimer = 0;
       presentationQualityDeadline = 0;
-      scheduleRender({ overlayDirty: true, reason: "presentation-quality-dwell" });
+      scheduleRender({
+        lane: CANVAS_PERFORMANCE_LANES.BACKGROUND,
+        overlayDirty: true,
+        reason: "presentation-quality-dwell",
+      });
     }, Math.ceil(waitMs));
   }
 
-  function releaseInteractionPriority(delayMs = 140, { emit = true } = {}) {
-    const waitMs = Math.max(0, Number(delayMs || 140) || 140);
-    const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
+  function beginInteractionRecovery({
+    performanceSessionId,
+    presentationSessionId,
+    emit = true,
+    beforeCommit = null,
+  } = {}) {
+    if (!canvasPerformanceRuntime.beginCommit(performanceSessionId)) {
+      return false;
+    }
     scenePresentationCoordinator.settleInteraction(presentationSessionId);
+    if (typeof beforeCommit === "function") {
+      beforeCommit();
+    }
+    if (!canvasPerformanceRuntime.beginRecovery(performanceSessionId)) {
+      return false;
+    }
+    canvasPerformanceRuntime.setViewportIntent(false);
+    pendingPerformanceRecovery = { performanceSessionId, presentationSessionId };
+    store.setPersistencePaused?.(false);
+    presentationSnapshotController.setPaused(false);
+    hydrationScheduler.setPaused(false);
+    if (emit) {
+      store.emit();
+    }
+    const recoveryFrameId = scheduleRender({
+      lane: CANVAS_PERFORMANCE_LANES.RECOVERY,
+      overlayDirty: true,
+      reason: "interaction-priority-release",
+    });
+    renderScheduler?.resume?.();
+    if (!recoveryFrameId) {
+      canvasPerformanceRuntime.finishRecovery(performanceSessionId);
+      scenePresentationCoordinator.finishInteraction(presentationSessionId);
+      pendingPerformanceRecovery = null;
+    }
+    return true;
+  }
+
+  function releaseInteractionPriority(delayMs = 140, { emit = true, beforeCommit = null } = {}) {
+    const waitMs = Math.max(0, Number(delayMs || 140) || 140);
+    const performanceSessionId = canvasPerformanceRuntime.getLifecycleSnapshot().sessionId;
+    const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
     }
     interactionRecoveryTimer = window.setTimeout(() => {
       interactionRecoveryTimer = 0;
-      interactionPriorityGate.release();
-      scenePresentationCoordinator.finishInteraction(presentationSessionId);
-      store.setPersistencePaused?.(false);
-      presentationSnapshotController.setPaused(false);
-      hydrationScheduler.setPaused(false);
-      if (emit) {
-        store.emit();
-      }
-      scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
+      beginInteractionRecovery({
+        performanceSessionId,
+        presentationSessionId,
+        emit,
+        beforeCommit,
+      });
     }, waitMs);
   }
 
   function getInteractionPrioritySnapshot() {
-    return interactionPriorityGate.getSnapshot();
+    return canvasPerformanceRuntime.getInteractionSnapshot();
   }
 
   function syncBoard({
@@ -20511,11 +20586,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  function finishPendingWheelSession({ persist = false } = {}) {
-    if (wheelCommitTimer) {
-      window.clearTimeout(wheelCommitTimer);
-      wheelCommitTimer = 0;
-    }
+  function commitPendingCameraSession({ persist = false } = {}) {
     const result = cameraInteractionRuntime.finish();
     if (result.active && result.changed) {
       state.board.view = createView(result.view);
@@ -20534,6 +20605,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return result.changed;
   }
 
+  function finishPendingWheelSession({ persist = false } = {}) {
+    if (interactionRecoveryTimer) {
+      window.clearTimeout(interactionRecoveryTimer);
+      interactionRecoveryTimer = 0;
+    }
+    let changed = false;
+    const lifecycle = canvasPerformanceRuntime.getLifecycleSnapshot();
+    const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
+    const commitCamera = () => {
+      changed = commitPendingCameraSession({ persist });
+    };
+    if (lifecycle.phase === CANVAS_PERFORMANCE_PHASES.ACTIVE) {
+      beginInteractionRecovery({
+        performanceSessionId: lifecycle.sessionId,
+        presentationSessionId,
+        emit: false,
+        beforeCommit: commitCamera,
+      });
+    } else {
+      commitCamera();
+    }
+    return changed;
+  }
+
   function onWheel(event) {
     if (!isInteractiveMode()) {
       return;
@@ -20542,7 +20637,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const zooming = Boolean(event.ctrlKey || event.metaKey);
     const reason = zooming ? "wheel-zoom" : "wheel-pan";
     activateInteractionPriority(reason);
-    releaseInteractionPriority(140, { emit: false });
     const baseView = cameraInteractionRuntime.getCurrentView();
     if (zooming) {
       const focusPoint = screenToScene(
@@ -20558,13 +20652,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     } else {
       cameraInteractionRuntime.update(() => panView(baseView, -event.deltaX, -event.deltaY), reason);
     }
-    if (wheelCommitTimer) {
-      window.clearTimeout(wheelCommitTimer);
-    }
-    wheelCommitTimer = window.setTimeout(() => {
-      wheelCommitTimer = 0;
-      finishPendingWheelSession({ persist: true });
-    }, 160);
+    releaseInteractionPriority(160, {
+      emit: false,
+      beforeCommit: () => commitPendingCameraSession({ persist: true }),
+    });
   }
 
   function onDragOver(event) {
@@ -25034,12 +25125,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       presentationQualityTimer = 0;
       presentationQualityDeadline = 0;
     }
-    interactionPriorityGate.release();
+    pendingPerformanceRecovery = null;
+    canvasPerformanceRuntime.reset();
     scenePresentationCoordinator.reset();
     presentationQualityRuntime.reset();
     presentationSnapshotController.clear();
-    resourceBudgetRuntime.setInteractionActive(true);
-    framePerformanceWindow.clear();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();

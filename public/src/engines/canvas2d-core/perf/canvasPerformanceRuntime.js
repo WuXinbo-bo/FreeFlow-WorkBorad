@@ -56,6 +56,23 @@ export function createCanvasPerformanceRuntime({
     });
   }
 
+  function getLifecycleSnapshot() {
+    const interactionCritical =
+      phase === CANVAS_PERFORMANCE_PHASES.ACTIVE ||
+      phase === CANVAS_PERFORMANCE_PHASES.COMMITTING;
+    return Object.freeze({
+      phase,
+      sessionId,
+      generation,
+      reason,
+      transitionCount,
+      viewportIntentActive,
+      interactionCritical,
+      canRunRecovery: phase === CANVAS_PERFORMANCE_PHASES.RECOVERING,
+      canRunBackground: phase === CANVAS_PERFORMANCE_PHASES.STEADY,
+    });
+  }
+
   function emit(previousPhase) {
     const snapshot = getSnapshot();
     listeners.forEach((listener) => listener(snapshot, previousPhase));
@@ -144,6 +161,10 @@ export function createCanvasPerformanceRuntime({
     registerResource: (descriptor) => resourceBudget.register(descriptor),
     requestResourceReconcile: () => resourceBudget.requestReconcile(),
     reconcileResourcesNow: () => resourceBudget.reconcileNow(),
+    getLifecycleSnapshot,
+    getInteractionSnapshot: () => Object.freeze({ ...interactionGate.getSnapshot() }),
+    getPerformanceSnapshot: () => frameWindow.getSnapshot(),
+    getResourceSnapshot: () => resourceBudget.getSnapshot(),
     subscribe(listener) {
       if (typeof listener !== "function") return () => false;
       listeners.add(listener);
