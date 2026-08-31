@@ -1576,13 +1576,17 @@ async function runTileScaleRecoveryCheck(browser) {
     assert(session.getErrors().length === 0, "tile scale recovery produced page errors", session.getErrors());
     cycles.forEach(({ active, recovered }, index) => {
       assert(active?.runtimeMode?.viewportInteractionActive === true, `cycle ${index} did not enter viewport interaction`, cycles);
-      assert(active?.tileCache?.scaleMode === "bucket", `cycle ${index} did not use a bucketed interaction scale`, cycles);
-      assert(
-        Number(active?.tileCache?.rasterScale || 0) >= Number(active?.tileCache?.requestedScale || 0),
-        `cycle ${index} undersampled the interaction tile scale`,
-        cycles
-      );
+      const retainedFrameActive = active?.cameraFastPath?.active === true && active?.retainedCameraFrame?.active === true;
+      if (!retainedFrameActive) {
+        assert(active?.tileCache?.scaleMode === "bucket", `cycle ${index} did not use a bucketed interaction scale`, cycles);
+        assert(
+          Number(active?.tileCache?.rasterScale || 0) >= Number(active?.tileCache?.requestedScale || 0),
+          `cycle ${index} undersampled the interaction tile scale`,
+          cycles
+        );
+      }
       assert(recovered?.runtimeMode?.mode === "steady", `cycle ${index} did not recover to steady mode`, cycles);
+      assert(recovered?.cameraFastPath?.active === false, `cycle ${index} retained the camera fast path after recovery`, cycles);
       assert(recovered?.tileCache?.scaleMode === "exact", `cycle ${index} did not restore exact tile scale`, cycles);
       assert(
         Math.abs(Number(recovered?.tileCache?.rasterScale || 0) - Number(recovered?.tileCache?.requestedScale || 0)) <= 0.001,
@@ -1592,6 +1596,7 @@ async function runTileScaleRecoveryCheck(browser) {
     });
     return { cycles: cycles.map(({ active, recovered }) => ({
       active: active?.tileCache || null,
+      retainedFrameActive: active?.retainedCameraFrame?.active === true,
       recovered: recovered?.tileCache || null,
     })) };
   } finally {

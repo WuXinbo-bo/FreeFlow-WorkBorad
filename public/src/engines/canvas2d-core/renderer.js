@@ -14,6 +14,7 @@ import { drawShapeElement } from "./rendererShape.js";
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
 import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
 import { createTileSceneCache } from "./render/tileSceneCache.js";
+import { createRetainedCameraFrame } from "./render/retainedCameraFrame.js";
 import { drawStableRoundedRectPath, resolveScreenCornerRadius } from "./render/cornerRadius.js";
 import { resolveViewportPixelBudget } from "./render/viewportPixelBudget.js";
 import { createCompactPresentationRegistry } from "./runtime/compactPresentationRegistry.js";
@@ -1508,6 +1509,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   const viewportCuller = createViewportCuller();
   const backgroundPatternCache = createBackgroundPatternCache();
   const staticTileLayer = createTileSceneCache();
+  const retainedCameraFrame = createRetainedCameraFrame();
   const layerStore = createCanvasLayerStore();
   let lastStaticExclusionSignature = "";
   let lastTileStats = {
@@ -1567,6 +1569,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
 
   function resetCachedSurfaces() {
     staticTileLayer.clear();
+    retainedCameraFrame.clear();
     layerStore.clear();
     lastStaticExclusionSignature = "";
     lastTileStats = {
@@ -1640,6 +1643,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       sceneVectorOwnedIds = null,
       sceneVectorConnectionsOwned = false,
       sceneVectorConnectionCount = 0,
+      cameraFastPath = false,
     }) {
       const presentationPlan = frameContext?.quality?.activePlan || null;
       const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
@@ -1674,6 +1678,112 @@ export function createRenderer({ customRenderers = [] } = {}) {
         selectionRect,
         imageEditState,
       });
+      const retainedPresentation = cameraFastPath && viewportInteractionActive
+        ? retainedCameraFrame.present({ ctx, view, width, height, dpr })
+        : { presented: false, reason: "inactive" };
+      if (retainedPresentation.presented) {
+        const fastVisibleItems = Array.isArray(visibleItems) ? visibleItems : [];
+        const selectedIdSet = new Set(Array.isArray(selectedIds) ? selectedIds : []);
+        const hoveredItem = fastVisibleItems.find(
+          (item) => String(item?.id || "") === String(hoverId || "")
+        ) || null;
+        const mindMapDropTarget = fastVisibleItems.find(
+          (item) => String(item?.id || "") === String(mindMapDropTargetId || "")
+        ) || null;
+        if (interactionCtx) {
+          interactionCtx.save();
+          interactionCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          interactionCtx.clearRect(0, 0, width, height);
+          drawInteractionLayer(interactionCtx, {
+            view,
+            width,
+            height,
+            selectionRect,
+            alignmentSnap,
+            alignmentSnapConfig,
+            items: fastVisibleItems,
+            draftElement,
+            hoveredItem:
+              hoveredItem && !selectedIdSet.has(String(hoveredItem.id || ""))
+                ? hoveredItem
+                : null,
+            mindMapDropTarget,
+            mindMapDropHint,
+            selectedItems: fastVisibleItems.filter((item) => selectedIdSet.has(item.id)),
+            lockedItems: fastVisibleItems.filter((item) => item?.locked),
+          });
+          interactionCtx.restore();
+        }
+        const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const previousStats = canvas.__ffRenderStats || {};
+        const renderStats = {
+          ...previousStats,
+          frameContext: frameContext
+            ? {
+                frameId: frameContext.frameId,
+                sceneRevision: frameContext.sceneRevision,
+                boardRevision: frameContext.boardRevision,
+                registryRevision: frameContext.registryRevision,
+                camera: { ...frameContext.view },
+              }
+            : null,
+          frameDurationMs: Number((frameEnd - frameStart).toFixed(2)),
+          performanceWindow: frameContext?.performance || null,
+          viewport: { width, height },
+          progressiveRender: {
+            enabled: false,
+            deferredColdTiles: 0,
+            predictedPreloadTiles: 0,
+            pending: false,
+          },
+          culling: {
+            totalCount: Array.isArray(items) ? items.length : 0,
+            renderedCount: fastVisibleItems.length,
+            culledCount: Math.max(0, (Array.isArray(items) ? items.length : 0) - fastVisibleItems.length),
+            forceRenderedCount: 0,
+          },
+          renderedItems: fastVisibleItems.length,
+          layerReuse: {
+            backgroundReused: true,
+            staticSceneReused: true,
+            dynamicSceneReused: true,
+            interactionReused: false,
+          },
+          renderReason: String(layerState?.renderReason || dirtyState?.reason || "camera-retained"),
+          renderReasons: Array.isArray(layerState?.reasons) ? layerState.reasons.slice() : [],
+          runtimeMode: {
+            mode: runtimeMode.mode,
+            viewportInteractionActive: runtimeMode.viewportInteractionActive,
+            interactionActive: runtimeMode.interactionActive,
+          },
+          invalidation: {
+            cameraDirty: Boolean(dirtyState?.cameraDirty),
+            sceneDirty: Boolean(dirtyState?.sceneDirty),
+            interactionDirty: Boolean(dirtyState?.interactionDirty),
+          },
+          layerState: layerState
+            ? {
+                revisions: { ...(layerState.revisions || {}) },
+                dirty: { ...(layerState.dirty || {}) },
+              }
+            : null,
+          tileCache: {
+            ...lastTileStats,
+            cacheSize: Number(lastTileStats?.cacheSize || staticTileLayer.getSize()) || 0,
+            reused: true,
+          },
+          retainedCameraFrame: {
+            ...retainedCameraFrame.getStats(),
+            active: true,
+            coverageMiss: false,
+          },
+        };
+        canvas.__ffRenderStats = renderStats;
+        if (typeof window !== "undefined") {
+          window.__ffRenderStats = renderStats;
+        }
+        return renderStats;
+      }
       const elementInteractionMode = runtimeMode.mode === "element-interaction";
       const effectiveRenderTextInCanvas = Boolean(renderTextInCanvas);
       const cullResult =
@@ -2019,6 +2129,129 @@ export function createRenderer({ customRenderers = [] } = {}) {
       if (hasDynamicContent) {
         ctx.drawImage(dynamicLayer.canvas, 0, 0, width, height);
       }
+      const retainedFrameKey = [
+        sceneKey,
+        frameContext?.sceneRevision || 0,
+        viewVisualSignature,
+        renderModeSignature,
+        staticExclusionSignature,
+        dynamicVisualSignature,
+        width,
+        height,
+        dpr,
+      ].join("|");
+      retainedCameraFrame.schedulePrepare({
+        key: retainedFrameKey,
+        width,
+        height,
+        dpr,
+        view,
+        draw: ({ ctx: retainedCtx, view: retainedView, width: retainedWidth, height: retainedHeight }) => {
+          drawBackground(
+            retainedCtx,
+            retainedWidth,
+            retainedHeight,
+            retainedView,
+            backgroundStyle,
+            backgroundPatternCache
+          );
+          if (staticItems.length && sceneIndex && sceneKey) {
+            staticTileLayer.draw({
+              ctx: retainedCtx,
+              sceneIndex,
+              sceneKey: `${sceneKey}|mode:${renderModeSignature}`,
+              view: retainedView,
+              viewportWidth: retainedWidth,
+              viewportHeight: retainedHeight,
+              excludeIds: Array.from(staticRenderExclusionIds),
+              sceneChanged: false,
+              dirtyItemIds: [],
+              maxColdTiles: Infinity,
+              viewportMarginPx: 0,
+              preloadMarginPx: 0,
+              overscanMarginPx: 0,
+              viewportPrediction: null,
+              preferExactScale: true,
+              drawItems: ({ ctx: tileCtx, items: tileItems, view: tileView }) =>
+                drawVisibleItemsToContext({
+                  ctx: tileCtx,
+                  items: tileItems,
+                  view: tileView,
+                  selectedIds: [],
+                  hoverId: null,
+                  editingId: null,
+                  imageEditState: null,
+                  flowDraft: null,
+                  relationshipDraft: null,
+                  allowLocalFileAccess,
+                  onImageNaturalSize,
+                  onImageResourceStateChange,
+                  renderTextInCanvas: effectiveRenderTextInCanvas,
+                  allItems,
+                  rendererDispatch,
+                  compactPresentationRegistry,
+                  presentationPlan,
+                  sceneContentOwnedIds: sceneContentOwned,
+                  sceneVectorOwnedIds: sceneVectorOwned,
+                }),
+            });
+          } else if (staticItems.length) {
+            drawVisibleItemsToContext({
+              ctx: retainedCtx,
+              items: staticItems,
+              view: retainedView,
+              selectedIds: [],
+              hoverId: null,
+              editingId: null,
+              imageEditState: null,
+              flowDraft: null,
+              relationshipDraft: null,
+              allowLocalFileAccess,
+              onImageNaturalSize,
+              onImageResourceStateChange,
+              renderTextInCanvas: effectiveRenderTextInCanvas,
+              allItems,
+              rendererDispatch,
+              compactPresentationRegistry,
+              presentationPlan,
+              sceneContentOwnedIds: sceneContentOwned,
+              sceneVectorOwnedIds: sceneVectorOwned,
+            });
+          }
+          if (hasConnectionContent && !sceneVectorConnectionsOwned) {
+            drawMindMapConnections(retainedCtx, frameVisibleItems, retainedView);
+            drawMindMapSummaries(retainedCtx, frameVisibleItems, retainedView);
+            drawMindRelationshipLines(retainedCtx, frameVisibleItems, retainedView, hoverId, hoverHandle);
+          }
+          if (hasDynamicContent) {
+            drawVisibleItemsToContext({
+              ctx: retainedCtx,
+              items: dynamicItems,
+              view: retainedView,
+              selectedIds,
+              hoverId,
+              editingId,
+              imageEditState,
+              flowDraft,
+              relationshipDraft,
+              allowLocalFileAccess,
+              onImageNaturalSize,
+              onImageResourceStateChange,
+              renderTextInCanvas: effectiveRenderTextInCanvas,
+              allItems,
+              rendererDispatch,
+              compactPresentationRegistry,
+              presentationPlan,
+              sceneContentOwnedIds: sceneContentOwned,
+              sceneVectorOwnedIds: sceneVectorOwned,
+            });
+            drawDraftElement(retainedCtx, draftElement, retainedView);
+          }
+          if (hasEmptyBoardHint) {
+            drawHint(retainedCtx, retainedWidth, retainedHeight);
+          }
+        },
+      });
       const frameEnd = typeof performance !== "undefined" ? performance.now() : Date.now();
       const backgroundStats = backgroundPatternCache.getStats();
       const renderStats = {
@@ -2094,6 +2327,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
           ...tileStats,
           cacheSize: Number(tileStats?.cacheSize || staticTileLayer.getSize()) || 0,
           reused: !effectiveStaticSceneDirty,
+        },
+        retainedCameraFrame: {
+          ...retainedCameraFrame.getStats(),
+          active: false,
+          coverageMiss: Boolean(cameraFastPath && viewportInteractionActive),
         },
       };
       canvas.__ffRenderStats = renderStats;

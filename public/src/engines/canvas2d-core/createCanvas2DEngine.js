@@ -5131,6 +5131,7 @@ let tablePointerSelectionState = {
       sceneVectorOwnedIds: sceneVectorState.ownedIds,
       sceneVectorConnectionsOwned: true,
       sceneVectorConnectionCount: sceneVectorState.connectionCount,
+      cameraFastPath,
     });
     const stats = refs.canvas?.__ffRenderStats || null;
     if (stats) {

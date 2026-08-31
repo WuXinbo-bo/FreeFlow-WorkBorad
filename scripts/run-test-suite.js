@@ -13,6 +13,7 @@ const CHECKS = [
   "scripts/check-overlay-budget.js",
   "scripts/check-interaction-coordination.js",
   "scripts/check-camera-interaction-runtime.js",
+  "scripts/check-retained-camera-frame.js",
   "scripts/check-presentation-quality-runtime.js",
   "scripts/check-canvas-performance-policy.js",
   "scripts/check-canvas-state-history.js",
