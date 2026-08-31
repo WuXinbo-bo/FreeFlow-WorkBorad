@@ -27,7 +27,7 @@ export const BUILTIN_ELEMENT_UX = Object.freeze({
     editor: "shape",
     inspector: "shape",
     contextMenu: "shape",
-    commands: [...COMMON_COMMANDS, "selection.rotate", "shape.reverse", "shape.toggle-dash", "shape.toggle-fill"],
+    commands: [...COMMON_COMMANDS, "shape.reverse", "shape.toggle-dash", "shape.toggle-fill"],
     acceptance: [...COMMON_ACCEPTANCE, "rotate", "endpoint-edit"],
   }),
   image: descriptor({
@@ -92,21 +92,21 @@ export const BUILTIN_ELEMENT_UX = Object.freeze({
     editor: "none",
     inspector: "mind-relationship",
     contextMenu: "mind-relationship",
-    commands: ["selection.delete", "relationship.style"],
+    commands: ["selection.delete"],
     acceptance: ["select", "delete", "endpoint-follow", "undo-redo", "reverse-recovery"],
   }),
   flowNode: descriptor({
     editor: "flow-node",
     inspector: "flow-node",
     contextMenu: "flow-node",
-    commands: [...COMMON_COMMANDS, "element.edit", "flow.connect"],
+    commands: [...COMMON_COMMANDS, "element.edit"],
     acceptance: [...COMMON_ACCEPTANCE, "edit-commit-cancel", "connect"],
   }),
   flowEdge: descriptor({
     editor: "none",
     inspector: "flow-edge",
     contextMenu: "flow-edge",
-    commands: ["selection.delete", "flow.reverse", "flow.toggle-dash", "flow.reconnect"],
+    commands: ["selection.delete", "flow.reverse", "flow.toggle-dash"],
     acceptance: ["select", "delete", "endpoint-follow", "undo-redo", "reverse-recovery"],
   }),
   text: descriptor({

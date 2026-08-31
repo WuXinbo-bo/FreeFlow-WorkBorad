@@ -400,6 +400,7 @@ export function createLightImageEditor(options = {}) {
     beginEdit,
     finishEdit,
     isEditing,
+    setMode,
     handlePointerDown,
     handlePointerMove,
     handlePointerUp,

@@ -15262,6 +15262,100 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
+  function runTableStructureCommand(kind = "", options = {}) {
+    const operation = String(options?.operation || options?.direction || "").trim().toLowerCase();
+    if (!ensureTableEditorReadyForAction({ anchorCell: options?.anchorCell || null })) {
+      return false;
+    }
+    if (kind === "insert") {
+      mutateTableEditor((matrix) => {
+        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+        if (operation === "row-above") {
+          return insertTableRows(matrix, getTableRowOperationBounds(matrix).startRow, 1, { hasHeader });
+        }
+        if (operation === "column-left") {
+          return insertTableColumns(matrix, getTableColumnOperationBounds(matrix).startColumn, 1, { hasHeader });
+        }
+        if (operation === "column-right" || operation === "column") {
+          return insertTableColumns(matrix, getTableColumnOperationBounds(matrix).endColumn + 1, 1, { hasHeader });
+        }
+        return insertTableRows(matrix, getTableRowOperationBounds(matrix).endRow + 1, 1, { hasHeader });
+      });
+      return true;
+    }
+    if (kind === "delete") {
+      mutateTableEditor((matrix) => {
+        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+        if (operation === "column") {
+          focusTableColumnOperationRange(matrix);
+          return deleteSelectedTableColumns(matrix, { hasHeader });
+        }
+        focusTableRowOperationRange(matrix);
+        return deleteSelectedTableRows(matrix, { hasHeader });
+      });
+      return true;
+    }
+    if (kind === "move") {
+      let changed = true;
+      mutateTableEditor((matrix) => {
+        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
+        if (operation === "row-up") {
+          const { startRow } = getTableRowOperationBounds(matrix);
+          if (startRow <= (hasHeader ? 1 : 0)) {
+            changed = false;
+            setStatus("当前行已经在顶部");
+            return matrix;
+          }
+          focusTableRowOperationRange(matrix);
+          return moveSelectedTableRows(matrix, "up", { hasHeader });
+        }
+        if (operation === "row-down") {
+          const { endRow } = getTableRowOperationBounds(matrix);
+          if (endRow >= matrix.length - 1) {
+            changed = false;
+            setStatus("当前行已经在底部");
+            return matrix;
+          }
+          focusTableRowOperationRange(matrix);
+          return moveSelectedTableRows(matrix, "down", { hasHeader });
+        }
+        if (operation === "column-left") {
+          const { startColumn } = getTableColumnOperationBounds(matrix);
+          if (startColumn <= 0) {
+            changed = false;
+            setStatus("当前列已经在最左侧");
+            return matrix;
+          }
+          focusTableColumnOperationRange(matrix);
+          return moveSelectedTableColumns(matrix, "left", { hasHeader });
+        }
+        const { endColumn } = getTableColumnOperationBounds(matrix);
+        if (endColumn >= (matrix[0] || []).length - 1) {
+          changed = false;
+          setStatus("当前列已经在最右侧");
+          return matrix;
+        }
+        focusTableColumnOperationRange(matrix);
+        return moveSelectedTableColumns(matrix, "right", { hasHeader });
+      });
+      return changed;
+    }
+    if (kind === "toggle-header") {
+      mutateTableEditor((matrix) => {
+        const editingItem = getTableEditItem();
+        const nextHasHeader = editingItem?.table?.hasHeader === false;
+        matrix.forEach((row, rowIndex) => {
+          row.forEach((cell) => {
+            cell.header = nextHasHeader ? rowIndex === 0 : false;
+          });
+        });
+        return { matrix, hasHeader: nextHasHeader };
+      });
+      return true;
+    }
+    return false;
+  }
+
   function getTableCellSelectionFromScenePoint(item, scenePoint) {
     const grid = getStructuredTableSceneGrid(item);
     const bounds = grid.bounds;
@@ -15848,6 +15942,69 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   async function exportImageElement(itemId) {
     return lightImageEditor.exportImage(itemId, renderImageToCanvas);
+  }
+
+  function getMutableSingleSelectedItem(expectedType = "") {
+    if (state.board.selectedIds.length !== 1) {
+      return null;
+    }
+    const item = getSingleSelectedItemFast(expectedType || undefined);
+    return item && !isLockedItem(item) ? item : null;
+  }
+
+  function startSelectedImageCrop() {
+    const item = getMutableSingleSelectedItem("image");
+    if (!item) {
+      return false;
+    }
+    if (!lightImageEditor.isEditing(item.id) && !beginImageEdit(item.id)) {
+      return false;
+    }
+    lightImageEditor.setMode("crop");
+    scheduleRender({ overlayDirty: true });
+    return true;
+  }
+
+  function rotateSelectedImage(delta = 90) {
+    const item = getMutableSingleSelectedItem("image");
+    return item ? lightImageEditor.applyRotation(item.id, Number(delta) < 0 ? -90 : 90) : false;
+  }
+
+  function flipSelectedImage(axis = "x") {
+    const item = getMutableSingleSelectedItem("image");
+    return item ? lightImageEditor.applyFlip(item.id, axis === "y" ? "y" : "x") : false;
+  }
+
+  function resetSelectedImageAdjustments() {
+    const item = getMutableSingleSelectedItem("image");
+    return item ? lightImageEditor.resetTransform(item.id) : false;
+  }
+
+  function toggleSelectedMemo(expectedType = "") {
+    const item = getMutableSingleSelectedItem(expectedType);
+    if (!item) {
+      return false;
+    }
+    if (item.memoVisible && String(item.memo || "").trim()) {
+      const confirmed = window.confirm("标签已有内容，确认删除？");
+      if (!confirmed) {
+        return false;
+      }
+    }
+    const before = takeItemsHistorySnapshot([item.id]);
+    item.memoVisible = !item.memoVisible;
+    if (!item.memoVisible) {
+      item.memo = "";
+    }
+    const isImage = expectedType === "image";
+    commitItemPatchHistory(
+      before,
+      item.id,
+      item,
+      `${item.memoVisible ? "显示" : "删除"}${isImage ? "图片" : "文件卡"}标签`,
+      isImage ? "image-memo-toggle" : "file-memo-toggle"
+    );
+    return true;
   }
 
   function getFlowEdgeBounds(edge) {
@@ -16923,6 +17080,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function getActiveCodeBlockCommandTarget({ mutable = false } = {}) {
+    const item = getCodeBlockEditItem() || getSelectedCodeBlockItem();
+    if (!item || (mutable && isLockedItem(item))) {
+      return null;
+    }
+    return item;
+  }
+
+  function toggleCodeBlockOption(option = "wrap") {
+    const item = getActiveCodeBlockCommandTarget({ mutable: true });
+    if (!item) {
+      return false;
+    }
+    const before = takeItemsHistorySnapshot([item.id]);
+    const patch = option === "lines"
+      ? { showLineNumbers: item.showLineNumbers === false }
+      : { wrap: item.wrap !== true };
+    Object.assign(item, updateCodeBlockElement(item, patch, { remeasure: true }));
+    clearCodeBlockEditLayoutCache(item.id);
+    markCodeBlockOverlayDirty(item.id);
+    commitCodeBlockPatchHistory(before, item.id, item, option === "lines" ? "切换代码行号" : "切换代码自动换行");
+    return true;
+  }
+
   function retryFileCardPreview(requestId = "") {
     const expectedRequestId = String(requestId || "").trim();
     const request = findFileCardPreviewRequest(expectedRequestId);
@@ -16944,6 +17125,25 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       () => hydrateFileCardPreviewFile(expectedRequestId, request.sourcePath),
       { priority: "selected", type: "file-preview-read" }
     );
+    return true;
+  }
+
+  async function openSelectedFileCard() {
+    const item = getSingleSelectedItemFast("fileCard");
+    const sourcePath = String(item?.sourcePath || "").trim();
+    if (!sourcePath) {
+      setStatus("文件路径为空");
+      return false;
+    }
+    if (typeof globalThis?.desktopShell?.openPath !== "function") {
+      setStatus("当前环境不支持打开文件");
+      return false;
+    }
+    const result = await globalThis.desktopShell.openPath(sourcePath);
+    if (result?.ok === false) {
+      setStatus(result?.error || "文件打开失败", "warning");
+      return false;
+    }
     return true;
   }
 
@@ -21060,8 +21260,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">对齐</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="对齐">
             <button type="button" class="canvas2d-context-menu-item" data-action="align-left">左对齐</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="align-top">上对齐</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="align-center">居中对齐</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="align-center">水平居中</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="align-right">右对齐</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="align-top">顶对齐</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="align-middle">垂直居中</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="align-bottom">底对齐</button>
           </div>
         </div>
         <div class="canvas2d-context-submenu">
@@ -21575,7 +21778,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "copy-selected") {
-      void copySelection();
+      void runCommand("selection.copy");
       hideContextMenu();
     }
     if (action === "copy-selected-html") {
@@ -21591,12 +21794,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "delete-selected") {
-      removeSelected();
+      runCommand("selection.delete");
       hideContextMenu();
     }
     if (action === "toggle-lock") {
       alignSelectionWithContextMenuTarget();
-      toggleLockOnSelection();
+      runCommand("selection.toggle-lock");
       hideContextMenu();
     }
     if (action === "navigator-add") {
@@ -21607,13 +21810,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "group-toggle") {
-      const selectedItems = getSelectedItemsFast();
-      const hasGrouped = selectedItems.some((item) => item.groupId);
-      if (hasGrouped) {
-        ungroupSelection();
-      } else {
-        groupSelection();
-      }
+      runCommand("selection.group-toggle");
       hideContextMenu();
     }
     if (action === "merge-selected-text") {
@@ -21662,75 +21859,75 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       hideContextMenu();
     }
-    if (action === "align-left") {
-      alignSelection("left");
-      hideContextMenu();
-    }
-    if (action === "align-top") {
-      alignSelection("top");
-      hideContextMenu();
-    }
-    if (action === "align-center") {
-      alignSelection("center");
+    const alignmentCommand = {
+      "align-left": "selection.align-left",
+      "align-center": "selection.align-center",
+      "align-right": "selection.align-right",
+      "align-top": "selection.align-top",
+      "align-middle": "selection.align-middle",
+      "align-bottom": "selection.align-bottom",
+    }[action];
+    if (alignmentCommand) {
+      runCommand(alignmentCommand);
       hideContextMenu();
     }
     if (action === "distribute-horizontal") {
-      distributeSelection("horizontal");
+      runCommand("selection.distribute-horizontal");
       hideContextMenu();
     }
     if (action === "distribute-vertical") {
-      distributeSelection("vertical");
+      runCommand("selection.distribute-vertical");
       hideContextMenu();
     }
     if (action === "copy") {
       alignSelectionWithContextMenuTarget();
-      void copySelection();
+      void runCommand("selection.copy");
       hideContextMenu();
     }
     if (action === "cut") {
       alignSelectionWithContextMenuTarget();
-      void cutSelection();
+      void runCommand("selection.cut");
       hideContextMenu();
     }
     if (action === "paste") {
-      void pasteFromSystemClipboard(getContextMenuScenePoint());
+      void runCommand("selection.paste", getContextMenuScenePoint());
       hideContextMenu();
     }
     if (action === "delete") {
       alignSelectionWithContextMenuTarget();
-      removeSelected();
+      runCommand("selection.delete");
       hideContextMenu();
     }
     if (action === "layer-front") {
       alignSelectionWithContextMenuTarget();
-      moveSelectionToFront();
+      runCommand("selection.layer-front");
       hideContextMenu();
     }
     if (action === "layer-back") {
       alignSelectionWithContextMenuTarget();
-      moveSelectionToBack();
+      runCommand("selection.layer-back");
       hideContextMenu();
     }
     if (action === "layer-up") {
       alignSelectionWithContextMenuTarget();
-      moveSelectionByStep("up");
+      runCommand("selection.layer-up");
       hideContextMenu();
     }
     if (action === "layer-down") {
       alignSelectionWithContextMenuTarget();
-      moveSelectionByStep("down");
+      runCommand("selection.layer-down");
       hideContextMenu();
     }
     if (action === "arrow-reverse") {
-      reverseArrowSelection();
+      runCommand("shape.reverse");
       hideContextMenu();
     }
     if (action === "line-dash-toggle") {
-      toggleLineDash();
+      runCommand("shape.toggle-dash");
       hideContextMenu();
     }
     if (action === "shape-fill-toggle") {
-      toggleShapeFill();
+      runCommand("shape.toggle-fill");
       hideContextMenu();
     }
     if (action === "shape-color") {
@@ -21739,23 +21936,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "edge-solid") {
-      updateFlowEdgeStyle("solid");
+      runCommand("flow.set-style", "solid");
       hideContextMenu();
     }
     if (action === "edge-dashed") {
-      updateFlowEdgeStyle("dashed");
+      runCommand("flow.set-style", "dashed");
       hideContextMenu();
     }
     if (action === "edge-arrow-forward") {
-      updateFlowEdgeStyle("arrow", "forward");
+      runCommand("flow.set-style", "arrow", "forward");
       hideContextMenu();
     }
     if (action === "edge-arrow-backward") {
-      updateFlowEdgeStyle("arrow", "backward");
+      runCommand("flow.set-style", "arrow", "backward");
       hideContextMenu();
     }
     if (action === "edge-delete") {
-      removeFlowEdges();
+      runCommand("selection.delete");
       hideContextMenu();
     }
     if (action === "text-node-toggle") {
@@ -21774,197 +21971,67 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "table-copy-selection") {
-      void copyTableSelectionToClipboard({ cut: false });
+      void runCommand("table.copy-selection");
       hideContextMenu();
     }
     if (action === "table-cut-selection") {
-      void copyTableSelectionToClipboard({ cut: true });
+      void runCommand("table.cut-selection");
       hideContextMenu();
     }
     if (action === "table-clear-selection") {
-      mutateTableEditor((matrix) =>
-        clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
-      );
+      runCommand("table.clear-selection");
       hideContextMenu();
     }
     if (action === "table-add-row") {
-      if (!ensureTableEditorReadyForAction({ anchorCell: getTableActionAnchorCellFromTarget(target) })) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const { endRow } = getTableRowOperationBounds(matrix);
-        return insertTableRows(matrix, endRow + 1, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        });
-      });
+      runCommand("table.insert", { operation: "row-below", anchorCell: getTableActionAnchorCellFromTarget(target) });
       hideContextMenu();
     }
     if (action === "table-add-row-above") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) =>
-        insertTableRows(matrix, getTableRowOperationBounds(matrix).startRow, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        })
-      );
+      runCommand("table.insert", { operation: "row-above" });
       hideContextMenu();
     }
     if (action === "table-add-row-below") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) =>
-        insertTableRows(matrix, getTableRowOperationBounds(matrix).endRow + 1, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        })
-      );
+      runCommand("table.insert", { operation: "row-below" });
       hideContextMenu();
     }
     if (action === "table-add-column") {
-      if (!ensureTableEditorReadyForAction({ anchorCell: getTableActionAnchorCellFromTarget(target) })) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const { endColumn } = getTableColumnOperationBounds(matrix);
-        return insertTableColumns(matrix, endColumn + 1, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        });
-      });
+      runCommand("table.insert", { operation: "column-right", anchorCell: getTableActionAnchorCellFromTarget(target) });
       hideContextMenu();
     }
     if (action === "table-add-column-left") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) =>
-        insertTableColumns(matrix, getTableColumnOperationBounds(matrix).startColumn, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        })
-      );
+      runCommand("table.insert", { operation: "column-left" });
       hideContextMenu();
     }
     if (action === "table-add-column-right") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) =>
-        insertTableColumns(matrix, getTableColumnOperationBounds(matrix).endColumn + 1, 1, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        })
-      );
+      runCommand("table.insert", { operation: "column-right" });
       hideContextMenu();
     }
     if (action === "table-delete-row") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        focusTableRowOperationRange(matrix);
-        return deleteSelectedTableRows(matrix, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        });
-      });
+      runCommand("table.delete", { operation: "row" });
       hideContextMenu();
     }
     if (action === "table-delete-column") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        focusTableColumnOperationRange(matrix);
-        return deleteSelectedTableColumns(matrix, {
-          hasHeader: getTableEditItem()?.table?.hasHeader !== false,
-        });
-      });
+      runCommand("table.delete", { operation: "column" });
       hideContextMenu();
     }
     if (action === "table-move-row-up") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
-        const { startRow } = getTableRowOperationBounds(matrix);
-        const minRow = hasHeader ? 1 : 0;
-        if (startRow <= minRow) {
-          setStatus("当前行已经在顶部");
-          return matrix;
-        }
-        focusTableRowOperationRange(matrix);
-        return moveSelectedTableRows(matrix, "up", { hasHeader });
-      });
+      runCommand("table.move", { operation: "row-up" });
       hideContextMenu();
     }
     if (action === "table-move-row-down") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const hasHeader = getTableEditItem()?.table?.hasHeader !== false;
-        const { endRow } = getTableRowOperationBounds(matrix);
-        if (endRow >= matrix.length - 1) {
-          setStatus("当前行已经在底部");
-          return matrix;
-        }
-        focusTableRowOperationRange(matrix);
-        return moveSelectedTableRows(matrix, "down", { hasHeader });
-      });
+      runCommand("table.move", { operation: "row-down" });
       hideContextMenu();
     }
     if (action === "table-move-column-left") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const { startColumn } = getTableColumnOperationBounds(matrix);
-        if (startColumn <= 0) {
-          setStatus("当前列已经在最左侧");
-          return matrix;
-        }
-        focusTableColumnOperationRange(matrix);
-        return moveSelectedTableColumns(matrix, "left", { hasHeader: getTableEditItem()?.table?.hasHeader !== false });
-      });
+      runCommand("table.move", { operation: "column-left" });
       hideContextMenu();
     }
     if (action === "table-move-column-right") {
-      if (!ensureTableEditorReadyForAction()) {
-        hideContextMenu();
-        return;
-      }
-      mutateTableEditor((matrix) => {
-        const { endColumn } = getTableColumnOperationBounds(matrix);
-        if (endColumn >= (matrix[0] || []).length - 1) {
-          setStatus("当前列已经在最右侧");
-          return matrix;
-        }
-        focusTableColumnOperationRange(matrix);
-        return moveSelectedTableColumns(matrix, "right", { hasHeader: getTableEditItem()?.table?.hasHeader !== false });
-      });
+      runCommand("table.move", { operation: "column-right" });
       hideContextMenu();
     }
     if (action === "table-toggle-header") {
-      mutateTableEditor((matrix) => {
-        const editingItem = getTableEditItem();
-        const nextHasHeader = editingItem?.table?.hasHeader === false;
-        matrix.forEach((row, rowIndex) => {
-          row.forEach((cell) => {
-            cell.header = nextHasHeader ? rowIndex === 0 : false;
-          });
-        });
-        return { matrix, hasHeader: nextHasHeader };
-      });
+      runCommand("table.toggle-header");
       hideContextMenu();
     }
     if (action === "table-done") {
@@ -21990,35 +22057,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "image-memo") {
-      if (state.board.selectedIds.length === 1) {
-        const selected = getSingleSelectedItemFast("image");
-        if (selected) {
-          if (selected.memoVisible) {
-            const memoText = String(selected.memo || "").trim();
-            if (memoText) {
-              const ok = window.confirm("标签已有内容，确认删除？");
-              if (!ok) {
-                hideContextMenu();
-                return;
-              }
-            }
-            const before = takeItemsHistorySnapshot([selected.id]);
-            selected.memoVisible = false;
-            selected.memo = "";
-            commitItemPatchHistory(before, selected.id, selected, "删除图片标签", "image-memo-toggle");
-          } else {
-            const before = takeItemsHistorySnapshot([selected.id]);
-            selected.memoVisible = true;
-            commitItemPatchHistory(before, selected.id, selected, "显示图片标签", "image-memo-toggle");
-          }
-        }
-      }
+      runCommand("image.memo");
       hideContextMenu();
     }
     if (action === "image-restore") {
-      if (state.board.selectedIds.length === 1) {
-        lightImageEditor.resetTransform(state.board.selectedIds[0]);
-      }
+      runCommand("image.reset-adjustments");
       hideContextMenu();
     }
     if (action === "image-edit") {
@@ -22043,29 +22086,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "file-memo") {
-      if (state.board.selectedIds.length === 1) {
-        const selected = getSingleSelectedItemFast("fileCard");
-        if (selected) {
-          if (selected.memoVisible) {
-            const memoText = String(selected.memo || "").trim();
-            if (memoText) {
-              const ok = window.confirm("标签已有内容，确认删除？");
-              if (!ok) {
-                hideContextMenu();
-                return;
-              }
-            }
-            const before = takeItemsHistorySnapshot([selected.id]);
-            selected.memoVisible = false;
-            selected.memo = "";
-            commitItemPatchHistory(before, selected.id, selected, "删除文件卡标签", "file-memo-toggle");
-          } else {
-            const before = takeItemsHistorySnapshot([selected.id]);
-            selected.memoVisible = true;
-            commitItemPatchHistory(before, selected.id, selected, "显示文件卡标签", "file-memo-toggle");
-          }
-        }
-      }
+      runCommand("file.memo");
       hideContextMenu();
     }
     if (action === "file-reveal") {
@@ -22083,15 +22104,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "file-preview") {
-      if (state.board.selectedIds.length === 1) {
-        const selected = getSingleSelectedItemFast("fileCard");
-        if (!openFileCardPreview(selected)) {
-          hideContextMenu();
-          return;
-        }
-      }
+      runCommand("file.preview");
       hideContextMenu();
     }
+  }
+
+  function runRichTextUiCommand(action = "", value) {
+    const commandId = {
+      link: "text.link",
+      "insert-math-inline": "text.inline-math",
+      "insert-math-block": "text.block-math",
+    }[String(action || "").trim()];
+    return commandId ? runCommand(commandId, value) : applyRichTextCommand(action, value);
   }
 
   function applyRichTextCommand(action, color) {
@@ -22450,7 +22474,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (action === "color") {
       const color = target.getAttribute("data-color");
-      applyRichTextCommand(action, color);
+      runRichTextUiCommand(action, color);
       return;
     }
     if (action === "color-preset") {
@@ -22471,7 +22495,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("已恢复默认颜色");
       return;
     }
-    applyRichTextCommand(action);
+    runRichTextUiCommand(action);
   }
 
   function onImageToolbarClick(event) {
@@ -22481,8 +22505,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     event.preventDefault();
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
     const action = target?.getAttribute("data-action") || "";
-    if (action === "image-done") {
-      finishImageEdit();
+    const command = {
+      "image-crop": ["image.crop"],
+      "image-rotate-cw": ["image.rotate", 90],
+      "image-rotate-ccw": ["image.rotate", -90],
+      "image-flip-x": ["image.flip", "x"],
+      "image-flip-y": ["image.flip", "y"],
+      "image-export": ["image.export"],
+      "image-done": ["image.finish-edit"],
+    }[action];
+    if (command) {
+      runCommand(command[0], ...command.slice(1));
       return;
     }
     lightImageEditor.handleToolbarClick(event, renderImageToCanvas);
@@ -22906,7 +22939,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const before = takeItemsHistorySnapshot(selectedIds);
     let changed = false;
     state.board.items = state.board.items.map((item) => {
-      if (item.type !== "flowEdge" || !selectedIds.has(item.id)) {
+      if (item.type !== "flowEdge" || !selectedIds.has(item.id) || isLockedItem(item)) {
         return item;
       }
       if (item.style === nextStyle && item.arrowDirection === nextArrowDirection) {
@@ -23401,7 +23434,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         "insert-math-block",
       ].includes(action)
     ) {
-      applyRichTextCommand(action);
+      runRichTextUiCommand(action);
       return true;
     }
     return false;
@@ -23598,7 +23631,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         const item = itemId ? sceneRegistry.getItemById(itemId, "codeBlock") : null;
         if (item) {
           actionTarget.dataset.pointerHandledAt = String(Date.now());
-          void copyCodeBlockContent(item);
+          void runCommand("code.copy", item.id);
         }
       }
       event.stopPropagation();
@@ -23629,7 +23662,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         }
         event.preventDefault();
         event.stopPropagation();
-        void copyCodeBlockContent(item);
+        void runCommand("code.copy", item.id);
       }
       return;
     }
@@ -24364,26 +24397,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-copy") {
-      void copyCodeBlockContent(item);
+      void runCommand("code.copy");
       return;
     }
     if (action === "code-wrap") {
-      const before = takeItemsHistorySnapshot([item.id]);
-      Object.assign(item, updateCodeBlockElement(item, { wrap: item.wrap !== true }, { remeasure: true }));
-      clearCodeBlockEditLayoutCache(item.id);
-      markCodeBlockOverlayDirty(item.id);
-      commitCodeBlockPatchHistory(before, item.id, item, "切换代码自动换行");
+      runCommand("code.toggle-wrap");
       return;
     }
     if (action === "code-line-numbers") {
-      const before = takeItemsHistorySnapshot([item.id]);
-      Object.assign(
-        item,
-        updateCodeBlockElement(item, { showLineNumbers: item.showLineNumbers === false }, { remeasure: true })
-      );
-      clearCodeBlockEditLayoutCache(item.id);
-      markCodeBlockOverlayDirty(item.id);
-      commitCodeBlockPatchHistory(before, item.id, item, "切换代码行号");
+      runCommand("code.toggle-lines");
       return;
     }
     if (action === "code-preview-toggle") {
@@ -24606,26 +24628,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     event.preventDefault();
+    const immediatePayload = buildDirectClipboardPayloadForItems(sceneRegistry.getSelectedItems());
+    if (immediatePayload && event.clipboardData) {
+      writeClipboardDataWithProtocols(event.clipboardData, {
+        marker: buildInternalClipboardMarker({
+          copiedAt: Number(immediatePayload.copiedAt) || Date.now(),
+          itemCount: Array.isArray(immediatePayload.items) ? immediatePayload.items.length : 0,
+          source: CLIPBOARD_SOURCE_CANVAS,
+          kind: CLIPBOARD_KIND_ITEMS,
+        }),
+        text: immediatePayload.text,
+        html: immediatePayload.html,
+      });
+    }
     await runClipboardOperationWithStatus("复制处理中…", async () => {
-      const payload = await copySelection();
-      if (payload && event.clipboardData) {
-        event.clipboardData.setData(
-          CANVAS_CLIPBOARD_MIME,
-          buildInternalClipboardMarker({
-            copiedAt: Number(payload.copiedAt) || Date.now(),
-            itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
-            source: CLIPBOARD_SOURCE_CANVAS,
-            kind: CLIPBOARD_KIND_ITEMS,
-          })
-        );
-        if (payload.text) {
-          event.clipboardData.setData("text/plain", payload.text);
-        }
-        if (payload.html) {
-          event.clipboardData.setData("text/html", payload.html);
-        }
-      }
-      return payload;
+      return copySelection();
     });
   }
 
@@ -24892,20 +24909,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if ((event.ctrlKey || event.metaKey) && key === "z") {
       event.preventDefault();
       if (event.shiftKey) {
-        redo();
+        runCommand("canvas.redo");
       } else {
-        undo();
+        runCommand("canvas.undo");
       }
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "y") {
       event.preventDefault();
-      redo();
+      runCommand("canvas.redo");
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "s") {
       event.preventDefault();
-      void saveBoard();
+      void runCommand("canvas.save");
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "c") {
@@ -24916,12 +24933,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           state.board.selectedIds = [hoverItem.id];
         }
       }
-      void copySelection();
+      void runCommand("selection.copy");
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "x") {
       event.preventDefault();
-      void cutSelection();
+      void runCommand("selection.cut");
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "v") {
@@ -24931,40 +24948,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       event.preventDefault();
       const hoverItem = getHoverItemFast();
       const anchor = hoverItem ? { x: hoverItem.x + hoverItem.width + 24, y: hoverItem.y + 24 } : (state.lastPointerScenePoint || getCenterScenePoint());
-      void pasteFromSystemClipboard(anchor);
+      void runCommand("selection.paste", anchor);
       return;
     }
     if (key === "enter" && state.board.selectedIds.length === 1 && !state.editingId && state.tool === "select") {
       const selected = getSingleSelectedItemFast();
-      if (selected?.type === "text") {
+      if (["text", "flowNode", "mindNode", "mindSummary", "table", "codeBlock", "mathBlock", "mathInline"].includes(selected?.type)) {
         event.preventDefault();
-        beginTextEdit(selected.id);
-        return;
-      }
-      if (selected?.type === "flowNode") {
-        event.preventDefault();
-        beginFlowNodeEdit(selected.id);
-        return;
-      }
-      if (selected?.type === "mindNode") {
-        event.preventDefault();
-        beginMindNodeEdit(selected.id);
-        return;
-      }
-      if (selected?.type === "table") {
-        event.preventDefault();
-        beginTableEdit(selected.id, tableEditSelection);
-        return;
-      }
-      if (selected?.type === "codeBlock") {
-        event.preventDefault();
-        beginCodeBlockEdit(selected.id);
+        runCommand("element.edit");
         return;
       }
     }
     if ((event.ctrlKey || event.metaKey) && key === "l") {
       event.preventDefault();
-      toggleLockOnSelection();
+      runCommand("selection.toggle-lock");
       return;
     }
     if (!event.ctrlKey && !event.metaKey && !event.altKey && (key === " " || key === "spacebar")) {
@@ -24977,27 +24974,27 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (selected?.type === "mindNode") {
         if (key === "tab" && event.shiftKey) {
           event.preventDefault();
-          promoteMindNode(selected.id);
+          runCommand("mind.promote", selected.id);
           return;
         }
         if (key === "tab" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
-          demoteMindNode(selected.id);
+          runCommand("mind.demote", selected.id);
           return;
         }
         if (key === "tab") {
           event.preventDefault();
-          createMindChildNode(selected.id);
+          runCommand("mind.child", selected.id);
           return;
         }
         if (key === " " || key === "spacebar") {
           event.preventDefault();
-          toggleMindNodeCollapsed(selected.id);
+          runCommand("mind.collapse", selected.id);
           return;
         }
         if (key === "enter" && event.shiftKey) {
           event.preventDefault();
-          createMindSiblingNode(selected.id);
+          runCommand("mind.sibling", selected.id);
           return;
         }
       }
@@ -25042,20 +25039,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           return;
         }
       }
-      removeSelected();
+      runCommand("selection.delete");
       return;
     }
     if (["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
       event.preventDefault();
       const step = event.shiftKey ? 10 : 1;
       if (key === "arrowup") {
-        nudgeSelection(0, -step);
+        runCommand("selection.nudge", 0, -step);
       } else if (key === "arrowdown") {
-        nudgeSelection(0, step);
+        runCommand("selection.nudge", 0, step);
       } else if (key === "arrowleft") {
-        nudgeSelection(-step, 0);
+        runCommand("selection.nudge", -step, 0);
       } else if (key === "arrowright") {
-        nudgeSelection(step, 0);
+        runCommand("selection.nudge", step, 0);
       }
       return;
     }
@@ -25232,6 +25229,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     clearLegacyBoardStorage();
     ensureDom(hostElement);
+    cleanupFns.push(canvasUiRuntime.registerHost("toolbar", Object.freeze({
+      rich: refs.richToolbar,
+      selection: refs.richSelectionToolbar,
+      code: refs.codeBlockToolbar,
+      table: refs.tableToolbar,
+      image: refs.imageToolbar,
+    })));
+    cleanupFns.push(canvasUiRuntime.registerHost("context-menu", refs.contextMenu));
+    cleanupFns.push(canvasUiRuntime.registerHost("inspector", refs.richSelectionToolbar));
+    cleanupFns.push(canvasUiRuntime.registerHost("editor", Object.freeze({
+      rich: refs.richEditor,
+      code: refs.codeBlockEditor,
+      table: refs.tableEditor,
+      fileMemo: refs.fileMemoEditor,
+      imageMemo: refs.imageMemoEditor,
+    })));
+    cleanupFns.push(canvasUiRuntime.registerHost("shortcut", window));
     resizeObserver = new ResizeObserver(() => resize());
     resizeObserver.observe(refs.surface);
     cleanupFns.push(() => {
@@ -25514,6 +25528,47 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function reverseFlowEdgeSelection() {
+    const targets = getMutableSelectedItems(["flowEdge"]);
+    if (!targets.length) {
+      return false;
+    }
+    const targetIds = new Set(targets.map((item) => item.id));
+    const before = takeItemsHistorySnapshot(Array.from(targetIds));
+    state.board.items = state.board.items.map((item) => {
+      if (!targetIds.has(item.id)) {
+        return item;
+      }
+      return {
+        ...item,
+        fromId: item.toId,
+        fromSide: item.toSide,
+        toId: item.fromId,
+        toSide: item.fromSide,
+        arrowDirection: item.arrowDirection === "backward" ? "forward" : item.arrowDirection,
+      };
+    });
+    commitItemsPatchHistory(before, Array.from(targetIds), "反向流程连线", "flow-edge-edit");
+    setStatus("已反向流程连线");
+    return true;
+  }
+
+  function toggleFlowEdgeDash() {
+    const targets = getMutableSelectedItems(["flowEdge"]);
+    if (!targets.length) {
+      return false;
+    }
+    const nextStyle = targets.every((item) => item.style === "dashed") ? "solid" : "dashed";
+    return updateFlowEdgeStyle(nextStyle);
+  }
+
+  function getMutableSelectedItems(expectedTypes = []) {
+    const allowedTypes = new Set((Array.isArray(expectedTypes) ? expectedTypes : [expectedTypes]).filter(Boolean));
+    return getSelectedItemsFast().filter((item) => {
+      return !isLockedItem(item) && (!allowedTypes.size || allowedTypes.has(item.type));
+    });
+  }
+
   function toggleFileCardMark() {
     if (!state.board.selectedIds.length) {
       return false;
@@ -25549,11 +25604,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function alignSelection(direction = "left") {
-    const selectedIds = state.board.selectedIds.slice();
+    const selectedItems = getMutableSelectedItems();
+    const selectedIds = selectedItems.map((item) => item.id);
     if (selectedIds.length < 2) {
       return false;
     }
-    const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
     const boundsList = selectedItems.map((item) => ({ item, bounds: getElementBounds(item) }));
     if (!boundsList.length) {
       return false;
@@ -25601,14 +25656,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function distributeSelection(axis = "horizontal") {
-    const selectedIds = state.board.selectedIds.slice();
+    const selectedItems = getMutableSelectedItems();
+    const selectedIds = selectedItems.map((item) => item.id);
     if (selectedIds.length < 3) {
       return false;
     }
-    const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
     const boundsList = selectedItems
-      .map((item) => ({ item, bounds: getElementBounds(item) }))
-      .filter((entry) => !isLockedItem(entry.item));
+      .map((item) => ({ item, bounds: getElementBounds(item) }));
     if (boundsList.length < 3) {
       return false;
     }
@@ -25649,11 +25703,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function groupSelection() {
-    if (state.board.selectedIds.length < 2) {
+    const mutableItems = getMutableSelectedItems();
+    if (mutableItems.length < 2) {
       return false;
     }
     const groupId = createId("group");
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
@@ -25667,10 +25722,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function ungroupSelection() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems();
+    if (!mutableItems.length) {
       return false;
     }
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
@@ -25691,10 +25747,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function moveSelectionToFront() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems();
+    if (!mutableItems.length) {
       return false;
     }
-    const selected = new Set(state.board.selectedIds);
+    const selected = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const front = [];
     const back = [];
@@ -25712,10 +25769,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function moveSelectionToBack() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems();
+    if (!mutableItems.length) {
       return false;
     }
-    const selected = new Set(state.board.selectedIds);
+    const selected = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const front = [];
     const back = [];
@@ -25733,10 +25791,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function moveSelectionByStep(direction = "up") {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems();
+    if (!mutableItems.length) {
       return false;
     }
-    const selected = new Set(state.board.selectedIds);
+    const selected = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const items = state.board.items.slice();
     let changed = false;
@@ -25769,10 +25828,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function reverseArrowSelection() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems(["shape"]);
+    if (!mutableItems.length) {
       return false;
     }
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
@@ -25802,10 +25862,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function toggleLineDash() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems(["shape"]);
+    if (!mutableItems.length) {
       return false;
     }
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = new Set(mutableItems.map((item) => item.id));
     const targets = state.board.items.filter(
       (item) => item.type === "shape" && item.shapeType === "line" && selectedIds.has(item.id)
     );
@@ -25815,7 +25876,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const nextDash = !targets.every((item) => Boolean(item.lineDash));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     state.board.items = state.board.items.map((item) => {
-      if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id)) {
+      if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id) || isLockedItem(item)) {
         return item;
       }
       return {
@@ -25866,7 +25927,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
-      if (item.type !== "shape" || !allowed.has(item.shapeType) || !selectedIds.has(item.id)) {
+      if (item.type !== "shape" || !allowed.has(item.shapeType) || !selectedIds.has(item.id) || isLockedItem(item)) {
         return item;
       }
       if (item.strokeColor === nextColor) {
@@ -25887,11 +25948,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function toggleShapeFill() {
-    if (!state.board.selectedIds.length) {
+    const mutableItems = getMutableSelectedItems(["shape"]);
+    if (!mutableItems.length) {
       return false;
     }
     const allowed = new Set(["rect", "ellipse"]);
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
@@ -26031,6 +26093,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function getCanvasCommandContext(extra = {}) {
     const selectedItems = getSelectedItemsFast();
+    const mutableSelectedItems = selectedItems.filter((item) => !isLockedItem(item));
     return {
       engine: api,
       mode: state.mode,
@@ -26041,6 +26104,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       selectedIds: selectedItems.map((item) => item.id),
       selectedTypes: Array.from(new Set(selectedItems.map((item) => item.type))),
       selectedCount: selectedItems.length,
+      mutableSelectedItems,
+      mutableSelectedIds: mutableSelectedItems.map((item) => item.id),
+      mutableSelectedCount: mutableSelectedItems.length,
       canUndo: state.history.undo.length > 0,
       canRedo: state.history.redo.length > 0,
       anchorPoint: state.lastPointerScenePoint || getCenterScenePoint(),
@@ -26055,7 +26121,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       { replace: true }
     );
     const hasSelection = (context) => context.selectedCount > 0;
-    const hasMultipleSelection = (context) => context.selectedCount > 1;
+    const hasMutableSelection = (context) => context.mutableSelectedCount > 0;
+    const hasMultipleSelection = (context) => context.mutableSelectedCount > 1;
+    const hasDistributionSelection = (context) => context.mutableSelectedCount > 2;
+    const hasSingleType = (type, { mutable = false } = {}) => (context) => {
+      const items = mutable ? context.mutableSelectedItems : context.selectedItems;
+      return items.length === 1 && items[0]?.type === type;
+    };
+    const hasOnlyMutableType = (type) => (context) => {
+      return context.mutableSelectedItems.length > 0 && context.mutableSelectedItems.every((item) => item.type === type);
+    };
+    const hasActiveTable = (context) => context.editingType === "table" || hasSingleType("table", { mutable: true })(context);
+    const hasActiveRichText = (context) => ["text", "flow-node", "mind-node", "table"].includes(context.editingType);
     register({ id: "canvas.undo", label: "撤销", category: "history", shortcuts: ["Ctrl+Z"], when: (context) => context.canUndo }, () => undo());
     register({ id: "canvas.redo", label: "重做", category: "history", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"], when: (context) => context.canRedo }, () => redo());
     register({ id: "canvas.save", label: "保存", category: "file", shortcuts: ["Ctrl+S"] }, () => saveBoard());
@@ -26065,24 +26142,57 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "view.fit", label: "适配内容", category: "view" }, () => zoomToFit());
     register({ id: "tool.set", label: "切换工具", category: "tool" }, (_context, tool) => setTool(tool));
     register({ id: "selection.copy", label: "复制", category: "selection", shortcuts: ["Ctrl+C"], when: hasSelection }, () => copySelection());
-    register({ id: "selection.cut", label: "剪切", category: "selection", shortcuts: ["Ctrl+X"], when: hasSelection }, () => cutSelection());
+    register({ id: "selection.cut", label: "剪切", category: "selection", shortcuts: ["Ctrl+X"], when: hasMutableSelection }, () => cutSelection());
     register({ id: "selection.paste", label: "粘贴", category: "selection", shortcuts: ["Ctrl+V"] }, (context, anchorPoint) => pasteFromSystemClipboard(anchorPoint || context.anchorPoint));
-    register({ id: "selection.delete", label: "删除", category: "selection", shortcuts: ["Delete", "Backspace"], destructive: true, when: hasSelection }, () => removeSelected());
+    register({ id: "selection.delete", label: "删除", category: "selection", shortcuts: ["Delete", "Backspace"], destructive: true, when: hasMutableSelection }, () => removeSelected());
     register({ id: "selection.toggle-lock", label: "锁定/解锁", category: "selection", shortcuts: ["Ctrl+L"], when: hasSelection }, () => toggleLockOnSelection());
     register({ id: "selection.group", label: "组合", category: "arrange", when: hasMultipleSelection }, () => groupSelection());
-    register({ id: "selection.ungroup", label: "取消组合", category: "arrange", when: hasSelection }, () => ungroupSelection());
-    register({ id: "selection.group-toggle", label: "组合/取消组合", category: "arrange", when: hasSelection }, (context) => context.selectedItems.some((item) => item.groupId) ? ungroupSelection() : groupSelection());
+    register({ id: "selection.ungroup", label: "取消组合", category: "arrange", when: hasMutableSelection }, () => ungroupSelection());
+    register({ id: "selection.group-toggle", label: "组合/取消组合", category: "arrange", when: hasMutableSelection }, (context) => context.mutableSelectedItems.some((item) => item.groupId) ? ungroupSelection() : groupSelection());
     ["left", "right", "top", "bottom", "center", "middle"].forEach((direction) => {
       register({ id: `selection.align-${direction}`, label: `对齐 ${direction}`, category: "arrange", when: hasMultipleSelection }, () => alignSelection(direction));
     });
-    register({ id: "selection.distribute-horizontal", label: "水平等距", category: "arrange", when: hasMultipleSelection }, () => distributeSelection("horizontal"));
-    register({ id: "selection.distribute-vertical", label: "垂直等距", category: "arrange", when: hasMultipleSelection }, () => distributeSelection("vertical"));
-    register({ id: "selection.layer-front", label: "置于顶层", category: "arrange", when: hasSelection }, () => moveSelectionToFront());
-    register({ id: "selection.layer-back", label: "置于底层", category: "arrange", when: hasSelection }, () => moveSelectionToBack());
-    register({ id: "selection.layer-up", label: "上移一层", category: "arrange", when: hasSelection }, () => moveSelectionByStep("up"));
-    register({ id: "selection.layer-down", label: "下移一层", category: "arrange", when: hasSelection }, () => moveSelectionByStep("down"));
-    register({ id: "element.edit", label: "编辑", category: "element", when: (context) => context.selectedCount === 1 }, (context) => beginElementEdit(context.selectedItems[0], { explicit: true }));
-    register({ id: "file.preview", label: "预览文件", category: "file-card", elementTypes: ["fileCard"], when: (context) => context.selectedCount === 1 && context.selectedTypes[0] === "fileCard" }, (context) => openFileCardPreview(context.selectedItems[0]));
+    register({ id: "selection.distribute-horizontal", label: "水平等距", category: "arrange", when: hasDistributionSelection }, () => distributeSelection("horizontal"));
+    register({ id: "selection.distribute-vertical", label: "垂直等距", category: "arrange", when: hasDistributionSelection }, () => distributeSelection("vertical"));
+    register({ id: "selection.layer-front", label: "置于顶层", category: "arrange", when: hasMutableSelection }, () => moveSelectionToFront());
+    register({ id: "selection.layer-back", label: "置于底层", category: "arrange", when: hasMutableSelection }, () => moveSelectionToBack());
+    register({ id: "selection.layer-up", label: "上移一层", category: "arrange", when: hasMutableSelection }, () => moveSelectionByStep("up"));
+    register({ id: "selection.layer-down", label: "下移一层", category: "arrange", when: hasMutableSelection }, () => moveSelectionByStep("down"));
+    register({ id: "selection.nudge", label: "微移", category: "arrange", when: hasMutableSelection }, (_context, dx, dy) => nudgeSelection(dx, dy));
+    register({ id: "element.edit", label: "编辑", category: "element", when: (context) => context.selectedCount === 1 && context.mutableSelectedCount === 1 }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
+    register({ id: "shape.reverse", label: "反向箭头", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => reverseArrowSelection());
+    register({ id: "shape.toggle-dash", label: "切换虚线", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleLineDash());
+    register({ id: "shape.toggle-fill", label: "切换填充", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleShapeFill());
+    register({ id: "image.crop", label: "裁剪", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, () => startSelectedImageCrop());
+    register({ id: "image.rotate", label: "旋转", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, (_context, delta) => rotateSelectedImage(delta));
+    register({ id: "image.flip", label: "翻转", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, (_context, axis) => flipSelectedImage(axis));
+    register({ id: "image.reset-adjustments", label: "重置图片", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, () => resetSelectedImageAdjustments());
+    register({ id: "image.memo", label: "切换图片标签", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, () => toggleSelectedMemo("image"));
+    register({ id: "image.export", label: "导出图片", category: "image", elementTypes: ["image"], when: hasSingleType("image") }, (context) => exportImageElement(context.selectedItems[0].id));
+    register({ id: "image.finish-edit", label: "完成图片编辑", category: "image", elementTypes: ["image"], when: (context) => context.editingType === "image" }, () => finishImageEdit());
+    register({ id: "file.open", label: "打开文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, () => openSelectedFileCard());
+    register({ id: "file.preview", label: "预览文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, (context) => openFileCardPreview(context.selectedItems[0]));
+    register({ id: "file.retry-preview", label: "重试预览", category: "file-card", elementTypes: ["fileCard"] }, (_context, requestId) => retryFileCardPreview(requestId));
+    register({ id: "file.memo", label: "切换文件标签", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard", { mutable: true }) }, () => toggleSelectedMemo("fileCard"));
+    register({ id: "code.copy", label: "复制代码", category: "code", elementTypes: ["codeBlock"] }, (_context, itemId) => {
+      const item = itemId ? sceneRegistry.getItemById(itemId, "codeBlock") : getActiveCodeBlockCommandTarget();
+      return item ? copyCodeBlockContent(item) : false;
+    });
+    register({ id: "code.toggle-wrap", label: "切换代码换行", category: "code", elementTypes: ["codeBlock"], when: (context) => context.editingType === "code-block" || hasSingleType("codeBlock", { mutable: true })(context) }, () => toggleCodeBlockOption("wrap"));
+    register({ id: "code.toggle-lines", label: "切换代码行号", category: "code", elementTypes: ["codeBlock"], when: (context) => context.editingType === "code-block" || hasSingleType("codeBlock", { mutable: true })(context) }, () => toggleCodeBlockOption("lines"));
+    register({ id: "table.copy-selection", label: "复制表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => copyTableSelectionToClipboard({ cut: false }));
+    register({ id: "table.cut-selection", label: "剪切表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => copyTableSelectionToClipboard({ cut: true }));
+    register({ id: "table.clear-selection", label: "清空表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => mutateTableEditor((matrix) => clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })));
+    register({ id: "table.insert", label: "插入表格行列", category: "table", elementTypes: ["table"], when: hasActiveTable }, (_context, options) => runTableStructureCommand("insert", options));
+    register({ id: "table.move", label: "移动表格行列", category: "table", elementTypes: ["table"], when: hasActiveTable }, (_context, options) => runTableStructureCommand("move", options));
+    register({ id: "table.delete", label: "删除表格行列", category: "table", elementTypes: ["table"], destructive: true, when: hasActiveTable }, (_context, options) => runTableStructureCommand("delete", options));
+    register({ id: "table.toggle-header", label: "切换表头", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => runTableStructureCommand("toggle-header"));
+    register({ id: "flow.reverse", label: "反向流程连线", category: "flow", elementTypes: ["flowEdge"], when: hasOnlyMutableType("flowEdge") }, () => reverseFlowEdgeSelection());
+    register({ id: "flow.toggle-dash", label: "切换流程线型", category: "flow", elementTypes: ["flowEdge"], when: hasOnlyMutableType("flowEdge") }, () => toggleFlowEdgeDash());
+    register({ id: "flow.set-style", label: "设置流程线型", category: "flow", elementTypes: ["flowEdge"], when: hasOnlyMutableType("flowEdge") }, (_context, style, direction) => updateFlowEdgeStyle(style, direction));
+    register({ id: "text.link", label: "插入链接", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("link"));
+    register({ id: "text.inline-math", label: "插入行内公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-inline"));
+    register({ id: "text.block-math", label: "插入独立公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-block"));
     register({ id: "mind.child", label: "添加子节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindChildNode(nodeId));
     register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindSiblingNode(nodeId));
     register({ id: "mind.promote", label: "提升节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => promoteMindNode(nodeId));

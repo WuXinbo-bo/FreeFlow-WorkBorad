@@ -7,6 +7,9 @@ async function main() {
   const { createCanvasUiRuntime, CANVAS_UI_HOST_KINDS } = await import(
     "../public/src/engines/canvas2d-core/uiRuntime/canvasUiRuntime.js"
   );
+  const { createCanvas2DReactBridge } = await import(
+    "../public/src/engines/canvas2d-core/reactBridge.js"
+  );
 
   const runtime = createCanvasUiRuntime({ elementRegistry: canvasElementRegistry });
   const calls = [];
@@ -51,6 +54,30 @@ async function main() {
   assert.strictEqual(runtime.getHost("toolbar"), null);
   assert.strictEqual(remove(), true);
   assert.strictEqual(remove(), false);
+
+  const commandCalls = [];
+  const bridge = createCanvas2DReactBridge({
+    runCommand(id, ...args) {
+      commandCalls.push([id, ...args]);
+      return id;
+    },
+  });
+  bridge.copySelection();
+  bridge.pasteSelection({ x: 12, y: 18 });
+  bridge.toggleSelectionLock();
+  bridge.toggleSelectionGroup();
+  bridge.alignSelection("right");
+  bridge.distributeSelection("vertical");
+  bridge.moveSelectionLayer("up");
+  assert.deepStrictEqual(commandCalls, [
+    ["selection.copy"],
+    ["selection.paste", { x: 12, y: 18 }],
+    ["selection.toggle-lock"],
+    ["selection.group-toggle"],
+    ["selection.align-right"],
+    ["selection.distribute-vertical"],
+    ["selection.layer-up"],
+  ]);
   console.log("[check-canvas-ui-runtime] ok");
 }
 

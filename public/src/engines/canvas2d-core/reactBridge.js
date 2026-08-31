@@ -12,6 +12,35 @@ export function createCanvas2DReactBridge(engine) {
     redo() {
       return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.redo") : engine?.redo?.();
     },
+    copySelection() {
+      return typeof engine?.runCommand === "function" ? engine.runCommand("selection.copy") : engine?.copySelection?.();
+    },
+    cutSelection() {
+      return typeof engine?.runCommand === "function" ? engine.runCommand("selection.cut") : engine?.cutSelection?.();
+    },
+    pasteSelection(anchorPoint) {
+      return typeof engine?.runCommand === "function"
+        ? engine.runCommand("selection.paste", anchorPoint)
+        : engine?.pasteFromSystemClipboard?.(anchorPoint);
+    },
+    deleteSelection() {
+      return typeof engine?.runCommand === "function" ? engine.runCommand("selection.delete") : engine?.removeSelected?.();
+    },
+    toggleSelectionLock() {
+      return engine?.runCommand?.("selection.toggle-lock");
+    },
+    toggleSelectionGroup() {
+      return engine?.runCommand?.("selection.group-toggle");
+    },
+    alignSelection(direction) {
+      return engine?.runCommand?.(`selection.align-${String(direction || "").trim().toLowerCase()}`);
+    },
+    distributeSelection(axis) {
+      return engine?.runCommand?.(`selection.distribute-${String(axis || "").trim().toLowerCase()}`);
+    },
+    moveSelectionLayer(direction) {
+      return engine?.runCommand?.(`selection.layer-${String(direction || "").trim().toLowerCase()}`);
+    },
     zoomIn() {
       return typeof engine?.runCommand === "function" ? engine.runCommand("view.zoom-in") : engine?.zoomIn?.();
     },
@@ -55,7 +84,9 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.setFileCardPreviewZoom?.(requestId, zoom);
     },
     retryFileCardPreview(requestId) {
-      return engine?.retryFileCardPreview?.(requestId);
+      return typeof engine?.runCommand === "function"
+        ? engine.runCommand("file.retry-preview", requestId)
+        : engine?.retryFileCardPreview?.(requestId);
     },
     getDocumentPreviewSessionData(sessionId, generation) {
       return engine?.getDocumentPreviewSessionData?.(sessionId, generation) || null;
@@ -70,16 +101,16 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.addFlowNode?.();
     },
     addMindChildNode(nodeId) {
-      return engine?.addMindChildNode?.(nodeId);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("mind.child", nodeId) : engine?.addMindChildNode?.(nodeId);
     },
     addMindSiblingNode(nodeId) {
-      return engine?.addMindSiblingNode?.(nodeId);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("mind.sibling", nodeId) : engine?.addMindSiblingNode?.(nodeId);
     },
     promoteMindNode(nodeId) {
-      return engine?.promoteMindNode?.(nodeId);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("mind.promote", nodeId) : engine?.promoteMindNode?.(nodeId);
     },
     demoteMindNode(nodeId) {
-      return engine?.demoteMindNode?.(nodeId);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("mind.demote", nodeId) : engine?.demoteMindNode?.(nodeId);
     },
     insertMindIntermediateNode(nodeId) {
       return engine?.insertMindIntermediateNode?.(nodeId);
@@ -91,7 +122,7 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.relayoutMindMapByNodeId?.(nodeId);
     },
     toggleMindNodeCollapsed(nodeId) {
-      return engine?.toggleMindNodeCollapsed?.(nodeId);
+      return typeof engine?.runCommand === "function" ? engine.runCommand("mind.collapse", nodeId) : engine?.toggleMindNodeCollapsed?.(nodeId);
     },
     addTable(options) {
       return engine?.addTable?.(options);
@@ -115,7 +146,7 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.ensureTutorialBoard?.();
     },
     saveBoard() {
-      return engine?.saveBoard?.();
+      return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.save") : engine?.saveBoard?.();
     },
     saveBoardAs() {
       return engine?.saveBoardAs?.();
