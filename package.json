@@ -27,6 +27,7 @@
     "test:retained-camera-frame": "node scripts/check-retained-camera-frame.js",
     "test:presentation-quality": "node scripts/check-presentation-quality-runtime.js",
     "test:canvas-performance-policy": "node scripts/check-canvas-performance-policy.js",
+    "test:canvas-performance-runtime": "node scripts/check-canvas-performance-runtime.js",
     "test:canvas-resource-budget": "node scripts/check-canvas-resource-budget-runtime.js",
     "test:canvas-state-history": "node scripts/check-canvas-state-history.js",
     "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",
