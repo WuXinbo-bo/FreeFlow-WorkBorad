@@ -24,6 +24,42 @@ function createBoard() {
       { id: "compact-file", type: "fileCard", x: 2300, y: 800, width: 800, height: 400, name: "architecture.pdf", fileName: "architecture.pdf", ext: "PDF", accentSoftColor: "rgba(254, 226, 226, 0.96)", accentStrokeColor: "rgba(239, 68, 68, 0.72)", accentTextColor: "#b91c1c", createdAt: now(), updatedAt: now() },
       { id: "compact-flow", type: "flowNode", x: 100, y: 1500, width: 900, height: 400, text: "真实流程节点", plainText: "真实流程节点", html: "<p>真实流程节点</p>", fontSize: 56, createdAt: now(), updatedAt: now() },
       { id: "compact-shape", type: "shape", shapeType: "rect", x: 1300, y: 1500, width: 800, height: 400, startX: 1300, startY: 1500, endX: 2100, endY: 1900, strokeColor: "#166534", fillColor: "rgba(34, 197, 94, 0.42)", strokeWidth: 8, radius: 24, createdAt: now(), updatedAt: now() },
+      {
+        id: "compact-density-text",
+        type: "text",
+        x: 2200,
+        y: 1500,
+        width: 900,
+        height: 400,
+        text: "默认字号长文本在不可读缩放下保持语义缩略。\n完整段落不能在切换时全部挤成黑团。\n交互期间也不能重复解析和绘制全部富文本。\n恢复详情后必须保持原始模型几何。",
+        plainText: "默认字号长文本在不可读缩放下保持语义缩略。\n完整段落不能在切换时全部挤成黑团。\n交互期间也不能重复解析和绘制全部富文本。\n恢复详情后必须保持原始模型几何。",
+        html: "<p>默认字号长文本在不可读缩放下保持语义缩略。</p><p>完整段落不能在切换时全部挤成黑团。</p><p>交互期间也不能重复解析和绘制全部富文本。</p><p>恢复详情后必须保持原始模型几何。</p>",
+        fontSize: 18,
+        textBoxLayoutMode: "fixed-size",
+        textResizeMode: "wrap",
+        wrapMode: "wrap",
+        contentFit: false,
+        createdAt: now(),
+        updatedAt: now(),
+      },
+      {
+        id: "compact-tiny-text",
+        type: "text",
+        x: 3200,
+        y: 1500,
+        width: 260,
+        height: 80,
+        text: "第一行保持原位。\n第二行保持原位。\n第三行保持原位。",
+        plainText: "第一行保持原位。\n第二行保持原位。\n第三行保持原位。",
+        html: "<p>第一行保持原位。</p><p>第二行保持原位。</p><p>第三行保持原位。</p>",
+        fontSize: 18,
+        textBoxLayoutMode: "fixed-size",
+        textResizeMode: "wrap",
+        wrapMode: "wrap",
+        contentFit: false,
+        createdAt: now(),
+        updatedAt: now(),
+      },
     ],
     selectedIds: [],
     view: { scale: 0.1, offsetX: 420, offsetY: 120 },
@@ -75,13 +111,35 @@ async function collectState(page) {
         if (max - min < 12 && max >= 105 && max <= 235) neutralMid += 1;
       }
       const total = Math.max(1, pixels.length / 4);
-      return { dark, saturated, neutralMid, total, neutralMidRatio: neutralMid / total, width, height };
+      return { dark, saturated, neutralMid, total, darkRatio: dark / total, neutralMidRatio: neutralMid / total, width, height };
     };
     const samples = Object.fromEntries(snapshot.board.items.map((item) => [item.id, sample(item)]));
     const hostHidden = (selector) => {
       const node = document.querySelector(selector);
       return !node || getComputedStyle(node).visibility === "hidden" || getComputedStyle(node).display === "none";
     };
+    const snapshots = {};
+    const countLineBands = (node) => {
+      if (!node) return 0;
+      const rows = [];
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        if (!String(walker.currentNode.nodeValue || "").trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        Array.from(range.getClientRects()).forEach((rect) => rows.push(Math.round(rect.top * 2) / 2));
+      }
+      return new Set(rows).size;
+    };
+    snapshot.board.items.forEach((item) => {
+      const node = document.querySelector(`[data-id="${item.id}"][data-active-representation]`);
+      snapshots[item.id] = {
+        planned: node?.dataset.plannedRepresentation || "",
+        active: node?.dataset.activeRepresentation || "",
+        snapshotCount: node?.querySelectorAll(".canvas2d-presentation-snapshot").length || 0,
+        lineBands: countLineBands(node),
+      };
+    });
     return {
       view,
       samples,
@@ -92,11 +150,27 @@ async function collectState(page) {
         height: item.height * view.scale,
       }])),
       stats: canvas.__ffRenderStats || null,
+      quality: window.__ffPresentationQuality || null,
       overlaysHidden: ["#canvas2d-rich-display", "#canvas2d-math-display", "#canvas2d-code-block-display"].every(hostHidden),
       legacySkeletonCount: document.querySelectorAll(".canvas2d-rich-skeleton, .canvas2d-rich-skeleton-svg").length,
       detailNodeCount: document.querySelectorAll(".canvas2d-rich-item, .canvas2d-math-item, .canvas2d-code-block-item").length,
+      snapshots,
     };
   });
+}
+
+async function waitForFrozenDetails(
+  page,
+  ids = ["compact-text", "compact-code", "compact-math", "compact-flow", "compact-density-text", "compact-tiny-text"]
+) {
+  await page.waitForFunction((snapshotIds) => snapshotIds.every((id) => {
+    const node = document.querySelector(`[data-id="${id}"][data-active-representation]`);
+    return (
+      node?.dataset.activeRepresentation === "frozen-detail" &&
+      !node.querySelector(".canvas2d-presentation-snapshot") &&
+      String(node.textContent || "").trim()
+    );
+  }), ids, { timeout: 15_000 });
 }
 
 async function collectCompositeSamples(page, state) {
@@ -131,6 +205,7 @@ async function collectCompositeSamples(page, state) {
       saturated,
       neutralMid,
       total,
+      darkRatio: dark / Math.max(1, total),
       neutralMidRatio: neutralMid / Math.max(1, total),
       width: Math.max(0, right - left),
       height: Math.max(0, bottom - top),
@@ -178,44 +253,102 @@ async function main() {
       return canvas?.clientWidth > 1000 && canvas?.clientHeight > 700;
     });
     await waitFrames(page, 4);
-    await page.waitForTimeout(300);
+    await waitForFrozenDetails(page);
 
     const compact = await collectState(page);
     compact.compositeSamples = await collectCompositeSamples(page, compact);
     await page.screenshot({ path: "tmp/compact-presentation-10.png", fullPage: false });
-    assert(compact.overlaysHidden, "10% did not hide detail overlays", compact);
+    assert(!compact.overlaysHidden, "10% did not expose frozen-detail overlays", compact);
     assert(compact.legacySkeletonCount === 0, "10% retained a legacy DOM skeleton", compact);
-    assert(compact.stats?.lodSimplifiedCount >= 7, "10% did not route semantic elements through compact painters", compact.stats);
+    assert(
+      compact.quality?.activePlan?.stats?.counts?.["native-compact"] === 4,
+      "10% did not retain native representations for canvas-owned elements",
+      compact.quality?.activePlan?.stats
+    );
     assert(compact.stats?.compactPresentation?.registeredTypes?.includes("image"), "image compact painter was not registered", compact.stats);
-    assert(compact.compositeSamples["compact-text"].dark > 0, "text compact lost real glyph pixels", compact.compositeSamples);
-    assert(compact.compositeSamples["compact-code"].dark > 0, "code compact lost real source pixels", compact.compositeSamples);
+    assert(compact.compositeSamples["compact-text"].dark > 0, "text snapshot lost real glyph pixels", compact.compositeSamples);
+    assert(compact.compositeSamples["compact-code"].dark > 0, "code snapshot lost real source pixels", compact.compositeSamples);
     assert(compact.compositeSamples["compact-table"].dark > 0, "table compact lost real cell content", compact);
-    assert(compact.compositeSamples["compact-math"].dark > 0, "math compact lost real formula pixels", compact.compositeSamples);
+    assert(compact.compositeSamples["compact-math"].dark > 0, "math snapshot lost real formula pixels", compact.compositeSamples);
     assert(compact.compositeSamples["compact-image"].saturated > 50, "image compact did not render real image pixels", compact);
     assert(compact.compositeSamples["compact-file"].saturated > 0, "file compact lost its semantic accent", compact.compositeSamples);
-    assert(compact.compositeSamples["compact-flow"].dark > 0, "flow compact lost real node text", compact.compositeSamples);
-    assert(compact.compositeSamples["compact-text"].neutralMidRatio < 0.18, "text compact still resembles the generic gray skeleton", compact.compositeSamples["compact-text"]);
+    assert(compact.compositeSamples["compact-flow"].dark > 0, "flow snapshot lost real node text", compact.compositeSamples);
+    assert(
+      compact.compositeSamples["compact-density-text"].darkRatio < 0.18,
+      "frozen detail collapsed the paragraph into a dense black block",
+      compact.compositeSamples["compact-density-text"]
+    );
+    ["compact-text", "compact-code", "compact-math", "compact-flow", "compact-density-text", "compact-tiny-text"].forEach((id) => {
+      assert(compact.snapshots[id].planned === "frozen-detail", `${id} did not use the frozen-detail plan`, compact.snapshots);
+      assert(compact.snapshots[id].active === "frozen-detail", `${id} did not activate frozen detail`, compact.snapshots);
+      assert(compact.snapshots[id].snapshotCount === 0, `${id} started a main-thread snapshot capture`, compact.snapshots);
+    });
+    assert(
+      compact.snapshots["compact-density-text"].lineBands >= 4,
+      "long text frozen detail no longer preserves its multi-line distribution",
+      compact.snapshots["compact-density-text"]
+    );
+    assert(
+      compact.snapshots["compact-tiny-text"].lineBands >= 3,
+      "tiny projected text fell back to a single-line compact summary",
+      compact.snapshots["compact-tiny-text"]
+    );
+    assert(compact.snapshots["compact-code"].lineBands >= 2, "code frozen detail collapsed its lines", compact.snapshots);
+    assert(
+      Number(compact.stats?.tileCache?.tileCount || 0) <= 32,
+      "10% viewport expanded into an excessive scene-tile set",
+      compact.stats?.tileCache
+    );
 
     const cycles = [];
     for (let index = 0; index < 3; index += 1) {
       await moveAcrossThreshold(page, "up");
+      await waitForFrozenDetails(page, ["compact-density-text"]);
       const detail = await collectState(page);
       assert(detail.view.scale >= 0.17, "detail recovery did not cross the exit threshold", detail.view);
       assert(!detail.overlaysHidden && detail.detailNodeCount > 0, "detail overlays did not recover", detail);
       assert(detail.legacySkeletonCount === 0, "detail recovery restored a legacy skeleton", detail);
+      assert(detail.quality?.pendingTransitions === 0, "detail recovery retained a pending quality transition", detail.quality);
+      assert(
+        detail.quality?.activePlan?.entries?.["compact-density-text"]?.representation === "frozen-detail",
+        "unreadable default-size text did not retain frozen detail",
+        detail.quality?.activePlan?.entries?.["compact-density-text"]
+      );
+      assert(
+        detail.quality?.activePlan?.entries?.["compact-image"]?.representation !== "native-compact",
+        "image recovery was coupled to text readability",
+        detail.quality?.activePlan?.entries?.["compact-image"]
+      );
       await moveAcrossThreshold(page, "down");
+      await waitForFrozenDetails(page);
       const compactAgain = await collectState(page);
       compactAgain.compositeSamples = await collectCompositeSamples(page, compactAgain);
       assert(compactAgain.view.scale <= 0.15, "compact re-entry did not cross the enter threshold", compactAgain.view);
-      assert(compactAgain.overlaysHidden, "compact re-entry left detail overlays visible", compactAgain);
+      assert(
+        compactAgain.snapshots["compact-density-text"].lineBands >= 4,
+        "compact re-entry collapsed text layout",
+        compactAgain.snapshots
+      );
+      assert(
+        compactAgain.snapshots["compact-tiny-text"].lineBands >= 3,
+        "compact re-entry collapsed tiny text layout",
+        compactAgain.snapshots
+      );
       assert(compactAgain.compositeSamples["compact-image"].saturated > 50, "image became stale after threshold re-entry", compactAgain.compositeSamples);
+      assert(compactAgain.quality?.pendingTransitions === 0, "compact re-entry retained a pending quality transition", compactAgain.quality);
       cycles.push({ detailScale: detail.view.scale, compactScale: compactAgain.view.scale });
     }
 
     assert(errors.length === 0, "compact presentation browser check produced page errors", errors);
     console.log(JSON.stringify({ ok: true, compact, cycles }, null, 2));
   } catch (error) {
-    console.error(JSON.stringify({ ok: false, error: error.message, details: error.details || null, errors }, null, 2));
+    let state = null;
+    try {
+      state = await collectState(page);
+    } catch {
+      state = null;
+    }
+    console.error(JSON.stringify({ ok: false, error: error.message, details: error.details || null, errors, state }, null, 2));
     process.exitCode = 1;
   } finally {
     await browser.close();

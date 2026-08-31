@@ -8,8 +8,9 @@ export const PRESENTATION_REPRESENTATIONS = Object.freeze({
 
 const DEFAULT_THRESHOLDS = Object.freeze({
   nativeCompactScale: 0.15,
+  nativeCompactExitScale: 0.17,
   liveDetailAreaPx: 2600,
-  snapshotAreaPx: 320,
+  areaHysteresisRatio: 0.12,
 });
 
 function normalizeId(value = "") {
@@ -37,6 +38,18 @@ function getElementComplexity(definition = null) {
   return score;
 }
 
+function getProjectedTextSize(item, definition, scale) {
+  const minimumReadableTextPx = Math.max(0, Number(definition?.capabilities?.minimumReadableTextPx) || 0);
+  if (!minimumReadableTextPx) return null;
+  const nominalFontSizePx = Math.max(1, Number(definition?.capabilities?.nominalFontSizePx) || 16);
+  const fontSize = Math.max(1, Number(item?.fontSize) || nominalFontSizePx);
+  return Object.freeze({ minimumReadableTextPx, projectedFontSizePx: fontSize * scale });
+}
+
+function supportsLayoutSnapshot(definition = null) {
+  return definition?.capabilities?.presentation === "layout-snapshot";
+}
+
 function getBounds(registry, item) {
   const resolved = registry?.invoke?.(item, "getBounds");
   if (resolved) {
@@ -51,31 +64,88 @@ function getBounds(registry, item) {
 
 function resolveRepresentation({
   visible,
-  pinned,
+  interactionProtected,
+  attentionProtected,
   scale,
   projectedArea,
   complexity,
   pressure,
   definition,
   thresholds,
+  previousEntry,
+  textReadability,
 }) {
   if (!visible) {
     return { representation: PRESENTATION_REPRESENTATIONS.CULLED, reason: "outside-visible-scene" };
   }
-  if (pinned) {
+  if (interactionProtected) {
     return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "interaction-protected" };
   }
+  const supportsLayoutPreservation = supportsLayoutSnapshot(definition);
+  if (attentionProtected) {
+    return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "attention-protected" };
+  }
   if (scale <= thresholds.nativeCompactScale) {
+    if (supportsLayoutPreservation) {
+      return { representation: PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL, reason: "extreme-low-scale-frozen" };
+    }
     return { representation: PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT, reason: "extreme-low-scale" };
+  }
+  if (
+    supportsLayoutPreservation &&
+    previousEntry?.representation === PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL &&
+    ["extreme-low-scale-frozen", "frozen-scale-hysteresis"].includes(previousEntry?.reason) &&
+    scale < thresholds.nativeCompactExitScale
+  ) {
+    return { representation: PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL, reason: "frozen-scale-hysteresis" };
+  }
+  if (
+    previousEntry?.representation === PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT &&
+    ["extreme-low-scale", "compact-scale-hysteresis"].includes(previousEntry?.reason) &&
+    scale < thresholds.nativeCompactExitScale
+  ) {
+    return { representation: PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT, reason: "compact-scale-hysteresis" };
+  }
+  if (textReadability) {
+    const readabilityExit = textReadability.minimumReadableTextPx * (1 + thresholds.areaHysteresisRatio);
+    const retainForReadability =
+      [
+        PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT,
+        PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL,
+      ].includes(previousEntry?.representation) &&
+      ["insufficient-readable-detail", "readability-hysteresis"].includes(previousEntry?.reason) &&
+      textReadability.projectedFontSizePx < readabilityExit;
+    if (retainForReadability) {
+      return {
+        representation: supportsLayoutPreservation
+          ? PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL
+          : PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT,
+        reason: "readability-hysteresis",
+      };
+    }
+    if (textReadability.projectedFontSizePx < textReadability.minimumReadableTextPx) {
+      return {
+        representation: supportsLayoutPreservation
+          ? PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL
+          : PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT,
+        reason: "insufficient-readable-detail",
+      };
+    }
   }
   const pressureMultiplier = 1 + pressure * 1.5;
   const complexityMultiplier = Math.max(1, complexity * 0.72);
-  if (projectedArea >= thresholds.liveDetailAreaPx * pressureMultiplier * complexityMultiplier) {
+  const liveDetailThreshold = thresholds.liveDetailAreaPx * pressureMultiplier * complexityMultiplier;
+  const hysteresisRatio = Math.max(0, Math.min(0.4, Number(thresholds.areaHysteresisRatio) || 0));
+  const liveDetailBoundary = previousEntry?.representation === PRESENTATION_REPRESENTATIONS.LIVE_DETAIL
+    ? liveDetailThreshold * (1 - hysteresisRatio)
+    : previousEntry
+      ? liveDetailThreshold * (1 + hysteresisRatio)
+      : liveDetailThreshold;
+  if (projectedArea >= liveDetailBoundary) {
     return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "sufficient-projected-detail" };
   }
-  const supportsExactSnapshot = definition?.capabilities?.render === "canvas-dom";
-  if (supportsExactSnapshot) {
-    return { representation: PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT, reason: "stable-detail-snapshot" };
+  if (supportsLayoutPreservation) {
+    return { representation: PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL, reason: "stable-frozen-detail" };
   }
   return { representation: PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT, reason: "insufficient-projected-detail" };
 }
@@ -94,13 +164,16 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
     pressure = 0,
     generation = 0,
     revisionKey = "",
+    previousPlan = null,
   } = {}) {
     const scale = Math.max(0.01, Number(view?.scale) || 1);
     const visible = visibleIds == null ? null : toIdSet(visibleIds);
-    const protectedIds = toIdSet([
-      ...selectedIds,
+    const interactionProtectedIds = toIdSet([
       ...interactingIds,
       editingId,
+    ]);
+    const attentionProtectedIds = toIdSet([
+      ...selectedIds,
       hoverId,
     ]);
     const normalizedPressure = clampPressure(pressure);
@@ -117,15 +190,19 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
       const projectedWidth = width * scale;
       const projectedHeight = height * scale;
       const projectedArea = projectedWidth * projectedHeight;
+      const textReadability = getProjectedTextSize(item, definition, scale);
       const decision = resolveRepresentation({
         visible: visible == null || visible.has(id),
-        pinned: protectedIds.has(id),
+        interactionProtected: interactionProtectedIds.has(id),
+        attentionProtected: attentionProtectedIds.has(id),
         scale,
         projectedArea,
         complexity: getElementComplexity(definition),
         pressure: normalizedPressure,
         definition,
         thresholds: policy,
+        previousEntry: previousPlan?.entries?.[id] || null,
+        textReadability,
       });
       entries[id] = freezeEntry({
         id,
@@ -135,6 +212,9 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
         projectedWidth: Number(projectedWidth.toFixed(2)),
         projectedHeight: Number(projectedHeight.toFixed(2)),
         projectedArea: Number(projectedArea.toFixed(2)),
+        projectedFontSize: textReadability
+          ? Number(textReadability.projectedFontSizePx.toFixed(2))
+          : null,
       });
       counts[decision.representation] = (counts[decision.representation] || 0) + 1;
     });

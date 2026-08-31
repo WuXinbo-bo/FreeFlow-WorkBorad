@@ -961,6 +961,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         sceneMatrix: [activeMatrix.a, activeMatrix.d, activeMatrix.e, activeMatrix.f],
         scenePhase: sceneRoot.dataset.presentationPhase,
+        sceneWillChange: getComputedStyle(sceneRoot).willChange,
         richLocalLeft: Number.parseFloat(richNode.style.left),
         mathLocalLeft: Number.parseFloat(mathNode.style.left),
         codeLocalLeft: Number.parseFloat(codeNode.style.left),
@@ -1011,6 +1012,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
           flowNodeB === document.querySelector('.canvas2d-scene-flow-node-item[data-id="viewport-flow-b"]'),
         flowEdgePreserved: flowEdgeNode === document.querySelector('.canvas2d-scene-flow-edge-item[data-id="viewport-flow-edge"]'),
         scenePhase: sceneRoot.dataset.presentationPhase,
+        sceneWillChange: getComputedStyle(sceneRoot).willChange,
         overlayHtml: [richNode.innerHTML, mathNode.innerHTML, codeNode.innerHTML],
         overlayRepresentations: [richNode, mathNode, codeNode].map((node) => ({
           planned: node.dataset.plannedRepresentation || "",
@@ -1155,6 +1157,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(Math.abs(result.active.sceneMatrix[2] - result.active.view.offsetX) < 0.01, "scene X translation diverged from camera", result);
     assert(Math.abs(result.active.sceneMatrix[3] - result.active.view.offsetY) < 0.01, "scene Y translation diverged from camera", result);
     assert(["active", "settling"].includes(result.active.scenePhase), "scene presentation did not enter interaction phase", result);
+    assert(result.active.sceneWillChange === "transform", "scene transform was not promoted during viewport interaction", result);
     assert(
       result.active.richPreserved && result.active.mathPreserved && result.active.codePreserved &&
         result.active.imagePreserved && result.active.tablePreserved && result.active.filePreserved &&
@@ -1187,6 +1190,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
     );
     assert(result.recovered.runtimeMode?.mode === "steady", "viewport interaction state did not return to steady", result);
     assert(result.recovered.scenePhase === "steady", "scene presentation did not return to steady", result);
+    assert(result.recovered.sceneWillChange === "auto", "scene transform promotion was not released after recovery", result);
     assert(
       result.recovered.overlayHtml.every((html) => Boolean(String(html || "").trim())),
       "DOM overlay content did not recover after viewport interaction",
@@ -2201,11 +2205,24 @@ async function runLowZoomOverlaySummaryCheck(browser) {
       const mathNode = document.querySelector('.canvas2d-rich-item[data-id="math-lod"]');
       const codeNode = document.querySelector('.canvas2d-code-block-item[data-id="code-lod"]');
       const canvas = document.querySelector("#canvas-office-canvas");
-      const hostHidden = (selector) => getComputedStyle(document.querySelector(selector)).visibility === "hidden";
+      const hostHidden = (selector) => {
+        const style = getComputedStyle(document.querySelector(selector));
+        return style.visibility === "hidden" || style.display === "none";
+      };
       return {
         richExists: Boolean(richNode),
         mathExists: Boolean(mathNode),
         codeExists: Boolean(codeNode),
+        richRepresentation: richNode?.dataset.activeRepresentation || "",
+        mathRepresentation: mathNode?.dataset.activeRepresentation || "",
+        codeRepresentation: codeNode?.dataset.activeRepresentation || "",
+        richHasSnapshot: Boolean(richNode?.querySelector(".canvas2d-presentation-snapshot")),
+        mathHasSnapshot: Boolean(mathNode?.querySelector(".canvas2d-presentation-snapshot")),
+        codeHasSnapshot: Boolean(codeNode?.querySelector(".canvas2d-presentation-snapshot")),
+        mathText: String(mathNode?.textContent || "").trim(),
+        mathVisible: Boolean(mathNode) && getComputedStyle(mathNode).display !== "none" &&
+          getComputedStyle(mathNode).visibility !== "hidden",
+        legacySkeletonCount: document.querySelectorAll(".canvas2d-rich-skeleton, .canvas2d-rich-skeleton-svg").length,
         richHostHidden: hostHidden("#canvas2d-rich-display"),
         mathHostHidden: hostHidden("#canvas2d-math-display"),
         codeHostHidden: hostHidden("#canvas2d-code-block-display"),
@@ -2213,10 +2230,25 @@ async function runLowZoomOverlaySummaryCheck(browser) {
       };
     });
     assert(session.getErrors().length === 0, "low zoom overlay summary check produced page errors", session.getErrors());
-    assert(!result.richExists && !result.mathExists && !result.codeExists, "low zoom created unnecessary DOM overlays", result);
-    assert(result.richHostHidden && result.mathHostHidden && result.codeHostHidden, "low zoom overlay hosts were not hidden", result);
+    assert(result.richExists && result.mathExists && result.codeExists, "low zoom lost a detail representation", result);
+    assert(
+      result.richRepresentation === "frozen-detail" &&
+        result.mathRepresentation === "frozen-detail" &&
+        result.codeRepresentation === "frozen-detail",
+      "low zoom did not preserve frozen layout detail",
+      result
+    );
+    assert(
+      !result.richHasSnapshot && !result.mathHasSnapshot && !result.codeHasSnapshot,
+      "low zoom started a main-thread snapshot capture",
+      result
+    );
+    assert(result.mathVisible && result.mathText.length > 0, "low zoom formula detail was not visibly preserved", result);
+    assert(result.legacySkeletonCount === 0, "low zoom restored a legacy skeleton", result);
+    assert(!result.richHostHidden && result.mathHostHidden && !result.codeHostHidden, "low zoom overlay hosts were inconsistent", result);
     assert(result.stats?.renderedItems === 3, "low zoom canvas did not render every item", result);
-    assert(result.stats?.lodSimplifiedCount >= 3, "low zoom canvas did not use simplified rendering", result);
+    assert(result.stats?.sceneContentOwnedCount === 3, "low zoom presentation ownership was incomplete", result);
+    assert(result.stats?.lodSimplifiedCount === 0, "low zoom duplicated frozen detail on the canvas", result);
     return result;
   } finally {
     await session.page.close();
@@ -2232,12 +2264,20 @@ async function runTextSummaryStabilityCheck(browser) {
   const session = await createPage(browser, { board });
   try {
     await session.page.waitForTimeout(240);
-    const beforeHidden = await session.page.evaluate(() => ({
-      nodeMissing: !document.querySelector('.canvas2d-rich-item[data-id="text-stability"]'),
-      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility === "hidden",
-    }));
+    const beforeHidden = await session.page.evaluate(() => {
+      const hostStyle = getComputedStyle(document.querySelector("#canvas2d-rich-display"));
+      const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
+      return {
+        nodeMissing: !node,
+        hostHidden: hostStyle.visibility === "hidden" || hostStyle.display === "none",
+        activeRepresentation: node?.dataset.activeRepresentation || "",
+        text: node?.textContent || "",
+        hasSnapshot: Boolean(node?.querySelector(".canvas2d-presentation-snapshot")),
+      };
+    });
     const firstRecoveredScale = await session.page.evaluate(async () => {
-      for (let index = 0; index < 4; index += 1) {
+      for (let index = 0; index < 10; index += 1) {
+        if (window.__canvas2dEngine.getSnapshot().board.view.scale >= 0.23) break;
         window.__canvas2dEngine.zoomIn();
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       }
@@ -2248,6 +2288,8 @@ async function runTextSummaryStabilityCheck(browser) {
       const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
       const svg = node?.querySelector(".canvas2d-rich-skeleton-svg");
       return {
+        hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility === "hidden" ||
+          getComputedStyle(document.querySelector("#canvas2d-rich-display")).display === "none",
         contentMode: node?.dataset.contentMode || "",
         plannedRepresentation: node?.dataset.plannedRepresentation || "",
         activeRepresentation: node?.dataset.activeRepresentation || "",
@@ -2264,34 +2306,54 @@ async function runTextSummaryStabilityCheck(browser) {
     });
     const firstRecovered = await readRecovered();
     await session.page.evaluate(async () => {
-      for (let index = 0; index < 2; index += 1) {
+      for (let index = 0; index < 10; index += 1) {
+        if (window.__canvas2dEngine.getSnapshot().board.view.scale <= 0.14) break;
         window.__canvas2dEngine.zoomOut();
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       }
     });
     await session.page.waitForTimeout(300);
-    const hiddenAgain = await session.page.evaluate(() => ({
-      hostHidden: getComputedStyle(document.querySelector("#canvas2d-rich-display")).visibility === "hidden",
-      nodePreserved: Boolean(document.querySelector('.canvas2d-rich-item[data-id="text-stability"]')),
-      scale: window.__canvas2dEngine.getSnapshot().board.view.scale,
-    }));
+    const hiddenAgain = await session.page.evaluate(() => {
+      const hostStyle = getComputedStyle(document.querySelector("#canvas2d-rich-display"));
+      const node = document.querySelector('.canvas2d-rich-item[data-id="text-stability"]');
+      return {
+        hostHidden: hostStyle.visibility === "hidden" || hostStyle.display === "none",
+        nodeMissing: !node,
+        activeRepresentation: node?.dataset.activeRepresentation || "",
+        text: node?.textContent || "",
+        hasSnapshot: Boolean(node?.querySelector(".canvas2d-presentation-snapshot")),
+        scale: window.__canvas2dEngine.getSnapshot().board.view.scale,
+      };
+    });
     const secondRecoveredScale = await session.page.evaluate(async () => {
-      window.__canvas2dEngine.zoomIn();
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      for (let index = 0; index < 10; index += 1) {
+        if (window.__canvas2dEngine.getSnapshot().board.view.scale >= 0.23) break;
+        window.__canvas2dEngine.zoomIn();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
       return window.__canvas2dEngine.getSnapshot().board.view.scale;
     });
     await session.page.waitForTimeout(800);
     const secondRecovered = await readRecovered();
     const result = { beforeHidden, firstRecoveredScale, firstRecovered, hiddenAgain, secondRecoveredScale, secondRecovered };
     assert(session.getErrors().length === 0, "text summary stability check produced page errors", session.getErrors());
-    assert(beforeHidden.nodeMissing && beforeHidden.hostHidden, "text overlay was not hidden below the LOD threshold", result);
-    assert(hiddenAgain.hostHidden === true, "text overlay did not hide after crossing below the LOD threshold", result);
-    assert(hiddenAgain.nodePreserved === true, "text overlay node was destroyed during the LOD transition", result);
+    for (const lowZoomState of [beforeHidden, hiddenAgain]) {
+      assert(
+        !lowZoomState.nodeMissing &&
+          !lowZoomState.hostHidden &&
+          lowZoomState.activeRepresentation === "frozen-detail" &&
+          lowZoomState.text === beforeHidden.text &&
+          !lowZoomState.hasSnapshot,
+        "low zoom text did not preserve its frozen layout detail",
+        result
+      );
+    }
     assert(firstRecovered.contentMode === "detail", "text overlay did not recover in detail mode", result);
     assert(secondRecovered.contentMode === "detail", "text overlay did not recover after repeated threshold crossing", result);
     for (const recovered of [firstRecovered, secondRecovered]) {
       assert(
-        recovered.activeRepresentation === recovered.plannedRepresentation &&
+        recovered.hostHidden === false &&
+          recovered.activeRepresentation === recovered.plannedRepresentation &&
           (recovered.activeRepresentation !== "exact-snapshot" || recovered.hasSnapshot),
         "text overlay did not resolve the unified plan after threshold recovery",
         result

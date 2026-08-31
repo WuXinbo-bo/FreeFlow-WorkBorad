@@ -45,6 +45,10 @@ async function main() {
       return request.promise;
     },
     cacheLimit: 2,
+    scheduleWork: (callback) => {
+      const id = setTimeout(callback, 0);
+      return () => clearTimeout(id);
+    },
   });
   const node = createFakeNode();
 
@@ -60,6 +64,7 @@ async function main() {
     density: 0.5,
   }), true);
   assert.strictEqual(node.dataset.activeRepresentation, "live-detail", "pending snapshot hid live detail");
+  await flushPromises();
   controller.prepare(node, {
     plannedRepresentation: "live-detail",
     signature: "v1",
@@ -109,6 +114,7 @@ async function main() {
     signature: "v3",
     generation: 5,
   });
+  await flushPromises();
   controller.prepare(node, {
     plannedRepresentation: "exact-snapshot",
     signature: "v4",
@@ -122,7 +128,9 @@ async function main() {
   await flushPromises();
   requests.get(3).resolve({ dataUrl: "data:image/png;base64,old-generation" });
   await flushPromises();
+  await flushPromises();
   assert.strictEqual(node.dataset.activeRepresentation, "live-detail", "superseded generation was committed");
+  assert(requests.has(4), "snapshot queue did not advance after the stale capture completed");
   requests.get(4).resolve({ dataUrl: "data:image/png;base64,new-generation" });
   await flushPromises();
   assert.strictEqual(node.dataset.activeRepresentation, "exact-snapshot", "latest generation was not committed");
@@ -144,6 +152,134 @@ async function main() {
   }), true, "cached snapshot was not reused");
   assert.strictEqual(node.dataset.activeRepresentation, "exact-snapshot", "cached snapshot was not committed synchronously");
   assert.strictEqual(controller.getSnapshot().cacheSize, 2, "snapshot cache limit was not enforced");
+
+  controller.prepare(node, {
+    plannedRepresentation: "frozen-detail",
+    signature: "",
+    generation: 8,
+  });
+  assert.strictEqual(node.dataset.activeRepresentation, "frozen-detail", "frozen detail was reported as live detail");
+
+  const queuedRequests = [];
+  const scheduledWork = [];
+  const queuedController = createPresentationSnapshotController({
+    capture: (targetNode) => {
+      const request = createDeferred();
+      request.node = targetNode;
+      queuedRequests.push(request);
+      return request.promise;
+    },
+    scheduleWork: (callback) => {
+      scheduledWork.push(callback);
+      return () => {};
+    },
+  });
+  const queuedNodes = [createFakeNode(), createFakeNode()];
+  queuedController.setPaused(true);
+  queuedNodes.forEach((queuedNode, index) => {
+    const signature = `queued-${index}`;
+    queuedController.prepare(queuedNode, {
+      plannedRepresentation: "exact-snapshot",
+      signature,
+      generation: 1,
+    });
+    queuedController.commit(queuedNode, {
+      plannedRepresentation: "exact-snapshot",
+      signature,
+      generation: 1,
+    });
+  });
+  assert.deepStrictEqual(
+    queuedController.getSnapshot(),
+    { cacheSize: 0, pendingCount: 2, queuedCount: 2, activeCount: 0, paused: true },
+    "paused snapshot controller started capture work"
+  );
+  queuedController.setPaused(false);
+  assert.strictEqual(scheduledWork.length, 1, "snapshot queue did not schedule idle work after recovery");
+  scheduledWork.shift()();
+  await flushPromises();
+  assert.strictEqual(queuedRequests.length, 1, "snapshot queue exceeded single-capture concurrency");
+  queuedRequests[0].resolve({ dataUrl: "data:image/png;base64,queued-0" });
+  await flushPromises();
+  assert.strictEqual(scheduledWork.length, 1, "snapshot queue did not schedule the next idle capture");
+  scheduledWork.shift()();
+  await flushPromises();
+  assert.strictEqual(queuedRequests.length, 2, "snapshot queue did not resume its second capture");
+  queuedRequests[1].resolve({ dataUrl: "data:image/png;base64,queued-1" });
+  await flushPromises();
+  assert.deepStrictEqual(
+    queuedController.getSnapshot(),
+    { cacheSize: 2, pendingCount: 0, queuedCount: 0, activeCount: 0, paused: false },
+    "snapshot queue retained work after both captures completed"
+  );
+
+  const canceledRequests = [];
+  const canceledController = createPresentationSnapshotController({
+    capture: () => {
+      canceledRequests.push(true);
+      return Promise.resolve({ dataUrl: "data:image/png;base64,unexpected" });
+    },
+    scheduleWork: () => () => {},
+  });
+  const canceledNode = createFakeNode();
+  canceledController.setPaused(true);
+  canceledController.prepare(canceledNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "canceled",
+    generation: 1,
+  });
+  canceledController.commit(canceledNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "canceled",
+    generation: 1,
+  });
+  canceledController.remove(canceledNode);
+  await flushPromises();
+  canceledController.setPaused(false);
+  assert.deepStrictEqual(
+    canceledController.getSnapshot(),
+    { cacheSize: 0, pendingCount: 0, queuedCount: 0, activeCount: 0, paused: false },
+    "removed node retained a stale queued snapshot"
+  );
+  assert.strictEqual(canceledRequests.length, 0, "removed node started a stale snapshot capture");
+
+  const stableGenerationRequest = createDeferred();
+  const stableGenerationController = createPresentationSnapshotController({
+    capture: () => stableGenerationRequest.promise,
+    scheduleWork: (callback) => {
+      callback();
+      return () => {};
+    },
+  });
+  const stableGenerationNode = createFakeNode();
+  stableGenerationController.prepare(stableGenerationNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "same-content",
+    generation: 1,
+  });
+  stableGenerationController.commit(stableGenerationNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "same-content",
+    generation: 1,
+  });
+  stableGenerationController.prepare(stableGenerationNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "same-content",
+    generation: 2,
+  });
+  stableGenerationController.commit(stableGenerationNode, {
+    plannedRepresentation: "exact-snapshot",
+    signature: "same-content",
+    generation: 2,
+  });
+  stableGenerationRequest.resolve({ dataUrl: "data:image/png;base64,stable", width: 120, height: 60 });
+  await flushPromises();
+  assert.strictEqual(
+    stableGenerationNode.dataset.activeRepresentation,
+    "exact-snapshot",
+    "same-signature generation change canceled a valid pending snapshot"
+  );
+  assert.strictEqual(stableGenerationNode.dataset.presentationSnapshotGeneration, "2");
 
   console.log("[check-presentation-snapshot-controller] ok");
 }

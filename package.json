@@ -25,6 +25,7 @@
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",
     "test:presentation-quality": "node scripts/check-presentation-quality-runtime.js",
     "test:canvas-performance-policy": "node scripts/check-canvas-performance-policy.js",
+    "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",
     "test:presentation-snapshots": "node scripts/check-presentation-snapshot-controller.js",
     "test:canvas-presentation-snapshots": "node scripts/check-canvas-presentation-snapshots.js",
     "test:compact-presentation": "node scripts/check-compact-presentation-runtime.js",

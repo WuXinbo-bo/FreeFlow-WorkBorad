@@ -3,6 +3,7 @@ import html2canvas from "../../../../assets/vendor/html2canvas/html2canvas.esm.m
 
 const DEFAULT_CACHE_LIMIT = 96;
 const DEFAULT_MAX_PIXELS = 1_500_000;
+const DEFAULT_MAX_CONCURRENT_CAPTURES = 1;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
@@ -32,14 +33,45 @@ function clearLiveContentState(node) {
   });
 }
 
+function resizeSnapshotCanvas(source, width, height) {
+  const canvas = globalThis.document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  const context = canvas.getContext("2d");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function createSnapshotMip(canvas, width, height, density) {
+  const targetWidth = Math.max(1, Math.ceil(width * density));
+  const targetHeight = Math.max(1, Math.ceil(height * density));
+  let current = canvas;
+  while (current.width / 2 > targetWidth * 1.25 || current.height / 2 > targetHeight * 1.25) {
+    current = resizeSnapshotCanvas(
+      current,
+      Math.max(targetWidth, Math.round(current.width / 2)),
+      Math.max(targetHeight, Math.round(current.height / 2))
+    );
+  }
+  if (current.width !== targetWidth || current.height !== targetHeight) {
+    current = resizeSnapshotCanvas(current, targetWidth, targetHeight);
+  }
+  return current;
+}
+
 async function captureElementSnapshot(node, { density = 1, maxPixels = DEFAULT_MAX_PIXELS } = {}) {
   if (!isElementNode(node) || !node.isConnected) {
     throw new Error("presentation snapshot source is unavailable");
   }
   const width = Math.max(1, Math.ceil(Number(node.offsetWidth || node.scrollWidth || 0) || 1));
   const height = Math.max(1, Math.ceil(Number(node.offsetHeight || node.scrollHeight || 0) || 1));
-  const requestedDensity = clamp(density, 0.25, 2);
-  const pixelScale = Math.min(requestedDensity, Math.sqrt(Math.max(1, maxPixels) / (width * height)));
+  const requestedDensity = clamp(density, 0.125, 2);
+  const pixelScale = Math.min(
+    Math.max(1, requestedDensity),
+    Math.sqrt(Math.max(1, maxPixels) / (width * height))
+  );
   const canvas = await html2canvas(node, {
     allowTaint: false,
     backgroundColor: null,
@@ -51,6 +83,8 @@ async function captureElementSnapshot(node, { density = 1, maxPixels = DEFAULT_M
     useCORS: true,
     width,
     onclone: (_, clone) => {
+      const sceneRoot = clone.closest?.("#canvas2d-scene-root");
+      if (sceneRoot?.style) sceneRoot.style.setProperty("transform", "none", "important");
       clone.style.animation = "none";
       clone.style.caretColor = "transparent";
       clone.style.transform = "none";
@@ -58,25 +92,84 @@ async function captureElementSnapshot(node, { density = 1, maxPixels = DEFAULT_M
       clone.style.visibility = "visible";
     },
   });
+  const snapshotCanvas = createSnapshotMip(canvas, width, height, Math.min(requestedDensity, pixelScale));
   return Object.freeze({
-    dataUrl: canvas.toDataURL("image/png"),
+    dataUrl: snapshotCanvas.toDataURL("image/png"),
     width,
     height,
-    pixelWidth: canvas.width,
-    pixelHeight: canvas.height,
+    pixelWidth: snapshotCanvas.width,
+    pixelHeight: snapshotCanvas.height,
   });
+}
+
+function scheduleIdleWork(callback) {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const id = globalThis.requestIdleCallback(callback, { timeout: 500 });
+    return () => globalThis.cancelIdleCallback?.(id);
+  }
+  const id = globalThis.setTimeout(callback, 16);
+  return () => globalThis.clearTimeout(id);
 }
 
 export function createPresentationSnapshotController({
   capture = captureElementSnapshot,
   cacheLimit = DEFAULT_CACHE_LIMIT,
   maxPixels = DEFAULT_MAX_PIXELS,
+  maxConcurrentCaptures = DEFAULT_MAX_CONCURRENT_CAPTURES,
+  scheduleWork = scheduleIdleWork,
 } = {}) {
   const cache = new Map();
   const pendingByKey = new Map();
   const nodeStates = new WeakMap();
+  const captureQueue = [];
+  const concurrency = Math.max(1, Math.floor(Number(maxConcurrentCaptures) || DEFAULT_MAX_CONCURRENT_CAPTURES));
   let requestToken = 0;
   let controllerGeneration = 0;
+  let activeCaptures = 0;
+  let paused = false;
+  let cancelScheduledWork = null;
+
+  function pumpCaptureQueue() {
+    cancelScheduledWork = null;
+    if (paused || activeCaptures >= concurrency || !captureQueue.length) return;
+    const task = captureQueue.shift();
+    activeCaptures += 1;
+    Promise.resolve()
+      .then(() => capture(task.node, task.options))
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        activeCaptures = Math.max(0, activeCaptures - 1);
+        scheduleCapturePump();
+      });
+  }
+
+  function scheduleCapturePump() {
+    if (paused || cancelScheduledWork || activeCaptures >= concurrency || !captureQueue.length) return;
+    cancelScheduledWork = scheduleWork(pumpCaptureQueue) || null;
+  }
+
+  function enqueueCapture(node, options) {
+    return new Promise((resolve, reject) => {
+      captureQueue.push({ node, options, resolve, reject });
+      scheduleCapturePump();
+    });
+  }
+
+  function cancelQueuedCaptures(node) {
+    let canceled = 0;
+    for (let index = captureQueue.length - 1; index >= 0; index -= 1) {
+      const task = captureQueue[index];
+      if (task.node !== node) continue;
+      captureQueue.splice(index, 1);
+      task.reject(new Error("presentation snapshot request superseded"));
+      canceled += 1;
+    }
+    if (!captureQueue.length && cancelScheduledWork) {
+      cancelScheduledWork();
+      cancelScheduledWork = null;
+    }
+    return canceled;
+  }
 
   function readCache(key) {
     if (!key || !cache.has(key)) return null;
@@ -129,11 +222,16 @@ export function createPresentationSnapshotController({
     if (target !== PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT) {
       if (state.signature || state.generation !== normalizedGeneration) {
         state.token = ++requestToken;
+        cancelQueuedCaptures(node);
       }
       state.signature = "";
       state.generation = normalizedGeneration;
       nodeStates.set(node, state);
-      return Object.freeze({ snapshotActive: false, restored: restoreLive(node) });
+      const restored = restoreLive(node);
+      node.dataset.activeRepresentation = target === PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL
+        ? PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL
+        : PRESENTATION_REPRESENTATIONS.LIVE_DETAIL;
+      return Object.freeze({ snapshotActive: false, restored });
     }
     const snapshotActive =
       node.dataset.activeRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT &&
@@ -141,12 +239,15 @@ export function createPresentationSnapshotController({
     if (snapshotActive) {
       return Object.freeze({ snapshotActive: true, restored: false });
     }
-    if (state.signature !== normalizedSignature || state.generation !== normalizedGeneration) {
+    if (state.signature !== normalizedSignature) {
       state.token = ++requestToken;
+      cancelQueuedCaptures(node);
       state.signature = normalizedSignature;
       state.generation = normalizedGeneration;
       delete node.dataset.presentationSnapshotStatus;
       delete node.dataset.presentationSnapshotError;
+    } else if (state.generation !== normalizedGeneration) {
+      state.generation = normalizedGeneration;
     }
     nodeStates.set(node, state);
     const restored =
@@ -184,6 +285,7 @@ export function createPresentationSnapshotController({
     image.style.height = "100%";
     image.style.display = "block";
     image.style.objectFit = "fill";
+    image.style.imageRendering = "auto";
     image.style.pointerEvents = "none";
     image.style.userSelect = "none";
     state.liveBoxStyle = {
@@ -239,7 +341,7 @@ export function createPresentationSnapshotController({
     node.dataset.presentationSnapshotStatus = "pending";
     let pending = pendingByKey.get(normalizedSignature);
     if (!pending) {
-      pending = Promise.resolve().then(() => capture(node, { density, maxPixels }));
+      pending = enqueueCapture(node, { density, maxPixels });
       pendingByKey.set(normalizedSignature, pending);
       const cleanup = () => {
         if (pendingByKey.get(normalizedSignature) === pending) {
@@ -252,10 +354,11 @@ export function createPresentationSnapshotController({
       .then((snapshot) => {
         if (!snapshot?.dataUrl) throw new Error("presentation snapshot result is empty");
         writeCache(normalizedSignature, snapshot);
+        const current = nodeStates.get(node);
         applySnapshot(node, snapshot, {
           signature: normalizedSignature,
-          generation: normalizedGeneration,
-          token,
+          generation: current?.generation ?? normalizedGeneration,
+          token: current?.token ?? token,
           controllerToken,
         });
       })
@@ -274,19 +377,41 @@ export function createPresentationSnapshotController({
     if (!isElementNode(node)) return;
     const state = nodeStates.get(node) || { token: 0 };
     state.token = ++requestToken;
+    cancelQueuedCaptures(node);
     nodeStates.delete(node);
   }
 
   function clear() {
     cache.clear();
     pendingByKey.clear();
+    if (cancelScheduledWork) cancelScheduledWork();
+    cancelScheduledWork = null;
+    const error = new Error("presentation snapshot queue cleared");
+    captureQueue.splice(0).forEach((task) => task.reject(error));
     controllerGeneration += 1;
     requestToken += 1;
   }
 
-  function getSnapshot() {
-    return Object.freeze({ cacheSize: cache.size, pendingCount: pendingByKey.size });
+  function setPaused(nextPaused = false) {
+    paused = Boolean(nextPaused);
+    if (paused && cancelScheduledWork) {
+      cancelScheduledWork();
+      cancelScheduledWork = null;
+    } else if (!paused) {
+      scheduleCapturePump();
+    }
+    return getSnapshot();
   }
 
-  return Object.freeze({ prepare, commit, remove, clear, getSnapshot });
+  function getSnapshot() {
+    return Object.freeze({
+      cacheSize: cache.size,
+      pendingCount: pendingByKey.size,
+      queuedCount: captureQueue.length,
+      activeCount: activeCaptures,
+      paused,
+    });
+  }
+
+  return Object.freeze({ prepare, commit, remove, clear, setPaused, getSnapshot });
 }

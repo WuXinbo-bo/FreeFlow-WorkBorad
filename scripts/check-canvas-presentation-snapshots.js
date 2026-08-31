@@ -70,31 +70,30 @@ function assert(condition, message, details) {
 async function collect(page) {
   return page.evaluate(() => {
     const entries = {};
+    const boardItems = window.__canvas2dEngine.getSnapshot().board.items;
+    const countLineBands = (node) => {
+      if (!node) return 0;
+      const rows = [];
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        if (!String(walker.currentNode.nodeValue || "").trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        Array.from(range.getClientRects()).forEach((rect) => rows.push(Math.round(rect.top * 2) / 2));
+      }
+      return new Set(rows).size;
+    };
     ["snapshot-text", "snapshot-math", "snapshot-code"].forEach((id) => {
       const node = document.querySelector(`[data-id="${id}"][data-active-representation]`);
-      const image = node?.querySelector(".canvas2d-presentation-snapshot") || null;
-      let paintedPixels = 0;
-      if (image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
-        const canvas = document.createElement("canvas");
-        canvas.width = image.naturalWidth;
-        canvas.height = image.naturalHeight;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        context.drawImage(image, 0, 0);
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-        for (let index = 3; index < pixels.length; index += 4) {
-          if (pixels[index] > 16) paintedPixels += 1;
-        }
-      }
+      const item = boardItems.find((entry) => entry.id === id) || null;
       entries[id] = {
         planned: node?.dataset.plannedRepresentation || "",
         active: node?.dataset.activeRepresentation || "",
-        status: node?.dataset.presentationSnapshotStatus || "",
-        signature: node?.dataset.presentationSnapshotSignature || "",
         snapshotCount: node?.querySelectorAll(".canvas2d-presentation-snapshot").length || 0,
-        naturalWidth: image?.naturalWidth || 0,
-        naturalHeight: image?.naturalHeight || 0,
-        paintedPixels,
         text: node?.textContent || "",
+        lineBands: countLineBands(node),
+        modelWidth: Number(item?.width || 0),
+        modelHeight: Number(item?.height || 0),
       };
     });
     return {
@@ -105,13 +104,16 @@ async function collect(page) {
   });
 }
 
-async function waitForSnapshots(page) {
+async function waitForFrozenDetails(page) {
   await page.waitForFunction(() => {
     const ids = ["snapshot-text", "snapshot-math", "snapshot-code"];
     return ids.every((id) => {
       const node = document.querySelector(`[data-id="${id}"][data-active-representation]`);
-      const image = node?.querySelector(".canvas2d-presentation-snapshot");
-      return node?.dataset.activeRepresentation === "exact-snapshot" && image?.complete && image.naturalWidth > 0;
+      return (
+        node?.dataset.activeRepresentation === "frozen-detail" &&
+        !node.querySelector(".canvas2d-presentation-snapshot") &&
+        String(node.textContent || "").trim()
+      );
     });
   }, null, { timeout: 10_000 });
 }
@@ -134,19 +136,19 @@ async function main() {
       }
       body { margin: 0 !important; }
     ` });
-    await page.evaluate(() => window.__canvas2dEngine.resize({ immediate: true, reason: "snapshot-check" }));
-    await waitForSnapshots(page);
+    await page.evaluate(() => window.__canvas2dEngine.resize({ immediate: true, reason: "frozen-detail-check" }));
+    await waitForFrozenDetails(page);
     const initial = await collect(page);
     await page.screenshot({ path: "tmp/presentation-snapshots.png", fullPage: false });
     Object.entries(initial.entries).forEach(([id, entry]) => {
-      assert(entry.planned === "exact-snapshot", `${id} was not planned as an exact snapshot`, initial);
-      assert(entry.active === "exact-snapshot", `${id} did not commit its exact snapshot`, initial);
-      assert(entry.snapshotCount === 1, `${id} did not own exactly one snapshot`, initial);
-      assert(entry.paintedPixels > 0, `${id} snapshot was blank`, initial);
+      assert(entry.planned === "frozen-detail", `${id} was not planned as frozen detail`, initial);
+      assert(entry.active === "frozen-detail", `${id} did not activate frozen detail`, initial);
+      assert(entry.snapshotCount === 0, `${id} started a main-thread snapshot capture`, initial);
+      assert(String(entry.text || "").trim(), `${id} frozen detail was blank`, initial);
     });
+    assert(initial.entries["snapshot-code"].lineBands >= 2, "code frozen detail collapsed its lines", initial);
 
-    const initialTextSignature = initial.entries["snapshot-text"].signature;
-    await page.evaluate(() => {
+    const expectedTextGeometry = await page.evaluate(() => {
       const engine = window.__canvas2dEngine;
       const board = engine.getSnapshotData();
       const item = board.items.find((entry) => entry.id === "snapshot-text");
@@ -155,27 +157,32 @@ async function main() {
       item.html = "<p><strong>Updated</strong> snapshot revision</p>";
       item.updatedAt = Date.now() + 1000;
       engine.loadStructuredBoardForExport(board);
-      engine.resize({ immediate: true, reason: "snapshot-content-revision" });
+      const loaded = engine.getSnapshot().board.items.find((entry) => entry.id === "snapshot-text");
+      return { width: Number(loaded?.width || 0), height: Number(loaded?.height || 0) };
     });
-    await page.waitForFunction((previousSignature) => {
+    await page.evaluate(() => {
+      window.__canvas2dEngine.resize({ immediate: true, reason: "frozen-detail-content-revision" });
+    });
+    await page.waitForFunction(() => {
       const node = document.querySelector('[data-id="snapshot-text"][data-active-representation]');
       return (
-        node?.dataset.activeRepresentation === "exact-snapshot" &&
-        node.dataset.presentationSnapshotSignature &&
-        node.dataset.presentationSnapshotSignature !== previousSignature
+        node?.dataset.activeRepresentation === "frozen-detail" &&
+        String(node.textContent || "").includes("Updated snapshot revision")
       );
-    }, initialTextSignature);
+    });
     const revised = await collect(page);
+    assert(revised.entries["snapshot-text"].text.includes("Updated snapshot revision"), "content revision was not visible", revised);
     assert(
-      revised.entries["snapshot-text"].paintedPixels > 0,
-      "content revision produced a blank replacement snapshot",
-      revised
+      revised.entries["snapshot-text"].modelWidth === expectedTextGeometry.width &&
+        revised.entries["snapshot-text"].modelHeight === expectedTextGeometry.height,
+        "frozen detail preparation wrote transient layout back into the text model",
+      { expectedTextGeometry, revised: revised.entries["snapshot-text"] }
     );
 
     const cycles = [];
     for (let index = 0; index < 3; index += 1) {
       const box = await page.locator('[data-id="snapshot-text"][data-active-representation]').boundingBox();
-      assert(box, "snapshot text node was not measurable", initial);
+      assert(box, "frozen text node was not measurable", initial);
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       await page.waitForFunction(() => {
@@ -191,14 +198,26 @@ async function main() {
 
       await page.mouse.move(1320, 860);
       await page.mouse.click(1320, 860);
-      await waitForSnapshots(page);
+      await waitForFrozenDetails(page);
       const recovered = await collect(page);
-      assert(recovered.selectedIds.length === 0, "blank click did not release snapshot selection", recovered);
-      assert(recovered.entries["snapshot-text"].paintedPixels > 0, "snapshot recovery produced a blank image", recovered);
+      assert(recovered.selectedIds.length === 0, "blank click did not release frozen-detail selection", recovered);
+      assert(recovered.entries["snapshot-text"].text.includes("Updated snapshot revision"), "frozen recovery was blank", recovered);
+      assert(
+        recovered.entries["snapshot-text"].modelWidth === detail.entries["snapshot-text"].modelWidth &&
+          recovered.entries["snapshot-text"].modelHeight === detail.entries["snapshot-text"].modelHeight,
+        "frozen recovery changed the stable live-detail geometry",
+        { detail: detail.entries["snapshot-text"], recovered: recovered.entries["snapshot-text"] }
+      );
+      assert(
+        Number(recovered.quality?.pendingTransitions || 0) === 0 &&
+          Number(recovered.quality?.nextEvaluationInMs || 0) === 0,
+        "frozen recovery retained a pending presentation transition",
+        recovered.quality
+      );
       cycles.push({ detail: detail.entries["snapshot-text"], recovered: recovered.entries["snapshot-text"] });
     }
 
-    assert(errors.length === 0, "presentation snapshot browser check produced page errors", errors);
+    assert(errors.length === 0, "frozen presentation browser check produced page errors", errors);
     console.log(JSON.stringify({ ok: true, initial, revised, cycles }, null, 2));
   } catch (error) {
     let state = null;

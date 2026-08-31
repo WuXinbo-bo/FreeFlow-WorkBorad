@@ -825,11 +825,9 @@ const RICH_OVERLAY_SCALE_BUCKET_STEP = 0.02;
 const RICH_OVERLAY_DETAIL_CACHE_LIMIT = 180;
 const RICH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const OVERLAY_CANVAS_LOD_EXIT_SCALE = 0.17;
-const MATH_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_SYNTAX_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_LINE_NUMBERS_MIN_SCALE = 0.15;
 const CODE_BLOCK_OVERLAY_HEADER_MIN_SCALE = 0.15;
-const CODE_BLOCK_OVERLAY_PREVIEW_MIN_SCALE = 0.15;
 const MATH_MARKUP_CACHE_LIMIT = 160;
 const OVERLAY_IDLE_TASK_TIMEOUT_MS = 96;
 const OVERLAY_IDLE_MIN_TIME_REMAINING_MS = 4;
@@ -1973,13 +1971,6 @@ function showOverlayHost(host) {
   host.style.visibility = "";
 }
 
-function suspendOverlayHostForCanvasLod(host) {
-  if (!(host instanceof HTMLDivElement)) {
-    return;
-  }
-  host.style.visibility = "hidden";
-}
-
 function buildOverlayTextPreview(text = "", maxLength = 240) {
   const source = sanitizeText(String(text || ""));
   if (!source) {
@@ -2138,6 +2129,7 @@ function scheduleRichOverlayDetailHtml(
     linkSignature = "",
     scale = 1,
     scaleBucket = "1",
+    onReady = null,
   } = {}
 ) {
   if (!(node instanceof HTMLDivElement) || !cacheKey || !item) {
@@ -2162,7 +2154,7 @@ function scheduleRichOverlayDetailHtml(
   }
   const existing = pendingRichOverlayDetailByCacheKey.get(cacheKey);
   if (existing) {
-    existing.subscribers.push({ node, detailRenderSignature, item, linkSignature, scale, scaleBucket });
+    existing.subscribers.push({ node, detailRenderSignature, item, linkSignature, scale, scaleBucket, onReady });
     pendingRichOverlayDetailTasks.set(node, {
       cacheKey,
       detailRenderSignature,
@@ -2182,7 +2174,7 @@ function scheduleRichOverlayDetailHtml(
   }
   const entry = {
     item,
-    subscribers: [{ node, detailRenderSignature, item, linkSignature, scale, scaleBucket }],
+    subscribers: [{ node, detailRenderSignature, item, linkSignature, scale, scaleBucket, onReady }],
   };
   pendingRichOverlayDetailByCacheKey.set(cacheKey, entry);
   richOverlayDetailQueue.enqueue(cacheKey);
@@ -2252,11 +2244,12 @@ function applyMathRenderResultToSubscribers(entry, cacheKey, markup = "", { tran
       // Mark the overlay as settled so detail mode does not retry indefinitely on fallback-only hosts.
       subscriber.item.mathOverlayReady = true;
     }
-    applyMathMarkupToNode(subscriber.node, subscriber.contentSignature, finalHasMarkup ? finalMarkup : "", {
+    const contentMutated = applyMathMarkupToNode(subscriber.node, subscriber.contentSignature, finalHasMarkup ? finalMarkup : "", {
       fallbackText: subscriber.fallbackText,
       state: finalHasMarkup ? "ready" : "fallback",
       transport: transport || (finalHasMarkup ? "main-thread" : "fallback"),
     });
+    if (contentMutated && typeof subscriber.onReady === "function") subscriber.onReady();
   });
 }
 
@@ -2302,7 +2295,7 @@ const richOverlayDetailQueue = createIdleBatchQueue({
     writeRichOverlayDetailHtmlCache(cacheKey, html);
     entry.subscribers.forEach((subscriber) => {
       pendingRichOverlayDetailTasks.delete(subscriber.node);
-      applyRichOverlayDetailHtmlToNode(subscriber.node, {
+      const contentMutated = applyRichOverlayDetailHtmlToNode(subscriber.node, {
         detailRenderSignature: subscriber.detailRenderSignature,
         html,
         item: subscriber.item,
@@ -2310,6 +2303,7 @@ const richOverlayDetailQueue = createIdleBatchQueue({
         scale: subscriber.scale,
         scaleBucket: subscriber.scaleBucket,
       });
+      if (contentMutated && typeof subscriber.onReady === "function") subscriber.onReady();
     });
   },
 });
@@ -2451,10 +2445,10 @@ function cancelPendingMathRender(node) {
 
 function applyMathMarkupToNode(node, contentSignature, markup = "", { fallbackText = "", state = "ready", transport = "" } = {}) {
   if (!(node instanceof HTMLDivElement)) {
-    return;
+    return false;
   }
   if (node.dataset.contentSignature !== contentSignature) {
-    return;
+    return false;
   }
   if (markup) {
     node.innerHTML = markup;
@@ -2463,9 +2457,10 @@ function applyMathMarkupToNode(node, contentSignature, markup = "", { fallbackTe
   }
   node.dataset.mathRenderState = state;
   node.dataset.mathRenderTransport = String(transport || "");
+  return true;
 }
 
-function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayMode = false, contentSignature = "", fallbackText = "", item = null } = {}) {
+function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayMode = false, contentSignature = "", fallbackText = "", item = null, onReady = null } = {}) {
   if (!(node instanceof HTMLDivElement) || !cacheKey || !formula) {
     return;
   }
@@ -2481,7 +2476,7 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
   }
   const existing = pendingMathRenderByCacheKey.get(cacheKey);
   if (existing) {
-    existing.subscribers.push({ node, contentSignature, fallbackText, item });
+    existing.subscribers.push({ node, contentSignature, fallbackText, item, onReady });
     pendingMathRenderTasks.set(node, {
       cacheKey,
       contentSignature,
@@ -2503,7 +2498,7 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
   const entry = {
     formula,
     displayMode,
-    subscribers: [{ node, contentSignature, fallbackText, item }],
+    subscribers: [{ node, contentSignature, fallbackText, item, onReady }],
   };
   pendingMathRenderByCacheKey.set(cacheKey, entry);
   mathOverlayRenderQueue.enqueue(cacheKey);
@@ -2549,12 +2544,32 @@ function syncOverlayPresentationState(node, frameContext = null, itemId = "") {
   });
 }
 
-function getOverlaySnapshotContext(frameContext = null) {
+function getPlannedPresentationRepresentation(frameContext = null, itemId = "") {
+  return String(
+    frameContext?.quality?.activePlan?.entries?.[String(itemId || "")]?.representation ||
+      PRESENTATION_REPRESENTATIONS.LIVE_DETAIL
+  );
+}
+
+function usesDetailOverlay(frameContext = null, itemId = "") {
+  const representation = getPlannedPresentationRepresentation(frameContext, itemId);
+  return representation === PRESENTATION_REPRESENTATIONS.LIVE_DETAIL ||
+    representation === PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL ||
+    representation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT;
+}
+
+function getOverlaySnapshotContext(frameContext = null, itemId = "") {
   const pixelRatio = Math.max(
     0.5,
     Number(frameContext?.pixelRatio) || Number(globalThis?.devicePixelRatio) || 1
   );
-  const density = Math.max(1, Math.min(1.5, Math.round(pixelRatio * 4) / 4));
+  const representation = getPlannedPresentationRepresentation(frameContext, itemId);
+  const scale = Math.max(0.01, Number(frameContext?.view?.scale) || 1);
+  const targetDensity = representation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
+    ? scale * pixelRatio * 1.5
+    : pixelRatio;
+  const densityLevels = [0.2, 0.25, 0.33, 0.5, 0.75, 1, 1.5];
+  const density = densityLevels.find((level) => level >= targetDensity) || 1.5;
   const theme = String(
     globalThis?.document?.documentElement?.dataset?.theme ||
       globalThis?.document?.body?.dataset?.theme ||
@@ -3377,6 +3392,8 @@ export function createCanvas2DEngine(options = {}) {
   let pendingWheelFrame = 0;
   let wheelCommitTimer = 0;
   let interactionRecoveryTimer = 0;
+  let presentationQualityTimer = 0;
+  let presentationQualityDeadline = 0;
   let lastContextMenuPoint = null;
   let lastContextMenuTargetId = null;
   let lastContextMenuSource = "canvas";
@@ -3950,7 +3967,7 @@ let tablePointerSelectionState = {
       isEditing ? 1 : 0,
     ].join("|");
     const presentation = syncOverlayPresentationState(node, frameContext, item.id);
-    const snapshotContext = getOverlaySnapshotContext(frameContext);
+    const snapshotContext = getOverlaySnapshotContext(frameContext, item.id);
     const snapshotSignature = [
       "code",
       item.id,
@@ -4756,14 +4773,18 @@ let tablePointerSelectionState = {
         items: visibleScene.items,
         visibleIds,
         selectedIds: state.board.selectedIds,
-        interactingIds: viewportInteractionActive ? visibleIds : state.pointer ? state.board.selectedIds : [],
+        interactingIds: state.pointer ? state.board.selectedIds : [],
         editingId: state.editingId,
         hoverId: state.hoverId,
         view: frameView,
         pressure: presentationPressure,
         revisionKey: qualityRevisionKey,
+        nowMs: timestamp,
       },
       presentation.interaction
+    );
+    schedulePresentationQualityReevaluation(
+      quality.phase === "steady" ? quality.nextEvaluationInMs : 0
     );
     const frameContext = createFrameContext({
       frameId,
@@ -4806,10 +4827,6 @@ let tablePointerSelectionState = {
     return overlayCanvasLodActive;
   }
 
-  function shouldSuspendCanvasOverlays() {
-    return overlayCanvasLodActive;
-  }
-
   function isViewportPresentationFrozen(frameContext = null) {
     return Boolean(
       frameContext?.runtimeMode === "viewport-interaction" &&
@@ -4823,13 +4840,15 @@ let tablePointerSelectionState = {
     }
     const presentation = frameContext?.presentation;
     const matrix = String(presentation?.cameraMatrix?.css || "matrix(1, 0, 0, 1, 0, 0)");
+    const interactionPhase = String(presentation?.interaction?.phase || "steady");
     if (refs.sceneRoot.dataset.cameraMatrix !== matrix) {
       refs.sceneRoot.style.transform = matrix;
       refs.sceneRoot.dataset.cameraMatrix = matrix;
     }
+    setStyleIfNeeded(refs.sceneRoot, "willChange", interactionPhase === "steady" ? "auto" : "transform");
     refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
     refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
-    refs.sceneRoot.dataset.presentationPhase = String(presentation?.interaction?.phase || "steady");
+    refs.sceneRoot.dataset.presentationPhase = interactionPhase;
     refs.sceneRoot.dataset.qualityMode = String(frameContext?.quality?.mode || "off");
     refs.sceneRoot.dataset.qualityGeneration = String(frameContext?.quality?.generation || 0);
     if (typeof window !== "undefined") {
@@ -4927,7 +4946,7 @@ let tablePointerSelectionState = {
     });
     const previousStats = refs.canvas?.__ffRenderStats || null;
     const skipDetailOverlays = Boolean(previousStats?.progressiveRender?.pending);
-    const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive || canvasLodActive);
+    const overlaySuspended = Boolean(skipDetailOverlays || viewportInteractionActive);
     overlayBudgetManager.reconcile({
       rich: refs.richDisplayHost?.querySelectorAll?.(".canvas2d-rich-item[data-id]").length || 0,
       math: refs.mathDisplayHost?.querySelectorAll?.(".canvas2d-math-item[data-id]").length || 0,
@@ -4992,7 +5011,7 @@ let tablePointerSelectionState = {
         fill: "#ffffff",
         pattern: getBoardBackgroundPattern(),
       },
-      renderTextInCanvas: RENDER_TEXT_IN_CANVAS || canvasLodActive,
+      renderTextInCanvas: true,
       viewportInteractionActive,
       pixelRatio: viewportBudget.effectiveDpr,
       viewportBudget,
@@ -5070,12 +5089,32 @@ let tablePointerSelectionState = {
     }
     interactionPriorityGate.activate(reason);
     scenePresentationCoordinator.beginInteraction(reason);
+    presentationSnapshotController.setPaused(true);
     hydrationScheduler.setPaused(true);
+  }
+
+  function schedulePresentationQualityReevaluation(delayMs = 0) {
+    const waitMs = Math.max(0, Number(delayMs) || 0);
+    if (!waitMs) {
+      if (presentationQualityTimer) window.clearTimeout(presentationQualityTimer);
+      presentationQualityTimer = 0;
+      presentationQualityDeadline = 0;
+      return;
+    }
+    const currentTime = window.performance?.now?.() || Date.now();
+    const deadline = currentTime + waitMs;
+    if (presentationQualityTimer && presentationQualityDeadline <= deadline) return;
+    if (presentationQualityTimer) window.clearTimeout(presentationQualityTimer);
+    presentationQualityDeadline = deadline;
+    presentationQualityTimer = window.setTimeout(() => {
+      presentationQualityTimer = 0;
+      presentationQualityDeadline = 0;
+      scheduleRender({ overlayDirty: true, reason: "presentation-quality-dwell" });
+    }, Math.ceil(waitMs));
   }
 
   function releaseInteractionPriority(delayMs = 140) {
     const waitMs = Math.max(0, Number(delayMs || 140) || 140);
-    interactionPriorityGate.scheduleRelease(waitMs);
     const presentationSessionId = scenePresentationCoordinator.getSnapshot().interaction.sessionId;
     scenePresentationCoordinator.settleInteraction(presentationSessionId);
     if (interactionRecoveryTimer) {
@@ -5083,10 +5122,9 @@ let tablePointerSelectionState = {
     }
     interactionRecoveryTimer = window.setTimeout(() => {
       interactionRecoveryTimer = 0;
-      if (interactionPriorityGate.isActive()) {
-        return;
-      }
+      interactionPriorityGate.release();
       scenePresentationCoordinator.finishInteraction(presentationSessionId);
+      presentationSnapshotController.setPaused(false);
       hydrationScheduler.setPaused(false);
       store.emit();
       scheduleRender({ overlayDirty: true, reason: "interaction-priority-release" });
@@ -11265,21 +11303,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
-    if (shouldSuspendCanvasOverlays()) {
-      suspendOverlayHostForCanvasLod(refs.richDisplayHost);
-      return;
-    }
-    if (isCanvasLodScale(scale, RICH_OVERLAY_PREVIEW_MIN_SCALE)) {
-      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
-        onRemove: (node) => {
-          cancelPendingRichOverlayDetail(node);
-          node.remove?.();
-        },
-        budgetManager: overlayBudgetManager,
-        overlayType: "rich",
-      });
-      return;
-    }
     const sceneIndex = getSceneIndexRuntime();
     const items = [
       ...(sceneIndex.recordsByType.get("text") || []),
@@ -11336,9 +11359,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         ),
       });
     });
-    const activeOverlayItems = visibleItems.filter(
-      ({ item, visible }) => visible || (editingId && editingId === item.id)
+    const activeOverlayItems = visibleItems.filter(({ item, visible }) =>
+      usesDetailOverlay(frameContext, item.id) && (visible || (editingId && editingId === item.id))
     );
+    if (!activeOverlayItems.length) {
+      hideOverlayHost(refs.richDisplayHost, richOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingRichOverlayDetail(node);
+          presentationSnapshotController.remove(node);
+          node.remove?.();
+        },
+        budgetManager: overlayBudgetManager,
+        overlayType: "rich",
+      });
+      return;
+    }
 
     const deferredOverlayIds = new Set();
     richOverlayVirtualizer.syncCollection({
@@ -11422,7 +11457,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         overflow: boxStyles.overflow,
       });
       const presentation = syncOverlayPresentationState(node, frameContext, item.id);
-      const snapshotContext = getOverlaySnapshotContext(frameContext);
+      const snapshotContext = getOverlaySnapshotContext(frameContext, item.id);
       const snapshotSignature = [
         "rich",
         detailRenderSignature,
@@ -11468,6 +11503,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             linkSignature,
             scale: 1,
             scaleBucket,
+            onReady:
+              presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
+                ? () => scheduleRender({ overlayDirty: true, reason: "rich-snapshot-detail-ready" })
+                : null,
           });
         }
       }
@@ -11485,7 +11524,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStyleIfNeeded(node, "overflow", boxStyles.overflow);
         node.dataset.styleSignature = styleSignature;
       }
-      if (!snapshotState.snapshotActive && !state.editingId && (item.type === "text" || isMindNode)) {
+      if (
+        presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.LIVE_DETAIL &&
+        !snapshotState.snapshotActive &&
+        !state.editingId &&
+        (item.type === "text" || isMindNode)
+      ) {
         const html = node.dataset.html || "";
         const writebackSignature = getAutoSizedTextWritebackSignature(item, html);
         if (node.dataset.layoutWritebackSignature !== writebackSignature) {
@@ -11565,11 +11609,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
-    if (shouldSuspendCanvasOverlays()) {
-      suspendOverlayHostForCanvasLod(refs.mathDisplayHost);
-      return;
-    }
-
     const sceneIndex = getSceneIndexRuntime();
     const items = [
       ...(sceneIndex.recordsByType.get("mathBlock") || []),
@@ -11589,17 +11628,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
-    if (isCanvasLodScale(scale, MATH_OVERLAY_PREVIEW_MIN_SCALE)) {
-      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
-        onRemove: (node) => {
-          cancelPendingMathRender(node);
-          node.remove?.();
-        },
-        budgetManager: overlayBudgetManager,
-        overlayType: "math",
-      });
-      return;
-    }
     showOverlayHost(refs.mathDisplayHost);
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
@@ -11635,7 +11663,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         ),
       };
     });
-    const activeMathItems = visibleItems.filter(({ visible }) => visible);
+    const activeMathItems = visibleItems.filter(
+      ({ item, visible }) => visible && usesDetailOverlay(frameContext, item.id)
+    );
+    if (!activeMathItems.length) {
+      hideOverlayHost(refs.mathDisplayHost, mathOverlayVirtualizer, {
+        onRemove: (node) => {
+          cancelPendingMathRender(node);
+          presentationSnapshotController.remove(node);
+          node.remove?.();
+        },
+        budgetManager: overlayBudgetManager,
+        overlayType: "math",
+      });
+      return;
+    }
 
     const deferredOverlayIds = new Set();
     mathOverlayVirtualizer.syncCollection({
@@ -11693,7 +11735,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         justifyContent,
       });
       const presentation = syncOverlayPresentationState(node, frameContext, item.id);
-      const snapshotContext = getOverlaySnapshotContext(frameContext);
+      const snapshotContext = getOverlaySnapshotContext(frameContext, item.id);
       const snapshotSignature = [
         "math",
         contentSignature,
@@ -11736,6 +11778,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               contentSignature,
               fallbackText,
               item,
+              onReady:
+                presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
+                  ? () => scheduleRender({ overlayDirty: true, reason: "math-snapshot-detail-ready" })
+                  : null,
             });
           }
         }
@@ -11764,6 +11810,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.dataset.layoutWritebackSignature = contentSignature;
       }
       if (
+        presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.LIVE_DETAIL &&
         !snapshotState.snapshotActive &&
         node.dataset.mathRenderState === "ready" &&
         maybeWritebackMathOverlayFrame(item, node, 1)
@@ -11819,10 +11866,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastCodeBlockOverlayInteractive = interactive;
       return;
     }
-    if (shouldSuspendCanvasOverlays()) {
-      suspendOverlayHostForCanvasLod(refs.codeBlockDisplayHost);
-      return;
-    }
     const sceneIndex = getSceneIndexRuntime();
     const items = (sceneIndex.recordsByType.get("codeBlock") || []).map((record) => record.item);
     if (!items.length) {
@@ -11835,13 +11878,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     showOverlayHost(refs.codeBlockDisplayHost);
     const frameView = frameContext?.view || state.board.view;
     const scale = Math.max(0.1, Number(frameView.scale || 1));
-    if (isCanvasLodScale(scale, CODE_BLOCK_OVERLAY_PREVIEW_MIN_SCALE)) {
-      refs.codeBlockDisplayHost.classList.add("is-hidden");
-      refs.codeBlockDisplayHost.style.display = "none";
-      resetCodeBlockOverlayState({ clearNodes: true });
-      lastCodeBlockOverlayInteractive = interactive;
-      return;
-    }
     const offsetX = Number(frameView.offsetX || 0);
     const offsetY = Number(frameView.offsetY || 0);
     const viewportBounds = getRichOverlayViewportBounds(
@@ -11893,12 +11929,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       candidateItems = items.slice();
     }
     const activeVisibleItems = candidateItems.filter((item) => {
+      if (!usesDetailOverlay(frameContext, item.id)) return false;
       const left = Number(item.x || 0) * scale + offsetX;
       const top = Number(item.y || 0) * scale + offsetY;
       const width = Math.max(1, Number(item.width || 1)) * scale;
       const height = Math.max(1, Number(item.height || 1)) * scale;
       return hasScreenRectIntersection({ left, top, right: left + width, bottom: top + height }, viewportBounds);
     });
+    if (!activeVisibleItems.length) {
+      refs.codeBlockDisplayHost.classList.add("is-hidden");
+      refs.codeBlockDisplayHost.style.display = "none";
+      resetCodeBlockOverlayState({ clearNodes: true });
+      lastCodeBlockOverlayInteractive = interactive;
+      return;
+    }
     const activeIds = activeVisibleItems.map((item) => item.id);
     if (
       !shouldRescan &&
@@ -24665,6 +24709,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
       interactionRecoveryTimer = 0;
+    }
+    if (presentationQualityTimer) {
+      window.clearTimeout(presentationQualityTimer);
+      presentationQualityTimer = 0;
+      presentationQualityDeadline = 0;
     }
     interactionPriorityGate.release();
     scenePresentationCoordinator.reset();

@@ -12,7 +12,7 @@ async function main() {
   const { createFramePerformanceWindow } = await import(
     "../public/src/engines/canvas2d-core/perf/framePerformanceWindow.js"
   );
-  const { resolveTileScaleLevel } = await import(
+  const { resolveTileScaleLevel, resolveTileSceneSize } = await import(
     "../public/src/engines/canvas2d-core/render/tileSceneCache.js"
   );
 
@@ -54,6 +54,9 @@ async function main() {
   const minimumBucket = resolveTileScaleLevel(0.01);
   assert(minimumBucket >= 0.1, "tile scale dropped below its supported minimum");
   assert(minimumBucket <= 0.11, "minimum tile scale was oversampled beyond one cache level");
+  assert.strictEqual(resolveTileSceneSize(0.1), 10240, "low zoom did not preserve a stable tile pixel size");
+  assert.strictEqual(resolveTileSceneSize(1), 1024, "1x tile scene size changed unexpectedly");
+  assert.strictEqual(resolveTileSceneSize(2), 512, "high zoom tile scene size did not shrink with raster scale");
 
   console.log("[check-canvas-performance-policy] ok");
 }

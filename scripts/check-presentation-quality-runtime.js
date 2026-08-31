@@ -27,7 +27,14 @@ async function main() {
   registry.register({
     ...baseDefinition,
     type: "text",
-    capabilities: { render: "canvas-dom", overlay: "rich", cache: "tile" },
+    capabilities: {
+      render: "canvas-dom",
+      overlay: "rich",
+      cache: "tile",
+      presentation: "layout-snapshot",
+      minimumReadableTextPx: 4,
+      nominalFontSizePx: 18,
+    },
   });
   registry.register({
     ...baseDefinition,
@@ -36,7 +43,9 @@ async function main() {
   });
 
   const items = [
-    { id: "text-small", type: "text", x: 0, y: 0, width: 100, height: 20 },
+    { id: "text-small", type: "text", x: 0, y: 0, width: 100, height: 20, fontSize: 30 },
+    { id: "text-default", type: "text", x: 0, y: 40, width: 400, height: 200, fontSize: 18 },
+    { id: "text-tiny", type: "text", x: 0, y: 260, width: 40, height: 20, fontSize: 30 },
     { id: "image-large", type: "image", x: 120, y: 0, width: 400, height: 300 },
     { id: "outside", type: "text", x: 1000, y: 1000, width: 200, height: 80 },
   ];
@@ -55,6 +64,28 @@ async function main() {
     PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
     "selected element was degraded"
   );
+
+  const unreadableTextPlan = planner.createPlan({
+    items,
+    visibleIds: items.map((item) => item.id),
+    view: { scale: 0.18 },
+    revisionKey: "unreadable-text",
+  });
+  assert.strictEqual(
+    unreadableTextPlan.entries["text-default"].representation,
+    PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL,
+    "subpixel text did not preserve its frozen full layout"
+  );
+  assert.strictEqual(
+    unreadableTextPlan.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+    "non-text content was held by the text readability policy"
+  );
+  assert.strictEqual(
+    unreadableTextPlan.entries["text-tiny"].representation,
+    PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL,
+    "small projected text lost its original multi-line layout"
+  );
   assert.strictEqual(
     plan.entries.outside.representation,
     PRESENTATION_REPRESENTATIONS.CULLED,
@@ -69,8 +100,8 @@ async function main() {
   });
   assert.strictEqual(
     compactDomPlan.entries["text-small"].representation,
-    PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT,
-    "small DOM element did not use the unified exact-detail representation"
+    PRESENTATION_REPRESENTATIONS.FROZEN_DETAIL,
+    "small DOM element fell back to a semantic compact summary"
   );
 
   const lowScalePlan = planner.createPlan({
@@ -83,7 +114,39 @@ async function main() {
   assert.strictEqual(lowScalePlan.entries["text-small"].representation, PRESENTATION_REPRESENTATIONS.LIVE_DETAIL);
   assert.strictEqual(lowScalePlan.entries["image-large"].representation, PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT);
 
-  const runtime = createPresentationQualityRuntime({ registry, planner, mode: "active" });
+  const compactHysteresis = planner.createPlan({
+    items,
+    visibleIds: items.map((item) => item.id),
+    view: { scale: 0.16 },
+    revisionKey: "compact-hysteresis",
+    previousPlan: lowScalePlan,
+  });
+  assert.strictEqual(
+    compactHysteresis.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT,
+    "compact representation left before its exit threshold"
+  );
+  const compactRecovered = planner.createPlan({
+    items,
+    visibleIds: items.map((item) => item.id),
+    view: { scale: 0.18 },
+    revisionKey: "compact-recovered",
+    previousPlan: compactHysteresis,
+  });
+  assert.strictEqual(
+    compactRecovered.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+    "compact representation did not recover after its exit threshold"
+  );
+
+  let nowMs = 0;
+  const runtime = createPresentationQualityRuntime({
+    registry,
+    planner,
+    mode: "active",
+    minimumDwellMs: 120,
+    nowProvider: () => nowMs,
+  });
   const steady = runtime.update(
     { items, visibleIds: items.map((item) => item.id), view: { scale: 1 }, revisionKey: "steady-1" },
     { phase: "steady", sessionId: 0 }
@@ -126,6 +189,61 @@ async function main() {
   assert.strictEqual(recovered.phase, "steady", "quality runtime did not recover to steady");
   assert.strictEqual(recovered.activePlan.revisionKey, "settle-new", "latest settled plan was not committed");
   assert.strictEqual(recovered.candidatePlan, null, "recovery retained candidate state");
+
+  nowMs = 200;
+  const dwellBaseline = runtime.update(
+    { items, visibleIds: items.map((item) => item.id), view: { scale: 0.15 }, revisionKey: "dwell-compact" },
+    { phase: "steady", sessionId: 2 }
+  );
+  assert.strictEqual(
+    dwellBaseline.activePlan.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT
+  );
+  nowMs = 240;
+  const dwellHeld = runtime.update(
+    { items, visibleIds: items.map((item) => item.id), view: { scale: 0.18 }, revisionKey: "dwell-live" },
+    { phase: "steady", sessionId: 2 }
+  );
+  assert.strictEqual(
+    dwellHeld.activePlan.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT,
+    "minimum dwell did not retain the current representation"
+  );
+  assert.strictEqual(dwellHeld.pendingTransitions > 0, true, "minimum dwell did not report a pending transition");
+  assert.strictEqual(dwellHeld.nextEvaluationInMs, 80, "minimum dwell returned the wrong reevaluation delay");
+  nowMs = 320;
+  const dwellReleased = runtime.update(
+    { items, visibleIds: items.map((item) => item.id), view: { scale: 0.18 }, revisionKey: "dwell-live" },
+    { phase: "steady", sessionId: 2 }
+  );
+  assert.strictEqual(
+    dwellReleased.activePlan.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+    "representation did not recover after the minimum dwell"
+  );
+  assert.strictEqual(dwellReleased.pendingTransitions, 0, "released dwell retained pending state");
+
+  nowMs = 500;
+  runtime.update(
+    { items, visibleIds: items.map((item) => item.id), view: { scale: 0.15 }, revisionKey: "protected-compact" },
+    { phase: "steady", sessionId: 2 }
+  );
+  nowMs = 510;
+  const protectedImmediately = runtime.update(
+    {
+      items,
+      visibleIds: items.map((item) => item.id),
+      selectedIds: ["image-large"],
+      view: { scale: 0.15 },
+      revisionKey: "protected-live",
+    },
+    { phase: "steady", sessionId: 2 }
+  );
+  assert.strictEqual(
+    protectedImmediately.activePlan.entries["image-large"].representation,
+    PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+    "interaction protection was delayed by minimum dwell"
+  );
 
   console.log("[check-presentation-quality-runtime] ok");
 }

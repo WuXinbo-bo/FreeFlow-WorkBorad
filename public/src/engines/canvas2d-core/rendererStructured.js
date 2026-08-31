@@ -102,8 +102,6 @@ function toScreenRect(item, view) {
 function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = false } = {}) {
   const sceneMetrics = getStructuredCodeSceneMetrics(item);
   const { x, y, width, height } = toScreenRect(item, view);
-  const hideReadyTextForOverlay =
-    !compact && typeof document !== "undefined" && document.documentElement?.dataset?.canvasCodeBlockOverlay === "1";
   const paddingX = scaleSceneValue(view, sceneMetrics.paddingX);
   const paddingY = scaleSceneValue(view, sceneMetrics.paddingY);
   const lineHeight = scaleSceneValue(view, 20, { min: compact ? 1 : 14 });
@@ -149,11 +147,9 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = fa
   ctx.beginPath();
   ctx.rect(contentLeft, contentTop, contentWidth, Math.max(1, contentBottom - contentTop));
   ctx.clip();
-  if (!hideReadyTextForOverlay) {
-    wrappedLines.slice(0, maxVisibleLines).forEach((line, index) => {
-      ctx.fillText(String(line || ""), contentLeft, contentTop + index * lineHeight);
-    });
-  }
+  wrappedLines.slice(0, maxVisibleLines).forEach((line, index) => {
+    ctx.fillText(String(line || ""), contentLeft, contentTop + index * lineHeight);
+  });
   ctx.restore();
   helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
   if (selected) {
@@ -229,12 +225,6 @@ function drawMath(ctx, item, view, selected, hover, helpers, { compact = false }
   const mathMetrics = getStructuredMathSceneMetrics(item);
   const { scale, x, y, width, height } = toScreenRect(item, view);
   const displayMode = mathMetrics.displayMode;
-  const hideReadyTextForOverlay =
-    !compact &&
-    state === "ready" &&
-    item?.mathOverlayReady === true &&
-    typeof document !== "undefined" &&
-    document.documentElement?.dataset?.canvasMathOverlay === "1";
   const formulaText = String(item?.formula || "").trim();
   const fallbackText = String(item?.fallbackText || "").trim();
   const text =
@@ -261,19 +251,17 @@ function drawMath(ctx, item, view, selected, hover, helpers, { compact = false }
   ctx.strokeStyle = strokeStyle;
   ctx.lineWidth = 1;
   ctx.stroke();
-  if (!hideReadyTextForOverlay) {
-    ctx.fillStyle = textColor;
-    ctx.font = `${displayMode ? "600" : "500"} ${Math.max(
-      1,
-      scaleSceneValue(view, displayMode ? 18 : 15, { min: compact ? 1 : 10 })
-    )}px "Cambria Math", "Times New Roman", serif`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = displayMode ? "center" : "left";
-    if (displayMode) {
-      ctx.fillText(text, x + width / 2, y + height / 2);
-    } else {
-      ctx.fillText(text, x + scaleSceneValue(view, mathMetrics.insetX), y + height / 2);
-    }
+  ctx.fillStyle = textColor;
+  ctx.font = `${displayMode ? "600" : "500"} ${Math.max(
+    1,
+    scaleSceneValue(view, displayMode ? 18 : 15, { min: compact ? 1 : 10 })
+  )}px "Cambria Math", "Times New Roman", serif`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = displayMode ? "center" : "left";
+  if (displayMode) {
+    ctx.fillText(text, x + width / 2, y + height / 2);
+  } else {
+    ctx.fillText(text, x + scaleSceneValue(view, mathMetrics.insetX), y + height / 2);
   }
   if (state !== "ready") {
     ctx.textBaseline = "top";
