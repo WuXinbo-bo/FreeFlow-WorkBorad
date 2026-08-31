@@ -120,6 +120,8 @@ async function main() {
   byteCache.set("d", { bytes: 4 });
   assert.deepStrictEqual(Array.from(byteCache.keys()), ["b", "d"], "byte cache did not preserve LRU order");
   assert(evicted.includes("a:budget") && evicted.includes("c:budget"), "byte cache did not report budget evictions");
+  assert.strictEqual(byteCache.trimToBytes(3), 8, "active trim did not release the requested cache bytes");
+  assert.strictEqual(byteCache.getStats().byteSize, 0, "active trim retained an oversized final entry");
 
   console.log("[check-canvas-performance-policy] ok");
 }

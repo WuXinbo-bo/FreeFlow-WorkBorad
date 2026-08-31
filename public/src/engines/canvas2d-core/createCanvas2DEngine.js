@@ -164,6 +164,7 @@ import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
 import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
 import { createInteractionPriorityGate } from "./perf/interactionPriorityGate.js";
 import { createFramePerformanceWindow } from "./perf/framePerformanceWindow.js";
+import { createResourceBudgetRuntime } from "./perf/resourceBudgetRuntime.js";
 import {
   recordAssetStats,
   timeAssetTask,
@@ -3495,6 +3496,44 @@ let tablePointerSelectionState = {
   });
   const overlayBudgetManager = createOverlayBudgetManager();
   const presentationSnapshotController = createPresentationSnapshotController();
+  const resourceBudgetRuntime = createResourceBudgetRuntime();
+  resourceBudgetRuntime.register({
+    id: "background-pattern",
+    priority: 5,
+    getStats: () => renderer.getResourceStats().backgroundPattern,
+    trimToBytes: (maxBytes) => renderer.trimBackgroundPatternCacheToBytes(maxBytes),
+  });
+  resourceBudgetRuntime.register({
+    id: "presentation-snapshot",
+    priority: 10,
+    minimumBytes: 8 * 1024 * 1024,
+    getStats: () => presentationSnapshotController.getCacheStats(),
+    trimToBytes: (maxBytes) => presentationSnapshotController.trimCacheToBytes(maxBytes),
+  });
+  resourceBudgetRuntime.register({
+    id: "tile",
+    priority: 20,
+    minimumBytes: 16 * 1024 * 1024,
+    getStats: () => renderer.getResourceStats().tile,
+    trimToBytes: (maxBytes) => renderer.trimTileCacheToBytes(maxBytes),
+  });
+  resourceBudgetRuntime.register({
+    id: "image",
+    priority: 30,
+    minimumBytes: 32 * 1024 * 1024,
+    getStats: () => imageRenderer.getResourceStats?.() || {},
+    trimToBytes: (maxBytes) => imageRenderer.trimResources?.(maxBytes) || 0,
+  });
+  resourceBudgetRuntime.register({
+    id: "live-layers",
+    reclaimable: false,
+    getStats: () => renderer.getResourceStats().liveLayers,
+  });
+  resourceBudgetRuntime.register({
+    id: "retained-frame",
+    reclaimable: false,
+    getStats: () => renderer.getResourceStats().retainedFrame,
+  });
   const framePerformanceWindow = createFramePerformanceWindow();
   const interactionPriorityGate = createInteractionPriorityGate({ cooldownMs: 140 });
   const scenePresentationCoordinator = createScenePresentationCoordinator();
@@ -5165,9 +5204,12 @@ let tablePointerSelectionState = {
         sceneDomSyncSkipped: Boolean(cameraFastPath),
         lifecycleSyncSkipped: Boolean(cameraFastPath),
       });
+      resourceBudgetRuntime.setInteractionActive(viewportInteractionActive);
+      resourceBudgetRuntime.requestReconcile();
       stats.resourceCaches = Object.freeze({
         image: imageRenderer.getResourceStats?.() || null,
         presentationSnapshot: presentationSnapshotController.getCacheStats(),
+        unified: resourceBudgetRuntime.getSnapshot(),
       });
     }
     if (stats?.progressiveRender?.pending) {
@@ -24990,6 +25032,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     scenePresentationCoordinator.reset();
     presentationQualityRuntime.reset();
     presentationSnapshotController.clear();
+    resourceBudgetRuntime.setInteractionActive(true);
     framePerformanceWindow.clear();
     hydrationScheduler.setPaused(false);
     if (typeof cancelPendingHydrationSync === "function") {

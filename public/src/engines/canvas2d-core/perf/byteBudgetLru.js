@@ -35,6 +35,17 @@ export function createByteBudgetLru({
     }
   }
 
+  function trimToBytes(targetBytes = byteLimit) {
+    const target = normalizeLimit(targetBytes, byteLimit);
+    const before = totalBytes;
+    while (entries.size && totalBytes > target) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      evict(oldestKey, "budget");
+    }
+    return Math.max(0, before - totalBytes);
+  }
+
   function set(key, value) {
     const previous = entries.get(key);
     if (previous) {
@@ -75,6 +86,7 @@ export function createByteBudgetLru({
     clear,
     keys: () => entries.keys(),
     entries: iterateEntries,
+    trimToBytes,
     get size() {
       return entries.size;
     },

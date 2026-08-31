@@ -508,5 +508,8 @@ export function createTileSceneCache({
     getStats() {
       return cache.getStats();
     },
+    trimToBytes(maxBytes) {
+      return cache.trimToBytes(maxBytes);
+    },
   };
 }

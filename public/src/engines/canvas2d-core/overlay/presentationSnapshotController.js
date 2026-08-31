@@ -419,5 +419,9 @@ export function createPresentationSnapshotController({
     return cache.getStats();
   }
 
-  return Object.freeze({ prepare, commit, remove, clear, setPaused, getSnapshot, getCacheStats });
+  function trimCacheToBytes(maxBytes) {
+    return cache.trimToBytes(maxBytes);
+  }
+
+  return Object.freeze({ prepare, commit, remove, clear, setPaused, getSnapshot, getCacheStats, trimCacheToBytes });
 }

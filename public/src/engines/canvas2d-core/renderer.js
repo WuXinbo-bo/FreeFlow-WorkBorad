@@ -1229,6 +1229,19 @@ function createCanvasLayerStore() {
     getMetrics() {
       return { ...metrics };
     },
+    retain(names = []) {
+      const retainedNames = new Set(names);
+      Array.from(layers.keys()).forEach((name) => {
+        if (!retainedNames.has(name)) layers.delete(name);
+      });
+    },
+    getStats() {
+      let byteSize = 0;
+      layers.forEach((entry) => {
+        byteSize += Math.max(1, Number(entry?.canvas?.width || 0)) * Math.max(1, Number(entry?.canvas?.height || 0)) * 4;
+      });
+      return Object.freeze({ size: layers.size, byteSize, ...metrics });
+    },
     clear() {
       layers.clear();
       metrics = { pixelWidth: 0, pixelHeight: 0, width: 0, height: 0, dpr: 1 };
@@ -1595,6 +1608,14 @@ export function createRenderer({ customRenderers = [] } = {}) {
 
   return {
     registerElementRenderer: registerRuntimeElementRenderer,
+    getResourceStats: () => Object.freeze({
+      backgroundPattern: backgroundPatternCache.getStats(),
+      liveLayers: layerStore.getStats(),
+      tile: staticTileLayer.getStats(),
+      retainedFrame: retainedCameraFrame.getStats(),
+    }),
+    trimBackgroundPatternCacheToBytes: (maxBytes) => backgroundPatternCache.trimToBytes(maxBytes),
+    trimTileCacheToBytes: (maxBytes) => staticTileLayer.trimToBytes(maxBytes),
     hasRuntimeElementRenderer: (item) => {
       const type = canvasElementRegistry.resolveElement(item)?.type || String(item?.type || "");
       return runtimeFallbackRendererCount > 0 || (runtimeRendererCounts.get(type) || 0) > 0;
@@ -1939,6 +1960,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const staticLayer = layerStore.ensure("staticScene", width, height, dpr);
       const connectionLayer = hasConnectionContent ? layerStore.ensure("mindConnections", width, height, dpr) : null;
       const dynamicLayer = hasDynamicContent ? layerStore.ensure("dynamicScene", width, height, dpr) : null;
+      layerStore.retain([
+        "background",
+        "staticScene",
+        ...(hasConnectionContent ? ["mindConnections"] : []),
+        ...(hasDynamicContent ? ["dynamicScene"] : []),
+      ]);
       if (
         !backgroundLayer ||
         !staticLayer ||

@@ -531,5 +531,6 @@ export function createImageRenderer({
   };
   renderer.disposeResources = () => imageCache.clear();
   renderer.getResourceStats = () => imageCache.getStats();
+  renderer.trimResources = (maxBytes) => imageCache.trimToBytes(maxBytes);
   return renderer;
 }

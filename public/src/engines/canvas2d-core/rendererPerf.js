@@ -1,8 +1,10 @@
 import { sceneToScreen } from "./camera.js";
 import { getElementBounds } from "./elements/index.js";
+import { createByteBudgetLru } from "./perf/byteBudgetLru.js";
 
 const DEFAULT_NEAR_MARGIN = 220;
 const MAX_PATTERN_CACHE_SIZE = 48;
+const MAX_PATTERN_CACHE_BYTES = 8 * 1024 * 1024;
 
 function createPatternCanvas(width, height) {
   if (typeof OffscreenCanvas !== "undefined") {
@@ -118,7 +120,11 @@ function buildPatternTile(patternType, step) {
 }
 
 export function createBackgroundPatternCache() {
-  const cache = new Map();
+  const cache = createByteBudgetLru({
+    maxEntries: MAX_PATTERN_CACHE_SIZE,
+    maxBytes: MAX_PATTERN_CACHE_BYTES,
+    estimateSize: (entry) => Number(entry?.byteSize || 0) || 0,
+  });
   let hits = 0;
   let misses = 0;
 
@@ -138,15 +144,13 @@ export function createBackgroundPatternCache() {
     if (!pattern) {
       return null;
     }
-    const entry = { pattern, tileSize: built.size };
+    const entry = {
+      pattern,
+      tileSize: built.size,
+      byteSize: Math.max(1, Number(built.tile?.width || 0)) * Math.max(1, Number(built.tile?.height || 0)) * 4,
+    };
     cache.set(key, entry);
     misses += 1;
-    if (cache.size > MAX_PATTERN_CACHE_SIZE) {
-      const oldestKey = cache.keys().next().value;
-      if (oldestKey) {
-        cache.delete(oldestKey);
-      }
-    }
     return entry;
   }
 
@@ -186,11 +190,16 @@ export function createBackgroundPatternCache() {
       return true;
     },
     getStats() {
+      const stats = cache.getStats();
       return {
-        cacheSize: cache.size,
+        ...stats,
+        cacheSize: stats.size,
         cacheHits: hits,
         cacheMisses: misses,
       };
+    },
+    trimToBytes(maxBytes) {
+      return cache.trimToBytes(maxBytes);
     },
   };
 }
