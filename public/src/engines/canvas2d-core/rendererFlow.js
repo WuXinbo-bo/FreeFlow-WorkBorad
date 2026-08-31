@@ -159,5 +159,6 @@ export function createFlowRenderer({ getItemById } = {}) {
     return false;
   };
   renderer.supportedTypes = ["flowNode", "flowEdge"];
+  renderer.renderCompact = renderer;
   return renderer;
 }

@@ -24,6 +24,8 @@
     "test:overlay-budget": "node scripts/check-overlay-budget.js",
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",
     "test:presentation-quality": "node scripts/check-presentation-quality-runtime.js",
+    "test:compact-presentation": "node scripts/check-compact-presentation-runtime.js",
+    "test:canvas-compact-presentation": "node scripts/check-canvas-compact-presentation.js",
     "test:element-runtime": "node scripts/check-element-runtime-architecture.js",
     "test:element-registry": "node scripts/check-builtin-element-registry.js",
     "test:canvas-element-interactions": "node scripts/check-canvas2d-element-interactions.js",

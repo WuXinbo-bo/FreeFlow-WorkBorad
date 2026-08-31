@@ -1,10 +1,7 @@
 import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
-import { drawLodTextBars, drawRoundedRectPath, drawTableStyleLodShell } from "./rendererLod.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
-
-const IMAGE_LOD_RADIUS_PX = 16;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -384,56 +381,14 @@ function drawRotateHandle(ctx, x, y, width, height) {
   ctx.restore();
 }
 
-function drawImageLodPlaceholder(ctx, width, height) {
-  const rect = drawTableStyleLodShell(ctx, 0, 0, width, height, {
-    radius: IMAGE_LOD_RADIUS_PX,
-  });
-  const innerX = rect.panelX;
-  const innerY = rect.panelY;
-  const innerWidth = rect.panelWidth;
-  const innerHeight = rect.panelHeight;
-  const iconBoxSize = Math.max(14, Math.min(innerWidth, innerHeight) * 0.28);
-
-  ctx.save();
-  drawRoundedRectPath(ctx, innerX, innerY, innerWidth, innerHeight, rect.panelRadius);
-  ctx.clip();
-  ctx.fillStyle = "rgba(191, 219, 254, 0.26)";
-  ctx.beginPath();
-  ctx.moveTo(innerX + innerWidth * 0.12, innerY + innerHeight * 0.76);
-  ctx.lineTo(innerX + innerWidth * 0.38, innerY + innerHeight * 0.46);
-  ctx.lineTo(innerX + innerWidth * 0.55, innerY + innerHeight * 0.62);
-  ctx.lineTo(innerX + innerWidth * 0.78, innerY + innerHeight * 0.34);
-  ctx.lineTo(innerX + innerWidth * 0.96, innerY + innerHeight * 0.72);
-  ctx.lineTo(innerX + innerWidth * 0.96, innerY + innerHeight * 0.96);
-  ctx.lineTo(innerX + innerWidth * 0.12, innerY + innerHeight * 0.96);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  ctx.fillStyle = "rgba(96, 165, 250, 0.32)";
-  ctx.beginPath();
-  ctx.arc(
-    innerX + innerWidth * 0.24,
-    innerY + innerHeight * 0.24,
-    Math.max(4, iconBoxSize * 0.18),
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-
-  drawLodTextBars(ctx, rect, {
-    lineCount: 2,
-    fill: "rgba(100, 116, 139, 0.12)",
-    padTop: innerHeight * 0.62,
-    widths: [0.72, 0.5],
-    lineHeight: Math.max(4, innerHeight * 0.08),
-    lineGap: Math.max(4, innerHeight * 0.07),
-  });
-}
-
 function drawExportFallbackPlaceholder(ctx, item, width, height, scale) {
-  drawImageLodPlaceholder(ctx, width, height);
   ctx.save();
+  drawRoundedRect(ctx, 0, 0, width, height, Math.min(16, width * 0.12, height * 0.12));
+  ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(220, 38, 38, 0.62)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
   const title = String(item?.name || item?.title || item?.fileName || "图片").trim() || "图片";
   const reason = String(item?.exportFallbackReason || "").trim();
   const label = reason === "preload-failed" ? "图片导出降级" : "图片占位导出";
@@ -450,8 +405,33 @@ function drawExportFallbackPlaceholder(ctx, item, width, height, scale) {
 
 export function createImageRenderer() {
   const imageCache = new Map();
+  let resourceGeneration = 0;
 
-  const renderer = function renderImageElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
+  function createImageEntry(cacheKey, source, itemId, helpers) {
+    const image = new Image();
+    const entry = {
+      image,
+      source,
+      generation: ++resourceGeneration,
+      status: "loading",
+    };
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      if (imageCache.get(cacheKey) !== entry) return;
+      entry.status = "ready";
+      helpers?.onImageResourceStateChange?.(itemId, "ready", entry.generation);
+    };
+    image.onerror = () => {
+      if (imageCache.get(cacheKey) !== entry) return;
+      entry.status = "error";
+      helpers?.onImageResourceStateChange?.(itemId, "error", entry.generation);
+    };
+    imageCache.set(cacheKey, entry);
+    image.src = source;
+    return entry;
+  }
+
+  const renderer = function renderImageElement({ ctx, item, view, selected, hover, helpers }) {
     if (item?.type !== "image") {
       return false;
     }
@@ -464,16 +444,6 @@ export function createImageRenderer() {
 
     ctx.save();
     ctx.translate(x, y);
-    if (lodMode !== "full") {
-      drawImageLodPlaceholder(ctx, width, height);
-      ctx.restore();
-      helpers?.drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
-      if (selected) {
-        helpers?.drawHandles?.(ctx, item, view);
-        drawRotateHandle(ctx, x, y, width, height);
-      }
-      return { handled: true, lodSimplified: true };
-    }
     const source = resolveImageSource(item.dataUrl, item.sourcePath, {
       allowLocalFileAccess: helpers?.allowLocalFileAccess,
     });
@@ -490,17 +460,9 @@ export function createImageRenderer() {
     const cacheKey = source || item.id;
     let entry = imageCache.get(cacheKey);
     if (!entry && source) {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      image.src = source;
-      entry = { image, source };
-      imageCache.set(cacheKey, entry);
+      entry = createImageEntry(cacheKey, source, item.id, helpers);
     } else if (entry && source && entry.source !== source) {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      image.src = source;
-      entry = { image, source };
-      imageCache.set(cacheKey, entry);
+      entry = createImageEntry(cacheKey, source, item.id, helpers);
     }
 
     const image = entry?.image;
@@ -533,6 +495,7 @@ export function createImageRenderer() {
     return { handled: true, lodSimplified: false };
   };
   renderer.supportedTypes = ["image"];
+  renderer.renderCompact = renderer;
   renderer.syncResources = (items = []) => {
     const activeKeys = new Set(
       (Array.isArray(items) ? items : [])

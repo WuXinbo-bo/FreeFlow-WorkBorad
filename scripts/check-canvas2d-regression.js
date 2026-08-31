@@ -1384,7 +1384,18 @@ async function runBackgroundLayerReuseCheck(browser) {
     const result = await session.page.evaluate(async () => {
       const canvas = document.querySelector("#canvas-office-canvas");
       window.__canvas2dEngine.resize({ immediate: true, reason: "background-reuse-preflight" });
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      let stableFrameCount = 0;
+      let lastFrameId = -1;
+      for (let index = 0; index < 30 && stableFrameCount < 3; index += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const frameId = Number(canvas.__ffRenderStats?.frameContext?.frameId || 0);
+        if (frameId === lastFrameId) {
+          stableFrameCount += 1;
+        } else {
+          stableFrameCount = 0;
+          lastFrameId = frameId;
+        }
+      }
       const frames = [];
       let latestStats = canvas.__ffRenderStats || null;
       Object.defineProperty(canvas, "__ffRenderStats", {
@@ -2286,23 +2297,45 @@ async function runOverlayBudgetReconciliationCheck(browser) {
 
 async function runFileCardLodThresholdCheck(browser) {
   const board = createBoard(
-    [createFileCardItem("filecard-lod", 180, 160, "项目文件夹")],
+    [createFileCardItem("filecard-lod", 2400, 1600, "项目文件夹")],
     ["filecard-lod"],
     { scale: 0.15, offsetX: 40, offsetY: 32 }
   );
   const session = await createPage(browser, { board });
   try {
     await session.page.waitForTimeout(240);
-    const result = await session.page.evaluate(() => {
+    const selected = await session.page.evaluate(() => {
       const stats = document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null;
-      return { stats };
+      return { stats, selectedIds: window.__canvas2dEngine.getSnapshot().board.selectedIds };
     });
+    const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
+    await session.page.mouse.click(canvasRect.x + 1000, canvasRect.y + 700);
+    await session.page.waitForTimeout(240);
+    const compact = await session.page.evaluate(() => ({
+      stats: document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null,
+      selectedIds: window.__canvas2dEngine.getSnapshot().board.selectedIds,
+    }));
+    await session.page.mouse.click(
+      canvasRect.x + 40 + (2400 + 160) * 0.15,
+      canvasRect.y + 32 + (1600 + 60) * 0.15
+    );
+    await session.page.waitForTimeout(240);
+    const recovered = await session.page.evaluate(() => ({
+      stats: document.querySelector("#canvas-office-canvas")?.__ffRenderStats || null,
+      selectedIds: window.__canvas2dEngine.getSnapshot().board.selectedIds,
+    }));
+    const result = { selected, compact, recovered };
     assert(session.getErrors().length === 0, "fileCard lod threshold check produced page errors", session.getErrors());
+    assert(selected.selectedIds.includes("filecard-lod"), "fileCard selection precondition was lost", result);
+    assert(Number(selected.stats?.lodSimplifiedCount || 0) === 0, "selected fileCard was incorrectly compacted", result);
+    assert(compact.selectedIds.length === 0, "fileCard did not leave the selected state", result);
     assert(
-      Number(result?.stats?.lodSimplifiedCount || 0) >= 1,
-      "fileCard did not switch to summary preview at threshold size",
+      Number(compact.stats?.lodSimplifiedCount || 0) >= 1,
+      "unselected fileCard did not switch to semantic compact presentation",
       result
     );
+    assert(recovered.selectedIds.includes("filecard-lod"), "fileCard was not reselected after compact presentation", result);
+    assert(Number(recovered.stats?.lodSimplifiedCount || 0) === 0, "reselected fileCard retained stale compact presentation", result);
     return result;
   } finally {
     await session.page.close();

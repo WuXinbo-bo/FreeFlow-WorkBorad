@@ -1,5 +1,4 @@
 import { sceneToScreen } from "./camera.js";
-import { getCanvasLodScalePercent } from "./lodScale.js";
 import { canvasElementRegistry, getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import {
@@ -12,12 +11,13 @@ import { getMindRelationshipGeometry, isMindRelationshipItem } from "./elements/
 import { drawTextElement } from "./rendererText.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
-import { drawLodHeaderStrip, drawLodTextBars, drawTableStyleLodShell } from "./rendererLod.js";
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
 import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
 import { createTileSceneCache } from "./render/tileSceneCache.js";
 import { drawStableRoundedRectPath, resolveScreenCornerRadius } from "./render/cornerRadius.js";
 import { resolveViewportPixelBudget } from "./render/viewportPixelBudget.js";
+import { createCompactPresentationRegistry } from "./runtime/compactPresentationRegistry.js";
+import { PRESENTATION_REPRESENTATIONS } from "./runtime/presentationQualityPlanner.js";
 import {
   getMultiSelectionBounds,
   getMultiSelectionHandleMap,
@@ -28,15 +28,7 @@ import {
 const HINT_LOGO_SRC = "/assets/brand/FreeFlow_logo.svg";
 let hintLogo = null;
 let hintLogoLoaded = false;
-const CANVAS_LOD_TEXT_MIN_SCALE = 0.15;
-const CANVAS_LOD_FILE_CARD_MIN_SCALE = 0.15;
-const CANVAS_LOD_MIND_NODE_MIN_SCALE = 0.15;
-const CANVAS_LOD_IMAGE_MIN_SCALE = 0.15;
-const CANVAS_LOD_TABLE_MIN_SCALE = 0.15;
-const CANVAS_LOD_CODE_BLOCK_MIN_SCALE = 0.15;
-const CANVAS_LOD_MATH_MIN_SCALE = 0.15;
-const CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX = 72;
-const CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX = 28;
+const CANVAS_NATIVE_COMPACT_SCALE = 0.15;
 const LARGE_VIEWPORT_COLD_TILE_BUDGET = 6;
 
 function getHintLogo() {
@@ -802,126 +794,33 @@ function drawMindSummaryNode(ctx, element, view, selected, hover) {
   ctx.restore();
 }
 
-function drawMindNodeLod(ctx, element, view, selected, hover) {
-  const bounds = getElementScreenBounds(view, element);
-  const x = bounds.left;
-  const y = bounds.top;
-  const width = bounds.width;
-  const height = bounds.height;
-
-  ctx.save();
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
-  drawLodTextBars(ctx, rect, {
-    lineCount: 3,
-    fill: "rgba(100, 116, 139, 0.12)",
-    verticalAlign: "start",
-    widths: [0.78, 0.64, 0.56],
+function drawMindNodeCompact(ctx, element, view, selected, hover) {
+  drawMindNode(ctx, element, view, selected, hover);
+  drawTextElement(ctx, element, view, false, false, false, () => {}, () => {}, {
+    renderText: true,
   });
-  drawMindCollapsedBadge(ctx, element, view, bounds);
-  drawSelectionFrame(ctx, x, y, width, height, selected, false);
-  if (selected) {
-    drawHandles(ctx, element, view);
-  }
-  ctx.restore();
 }
 
-function drawTextElementLod(ctx, element, view, selected, hover) {
-  const bounds = getElementScreenBounds(view, element);
-  const x = bounds.left;
-  const y = bounds.top;
-  const width = bounds.width;
-  const height = bounds.height;
-  ctx.save();
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
-  drawLodTextBars(ctx, rect, {
-    lineCount: 3,
-    fill: "rgba(100, 116, 139, 0.12)",
-    verticalAlign: "start",
-    widths: [0.82, 0.7, 0.58],
+function drawMindSummaryCompact(ctx, element, view, selected, hover) {
+  drawMindSummaryNode(ctx, element, view, selected, hover);
+  drawTextElement(ctx, element, view, false, false, false, () => {}, () => {}, {
+    renderText: true,
   });
-  drawSelectionFrame(ctx, x, y, width, height, selected, false);
-  if (selected) {
-    drawHandles(ctx, element, view);
-  }
-  ctx.restore();
 }
 
-function drawFileCardLod(ctx, element, view, selected, hover, { drawSelectionFrame, drawHandles } = {}) {
+function resolveCanvasLodMode(item, view, { presentationPlan = null } = {}) {
   const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const x = Number(element.x || 0) * scale + Number(view?.offsetX || 0);
-  const y = Number(element.y || 0) * scale + Number(view?.offsetY || 0);
-  const width = Math.max(1, Number(element.width) || 1) * scale;
-  const height = Math.max(1, Number(element.height) || 1) * scale;
-  ctx.save();
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height);
-  const headerHeight = drawLodHeaderStrip(ctx, rect, {
-    height: Math.max(8, rect.panelHeight * 0.22),
-  });
-  drawLodTextBars(ctx, rect, {
-    lineCount: 2,
-    fill: "rgba(100, 116, 139, 0.12)",
-    verticalAlign: "start",
-    padTop: headerHeight + Math.max(6, rect.panelHeight * 0.14),
-    widths: [0.76, 0.52],
-  });
-
-  if (element.marked) {
-    ctx.save();
-    drawRoundedRect(ctx, x + 4, y + 4, Math.max(1, width - 8), Math.max(1, height - 8), 14);
-    ctx.strokeStyle = "rgba(239, 68, 68, 0.82)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
-  if (selected) {
-    drawHandles?.(ctx, element, view);
-  }
-  ctx.restore();
-}
-
-function resolveCanvasLodMode(item, view, { renderTextInCanvas = false } = {}) {
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const scalePercent = getCanvasLodScalePercent(scale);
   if (!item || typeof item !== "object") {
     return "full";
   }
-  const screenWidth = Math.max(1, Number(item.width || 1) || 1) * scale;
-  const screenHeight = Math.max(1, Number(item.height || 1) || 1) * scale;
+  const plannedRepresentation = presentationPlan?.entries?.[String(item.id || "")]?.representation;
+  if (plannedRepresentation) {
+    return plannedRepresentation === PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT ? "compact" : "full";
+  }
   const lodPolicy = canvasElementRegistry.resolveElement(item)?.capabilities?.lod || "full";
-  if (!renderTextInCanvas && ["text", "flow-node", "code-block", "math"].includes(lodPolicy)) {
-    return "full";
-  }
-  if (
-    lodPolicy === "file-card" &&
-    (
-      scalePercent <= Math.round(CANVAS_LOD_FILE_CARD_MIN_SCALE * 100) ||
-      screenWidth <= CANVAS_LOD_FILE_CARD_MIN_WIDTH_PX ||
-      screenHeight <= CANVAS_LOD_FILE_CARD_MIN_HEIGHT_PX
-    )
-  ) {
-    return "summary";
-  }
-  if (lodPolicy === "mind-node" && scalePercent <= Math.round(CANVAS_LOD_MIND_NODE_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  if (lodPolicy === "image" && scalePercent <= Math.round(CANVAS_LOD_IMAGE_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  if (lodPolicy === "table" && scalePercent <= Math.round(CANVAS_LOD_TABLE_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  if (lodPolicy === "code-block" && scalePercent <= Math.round(CANVAS_LOD_CODE_BLOCK_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  if (lodPolicy === "math" && scalePercent <= Math.round(CANVAS_LOD_MATH_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  if ((lodPolicy === "text" || lodPolicy === "flow-node") && scalePercent <= Math.round(CANVAS_LOD_TEXT_MIN_SCALE * 100)) {
-    return "summary";
-  }
-  return "full";
+  return scale <= CANVAS_NATIVE_COMPACT_SCALE && lodPolicy !== "full" && lodPolicy !== "shape"
+    ? "compact"
+    : "full";
 }
 
 function shouldBypassStaticTileCache(item, dynamicIdSet) {
@@ -1076,39 +975,46 @@ function drawHint(ctx, width, height) {
 }
 
 function createBuiltinElementRenderers() {
-  const create = (supportedType, render) => {
+  const create = (supportedType, render, renderCompact = null) => {
     render.supportedTypes = [supportedType];
     render.isBuiltin = true;
+    if (typeof renderCompact === "function") {
+      renderCompact.supportedTypes = [supportedType];
+      renderCompact.isBuiltin = true;
+      render.renderCompact = renderCompact;
+    }
     return render;
   };
   return [
-    create("fileCard", function renderFileCardElement({ ctx, item, view, selected, hover, lodMode, helpers }) {
-      if (lodMode !== "full") {
-        drawFileCardLod(ctx, item, view, selected, hover, helpers);
-        return { handled: true, lodSimplified: true };
-      }
+    create("fileCard", function renderFileCardElement({ ctx, item, view, selected, hover, helpers }) {
+      drawFileCard(ctx, item, view, selected, hover, helpers);
+      return true;
+    }, function renderFileCardCompact({ ctx, item, view, selected, hover, helpers }) {
       drawFileCard(ctx, item, view, selected, hover, helpers);
       return true;
     }),
-    create("mindNode", function renderMindNodeElement({ ctx, item, view, selected, hover, lodMode }) {
-      if (lodMode !== "full") {
-        drawMindNodeLod(ctx, item, view, selected, hover);
-        return { handled: true, lodSimplified: true };
-      }
+    create("mindNode", function renderMindNodeElement({ ctx, item, view, selected, hover }) {
       drawMindNode(ctx, item, view, selected, hover);
+      return true;
+    }, function renderMindNodeSemanticCompact({ ctx, item, view, selected, hover }) {
+      drawMindNodeCompact(ctx, item, view, selected, hover);
       return true;
     }),
     create("mindSummary", function renderMindSummaryElement({ ctx, item, view, selected, hover }) {
       drawMindSummaryNode(ctx, item, view, selected, hover);
       return true;
+    }, function renderMindSummarySemanticCompact({ ctx, item, view, selected, hover }) {
+      drawMindSummaryCompact(ctx, item, view, selected, hover);
+      return true;
     }),
-    create("text", function renderTextItem({ ctx, item, view, selected, hover, editing, lodMode, helpers }) {
-      if (lodMode !== "full") {
-        drawTextElementLod(ctx, item, view, selected, hover);
-        return { handled: true, lodSimplified: true };
-      }
+    create("text", function renderTextItem({ ctx, item, view, selected, hover, editing, helpers }) {
       drawTextElement(ctx, item, view, selected, hover, editing, helpers.drawSelectionFrame, helpers.drawHandles, {
         renderText: Boolean(helpers.renderTextInCanvas),
+      });
+      return true;
+    }, function renderTextSemanticCompact({ ctx, item, view, selected, hover, editing, helpers }) {
+      drawTextElement(ctx, item, view, selected, hover, editing, helpers.drawSelectionFrame, helpers.drawHandles, {
+        renderText: true,
       });
       return true;
     }),
@@ -1180,8 +1086,11 @@ function drawVisibleItemsToContext({
   relationshipDraft,
   allowLocalFileAccess,
   onImageNaturalSize,
+  onImageResourceStateChange,
   renderTextInCanvas,
   rendererDispatch,
+  compactPresentationRegistry,
+  presentationPlan = null,
   sceneContentOwnedIds = null,
   sceneVectorOwnedIds = null,
 }) {
@@ -1208,7 +1117,7 @@ function drawVisibleItemsToContext({
     if (sceneOwned.has(String(item.id || ""))) {
       return;
     }
-    const lodMode = resolveCanvasLodMode(item, view, { renderTextInCanvas });
+    const lodMode = resolveCanvasLodMode(item, view, { presentationPlan });
     const renderContext = {
       ctx,
       item,
@@ -1224,10 +1133,21 @@ function drawVisibleItemsToContext({
         flowDraft,
         allowLocalFileAccess,
         onImageNaturalSize,
-        renderTextInCanvas,
+        onImageResourceStateChange,
+        renderTextInCanvas: lodMode === "compact" ? true : renderTextInCanvas,
         editingId,
       },
     };
+    if (lodMode === "compact") {
+      const compactResult = compactPresentationRegistry?.render?.(renderContext);
+      if (compactResult?.handled) {
+        lodSimplifiedCount += 1;
+        if (compactResult.painter?.isBuiltin !== true) {
+          customRendererHandledCount += 1;
+        }
+        return;
+      }
+    }
     const candidateRenderers = [
       ...(rendererDispatch?.resolveAll?.(item) || []),
       ...(rendererDispatch?.getFallbackRenderers?.() || []),
@@ -1559,11 +1479,39 @@ function getRenderModeSignature({ renderTextInCanvas = false, viewportInteractio
   return [renderTextInCanvas ? 1 : 0, viewportInteractionActive ? 1 : 0].join(":");
 }
 
+function getPresentationPlanSignature(plan = null) {
+  const entries = plan?.entries && typeof plan.entries === "object" ? plan.entries : null;
+  if (!entries) return "none";
+  const compactIds = Object.keys(entries)
+    .filter((id) => entries[id]?.representation === PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT)
+    .sort();
+  let hash = 2166136261;
+  compactIds.forEach((id) => {
+    const token = `${id}|`;
+    for (let index = 0; index < token.length; index += 1) {
+      hash ^= token.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  });
+  return `${compactIds.length}:${hash >>> 0}`;
+}
+
 export function createRenderer({ customRenderers = [] } = {}) {
   const renderers = Array.isArray(customRenderers) ? customRenderers : [];
   const rendererDispatch = createRendererDispatch();
-  createBuiltinElementRenderers().forEach((renderer) => rendererDispatch.register(renderer));
-  renderers.forEach((renderer) => rendererDispatch.register(renderer));
+  const compactPresentationRegistry = createCompactPresentationRegistry({ elementRegistry: canvasElementRegistry });
+  function registerRenderer(renderer) {
+    const unregisterRenderer = rendererDispatch.register(renderer);
+    const unregisterCompact = typeof renderer?.renderCompact === "function"
+      ? compactPresentationRegistry.register(renderer.renderCompact, { supportedTypes: renderer.supportedTypes })
+      : () => false;
+    return () => {
+      unregisterCompact?.();
+      unregisterRenderer?.();
+    };
+  }
+  createBuiltinElementRenderers().forEach(registerRenderer);
+  renderers.forEach(registerRenderer);
   const viewportCuller = createViewportCuller();
   const backgroundPatternCache = createBackgroundPatternCache();
   const staticTileLayer = createTileSceneCache();
@@ -1592,7 +1540,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let runtimeFallbackRendererCount = 0;
 
   function registerRuntimeElementRenderer(renderer) {
-    const unregister = rendererDispatch.register(renderer);
+    const unregister = registerRenderer(renderer);
     const supportedTypes = Array.isArray(renderer?.supportedTypes) ? renderer.supportedTypes : [];
     const resolvedTypes = supportedTypes
       .map((type) => canvasElementRegistry.resolve(type, { fallback: false })?.type || String(type || ""))
@@ -1677,6 +1625,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       alignmentSnapConfig,
       allowLocalFileAccess,
       onImageNaturalSize,
+      onImageResourceStateChange,
       backgroundStyle,
       viewportInteractionActive = false,
       renderTextInCanvas,
@@ -1699,6 +1648,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       sceneVectorConnectionsOwned = false,
       sceneVectorConnectionCount = 0,
     }) {
+      const presentationPlan = frameContext?.quality?.activePlan || null;
       const fallbackDpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
       const rawDpr = Math.max(1, Number(pixelRatio) || fallbackDpr || 1);
       const resolvedBudget = viewportBudget && typeof viewportBudget === "object"
@@ -1800,7 +1750,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       const renderModeSignature = getRenderModeSignature({
         renderTextInCanvas: effectiveRenderTextInCanvas,
         viewportInteractionActive,
-      }) + `|scene-content:${sceneContentOwnershipSignature}|scene-vector:${sceneVectorOwnershipSignature}`;
+      }) + `|quality:${getPresentationPlanSignature(presentationPlan)}|compact:${compactPresentationRegistry.getSnapshot().revision}|scene-content:${sceneContentOwnershipSignature}|scene-vector:${sceneVectorOwnershipSignature}`;
       const forceStaticSceneRedraw = staticExclusionSignature !== lastStaticExclusionSignature;
       const forceDynamicSceneRedraw = dynamicVisualSignature !== lastDynamicVisualSignature;
       const forceInteractionRedraw = interactionVisualSignature !== lastInteractionVisualSignature;
@@ -1934,9 +1884,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     relationshipDraft: null,
                     allowLocalFileAccess,
                     onImageNaturalSize,
+                    onImageResourceStateChange,
                     renderTextInCanvas: effectiveRenderTextInCanvas,
                     allItems,
                     rendererDispatch,
+                    compactPresentationRegistry,
+                    presentationPlan,
                     sceneContentOwnedIds: sceneContentOwned,
                     sceneVectorOwnedIds: sceneVectorOwned,
                   }),
@@ -1954,9 +1907,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   relationshipDraft: null,
                   allowLocalFileAccess,
                   onImageNaturalSize,
+                  onImageResourceStateChange,
                   renderTextInCanvas: effectiveRenderTextInCanvas,
                   allItems,
                   rendererDispatch,
+                  compactPresentationRegistry,
+                  presentationPlan,
                   sceneContentOwnedIds: sceneContentOwned,
                   sceneVectorOwnedIds: sceneVectorOwned,
                 })
@@ -2012,8 +1968,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
           relationshipDraft,
           allowLocalFileAccess,
           onImageNaturalSize,
+          onImageResourceStateChange,
           renderTextInCanvas: effectiveRenderTextInCanvas,
           rendererDispatch,
+          compactPresentationRegistry,
+          presentationPlan,
           sceneContentOwnedIds: sceneContentOwned,
           sceneVectorOwnedIds: sceneVectorOwned,
         });
@@ -2112,6 +2071,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           customRendererHandledCount + Math.max(0, Number(tileStats?.customRendererHandledCount || 0) || 0),
         lodSimplifiedCount:
           lodSimplifiedCount + Math.max(0, Number(tileStats?.lodSimplifiedCount || 0) || 0),
+        compactPresentation: compactPresentationRegistry.getSnapshot(),
         background: backgroundStats,
         layerReuse: {
           backgroundReused: !effectiveBackgroundDirty,

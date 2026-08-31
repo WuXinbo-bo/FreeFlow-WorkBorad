@@ -90,6 +90,15 @@ async function main() {
   assert.strictEqual(cameraLayers.dirty.dynamicScene, false);
   assert.strictEqual(cameraLayers.dirty.interaction, true);
   assert.strictEqual(cameraLayers.dirty.overlay, false);
+  assert.strictEqual(cameraLayers.dirty.surface, false);
+  const surfaceLayers = layers.applyDirtyState({ reason: "viewport-resize", surfaceDirty: true });
+  assert.strictEqual(surfaceLayers.dirty.background, true);
+  assert.strictEqual(surfaceLayers.dirty.staticScene, true);
+  assert.strictEqual(surfaceLayers.dirty.dynamicScene, true);
+  assert.strictEqual(surfaceLayers.dirty.interaction, true);
+  assert.strictEqual(surfaceLayers.dirty.overlay, false);
+  assert.strictEqual(surfaceLayers.dirty.camera, false);
+  assert.strictEqual(surfaceLayers.dirty.surface, true);
 
   const presentation = createScenePresentationCoordinator({
     view: { scale: 1, offsetX: 10, offsetY: 20 },

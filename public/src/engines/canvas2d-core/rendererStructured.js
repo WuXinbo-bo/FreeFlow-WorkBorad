@@ -7,7 +7,6 @@ import {
   normalizeMathRenderState,
   scaleSceneValue,
 } from "./viewportMetrics.js";
-import { drawLodHeaderStrip, drawLodTextBars, drawTableStyleLodShell } from "./rendererLod.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 const STRUCTURED_CODE_BLOCK_RADIUS_PX = 12;
@@ -100,18 +99,18 @@ function toScreenRect(item, view) {
   };
 }
 
-function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
+function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = false } = {}) {
   const sceneMetrics = getStructuredCodeSceneMetrics(item);
   const { x, y, width, height } = toScreenRect(item, view);
   const hideReadyTextForOverlay =
-    typeof document !== "undefined" && document.documentElement?.dataset?.canvasCodeBlockOverlay === "1";
+    !compact && typeof document !== "undefined" && document.documentElement?.dataset?.canvasCodeBlockOverlay === "1";
   const paddingX = scaleSceneValue(view, sceneMetrics.paddingX);
   const paddingY = scaleSceneValue(view, sceneMetrics.paddingY);
-  const lineHeight = scaleSceneValue(view, 20, { min: 14 });
+  const lineHeight = scaleSceneValue(view, 20, { min: compact ? 1 : 14 });
   const lines = String(item?.plainText || item?.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   const language = String(item?.language || "").trim().toUpperCase();
   const hasLanguage = Boolean(language);
-  const headerHeight = hasLanguage ? scaleSceneValue(view, 22, { min: 16 }) : 0;
+  const headerHeight = hasLanguage ? scaleSceneValue(view, 22, { min: compact ? 1 : 16 }) : 0;
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_CODE_BLOCK_RADIUS_PX);
   // Use an opaque light theme in canvas fallback mode to avoid dark tinting over dark stage backgrounds.
@@ -127,11 +126,11 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
     ctx.fill();
     ctx.restore();
   }
-  const fontPx = Math.max(1, scaleSceneValue(view, Number(item?.fontSize || 16), { min: 12 }));
+  const fontPx = Math.max(1, scaleSceneValue(view, Number(item?.fontSize || 16), { min: compact ? 1 : 12 }));
   ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
   ctx.font = `${fontPx}px Consolas, "Courier New", monospace`;
   ctx.textBaseline = "top";
-  const labelFontPx = Math.max(1, scaleSceneValue(view, 11, { min: 9 }));
+  const labelFontPx = Math.max(1, scaleSceneValue(view, 11, { min: compact ? 1 : 9 }));
   const labelHeight = hasLanguage ? Math.max(headerHeight, labelFontPx + scaleSceneValue(view, 6)) : 0;
   const contentLeft = x + paddingX;
   const contentTop = y + paddingY + labelHeight;
@@ -163,7 +162,7 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers) {
   ctx.restore();
 }
 
-function drawTable(ctx, item, view, selected, hover, helpers) {
+function drawTable(ctx, item, view, selected, hover, helpers, { compact = false } = {}) {
   const tableGrid = getStructuredTableSceneGrid(item);
   const { x, y, width, height } = toScreenRect(item, view);
   const rows = tableGrid.rows;
@@ -173,10 +172,10 @@ function drawTable(ctx, item, view, selected, hover, helpers) {
   const cellFill = "rgba(255, 255, 255, 0.985)";
   const stroke = "rgba(148, 163, 184, 0.38)";
   const textColor = "#0f172a";
-  const fontPx = Math.max(1, scaleSceneValue(view, 12, { min: 9 }));
-  const lineHeight = Math.max(fontPx * 1.35, scaleSceneValue(view, 15, { min: 11 }));
-  const padX = scaleSceneValue(view, 8, { min: 5 });
-  const padY = scaleSceneValue(view, 6, { min: 4 });
+  const fontPx = Math.max(1, scaleSceneValue(view, 12, { min: compact ? 1 : 9 }));
+  const lineHeight = Math.max(fontPx * 1.35, scaleSceneValue(view, 15, { min: compact ? 1 : 11 }));
+  const padX = scaleSceneValue(view, 8, { min: compact ? 0.5 : 5 });
+  const padY = scaleSceneValue(view, 6, { min: compact ? 0.5 : 4 });
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_TABLE_RADIUS_PX);
   ctx.fillStyle = cellFill;
@@ -225,113 +224,13 @@ function drawTable(ctx, item, view, selected, hover, helpers) {
   ctx.restore();
 }
 
-function drawTableLod(ctx, item, view, selected, hover, helpers) {
-  const { x, y, width, height } = toScreenRect(item, view);
-  const cols = Math.max(2, Math.min(6, Number(item?.table?.columns?.length || 4) || 4));
-  const rows = Math.max(2, Math.min(5, Number(item?.table?.rows?.length || 3) || 3));
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height, {
-    radius: STRUCTURED_TABLE_RADIUS_PX,
-  });
-  const gridX = rect.panelX;
-  const gridY = rect.panelY;
-  const gridWidth = rect.panelWidth;
-  const gridHeight = rect.panelHeight;
-  const colWidth = gridWidth / cols;
-  const rowHeight = gridHeight / rows;
-
-  ctx.save();
-  ctx.fillStyle = "rgba(226, 232, 240, 0.84)";
-  ctx.fillRect(gridX, gridY, gridWidth, rowHeight);
-
-  ctx.strokeStyle = "rgba(203, 213, 225, 0.74)";
-  ctx.lineWidth = 1;
-  for (let index = 1; index < cols; index += 1) {
-    const lineX = gridX + colWidth * index;
-    ctx.beginPath();
-    ctx.moveTo(lineX, gridY);
-    ctx.lineTo(lineX, gridY + gridHeight);
-    ctx.stroke();
-  }
-  for (let index = 1; index < rows; index += 1) {
-    const lineY = gridY + rowHeight * index;
-    ctx.beginPath();
-    ctx.moveTo(gridX, lineY);
-    ctx.lineTo(gridX + gridWidth, lineY);
-    ctx.stroke();
-  }
-
-  const skeletonPadX = Math.max(4, colWidth * 0.16);
-  const skeletonHeight = Math.max(4, rowHeight * 0.16);
-  ctx.fillStyle = "rgba(100, 116, 139, 0.12)";
-  for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
-    for (let colIndex = 0; colIndex < cols; colIndex += 1) {
-      const lineWidth = colWidth * (rowIndex === 0 ? 0.54 : ((colIndex + rowIndex) % 2 === 0 ? 0.66 : 0.42));
-      const lineX = gridX + colIndex * colWidth + skeletonPadX;
-      const lineY = gridY + rowIndex * rowHeight + (rowHeight - skeletonHeight) / 2;
-      drawRoundedRectPath(ctx, lineX, lineY, Math.max(6, lineWidth - skeletonPadX * 2), skeletonHeight, skeletonHeight * 0.5);
-      ctx.fill();
-    }
-  }
-
-  helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
-  if (selected) {
-    helpers.drawHandles(ctx, item, view);
-  }
-  ctx.restore();
-}
-
-function drawCodeBlockLod(ctx, item, view, selected, hover, helpers) {
-  const { x, y, width, height } = toScreenRect(item, view);
-  ctx.save();
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height, {
-    radius: STRUCTURED_CODE_BLOCK_RADIUS_PX,
-  });
-  const headerHeight = drawLodHeaderStrip(ctx, rect, {
-    height: Math.max(8, rect.panelHeight * 0.2),
-  });
-  drawLodTextBars(ctx, rect, {
-    lineCount: 3,
-    fill: "rgba(100, 116, 139, 0.12)",
-    verticalAlign: "start",
-    padTop: headerHeight + Math.max(6, rect.panelHeight * 0.1),
-    widths: [0.74, 0.82, 0.6],
-    lineHeight: Math.max(4, rect.panelHeight * 0.11),
-  });
-  helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
-  if (selected) {
-    helpers.drawHandles(ctx, item, view);
-  }
-  ctx.restore();
-}
-
-function drawMathLod(ctx, item, view, selected, hover, helpers) {
-  const { x, y, width, height } = toScreenRect(item, view);
-  ctx.save();
-  const rect = drawTableStyleLodShell(ctx, x, y, width, height, {
-    radius: item?.displayMode === false ? 999 : STRUCTURED_TABLE_RADIUS_PX,
-  });
-  drawLodTextBars(ctx, rect, {
-    lineCount: 2,
-    fill: "rgba(100, 116, 139, 0.12)",
-    align: "center",
-    widths: [0.46, 0.34],
-    padTop: Math.max(6, rect.panelHeight * 0.3),
-    lineHeight: Math.max(4, rect.panelHeight * 0.12),
-    lineGap: Math.max(4, rect.panelHeight * 0.08),
-  });
-  helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
-  if (selected) {
-    helpers.drawHandles(ctx, item, view);
-  }
-  ctx.restore();
-}
-
-function drawMath(ctx, item, view, selected, hover, helpers) {
+function drawMath(ctx, item, view, selected, hover, helpers, { compact = false } = {}) {
   const state = normalizeMathRenderState(item);
   const mathMetrics = getStructuredMathSceneMetrics(item);
   const { scale, x, y, width, height } = toScreenRect(item, view);
   const displayMode = mathMetrics.displayMode;
   const hideReadyTextForOverlay =
+    !compact &&
     state === "ready" &&
     item?.mathOverlayReady === true &&
     typeof document !== "undefined" &&
@@ -366,7 +265,7 @@ function drawMath(ctx, item, view, selected, hover, helpers) {
     ctx.fillStyle = textColor;
     ctx.font = `${displayMode ? "600" : "500"} ${Math.max(
       1,
-      scaleSceneValue(view, displayMode ? 18 : 15, { min: 10 })
+      scaleSceneValue(view, displayMode ? 18 : 15, { min: compact ? 1 : 10 })
     )}px "Cambria Math", "Times New Roman", serif`;
     ctx.textBaseline = "middle";
     ctx.textAlign = displayMode ? "center" : "left";
@@ -380,7 +279,7 @@ function drawMath(ctx, item, view, selected, hover, helpers) {
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
     ctx.fillStyle = state === "error" ? "rgba(153, 27, 27, 0.95)" : "rgba(146, 64, 14, 0.95)";
-    ctx.font = `600 ${Math.max(1, scaleSceneValue(view, 10, { min: 8 }))}px "Segoe UI", sans-serif`;
+    ctx.font = `600 ${Math.max(1, scaleSceneValue(view, 10, { min: compact ? 1 : 8 }))}px "Segoe UI", sans-serif`;
     ctx.fillText(
       state === "error" ? "RENDER ERROR" : "FALLBACK",
       x + scaleSceneValue(view, mathMetrics.insetX),
@@ -395,36 +294,42 @@ function drawMath(ctx, item, view, selected, hover, helpers) {
 }
 
 export function createStructuredCanvasRenderer() {
-  const renderer = function renderStructuredElement({ ctx, item, view, selected, hover, helpers, lodMode = "full" }) {
+  const renderer = function renderStructuredElement({ ctx, item, view, selected, hover, helpers }) {
     if (!item || !ctx || !view || !helpers) {
       return false;
     }
     if (item.type === "codeBlock") {
-      if (lodMode !== "full") {
-        drawCodeBlockLod(ctx, item, view, selected, hover, helpers);
-        return { handled: true, lodSimplified: true };
-      }
       drawCodeBlock(ctx, item, view, selected, hover, helpers);
       return { handled: true, lodSimplified: false };
     }
     if (item.type === "table") {
-      if (lodMode !== "full") {
-        drawTableLod(ctx, item, view, selected, hover, helpers);
-        return { handled: true, lodSimplified: true };
-      }
       drawTable(ctx, item, view, selected, hover, helpers);
       return { handled: true, lodSimplified: false };
     }
     if (item.type === "mathBlock" || item.type === "mathInline") {
-      if (lodMode !== "full") {
-        drawMathLod(ctx, item, view, selected, hover, helpers);
-        return { handled: true, lodSimplified: true };
-      }
       drawMath(ctx, item, view, selected, hover, helpers);
       return { handled: true, lodSimplified: false };
     }
     return false;
   };
   renderer.supportedTypes = ["codeBlock", "table", "mathBlock", "mathInline"];
+  renderer.renderCompact = function renderStructuredCompact({ ctx, item, view, selected, hover, helpers }) {
+    if (!item || !ctx || !view || !helpers) {
+      return false;
+    }
+    if (item.type === "codeBlock") {
+      drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact: true });
+      return true;
+    }
+    if (item.type === "table") {
+      drawTable(ctx, item, view, selected, hover, helpers, { compact: true });
+      return true;
+    }
+    if (item.type === "mathBlock" || item.type === "mathInline") {
+      drawMath(ctx, item, view, selected, hover, helpers, { compact: true });
+      return true;
+    }
+    return false;
+  };
   return renderer;
 }

@@ -4112,6 +4112,20 @@ let tablePointerSelectionState = {
     return true;
   }
 
+  function handleImageResourceStateChange(itemId = "", status = "") {
+    const id = String(itemId || "").trim();
+    if (!id || !getItemByIdFast(id)) {
+      return;
+    }
+    scheduleRender({
+      reason: status === "ready" ? "image-resource-ready" : "image-resource-error",
+      sceneDirty: true,
+      interactionDirty: false,
+      overlayDirty: false,
+      itemIds: [id],
+    });
+  }
+
   function getSceneIndexRuntime(options = {}) {
     flushPendingSceneGraphInvalidation();
     return resolveSceneIndex(state.board.items, {
@@ -4924,6 +4938,7 @@ let tablePointerSelectionState = {
       alignmentSnapConfig: state.alignmentSnapConfig,
       allowLocalFileAccess: getAllowLocalFileAccess(),
       onImageNaturalSize: syncImageNaturalSize,
+      onImageResourceStateChange: handleImageResourceStateChange,
       backgroundStyle: {
         fill: "#ffffff",
         pattern: getBoardBackgroundPattern(),
@@ -4988,6 +5003,7 @@ let tablePointerSelectionState = {
       reason: String(options.reason || "render").trim() || "render",
       backgroundDirty: Boolean(options.backgroundDirty || invalidationPatch.backgroundDirty),
       sceneDirty: Boolean(options.sceneDirty || invalidationPatch.sceneDirty),
+      surfaceDirty: Boolean(options.surfaceDirty),
       cameraDirty: Boolean(options.cameraDirty || options.viewDirty),
       viewDirty: Boolean(options.viewDirty),
       interactionDirty: options.interactionDirty !== false || invalidationPatch.interactionDirty,
@@ -8369,6 +8385,7 @@ let tablePointerSelectionState = {
     }
     const renderPatch = {
       reason: sizeChanged ? reason : `${reason}-sync`,
+      surfaceDirty: sizeChanged || backingStoreChanged,
       backgroundDirty: true,
       viewDirty: true,
       interactionDirty: true,
@@ -25220,6 +25237,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (typeof adapters.renderer === "function") {
         const renderAdapter = (...args) => adapters.renderer(...args);
         renderAdapter.supportedTypes = [registered.type];
+        const compactRenderer = typeof adapters.renderCompact === "function"
+          ? adapters.renderCompact
+          : adapters.renderer.renderCompact;
+        if (typeof compactRenderer === "function") {
+          renderAdapter.renderCompact = (...args) => compactRenderer(...args);
+        }
         disposers.push(renderer.registerElementRenderer(renderAdapter));
       }
       const editorType = registered.capabilities?.editor;
