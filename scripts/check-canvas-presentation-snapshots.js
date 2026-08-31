@@ -138,6 +138,7 @@ async function collect(page) {
 async function collectTable(page) {
   return page.evaluate(() => {
     const node = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+    const cache = document.querySelector("#canvas-office-canvas")?.__ffRenderStats?.resourceCaches || {};
     return {
       selected: window.__canvas2dEngine.getSnapshot().board.selectedIds.includes("snapshot-table"),
       editingType: window.__canvas2dEngine.getSnapshot().editingType || "",
@@ -149,6 +150,8 @@ async function collectTable(page) {
       text: node?.textContent || "",
       display: node ? getComputedStyle(node).display : "missing",
       sameNode: node === window.__snapshotTableNode,
+      snapshotCache: cache.presentationSnapshot || null,
+      unifiedSnapshotPool: cache.unified?.pools?.["presentation-snapshot"] || null,
     };
   });
 }
@@ -200,6 +203,7 @@ async function main() {
     await waitForTableRepresentation(page, "exact-snapshot");
     await page.evaluate(() => {
       window.__snapshotTableNode = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+      window.__canvas2dEngine.resize({ immediate: true, reason: "table-snapshot-budget-check" });
     });
     const initial = await collect(page);
     const initialTable = await collectTable(page);
@@ -213,6 +217,18 @@ async function main() {
     assert(initial.entries["snapshot-code"].lineBands >= 2, "code frozen detail collapsed its lines", initial);
     assert(initialTable.planned === "exact-snapshot", "large table was not planned as an exact snapshot", initialTable);
     assert(initialTable.snapshotCount === 1 && initialTable.cellCount === 0, "large table retained live cell DOM", initialTable);
+    assert(
+      initialTable.snapshotCache?.size >= 1 &&
+        initialTable.snapshotCache?.byteSize > 0 &&
+        initialTable.snapshotCache?.byteSize <= initialTable.snapshotCache?.maxBytes,
+      "large table snapshot escaped its cache budget",
+      initialTable
+    );
+    assert(
+      initialTable.unifiedSnapshotPool?.stats?.byteSize === initialTable.snapshotCache?.byteSize,
+      "large table snapshot was not reported to the unified resource budget",
+      initialTable
+    );
 
     const expectedTextGeometry = await page.evaluate(() => {
       const engine = window.__canvas2dEngine;
@@ -301,6 +317,26 @@ async function main() {
       tableCycles.push({ live, snapshot });
     }
 
+    await page.evaluate(() => {
+      const engine = window.__canvas2dEngine;
+      const board = engine.getSnapshotData();
+      const table = board.items.find((entry) => entry.id === "snapshot-table");
+      table.table.rows[1].cells[1].plainText = "Updated snapshot cell";
+      table.table.rows[1].cells[1].html = "<p><strong>Updated snapshot cell</strong></p>";
+      table.updatedAt = Date.now() + 2000;
+      engine.loadStructuredBoardForExport(board);
+      engine.resize({ immediate: true, reason: "table-snapshot-content-revision" });
+    });
+    await waitForTableRepresentation(page, "exact-snapshot");
+    const revisedTableBox = await page.locator('.canvas2d-scene-table-item[data-id="snapshot-table"]').boundingBox();
+    await page.mouse.click(revisedTableBox.x + revisedTableBox.width / 2, revisedTableBox.y + revisedTableBox.height / 2);
+    await waitForTableRepresentation(page, "live-detail");
+    const revisedTableLive = await collectTable(page);
+    assert(revisedTableLive.text.includes("Updated snapshot cell"), "table snapshot reused stale content", revisedTableLive);
+    assert(revisedTableLive.sameNode, "table content revision replaced the scene node", revisedTableLive);
+    await page.mouse.click(1320, 860);
+    await waitForTableRepresentation(page, "exact-snapshot");
+
     const tableBox = await page.locator('.canvas2d-scene-table-item[data-id="snapshot-table"]').boundingBox();
     await page.mouse.dblclick(tableBox.x + tableBox.width / 2, tableBox.y + tableBox.height / 2);
     await page.waitForFunction(() => {
@@ -338,7 +374,7 @@ async function main() {
     assert(wheelRecovered.sameNode && wheelRecovered.snapshotCount === 1, "table snapshot did not recover after viewport interaction", wheelRecovered);
 
     assert(errors.length === 0, "frozen presentation browser check produced page errors", errors);
-    console.log(JSON.stringify({ ok: true, initial, initialTable, revised, cycles, tableCycles, edited, wheelRecovered }, null, 2));
+    console.log(JSON.stringify({ ok: true, initial, initialTable, revised, cycles, tableCycles, revisedTableLive, edited, wheelRecovered }, null, 2));
   } catch (error) {
     let state = null;
     try {
