@@ -89,6 +89,37 @@ function addRecordToGrid(grid, largeRecordIndexes, recordIndex, bounds, cellSize
   return gridEntryCount;
 }
 
+function removeRecordFromGrid(grid, largeRecordIndexes, recordIndex, bounds, cellSize, maxCellsPerRecord) {
+  const xRange = getCellRange(bounds.left, bounds.right, cellSize);
+  const yRange = getCellRange(bounds.top, bounds.bottom, cellSize);
+  if (getCellCount(xRange, yRange) > maxCellsPerRecord) {
+    const largeIndex = largeRecordIndexes.indexOf(recordIndex);
+    if (largeIndex >= 0) {
+      largeRecordIndexes.splice(largeIndex, 1);
+    }
+    return 0;
+  }
+  let removedCount = 0;
+  for (let cellX = xRange.min; cellX <= xRange.max; cellX += 1) {
+    for (let cellY = yRange.min; cellY <= yRange.max; cellY += 1) {
+      const key = getCellKey(cellX, cellY);
+      const bucket = grid.get(key);
+      if (!bucket) {
+        continue;
+      }
+      const bucketIndex = bucket.indexOf(recordIndex);
+      if (bucketIndex >= 0) {
+        bucket.splice(bucketIndex, 1);
+        removedCount += 1;
+      }
+      if (!bucket.length) {
+        grid.delete(key);
+      }
+    }
+  }
+  return removedCount;
+}
+
 function getGuardRefs(items) {
   const length = Math.max(0, Number(items?.length || 0));
   if (!length) {
@@ -289,6 +320,53 @@ function buildRecord(item, itemIndex, itemById) {
   return buildGenericRecord(item, itemIndex);
 }
 
+function getRecordDependencyIds(record) {
+  if (record?.itemType !== "flowEdge" && record?.itemType !== "mindRelationship") {
+    return [];
+  }
+  return [String(record.item?.fromId || "").trim(), String(record.item?.toId || "").trim()].filter(Boolean);
+}
+
+function addRecordDependencies(dependentRecordIdsByItemId, record) {
+  getRecordDependencyIds(record).forEach((itemId) => {
+    const bucket = dependentRecordIdsByItemId.get(itemId) || new Set();
+    bucket.add(record.itemId);
+    dependentRecordIdsByItemId.set(itemId, bucket);
+  });
+}
+
+function removeRecordDependencies(dependentRecordIdsByItemId, record) {
+  getRecordDependencyIds(record).forEach((itemId) => {
+    const bucket = dependentRecordIdsByItemId.get(itemId);
+    if (!bucket) {
+      return;
+    }
+    bucket.delete(record.itemId);
+    if (!bucket.size) {
+      dependentRecordIdsByItemId.delete(itemId);
+    }
+  });
+}
+
+function replaceTypeRecord(recordsByType, previousRecord, nextRecord) {
+  const previousBucket = recordsByType.get(previousRecord.itemType) || [];
+  const previousIndex = previousBucket.indexOf(previousRecord);
+  if (previousRecord.itemType === nextRecord.itemType && previousIndex >= 0) {
+    previousBucket[previousIndex] = nextRecord;
+    return;
+  }
+  if (previousIndex >= 0) {
+    previousBucket.splice(previousIndex, 1);
+  }
+  if (!previousBucket.length) {
+    recordsByType.delete(previousRecord.itemType);
+  }
+  const nextBucket = recordsByType.get(nextRecord.itemType) || [];
+  nextBucket.push(nextRecord);
+  nextBucket.sort((left, right) => left.itemIndex - right.itemIndex);
+  recordsByType.set(nextRecord.itemType, nextBucket);
+}
+
 export function buildSceneIndex(items, options = {}) {
   const sourceItems = Array.isArray(items) ? items : [];
   const cellSize = Math.max(64, Number(options.cellSize || DEFAULT_GRID_CELL_SIZE) || DEFAULT_GRID_CELL_SIZE);
@@ -302,6 +380,7 @@ export function buildSceneIndex(items, options = {}) {
   const itemById = new Map();
   const recordById = new Map();
   const recordsByType = new Map();
+  const dependentRecordIdsByItemId = new Map();
   let gridEntryCount = 0;
 
   for (let index = 0; index < sourceItems.length; index += 1) {
@@ -318,6 +397,7 @@ export function buildSceneIndex(items, options = {}) {
       continue;
     }
     const recordIndex = records.length;
+    record.recordIndex = recordIndex;
     records.push(record);
     if (record.itemId) {
       recordById.set(record.itemId, record);
@@ -325,6 +405,7 @@ export function buildSceneIndex(items, options = {}) {
     const typeBucket = recordsByType.get(record.itemType) || [];
     typeBucket.push(record);
     recordsByType.set(record.itemType, typeBucket);
+    addRecordDependencies(dependentRecordIdsByItemId, record);
     gridEntryCount += addRecordToGrid(
       grid,
       largeRecordIndexes,
@@ -348,9 +429,82 @@ export function buildSceneIndex(items, options = {}) {
     itemById,
     recordById,
     recordsByType,
+    dependentRecordIdsByItemId,
     guardRefs: getGuardRefs(sourceItems),
     guardSignature: getGuardSignature(sourceItems),
+    lastUpdateMode: "full",
+    incrementalUpdateCount: 0,
   };
+}
+
+export function updateSceneIndex(index, items, dirtyItemIds = [], options = {}) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  const normalizedDirtyIds = Array.from(
+    new Set(
+      (Array.isArray(dirtyItemIds) ? dirtyItemIds : [])
+        .map((itemId) => String(itemId || "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (!index || !normalizedDirtyIds.length || index.length !== sourceItems.length) {
+    return buildSceneIndex(sourceItems, options);
+  }
+  for (let itemIndex = 0; itemIndex < sourceItems.length; itemIndex += 1) {
+    const itemId = String(sourceItems[itemIndex]?.id || "");
+    if (!itemId || Number(index.recordById.get(itemId)?.itemIndex) !== itemIndex) {
+      return buildSceneIndex(sourceItems, options);
+    }
+  }
+  const affectedIds = new Set(normalizedDirtyIds);
+  normalizedDirtyIds.forEach((itemId) => {
+    const dependents = index.dependentRecordIdsByItemId?.get(itemId);
+    dependents?.forEach((dependentId) => affectedIds.add(dependentId));
+  });
+  for (const itemId of affectedIds) {
+    const previousRecord = index.recordById.get(itemId);
+    if (!previousRecord) {
+      return buildSceneIndex(sourceItems, options);
+    }
+    index.itemById.set(itemId, sourceItems[previousRecord.itemIndex]);
+  }
+  for (const itemId of affectedIds) {
+    const previousRecord = index.recordById.get(itemId);
+    const nextRecord = buildRecord(sourceItems[previousRecord.itemIndex], previousRecord.itemIndex, index.itemById);
+    if (!nextRecord) {
+      return buildSceneIndex(sourceItems, options);
+    }
+    nextRecord.recordIndex = previousRecord.recordIndex;
+    index.gridEntryCount -= removeRecordFromGrid(
+      index.grid,
+      index.largeRecordIndexes,
+      previousRecord.recordIndex,
+      previousRecord.queryBounds,
+      index.cellSize,
+      index.maxCellsPerRecord
+    );
+    removeRecordDependencies(index.dependentRecordIdsByItemId, previousRecord);
+    replaceTypeRecord(index.recordsByType, previousRecord, nextRecord);
+    index.records[previousRecord.recordIndex] = nextRecord;
+    index.recordById.set(itemId, nextRecord);
+    addRecordDependencies(index.dependentRecordIdsByItemId, nextRecord);
+    index.gridEntryCount += addRecordToGrid(
+      index.grid,
+      index.largeRecordIndexes,
+      nextRecord.recordIndex,
+      nextRecord.queryBounds,
+      index.cellSize,
+      index.maxCellsPerRecord
+    );
+  }
+  index.items = sourceItems;
+  index.length = sourceItems.length;
+  index.revision = Number(options.revision || index.revision || 0) || 0;
+  index.guardRefs = getGuardRefs(sourceItems);
+  index.guardSignature = getGuardSignature(sourceItems);
+  index.lastUpdateMode = "incremental";
+  index.incrementalUpdateCount = Number(index.incrementalUpdateCount || 0) + 1;
+  indexCache.set(sourceItems, index);
+  return index;
 }
 
 export function resolveSceneIndex(items, options = {}) {
@@ -358,6 +512,11 @@ export function resolveSceneIndex(items, options = {}) {
   const revision = Number(options.revision || 0) || 0;
   const checkRevision = Object.prototype.hasOwnProperty.call(options, "revision");
   const forceRebuild = Boolean(options.forceRebuild);
+  const dirtyItemIds = Array.isArray(options.dirtyItemIds) ? options.dirtyItemIds : [];
+  const previousIndex = options.previousIndex || indexCache.get(sourceItems) || null;
+  if (!forceRebuild && dirtyItemIds.length && previousIndex) {
+    return updateSceneIndex(previousIndex, sourceItems, dirtyItemIds, options);
+  }
   if (!forceRebuild) {
     const cached = indexCache.get(sourceItems);
     if (cached && isCacheGuardValid(cached, sourceItems, revision, checkRevision)) {

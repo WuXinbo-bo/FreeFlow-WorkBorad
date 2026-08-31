@@ -100,10 +100,10 @@ function measure(task) {
 
 async function main() {
   const { normalizeBoard } = await import("../public/src/engines/canvas2d-core/elements/index.js");
-  const { buildSceneIndex, querySceneIndex } = await import(
+  const { buildSceneIndex, querySceneIndex, updateSceneIndex } = await import(
     "../public/src/engines/canvas2d-core/scene/sceneIndex.js"
   );
-  const { createHistoryState, markHistoryBaseline, takeHistorySnapshot } = await import(
+  const { createHistoryState, markHistoryStateBaseline } = await import(
     "../public/src/engines/canvas2d-core/history.js"
   );
   const { createCanvas2DStore } = await import("../public/src/engines/canvas2d-core/store.js");
@@ -134,14 +134,30 @@ async function main() {
     });
     const history = measure(() => {
       const value = createHistoryState();
-      markHistoryBaseline(value, takeHistorySnapshot({ board: normalized.value }));
+      markHistoryStateBaseline(value, { board: normalized.value });
       return value;
     });
     const storeSnapshot = measure(() => {
       const store = createCanvas2DStore({ initialBoard: normalized.value, disableLocalStorage: true });
       const snapshot = store.getSnapshot();
-      store.dispose();
-      return snapshot;
+      return { store, snapshot };
+    });
+    const incrementalStoreSnapshot = measure(() => {
+      const store = storeSnapshot.value.store;
+      const itemId = String(store.state.board.items[0]?.id || "");
+      store.state.board.items[0].x += 16;
+      store.touchBoard({ itemIds: [itemId] });
+      return store.getSnapshot();
+    });
+    storeSnapshot.value.store.dispose();
+    const incrementalIndex = measure(() => {
+      const movedItems = normalized.value.items.slice();
+      const movedItem = { ...movedItems[5], x: Number(movedItems[5].x || 0) + 320 };
+      movedItems[5] = movedItem;
+      const previousEdgeStart = Number(sceneIndex.value.recordById.get("item-7")?.geometry?.fromPoint?.x || 0);
+      const value = updateSceneIndex(sceneIndex.value, movedItems, [movedItem.id], { revision: 2 });
+      const nextEdgeStart = Number(value.recordById.get("item-7")?.geometry?.fromPoint?.x || 0);
+      return { value, previousEdgeStart, nextEdgeStart };
     });
     const serializedBytes = Buffer.byteLength(JSON.stringify(normalized.value));
     const historySignatureBytes = Buffer.byteLength(String(history.value.lastSignature || ""));
@@ -152,6 +168,8 @@ async function main() {
       viewportQueriesMs: queries.elapsedMs,
       historyBaselineMs: history.elapsedMs,
       storeSnapshotMs: storeSnapshot.elapsedMs,
+      incrementalStoreSnapshotMs: incrementalStoreSnapshot.elapsedMs,
+      incrementalSceneIndexMs: incrementalIndex.elapsedMs,
       serializedMiB: Number((serializedBytes / 1024 / 1024).toFixed(2)),
       historySignatureMiB: Number((historySignatureBytes / 1024 / 1024).toFixed(2)),
       indexedRecords: sceneIndex.value.records.length,
@@ -165,6 +183,29 @@ async function main() {
     assert(summary.viewportQueriesMs < 2_000, "mixed viewport queries exceeded the baseline guard");
     assert(summary.historyBaselineMs < 5_000, "mixed history baseline exceeded the baseline guard");
     assert(summary.storeSnapshotMs < 5_000, "mixed store snapshot exceeded the baseline guard");
+    assert(summary.incrementalStoreSnapshotMs < 1_000, "incremental store snapshot exceeded the baseline guard");
+    assert(summary.incrementalSceneIndexMs < 1_000, "incremental scene index exceeded the baseline guard");
+    assert(summary.historySignatureMiB === 0, "history baseline retained serialized board content");
+    assert.strictEqual(incrementalIndex.value.value, sceneIndex.value, "dirty-item update rebuilt the scene index");
+    assert.strictEqual(sceneIndex.value.lastUpdateMode, "incremental", "scene index did not report incremental update");
+    assert.notStrictEqual(
+      incrementalIndex.value.previousEdgeStart,
+      incrementalIndex.value.nextEdgeStart,
+      "dependent flow edge geometry did not follow the moved node"
+    );
+    if (count === 1_000) {
+      const reorderedItems = incrementalIndex.value.value.items.slice();
+      [reorderedItems[0], reorderedItems[1]] = [reorderedItems[1], reorderedItems[0]];
+      const reorderedIndex = updateSceneIndex(incrementalIndex.value.value, reorderedItems, [reorderedItems[0].id], {
+        revision: 3,
+      });
+      assert.notStrictEqual(reorderedIndex, incrementalIndex.value.value, "item reorder did not rebuild the scene index");
+      assert.strictEqual(reorderedIndex.lastUpdateMode, "full", "item reorder reported an incremental index update");
+      const deletedItems = reorderedItems.slice(0, -1);
+      const deletedIndex = updateSceneIndex(reorderedIndex, deletedItems, [reorderedItems.at(-1).id], { revision: 4 });
+      assert.notStrictEqual(deletedIndex, reorderedIndex, "item deletion did not rebuild the scene index");
+      assert.strictEqual(deletedIndex.records.length, deletedItems.length, "item deletion left stale scene records");
+    }
     summaries.push(summary);
   }
 

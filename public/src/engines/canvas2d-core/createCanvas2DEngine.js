@@ -130,7 +130,7 @@ import {
 } from "./codeBlock/languageRegistry.js";
 import {
   createHistoryState,
-  markHistoryBaseline,
+  markHistoryStateBaseline,
   pushHistory,
   pushPatchHistory,
   redoHistory,
@@ -148,7 +148,6 @@ import {
 import {
   getSceneRecord,
   getSceneViewportBounds,
-  invalidateSceneIndex,
   querySceneIndex,
   queryVisibleSceneItems,
   resolveSceneIndex,
@@ -3610,6 +3609,9 @@ let tablePointerSelectionState = {
   let lastCodeBlockOverlayInteractive = true;
   let pendingSceneIndexInvalidation = false;
   let pendingHitTestInvalidation = false;
+  let pendingFullSceneIndexInvalidation = true;
+  const pendingSceneIndexItemIds = new Set();
+  let sceneIndexRuntime = null;
   let pointerOverCanvas = false;
   let editBaselineSnapshot = null;
   let deferredBlankEditExit = null;
@@ -4120,17 +4122,34 @@ let tablePointerSelectionState = {
     deferredStoreEmitHandle = 1;
   }
 
-  function flushPendingSceneGraphInvalidation() {
-    if (pendingSceneIndexInvalidation || pendingHitTestInvalidation) {
-      invalidateSceneIndex(state.board.items);
-    }
+  function consumePendingSceneGraphInvalidation() {
+    const invalidation = {
+      forceRebuild: pendingFullSceneIndexInvalidation || (!sceneIndexRuntime && pendingSceneIndexInvalidation),
+      itemIds: Array.from(pendingSceneIndexItemIds),
+    };
     pendingSceneIndexInvalidation = false;
     pendingHitTestInvalidation = false;
+    pendingFullSceneIndexInvalidation = false;
+    pendingSceneIndexItemIds.clear();
+    return invalidation;
   }
 
-  function markSceneGraphDirty({ hitTest = true } = {}) {
+  function markSceneGraphDirty({ hitTest = true, itemIds = [] } = {}) {
     sceneRevision += 1;
     pendingSceneIndexInvalidation = true;
+    const normalizedItemIds = Array.from(
+      new Set(
+        (Array.isArray(itemIds) ? itemIds : [])
+          .map((itemId) => String(itemId || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!normalizedItemIds.length) {
+      pendingFullSceneIndexInvalidation = true;
+      pendingSceneIndexItemIds.clear();
+    } else if (!pendingFullSceneIndexInvalidation) {
+      normalizedItemIds.forEach((itemId) => pendingSceneIndexItemIds.add(itemId));
+    }
     if (hitTest) {
       pendingHitTestInvalidation = true;
     }
@@ -4138,6 +4157,8 @@ let tablePointerSelectionState = {
 
   function markHitTestDirty() {
     pendingHitTestInvalidation = true;
+    pendingFullSceneIndexInvalidation = true;
+    pendingSceneIndexItemIds.clear();
   }
 
   function syncImageNaturalSize(itemId = "", naturalWidth = 0, naturalHeight = 0) {
@@ -4176,7 +4197,7 @@ let tablePointerSelectionState = {
         height: shouldRepairFrame ? nextHeight : entry.height,
       };
     });
-    markSceneGraphDirty({ hitTest: shouldRepairFrame });
+    markSceneGraphDirty({ hitTest: shouldRepairFrame, itemIds: [id] });
     scheduleRender({
       reason: "image-natural-size-sync",
       sceneDirty: shouldRepairFrame,
@@ -4209,15 +4230,18 @@ let tablePointerSelectionState = {
   }
 
   function getSceneIndexRuntime(options = {}) {
-    flushPendingSceneGraphInvalidation();
-    return resolveSceneIndex(state.board.items, {
+    const invalidation = consumePendingSceneGraphInvalidation();
+    sceneIndexRuntime = resolveSceneIndex(state.board.items, {
       revision: sceneRevision,
-      forceRebuild: Boolean(options.forceRebuild),
+      forceRebuild: Boolean(options.forceRebuild || invalidation.forceRebuild),
+      previousIndex: sceneIndexRuntime,
+      dirtyItemIds: invalidation.itemIds,
     });
+    return sceneIndexRuntime;
   }
 
   function hitTestCanvasElement(point, scale = 1) {
-    flushPendingSceneGraphInvalidation();
+    getSceneIndexRuntime();
     return hitTestElement(state.board.items, point, scale);
   }
 
@@ -4423,7 +4447,6 @@ let tablePointerSelectionState = {
     }
     state.board.items = nextItems;
     state.board.selectedIds = state.board.selectedIds.filter((id) => String(id || "") !== normalizedId);
-    markSceneGraphDirty({ hitTest: true });
     commitItemsPatchHistory(before, [normalizedId], "删除关系线", "mind-relationship-delete", {
       beforeOrderIds: before.orderIds,
       afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
@@ -5273,12 +5296,12 @@ let tablePointerSelectionState = {
     itemIds = [],
   } = {}) {
     if (sceneChange) {
-      markSceneGraphDirty({ hitTest: hitTestChange });
+      markSceneGraphDirty({ hitTest: hitTestChange, itemIds });
     } else if (hitTestChange) {
       markHitTestDirty();
     }
     if (boardChange) {
-      store.touchBoard?.({ itemsChanged: sceneChange });
+      store.touchBoard?.({ itemsChanged: sceneChange, itemIds });
     }
     if (fullOverlayRescan) {
       markCodeBlockOverlayDirty([], { fullRescan: true });
@@ -7188,7 +7211,7 @@ let tablePointerSelectionState = {
         loadMetrics.mark("repair-board");
         state.board.selectedIds = [];
         state.history = createHistoryState();
-        markHistoryBaseline(state.history, takeHistorySnapshot(state));
+        markHistoryStateBaseline(state.history, state);
         loadMetrics.mark("reset-history");
         cancelTextEdit();
         cancelFlowNodeEdit();
@@ -7345,7 +7368,7 @@ let tablePointerSelectionState = {
     state.board = createEmptyBoard();
     state.board.selectedIds = [];
     state.history = createHistoryState();
-    markHistoryBaseline(state.history, takeHistorySnapshot(state));
+    markHistoryStateBaseline(state.history, state);
     cancelTextEdit();
     cancelFlowNodeEdit();
     cancelFileMemoEdit();
@@ -19957,7 +19980,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       if (movedCodeBlockIds.length) {
         markCodeBlockOverlayDirty(movedCodeBlockIds);
-        markSceneGraphDirty({ hitTest: false });
+        markSceneGraphDirty({ hitTest: false, itemIds: Array.from(movedIds) });
         scheduleRender({
           reason: "move-selection-code-block",
           sceneDirty: true,
@@ -20247,7 +20270,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             "item-transform-batch"
           );
         }
-        markSceneGraphDirty({ hitTest: true });
         scheduleRender({
           reason: "move-selection-commit",
           sceneDirty: true,
@@ -24941,7 +24963,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     clearAlignmentSnap("mount");
     bindEvents();
     state.mode = normalizeMode(getCanvasOfficeEngineMode());
-    markHistoryBaseline(state.history, takeHistorySnapshot(state));
+    markHistoryStateBaseline(state.history, state);
     resize({ immediate: true, reason: "mount-resize" });
     store.emit();
     scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: false, fullOverlayRescan: false });

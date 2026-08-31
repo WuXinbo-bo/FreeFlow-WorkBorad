@@ -1,6 +1,8 @@
 import { HISTORY_LIMIT } from "./constants.js";
 import { clone } from "./utils.js";
 
+let historyBaselineRevision = 0;
+
 export function createHistoryState() {
   return {
     undo: [],
@@ -47,9 +49,66 @@ export function takeHistoryMetadataSnapshot(state) {
   return takeHistorySnapshot(state, { includeItems: false });
 }
 
+function mixSignatureCode(state, code) {
+  state.first = Math.imul(state.first ^ code, 16777619) >>> 0;
+  state.second = Math.imul(state.second ^ code, 2246822519) >>> 0;
+}
+
+function mixSignatureString(state, value) {
+  const text = String(value ?? "");
+  mixSignatureCode(state, text.length);
+  for (let index = 0; index < text.length; index += 1) {
+    mixSignatureCode(state, text.charCodeAt(index));
+  }
+}
+
+function visitSignatureValue(state, value, ancestors) {
+  state.valueCount += 1;
+  if (value === null) {
+    mixSignatureString(state, "null");
+    return;
+  }
+  const valueType = typeof value;
+  mixSignatureString(state, valueType);
+  if (valueType === "string" || valueType === "boolean" || valueType === "bigint") {
+    mixSignatureString(state, value);
+    return;
+  }
+  if (valueType === "number") {
+    mixSignatureString(state, Object.is(value, -0) ? "-0" : String(value));
+    return;
+  }
+  if (valueType === "undefined" || valueType === "function" || valueType === "symbol") {
+    return;
+  }
+  if (ancestors.has(value)) {
+    mixSignatureString(state, "cycle");
+    return;
+  }
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    mixSignatureString(state, "array");
+    mixSignatureCode(state, value.length);
+    value.forEach((entry) => visitSignatureValue(state, entry, ancestors));
+  } else if (value instanceof Date) {
+    mixSignatureString(state, value.toISOString());
+  } else {
+    const keys = Object.keys(value);
+    mixSignatureString(state, "object");
+    mixSignatureCode(state, keys.length);
+    keys.forEach((key) => {
+      mixSignatureString(state, key);
+      visitSignatureValue(state, value[key], ancestors);
+    });
+  }
+  ancestors.delete(value);
+}
+
 export function getSnapshotSignature(snapshot) {
   try {
-    return JSON.stringify(snapshot);
+    const state = { first: 2166136261, second: 374761393, valueCount: 0 };
+    visitSignatureValue(state, snapshot, new WeakSet());
+    return `v2:${state.first.toString(36)}:${state.second.toString(36)}:${state.valueCount.toString(36)}`;
   } catch {
     return "";
   }
@@ -57,6 +116,12 @@ export function getSnapshotSignature(snapshot) {
 
 export function markHistoryBaseline(history, snapshot) {
   history.lastSignature = getSnapshotSignature(snapshot);
+}
+
+export function markHistoryStateBaseline(history, state) {
+  historyBaselineRevision += 1;
+  const itemCount = Array.isArray(state?.board?.items) ? state.board.items.length : 0;
+  history.lastSignature = `baseline:v2:${historyBaselineRevision.toString(36)}:${itemCount.toString(36)}`;
 }
 
 function cloneHistorySnapshot(snapshot) {
@@ -225,8 +290,9 @@ function resolveHistoryEntrySnapshot(entry, currentSnapshot, targetKey) {
 }
 
 export function pushHistory(history, before, after, reason = "") {
+  const beforeSignature = getSnapshotSignature(before);
   const signature = getSnapshotSignature(after);
-  if (!signature || signature === history.lastSignature) {
+  if (!signature || signature === beforeSignature || signature === history.lastSignature) {
     return false;
   }
   history.undo.push({

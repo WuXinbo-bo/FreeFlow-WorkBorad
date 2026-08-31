@@ -35,7 +35,7 @@ async function checkStoreSnapshotReuse() {
   const store = createCanvas2DStore({
     disableLocalStorage: true,
     initialBoard: {
-      items: [createItem("a")],
+      items: [createItem("a"), createItem("b", 120)],
       selectedIds: [],
       view: { scale: 1, offsetX: 0, offsetY: 0 },
     },
@@ -61,14 +61,47 @@ async function checkStoreSnapshotReuse() {
     assert.strictEqual(camera.board.items, selected.board.items, "camera update cloned the element array");
     assert.deepStrictEqual(camera.board.view, store.state.board.view, "camera snapshot did not update");
 
-    store.state.board.items[0] = { ...store.state.board.items[0], x: 40 };
-    store.touchBoard();
+    const previousA = camera.board.items[0];
+    const previousB = camera.board.items[1];
+    store.state.board.items[0].x = 40;
+    store.touchBoard({ itemIds: ["a"] });
     const changed = store.getSnapshot();
     assert.notStrictEqual(changed.board.items, camera.board.items, "element mutation reused a stale element snapshot");
+    assert.notStrictEqual(changed.board.items[0], previousA, "dirty element reused its previous snapshot object");
+    assert.strictEqual(changed.board.items[1], previousB, "unchanged element lost structural sharing");
+    assert.strictEqual(previousA.x, 0, "dirty element mutated the previous snapshot");
     assert.strictEqual(changed.board.items[0].x, 40, "element mutation was not reflected in the snapshot");
+
+    store.state.board.items = [store.state.board.items[1], store.state.board.items[0], createItem("c", 240)];
+    store.touchBoard({ itemIds: ["c"] });
+    const reordered = store.getSnapshot();
+    assert.deepStrictEqual(itemIds(reordered.board), ["b", "a", "c"], "structural snapshot did not preserve item order");
+    assert.strictEqual(reordered.board.items[0], previousB, "reordered unchanged item lost structural sharing");
+    assert.strictEqual(reordered.board.items[1], changed.board.items[0], "reordered dirty item lost its latest snapshot");
   } finally {
     store.dispose();
   }
+}
+
+async function checkCompactHistorySignatures() {
+  const {
+    createHistoryState,
+    getSnapshotSignature,
+    markHistoryStateBaseline,
+    pushHistory,
+  } = await import("../public/src/engines/canvas2d-core/history.js");
+  const snapshot = createSnapshot([createItem("a"), createItem("b", 120)], ["a"]);
+  const first = getSnapshotSignature(snapshot);
+  const equal = getSnapshotSignature(createSnapshot([createItem("a"), createItem("b", 120)], ["a"]));
+  const changed = getSnapshotSignature(createSnapshot([createItem("a"), createItem("b", 180)], ["a"]));
+  assert.strictEqual(first, equal, "equal history snapshots produced different signatures");
+  assert.notStrictEqual(first, changed, "changed history snapshot reused a stale signature");
+  assert(Buffer.byteLength(first) < 64, "history signature retained serialized snapshot content");
+
+  const history = createHistoryState();
+  markHistoryStateBaseline(history, { board: snapshot });
+  assert(Buffer.byteLength(history.lastSignature) < 64, "state baseline retained board content");
+  assert.strictEqual(pushHistory(history, snapshot, createSnapshot([createItem("a"), createItem("b", 120)], ["a"])), false, "no-op history entry was recorded after a lightweight baseline");
 }
 
 async function checkPatchRecovery() {
@@ -178,6 +211,7 @@ async function checkPatchRecovery() {
 
 async function main() {
   await checkStoreSnapshotReuse();
+  await checkCompactHistorySignatures();
   await checkPatchRecovery();
   console.log("[check-canvas-state-history] ok");
 }

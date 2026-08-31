@@ -158,8 +158,11 @@ export function createCanvas2DStore({
   let cachedBoardItems = null;
   let cachedBoardItemsSource = null;
   let cachedBoardItemsRevision = -1;
+  let cachedBoardItemsById = new Map();
   let cachedBoardSelectedIdsSource = null;
   let cachedBoardViewSource = null;
+  let fullBoardItemsSnapshotRequired = true;
+  const dirtyBoardItemIds = new Set();
   let pendingPersistTimer = 0;
   let pendingPersistRevision = 0;
 
@@ -223,9 +226,24 @@ export function createCanvas2DStore({
       cachedBoardItemsSource !== state.board.items ||
       !cachedBoardItems
     ) {
-      cachedBoardItems = clone(state.board.items);
+      if (!fullBoardItemsSnapshotRequired && cachedBoardItems && dirtyBoardItemIds.size) {
+        cachedBoardItems = state.board.items.map((item) => {
+          const itemId = String(item?.id || "").trim();
+          const cachedItem = itemId ? cachedBoardItemsById.get(itemId) : null;
+          return !cachedItem || dirtyBoardItemIds.has(itemId) ? clone(item) : cachedItem;
+        });
+      } else {
+        cachedBoardItems = clone(state.board.items);
+      }
+      cachedBoardItemsById = new Map(
+        cachedBoardItems
+          .map((item) => [String(item?.id || "").trim(), item])
+          .filter(([itemId]) => Boolean(itemId))
+      );
       cachedBoardItemsSource = state.board.items;
       cachedBoardItemsRevision = boardItemsRevision;
+      fullBoardItemsSnapshotRequired = false;
+      dirtyBoardItemIds.clear();
     }
     cachedBoardSnapshot = clone({ ...state.board, items: [] });
     cachedBoardSnapshot.items = cachedBoardItems;
@@ -340,18 +358,33 @@ export function createCanvas2DStore({
       boardItemsRevision += 1;
       cachedBoardSnapshotRevision = -1;
       cachedBoardItemsRevision = -1;
+      fullBoardItemsSnapshotRequired = true;
+      dirtyBoardItemIds.clear();
     },
     resetView() {
       state.board.view = clone(DEFAULT_VIEW);
       state.boardRevision += 1;
       cachedBoardSnapshotRevision = -1;
     },
-    touchBoard({ itemsChanged = true } = {}) {
+    touchBoard({ itemsChanged = true, itemIds = [] } = {}) {
       state.boardRevision += 1;
       cachedBoardSnapshotRevision = -1;
       if (itemsChanged) {
         boardItemsRevision += 1;
         cachedBoardItemsRevision = -1;
+        const normalizedItemIds = Array.from(
+          new Set(
+            (Array.isArray(itemIds) ? itemIds : [])
+              .map((itemId) => String(itemId || "").trim())
+              .filter(Boolean)
+          )
+        );
+        if (!normalizedItemIds.length) {
+          fullBoardItemsSnapshotRequired = true;
+          dirtyBoardItemIds.clear();
+        } else if (!fullBoardItemsSnapshotRequired) {
+          normalizedItemIds.forEach((itemId) => dirtyBoardItemIds.add(itemId));
+        }
       }
     },
     setTool(tool) {

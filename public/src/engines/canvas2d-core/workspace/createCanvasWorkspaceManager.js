@@ -1,5 +1,5 @@
 import { createEmptyBoard } from "../elements/index.js";
-import { createHistoryState, markHistoryBaseline, takeHistorySnapshot } from "../history.js";
+import { createHistoryState, markHistoryStateBaseline } from "../history.js";
 import { getFileName } from "../utils.js";
 import { DEFAULT_BOARD_FILE_NAME } from "../boardFileFormat.js";
 
@@ -310,7 +310,7 @@ export function createCanvasWorkspaceManager(deps) {
     state.board = createEmptyBoard();
     state.board.selectedIds = [];
     state.history = createHistoryState();
-    markHistoryBaseline(state.history, takeHistorySnapshot(state));
+    markHistoryStateBaseline(state.history, state);
     cancelTextEdit();
     cancelFlowNodeEdit();
     cancelFileMemoEdit();
