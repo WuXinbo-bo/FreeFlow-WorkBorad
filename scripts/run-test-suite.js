@@ -18,6 +18,7 @@ const CHECKS = [
   "scripts/check-canvas-performance-policy.js",
   "scripts/check-canvas-performance-runtime.js",
   "scripts/check-canvas-render-scheduler.js",
+  "scripts/check-canvas-resource-prewarm-runtime.js",
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
   "scripts/check-canvas-large-scene-runtime.js",

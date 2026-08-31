@@ -4826,6 +4826,53 @@ let tablePointerSelectionState = {
     );
   }
 
+  function scheduleImageResourcePrewarm({
+    sceneIndex,
+    frameView,
+    viewportWidth,
+    viewportHeight,
+    visibleScene,
+    primaryBounds,
+  } = {}) {
+    if (!sceneIndex || !frameView || !primaryBounds) return;
+    const nearIds = new Set((visibleScene?.records || []).map((record) => String(record.itemId || "")));
+    canvasPerformanceRuntime.requestResourcePrewarm(
+      "image:viewport-plan",
+      ({ isStale }) => {
+        if (isStale()) return;
+        const primaryIds = new Set(
+          querySceneIndex(sceneIndex, primaryBounds).map((record) => String(record.itemId || ""))
+        );
+        const prewarmScene = queryVisibleSceneItems(
+          sceneIndex,
+          frameView,
+          viewportWidth,
+          viewportHeight,
+          { marginPx: 1280 }
+        );
+        prewarmScene.items
+          .filter((item) => item?.type === "image" && !item?.exportFallbackPlaceholder)
+          .slice(0, 64)
+          .forEach((item) => {
+            const itemId = String(item.id || "");
+            const priority = primaryIds.has(itemId)
+              ? "visible"
+              : nearIds.has(itemId)
+                ? "near"
+                : "predicted";
+            canvasPerformanceRuntime.requestResourcePrewarm(
+              `image:${itemId}`,
+              () => imageRenderer.prewarmResource?.(item, {
+                allowLocalFileAccess: getAllowLocalFileAccess(),
+              }),
+              { priority }
+            );
+          });
+      },
+      { priority: "background" }
+    );
+  }
+
   function createHeldQualitySnapshot(quality, interaction) {
     return Object.freeze({
       ...(quality || {}),
@@ -4925,6 +4972,14 @@ let tablePointerSelectionState = {
         quality.phase === "steady" ? quality.nextEvaluationInMs : 0
       );
       visibleScene.recordsByType = buildVisibleSceneRecordBuckets(visibleScene.records);
+      scheduleImageResourcePrewarm({
+        sceneIndex,
+        frameView,
+        viewportWidth,
+        viewportHeight,
+        visibleScene,
+        primaryBounds: currentViewportBounds,
+      });
       cameraFrameCache = {
         sceneIndex,
         visibleScene,
@@ -4997,7 +5052,7 @@ let tablePointerSelectionState = {
       refs.sceneRoot.style.transform = matrix;
       refs.sceneRoot.dataset.cameraMatrix = matrix;
     }
-    setStyleIfNeeded(refs.sceneRoot, "willChange", interactionPhase === "steady" ? "auto" : "transform");
+    setStyleIfNeeded(refs.sceneRoot, "willChange", "transform");
     refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
     refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
     refs.sceneRoot.dataset.presentationPhase = interactionPhase;
@@ -5204,8 +5259,13 @@ let tablePointerSelectionState = {
     });
     const stats = refs.canvas?.__ffRenderStats || null;
     if (stats) {
+      const retainedPresented = Boolean(stats.retainedCameraFrame?.active);
       stats.cameraFastPath = Object.freeze({
-        active: Boolean(cameraFastPath),
+        active: Boolean(cameraFastPath && retainedPresented),
+        candidate: Boolean(cameraFastPath),
+        retainedPresented,
+        fallbackRendered: Boolean(cameraFastPath && !retainedPresented),
+        missReason: String(stats.retainedCameraFrame?.missReason || ""),
         visibleSceneReused: Boolean(cameraFastPath),
         presentationPlanReused: Boolean(cameraFastPath),
         sceneDomSyncSkipped: Boolean(cameraFastPath),
@@ -5218,6 +5278,7 @@ let tablePointerSelectionState = {
         unified: canvasPerformanceRuntime.getResourceSnapshot(),
       });
       stats.performanceRuntime = canvasPerformanceRuntime.getLifecycleSnapshot();
+      stats.resourcePrewarm = canvasPerformanceRuntime.getPrewarmSnapshot();
     }
     if (stats?.progressiveRender?.pending) {
       if (!largeViewportProgressivePending) {

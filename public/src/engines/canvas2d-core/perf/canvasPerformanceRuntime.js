@@ -1,6 +1,7 @@
 import { createFramePerformanceWindow } from "./framePerformanceWindow.js";
 import { createInteractionPriorityGate } from "./interactionPriorityGate.js";
 import { createResourceBudgetRuntime } from "./resourceBudgetRuntime.js";
+import { createResourcePrewarmRuntime } from "./resourcePrewarmRuntime.js";
 
 export const CANVAS_PERFORMANCE_PHASES = Object.freeze({
   STEADY: "steady",
@@ -24,10 +25,12 @@ export function createCanvasPerformanceRuntime({
   interactionCooldownMs = 140,
   frameWindowOptions = null,
   resourceBudgetOptions = null,
+  resourcePrewarmOptions = null,
 } = {}) {
   const interactionGate = createInteractionPriorityGate({ cooldownMs: interactionCooldownMs });
   const frameWindow = createFramePerformanceWindow(frameWindowOptions || {});
   const resourceBudget = createResourceBudgetRuntime(resourceBudgetOptions || {});
+  const resourcePrewarm = createResourcePrewarmRuntime(resourcePrewarmOptions || {});
   const listeners = new Set();
   let phase = CANVAS_PERFORMANCE_PHASES.STEADY;
   let sessionId = 0;
@@ -53,6 +56,7 @@ export function createCanvasPerformanceRuntime({
       interaction: Object.freeze({ ...interactionGate.getSnapshot() }),
       performanceWindow: frameWindow.getSnapshot(),
       resources: resourceBudget.getSnapshot(),
+      prewarm: resourcePrewarm.getSnapshot(),
     });
   }
 
@@ -74,6 +78,9 @@ export function createCanvasPerformanceRuntime({
   }
 
   function emit(previousPhase) {
+    if (!listeners.size) {
+      return getLifecycleSnapshot();
+    }
     const snapshot = getSnapshot();
     listeners.forEach((listener) => listener(snapshot, previousPhase));
     return snapshot;
@@ -81,7 +88,7 @@ export function createCanvasPerformanceRuntime({
 
   function transition(nextPhase, nextReason = reason) {
     if (phase === nextPhase && reason === nextReason) {
-      return getSnapshot();
+      return getLifecycleSnapshot();
     }
     const previousPhase = phase;
     phase = nextPhase;
@@ -92,11 +99,13 @@ export function createCanvasPerformanceRuntime({
   }
 
   function beginInteraction(nextReason = "interaction") {
-    if (phase !== CANVAS_PERFORMANCE_PHASES.ACTIVE) {
+    const entering = phase !== CANVAS_PERFORMANCE_PHASES.ACTIVE;
+    if (entering) {
       sessionId += 1;
+      resourceBudget.setInteractionActive(true);
+      resourcePrewarm.setPaused(true, { stale: true });
     }
     interactionGate.activate(nextReason);
-    resourceBudget.setInteractionActive(true);
     transition(CANVAS_PERFORMANCE_PHASES.ACTIVE, nextReason);
     return sessionId;
   }
@@ -127,12 +136,13 @@ export function createCanvasPerformanceRuntime({
       return false;
     }
     transition(CANVAS_PERFORMANCE_PHASES.STEADY, "");
+    resourcePrewarm.setPaused(false);
     return true;
   }
 
   function setViewportIntent(active = false) {
     const next = Boolean(active);
-    if (viewportIntentActive === next) return getSnapshot();
+    if (viewportIntentActive === next) return getLifecycleSnapshot();
     viewportIntentActive = next;
     return emit(phase);
   }
@@ -140,6 +150,7 @@ export function createCanvasPerformanceRuntime({
   function reset() {
     interactionGate.release();
     resourceBudget.setInteractionActive(false);
+    resourcePrewarm.setPaused(false, { stale: true });
     sessionId += 1;
     transition(CANVAS_PERFORMANCE_PHASES.STEADY, "");
     frameWindow.clear();
@@ -149,6 +160,7 @@ export function createCanvasPerformanceRuntime({
     reset();
     listeners.clear();
     resourceBudget.dispose();
+    resourcePrewarm.dispose();
   }
 
   return Object.freeze({
@@ -161,10 +173,12 @@ export function createCanvasPerformanceRuntime({
     registerResource: (descriptor) => resourceBudget.register(descriptor),
     requestResourceReconcile: () => resourceBudget.requestReconcile(),
     reconcileResourcesNow: () => resourceBudget.reconcileNow(),
+    requestResourcePrewarm: (key, run, options) => resourcePrewarm.request(key, run, options),
     getLifecycleSnapshot,
     getInteractionSnapshot: () => Object.freeze({ ...interactionGate.getSnapshot() }),
     getPerformanceSnapshot: () => frameWindow.getSnapshot(),
     getResourceSnapshot: () => resourceBudget.getSnapshot(),
+    getPrewarmSnapshot: () => resourcePrewarm.getSnapshot(),
     subscribe(listener) {
       if (typeof listener !== "function") return () => false;
       listeners.add(listener);

@@ -6261,6 +6261,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   overflow: visible;
   pointer-events: none;
   transform-origin: 0 0;
+  will-change: transform;
   contain: layout style;
 }
 

@@ -89,6 +89,23 @@ export function createRetainedCameraFrame({
   let presentCount = 0;
   let coverageMissCount = 0;
 
+  function getReadiness({ view, width, height, dpr = 1, key = "" } = {}) {
+    if (!readyFrame?.surface || !readyFrame?.view) {
+      return Object.freeze({ ready: false, reason: "unavailable" });
+    }
+    const expectedKey = String(key || "");
+    if (expectedKey && readyFrame.key !== expectedKey) {
+      return Object.freeze({ ready: false, reason: "content" });
+    }
+    if (Math.abs(Number(readyFrame.dpr || 1) - Number(dpr || 1)) > 0.001) {
+      return Object.freeze({ ready: false, reason: "dpr" });
+    }
+    if (!isRetainedFrameCoverageValid(readyFrame, view, width, height)) {
+      return Object.freeze({ ready: false, reason: "coverage" });
+    }
+    return Object.freeze({ ready: true, reason: "ready", key: readyFrame.key });
+  }
+
   function cancelScheduledPrepare() {
     cancelPending?.();
     cancelPending = null;
@@ -167,14 +184,11 @@ export function createRetainedCameraFrame({
     return true;
   }
 
-  function present({ ctx, view, width, height, dpr = 1 } = {}) {
-    if (!ctx || !readyFrame || Math.abs(Number(readyFrame.dpr || 1) - Number(dpr || 1)) > 0.001) {
+  function present({ ctx, view, width, height, dpr = 1, key = "" } = {}) {
+    const readiness = getReadiness({ view, width, height, dpr, key });
+    if (!ctx || !readiness.ready) {
       coverageMissCount += 1;
-      return { presented: false, reason: "unavailable" };
-    }
-    if (!isRetainedFrameCoverageValid(readyFrame, view, width, height)) {
-      coverageMissCount += 1;
-      return { presented: false, reason: "coverage" };
+      return { presented: false, reason: ctx ? readiness.reason : "unavailable" };
     }
     const transform = getRetainedFrameTransform(readyFrame.view, view, readyFrame.marginPx);
     ctx.save();
@@ -210,6 +224,7 @@ export function createRetainedCameraFrame({
     return Object.freeze({
       ready: Boolean(readyFrame),
       pending: Boolean(pendingKey),
+      pendingKey,
       key: readyFrame?.key || "",
       marginPx: margin,
       prepareCount,
@@ -221,5 +236,5 @@ export function createRetainedCameraFrame({
     });
   }
 
-  return Object.freeze({ schedulePrepare, prepareNow, present, clear, getStats });
+  return Object.freeze({ schedulePrepare, prepareNow, present, getReadiness, clear, getStats });
 }

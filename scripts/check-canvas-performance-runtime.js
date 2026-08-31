@@ -27,9 +27,13 @@ async function main() {
     },
   });
   let resourceBytes = 18;
+  let resourceReadCount = 0;
   runtime.registerResource({
     id: "test-cache",
-    getStats: () => ({ byteSize: resourceBytes }),
+    getStats: () => {
+      resourceReadCount += 1;
+      return { byteSize: resourceBytes };
+    },
     trimToBytes: (targetBytes) => {
       const released = Math.max(0, resourceBytes - targetBytes);
       resourceBytes = targetBytes;
@@ -44,7 +48,9 @@ async function main() {
   const firstSession = runtime.beginInteraction("wheel-zoom");
   assert.strictEqual(runtime.getSnapshot().phase, CANVAS_PERFORMANCE_PHASES.ACTIVE);
   assert.strictEqual(runtime.getSnapshot().interactionCritical, true);
+  const readsBeforeContinuousInput = resourceReadCount;
   assert.strictEqual(runtime.beginInteraction("wheel-zoom"), firstSession, "continuous input created a new session");
+  assert.strictEqual(resourceReadCount, readsBeforeContinuousInput, "continuous input reread every resource pool");
   runtime.requestResourceReconcile();
   assert.strictEqual(resourceBytes, 18, "active interaction reclaimed resources on the hot path");
   assert.strictEqual(runtime.getSnapshot().resources.deferred, true, "active resource pressure was not deferred");

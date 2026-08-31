@@ -423,6 +423,8 @@ export function createImageRenderer({
     },
   });
   let resourceGeneration = 0;
+  let prewarmRequestCount = 0;
+  let prewarmHitCount = 0;
 
   function createImageEntry(cacheKey, source, itemId, helpers) {
     const image = new Image();
@@ -432,6 +434,7 @@ export function createImageRenderer({
       generation: ++resourceGeneration,
       status: "loading",
       byteSize: 0,
+      decodeRequested: false,
     };
     image.crossOrigin = "anonymous";
     image.onload = () => {
@@ -529,8 +532,30 @@ export function createImageRenderer({
       }
     });
   };
+  renderer.prewarmResource = (item, { allowLocalFileAccess = false } = {}) => {
+    if (item?.type !== "image" || item?.exportFallbackPlaceholder) return false;
+    const source = resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess });
+    if (!source) return false;
+    const cacheKey = source || item.id;
+    prewarmRequestCount += 1;
+    let entry = imageCache.get(cacheKey);
+    if (entry?.source === source) {
+      prewarmHitCount += 1;
+    } else {
+      entry = createImageEntry(cacheKey, source, item.id, null);
+    }
+    if (entry?.image && !entry.decodeRequested && entry.status !== "ready" && typeof entry.image.decode === "function") {
+      entry.decodeRequested = true;
+      void entry.image.decode().catch(() => {});
+    }
+    return true;
+  };
   renderer.disposeResources = () => imageCache.clear();
-  renderer.getResourceStats = () => imageCache.getStats();
+  renderer.getResourceStats = () => Object.freeze({
+    ...imageCache.getStats(),
+    prewarmRequestCount,
+    prewarmHitCount,
+  });
   renderer.trimResources = (maxBytes) => imageCache.trimToBytes(maxBytes);
   return renderer;
 }

@@ -1544,6 +1544,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastViewVisualSignature = "";
   let lastRenderModeSignature = "";
   let lastStaticItemCount = 0;
+  let retainedFrameExpectedKey = "";
   const runtimeRendererCounts = new Map();
   let runtimeFallbackRendererCount = 0;
 
@@ -1604,6 +1605,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     lastViewVisualSignature = "";
     lastRenderModeSignature = "";
     lastStaticItemCount = 0;
+    retainedFrameExpectedKey = "";
   }
 
   return {
@@ -1612,8 +1614,13 @@ export function createRenderer({ customRenderers = [] } = {}) {
       backgroundPattern: backgroundPatternCache.getStats(),
       liveLayers: layerStore.getStats(),
       tile: staticTileLayer.getStats(),
-      retainedFrame: retainedCameraFrame.getStats(),
+      retainedFrame: Object.freeze({
+        ...retainedCameraFrame.getStats(),
+        expectedKey: retainedFrameExpectedKey,
+      }),
     }),
+    getRetainedCameraReadiness: ({ view, width, height, dpr } = {}) =>
+      retainedCameraFrame.getReadiness({ view, width, height, dpr, key: retainedFrameExpectedKey }),
     trimBackgroundPatternCacheToBytes: (maxBytes) => backgroundPatternCache.trimToBytes(maxBytes),
     trimTileCacheToBytes: (maxBytes) => staticTileLayer.trimToBytes(maxBytes),
     hasRuntimeElementRenderer: (item) => {
@@ -1700,7 +1707,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         imageEditState,
       });
       const retainedPresentation = cameraFastPath && viewportInteractionActive
-        ? retainedCameraFrame.present({ ctx, view, width, height, dpr })
+        ? retainedCameraFrame.present({ ctx, view, width, height, dpr, key: retainedFrameExpectedKey })
         : { presented: false, reason: "inactive" };
       if (retainedPresentation.presented) {
         const fastVisibleItems = Array.isArray(visibleItems) ? visibleItems : [];
@@ -1795,6 +1802,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           },
           retainedCameraFrame: {
             ...retainedCameraFrame.getStats(),
+            expectedKey: retainedFrameExpectedKey,
             active: true,
             coverageMiss: false,
           },
@@ -2167,6 +2175,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         height,
         dpr,
       ].join("|");
+      retainedFrameExpectedKey = retainedFrameKey;
       retainedCameraFrame.schedulePrepare({
         key: retainedFrameKey,
         width,
@@ -2357,8 +2366,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         },
         retainedCameraFrame: {
           ...retainedCameraFrame.getStats(),
+          expectedKey: retainedFrameExpectedKey,
           active: false,
-          coverageMiss: Boolean(cameraFastPath && viewportInteractionActive),
+          coverageMiss: retainedPresentation.reason === "coverage",
+          missReason: cameraFastPath && viewportInteractionActive ? retainedPresentation.reason : "",
         },
       };
       canvas.__ffRenderStats = renderStats;
