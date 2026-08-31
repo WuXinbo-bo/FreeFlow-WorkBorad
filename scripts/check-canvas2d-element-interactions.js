@@ -519,6 +519,8 @@ async function runMovableContract(browser, url, kind, assertUnifiedPresentation)
     const moving = await readState(session.page, fixture.id);
     const expectedDx = DRAG_SCREEN_DELTA.x / Number(initial.view.scale || 1);
     const expectedDy = DRAG_SCREEN_DELTA.y / Number(initial.view.scale || 1);
+    assertNear(moving.item.width, initial.item.width, `${kind}: moving changed element width`, { initial, moving }, 2);
+    assertNear(moving.item.height, initial.item.height, `${kind}: moving changed element height`, { initial, moving }, 2);
     if (assertUnifiedPresentation) {
       assert(moving.presentation?.connected && moving.presentation?.visible, `${kind}: presentation disappeared during drag`, moving);
       assertNear(moving.presentation.x, initial.item.x + expectedDx, `${kind}: presentation x did not follow the pointer`, { initial, moving }, 3);
@@ -529,6 +531,8 @@ async function runMovableContract(browser, url, kind, assertUnifiedPresentation)
     const committed = await readState(session.page, fixture.id);
     assertNear(committed.item.x, initial.item.x + expectedDx, `${kind}: committed x diverged from the pointer`, { initial, committed }, 3);
     assertNear(committed.item.y, initial.item.y + expectedDy, `${kind}: committed y diverged from the pointer`, { initial, committed }, 3);
+    assertNear(committed.item.width, initial.item.width, `${kind}: move commit changed element width`, { initial, committed }, 2);
+    assertNear(committed.item.height, initial.item.height, `${kind}: move commit changed element height`, { initial, committed }, 2);
     if (assertUnifiedPresentation) assertPresentation(committed, `${kind} committed`);
 
     const movedCenter = await getScreenPoint(session.page, fixture.id);
@@ -538,6 +542,8 @@ async function runMovableContract(browser, url, kind, assertUnifiedPresentation)
     const recovered = await readState(session.page, fixture.id);
     assertNear(recovered.item.x, initial.item.x, `${kind}: reverse drag left stale x`, { initial, recovered }, 3);
     assertNear(recovered.item.y, initial.item.y, `${kind}: reverse drag left stale y`, { initial, recovered }, 3);
+    assertNear(recovered.item.width, initial.item.width, `${kind}: reverse drag left stale width`, { initial, recovered }, 2);
+    assertNear(recovered.item.height, initial.item.height, `${kind}: reverse drag left stale height`, { initial, recovered }, 2);
     if (assertUnifiedPresentation) {
       assertPresentation(recovered, `${kind} recovered`);
       assert(recovered.runtimeMode === "steady", `${kind}: runtime did not recover to steady`, recovered);
@@ -559,38 +565,46 @@ async function runResizeContract(browser, url, kind, assertUnifiedPresentation, 
     await session.page.mouse.click(center.x, center.y);
     await waitForFrames(session.page, 40);
     const initial = await readState(session.page, fixture.id);
-    const handle = await getScreenPoint(session.page, fixture.id, "se");
-    await drag(session.page, handle, RESIZE_SCREEN_DELTA, 4);
-    await waitForFrames(session.page, 30);
-    const resizing = await readState(session.page, fixture.id);
-    if (assertUnifiedPresentation) {
-      assert(resizing.presentation?.connected && resizing.presentation?.visible, `${kind}: presentation disappeared during resize`, resizing);
-      if (Number.isFinite(resizing.presentation.width) && resizing.presentation.width > 0) {
-        assert(resizing.presentation.width > initial.item.width + 20, `${kind}: presentation width did not follow resize`, { initial, resizing });
+    const recoveryCycles = kind === "formula" ? 3 : 1;
+    const cycles = [];
+    for (let cycle = 0; cycle < recoveryCycles; cycle += 1) {
+      const handle = await getScreenPoint(session.page, fixture.id, "se");
+      await drag(session.page, handle, RESIZE_SCREEN_DELTA, 4);
+      await waitForFrames(session.page, 30);
+      const resizing = await readState(session.page, fixture.id);
+      if (kind === "formula") {
+        assertNear(resizing.item.height, initial.item.height, `${kind}: active resize changed settled formula height`, { initial, resizing }, 2);
       }
-      if (Number.isFinite(resizing.presentation.height) && resizing.presentation.height > 0) {
-        assert(resizing.presentation.height >= initial.item.height, `${kind}: presentation height regressed during resize`, { initial, resizing });
+      if (assertUnifiedPresentation) {
+        assert(resizing.presentation?.connected && resizing.presentation?.visible, `${kind}: presentation disappeared during resize`, resizing);
+        if (Number.isFinite(resizing.presentation.width) && resizing.presentation.width > 0) {
+          assert(resizing.presentation.width > initial.item.width + 20, `${kind}: presentation width did not follow resize`, { initial, resizing });
+        }
+        if (Number.isFinite(resizing.presentation.height) && resizing.presentation.height > 0) {
+          assert(resizing.presentation.height >= initial.item.height, `${kind}: presentation height regressed during resize`, { initial, resizing });
+        }
       }
-    }
-    await session.page.mouse.up({ button: "left" });
-    await waitForFrames(session.page, 180);
-    const committed = await readState(session.page, fixture.id);
-    assert(committed.item.width > initial.item.width + 20, `${kind}: width was not committed after resize`, { initial, committed });
-    assert(committed.item.height >= initial.item.height, `${kind}: height regressed after resize commit`, { initial, committed });
-    if (assertUnifiedPresentation) assertPresentation(committed, `${kind} resize committed`);
+      await session.page.mouse.up({ button: "left" });
+      await waitForFrames(session.page, 180);
+      const committed = await readState(session.page, fixture.id);
+      assert(committed.item.width > initial.item.width + 20, `${kind}: width was not committed after resize`, { initial, committed });
+      assert(committed.item.height >= initial.item.height, `${kind}: height regressed after resize commit`, { initial, committed });
+      if (assertUnifiedPresentation) assertPresentation(committed, `${kind} resize committed ${cycle + 1}`);
 
-    const reverseHandle = await getScreenPoint(session.page, fixture.id, "se");
-    await drag(session.page, reverseHandle, { x: -RESIZE_SCREEN_DELTA.x, y: -RESIZE_SCREEN_DELTA.y }, 4);
-    await session.page.mouse.up({ button: "left" });
-    await waitForFrames(session.page, 180);
-    const recovered = await readState(session.page, fixture.id);
-    if (strictRecovery) {
-      assertNear(recovered.item.width, initial.item.width, `${kind}: reverse resize left stale width`, { initial, resizing, committed, recovered }, 4);
-      assertNear(recovered.item.height, initial.item.height, `${kind}: reverse resize left stale height`, { initial, resizing, committed, recovered }, 4);
+      const reverseHandle = await getScreenPoint(session.page, fixture.id, "se");
+      await drag(session.page, reverseHandle, { x: -RESIZE_SCREEN_DELTA.x, y: -RESIZE_SCREEN_DELTA.y }, 4);
+      await session.page.mouse.up({ button: "left" });
+      await waitForFrames(session.page, 180);
+      const recovered = await readState(session.page, fixture.id);
+      if (strictRecovery) {
+        assertNear(recovered.item.width, initial.item.width, `${kind}: reverse resize left stale width`, { initial, resizing, committed, recovered }, 4);
+        assertNear(recovered.item.height, initial.item.height, `${kind}: reverse resize left stale height`, { initial, resizing, committed, recovered }, 4);
+      }
+      if (assertUnifiedPresentation) assertPresentation(recovered, `${kind} resize recovered ${cycle + 1}`);
+      cycles.push({ resizing: resizing.item, committed: committed.item, recovered: recovered.item });
     }
-    if (assertUnifiedPresentation) assertPresentation(recovered, `${kind} resize recovered`);
     assert(session.errors.length === 0, `${kind}: resize browser errors`, session.errors);
-    return { initial: initial.item, resizing: resizing.item, committed: committed.item, recovered: recovered.item };
+    return { initial: initial.item, ...cycles[0], cycles };
   } finally {
     await session.page.close();
   }

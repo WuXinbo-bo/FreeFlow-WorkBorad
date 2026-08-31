@@ -15,8 +15,8 @@ export function createCanvasImageStorageManager(deps) {
     getImageItemById,
     renderImageToCanvas,
     safeCanvasToDataUrl,
-    takeHistorySnapshot,
-    commitHistory,
+    takeItemHistorySnapshot,
+    commitItemHistory,
   } = deps;
 
   function normalizeExportName(value, fallback) {
@@ -284,7 +284,7 @@ export function createCanvasImageStorageManager(deps) {
     if (!dataUrl) {
       return false;
     }
-    const before = takeHistorySnapshot();
+    const before = takeItemHistorySnapshot(itemId);
     const ok = await saveImageItemToImportFolder(item, {
       dataUrlOverride: dataUrl,
       nameOverride: `${item.name || "image"}-crop`,
@@ -293,7 +293,7 @@ export function createCanvasImageStorageManager(deps) {
     if (!ok) {
       return false;
     }
-    commitHistory(before, "保存裁剪图片");
+    commitItemHistory(before, itemId, "保存裁剪图片");
     setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
     return true;
   }

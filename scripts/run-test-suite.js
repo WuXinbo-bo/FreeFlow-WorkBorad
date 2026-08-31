@@ -15,6 +15,7 @@ const CHECKS = [
   "scripts/check-camera-interaction-runtime.js",
   "scripts/check-presentation-quality-runtime.js",
   "scripts/check-canvas-performance-policy.js",
+  "scripts/check-canvas-state-history.js",
   "scripts/check-presentation-snapshot-controller.js",
   "scripts/check-compact-presentation-runtime.js",
   "scripts/check-element-runtime-architecture.js",

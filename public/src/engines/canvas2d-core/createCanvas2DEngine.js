@@ -3127,8 +3127,9 @@ export function createCanvas2DEngine(options = {}) {
     getImageItemById: (itemId) => getImageItemById(itemId),
     renderImageToCanvas,
     safeCanvasToDataUrl,
-    takeHistorySnapshot: () => takeHistorySnapshot(state),
-    commitHistory,
+    takeItemHistorySnapshot: (itemId) => takeItemsHistorySnapshot([itemId]),
+    commitItemHistory: (beforeSnapshot, itemId, reason) =>
+      commitItemPatchHistory(beforeSnapshot, itemId, getImageItemById(itemId), reason, "image-save-crop"),
   });
   const {
     syncExportHistoryForActiveBoard,
@@ -4380,12 +4381,15 @@ let tablePointerSelectionState = {
       setStatus("该关系线已存在");
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
+    const beforeOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
     const relationship = createMindRelationshipElement(normalizedSourceId, normalizedTargetId);
     state.board.items.unshift(relationship);
     state.board.selectedIds = [relationship.id];
-    markSceneGraphDirty({ hitTest: true });
-    commitHistory(before, "创建关系线");
+    commitInsertedItemsPatchHistory(before, [relationship], "创建关系线", "mind-relationship-insert", {
+      beforeOrderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
+    });
     setStatus("已连接节点");
     return true;
   }
@@ -4410,7 +4414,7 @@ let tablePointerSelectionState = {
     if (!normalizedId) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([normalizedId], { includeOrder: true });
     const nextItems = state.board.items.filter(
       (item) => !(isMindRelationshipItem(item) && String(item.id || "") === normalizedId)
     );
@@ -4420,7 +4424,10 @@ let tablePointerSelectionState = {
     state.board.items = nextItems;
     state.board.selectedIds = state.board.selectedIds.filter((id) => String(id || "") !== normalizedId);
     markSceneGraphDirty({ hitTest: true });
-    commitHistory(before, "删除关系线");
+    commitItemsPatchHistory(before, [normalizedId], "删除关系线", "mind-relationship-delete", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
+    });
     setStatus("已删除关系线");
     return true;
   }
@@ -5270,7 +5277,7 @@ let tablePointerSelectionState = {
       markHitTestDirty();
     }
     if (boardChange) {
-      store.touchBoard?.();
+      store.touchBoard?.({ itemsChanged: sceneChange });
     }
     if (fullOverlayRescan) {
       markCodeBlockOverlayDirty([], { fullRescan: true });
@@ -7048,7 +7055,10 @@ let tablePointerSelectionState = {
         }
       }
       if (state.editingId) {
-        editBaselineSnapshot = takeHistorySnapshot(state);
+        const editingItem = sceneRegistry.getItemById(state.editingId);
+        editBaselineSnapshot = isMindMapNode(editingItem)
+          ? takeItemsHistorySnapshot(getMindMapHistoryItemIds())
+          : takeItemsHistorySnapshot([state.editingId]);
         richTextSession.setBaselineSnapshot(editBaselineSnapshot);
       }
       store.emit();
@@ -7852,6 +7862,45 @@ let tablePointerSelectionState = {
     }
   }
 
+  function takeItemsHistorySnapshot(itemIds = [], { includeOrder = false } = {}) {
+    const sourceIds = Array.isArray(itemIds)
+      ? itemIds
+      : itemIds && typeof itemIds[Symbol.iterator] === "function"
+        ? Array.from(itemIds)
+        : [];
+    const normalizedIds = Array.from(
+      new Set(
+        sourceIds
+          .map((itemId) => String(itemId || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const snapshot = takeHistoryMetadataSnapshot(state);
+    snapshot.items = sceneRegistry.getItemsByIds(normalizedIds).map((item) => clone(item));
+    if (includeOrder) {
+      snapshot.orderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
+    }
+    return snapshot;
+  }
+
+  function getMindMapHistoryItemIds() {
+    return state.board.items
+      .filter((item) => isMindMapNode(item))
+      .map((item) => String(item?.id || "").trim())
+      .filter(Boolean);
+  }
+
+  function getMindMapPatchItemIds(beforeSnapshot = null) {
+    return Array.from(
+      new Set([
+        ...(Array.isArray(beforeSnapshot?.items)
+          ? beforeSnapshot.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+          : []),
+        ...getMindMapHistoryItemIds(),
+      ])
+    );
+  }
+
   function commitInsertedItemsPatchHistory(beforeSnapshot, insertedItems = [], reason = "", patchKind = "item-insert-batch", options = {}) {
     const normalizedItems = Array.isArray(insertedItems) ? insertedItems.filter(Boolean) : [];
     const insertedItemIds = Array.from(
@@ -7947,7 +7996,8 @@ let tablePointerSelectionState = {
       return false;
     }
     const sortedItems = sortItemsForDocumentMerge(selectedItems);
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
+    const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "").trim()).filter(Boolean);
     const bounds = getMultiSelectionBounds(sortedItems);
     if (!bounds) {
       setStatus("无法计算合并范围", "warning");
@@ -7994,9 +8044,6 @@ let tablePointerSelectionState = {
     state.board.selectedIds = [mergedItem.id];
     state.hoverId = mergedItem.id;
     scheduleUrlMetaHydrationForItem(mergedItem);
-    const beforeOrderIds = Array.isArray(before?.items)
-      ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
-      : [];
     const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
     const changed = commitItemsPatchHistory(before, [mergedItem.id], "合并文本", "text-merge", {
       beforeOrderIds,
@@ -8498,9 +8545,11 @@ let tablePointerSelectionState = {
   }
 
   function commitOrderPatchHistory(beforeSnapshot, itemIds = [], reason = "", patchKind = "item-reorder") {
-    const beforeOrderIds = Array.isArray(beforeSnapshot?.items)
-      ? beforeSnapshot.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
-      : [];
+    const beforeOrderIds = Array.isArray(beforeSnapshot?.orderIds)
+      ? beforeSnapshot.orderIds.slice()
+      : Array.isArray(beforeSnapshot?.items)
+        ? beforeSnapshot.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+        : [];
     const afterOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
     return commitItemsPatchHistory(beforeSnapshot, itemIds, reason, patchKind, {
       beforeOrderIds,
@@ -11066,8 +11115,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             };
           }
           prepareRichOverlayDetailHandoff(currentItem);
-          markSceneGraphDirty();
-          syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+          syncBoard({
+            persist: false,
+            emit: true,
+            markDirty: false,
+            sceneChange: true,
+            fullOverlayRescan: false,
+            reason: "text-layout-followup",
+          });
         }
       });
     });
@@ -11119,8 +11174,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         }
         prepareRichOverlayDetailHandoff(currentItem, { deferHtmlWarmup: true });
         if (changed) {
-          markSceneGraphDirty();
-          syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+          syncBoard({
+            persist: false,
+            emit: true,
+            markDirty: false,
+            sceneChange: true,
+            fullOverlayRescan: false,
+            reason: "text-link-semantics-followup",
+          });
         }
         clearCommittedTextDraftCacheEntry(itemId);
       });
@@ -11619,8 +11680,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             scale: 1,
             scaleBucket,
             onReady:
-              presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
-                ? () => scheduleRender({ overlayDirty: true, reason: "rich-snapshot-detail-ready" })
+              presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT ||
+              ((item.type === "text" || isMindNode) &&
+                getTextBoxLayoutMode(item) !== TEXT_BOX_LAYOUT_MODE_FIXED_SIZE)
+                ? () => scheduleRender({
+                    overlayDirty: true,
+                    reason:
+                      presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
+                        ? "rich-snapshot-detail-ready"
+                        : "rich-overlay-detail-ready",
+                  })
                 : null,
           });
         }
@@ -11643,6 +11712,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.LIVE_DETAIL &&
         !snapshotState.snapshotActive &&
         !state.editingId &&
+        !state.pointer &&
         (item.type === "text" || isMindNode)
       ) {
         const html = node.dataset.html || "";
@@ -11670,8 +11740,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       reason: "rich-overlay-budget-deferred",
     });
     if (textLayoutWritebackChanged) {
-      markSceneGraphDirty();
-      syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+      syncBoard({
+        persist: false,
+        emit: true,
+        markDirty: false,
+        sceneChange: true,
+        fullOverlayRescan: false,
+        reason: "text-layout-writeback",
+      });
     }
   }
 
@@ -11951,8 +12027,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
 
     if (mathLayoutWritebackChanged) {
-      markSceneGraphDirty();
-      syncBoard({ persist: false, emit: true, markDirty: false, sceneChange: false, fullOverlayRescan: false });
+      syncBoard({
+        persist: false,
+        emit: true,
+        markDirty: false,
+        sceneChange: true,
+        fullOverlayRescan: false,
+        reason: "math-layout-writeback",
+      });
     }
   }
 
@@ -12171,7 +12253,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelFlowNodeEdit();
     cancelPendingRichEditorHide();
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "text";
@@ -12213,7 +12295,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelImageMemoEdit();
     cancelPendingRichEditorHide();
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "flow-node";
@@ -12256,7 +12338,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const initialContent = normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true });
     applyMindNodeTextContent(item, initialContent);
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot(getMindMapHistoryItemIds());
     }
     state.editingId = item.id;
     state.editingType = "mind-node";
@@ -12308,7 +12390,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return false;
     }
-    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
+    const before =
+      editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeItemsHistorySnapshot([item.id]);
     const fontSize = item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_TEXT_FONT_SIZE);
     const html = normalizeRichHtmlInlineFontSizes(
       richTextSession.getHTML() || refs.richEditor.innerHTML || "",
@@ -12324,6 +12407,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     setCommittedTextDraftCacheEntry(item.id, draft);
     const plainText = draft.plainText;
     if (!plainText.trim()) {
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       clearCommittedTextDraftCacheEntry(item.id);
       state.board.items = state.board.items.filter((entry) => {
         if (entry.id === item.id) {
@@ -12340,7 +12424,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.richEditor.classList.add("is-hidden");
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      commitItemPatchHistory(before, item.id, null, "删除空白文本", "text-edit");
+      commitItemsPatchHistory(before, [item.id], "删除空白文本", "text-edit", {
+        beforeOrderIds,
+        afterOrderIds: state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean),
+      });
       setStatus("已删除空白文本");
       if (state.tool === "text" && shouldExitTextToolAfterEdit) {
         shouldExitTextToolAfterEdit = false;
@@ -12353,6 +12440,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       fontSize,
     });
     if (Array.isArray(textSplitItems) && textSplitItems.length) {
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       clearCommittedTextDraftCacheEntry(item.id);
       textSplitItems.forEach((entry) => {
         if (entry?.type === "text") {
@@ -12375,9 +12463,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
       const changedIds = [item.id, ...textSplitItems.map((entry) => entry.id)];
-      const beforeOrderIds = Array.isArray(before?.items)
-        ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
-        : [];
       const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       const changed = commitItemsPatchHistory(before, changedIds, "拆分文本", "text-split", {
         beforeOrderIds,
@@ -12401,6 +12486,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       fontSize,
     });
     if (Array.isArray(splitItems) && splitItems.length) {
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       clearCommittedTextDraftCacheEntry(item.id);
       splitItems.forEach((entry) => {
         if (entry?.type === "text") {
@@ -12423,9 +12509,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
       const changedIds = [item.id, ...splitItems.map((entry) => entry.id)];
-      const beforeOrderIds = Array.isArray(before?.items)
-        ? before.items.map((entry) => String(entry?.id || "")).filter(Boolean)
-        : [];
       const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       const changed = commitItemsPatchHistory(before, changedIds, "拆分独立公式", "text-math-block-split", {
         beforeOrderIds,
@@ -12497,7 +12580,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextSession.clear({ destroyAdapter: false });
       return false;
     }
-    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
+    const before =
+      editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeItemsHistorySnapshot([item.id]);
     const html = normalizeRichHtmlInlineFontSizes(
       richTextSession.getHTML() || refs.richEditor.innerHTML || "",
       item.fontSize || resolveSessionFontSize(richTextSession, 18)
@@ -12514,6 +12598,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     );
     const plainText = content.plainText;
     if (!plainText.trim()) {
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
       if (state.hoverId === item.id) {
         state.hoverId = null;
@@ -12524,7 +12609,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.richEditor.classList.add("is-hidden");
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      commitItemPatchHistory(before, item.id, null, "删除空白节点", "flow-node-edit");
+      commitItemsPatchHistory(before, [item.id], "删除空白节点", "flow-node-edit", {
+        beforeOrderIds,
+        afterOrderIds: state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean),
+      });
       setStatus("已删除空白节点");
       return true;
     }
@@ -12571,7 +12659,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextSession.clear({ destroyAdapter: false });
       return false;
     }
-    const before = editBaselineSnapshot || richTextSession.getBaselineSnapshot() || takeHistorySnapshot(state);
+    const before =
+      editBaselineSnapshot ||
+      richTextSession.getBaselineSnapshot() ||
+      takeItemsHistorySnapshot(getMindMapHistoryItemIds());
     const html = normalizeRichHtmlInlineFontSizes(
       richTextSession.getHTML() || refs.richEditor.innerHTML || "",
       item.fontSize || resolveSessionFontSize(richTextSession, DEFAULT_MIND_NODE_FONT_SIZE)
@@ -12588,6 +12679,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     );
     const plainText = content.plainText;
     if (!plainText.trim()) {
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       if (item.type === "mindSummary") {
         state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
         if (state.hoverId === item.id) {
@@ -12598,7 +12690,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         refs.richEditor.classList.add("is-hidden");
         richTextSession.clear({ destroyAdapter: false });
         editBaselineSnapshot = null;
-        commitItemPatchHistory(before, item.id, null, "删除空白摘要节点", "mind-node-edit");
+        commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "删除空白摘要节点", "mind-node-edit", {
+          beforeOrderIds,
+          afterOrderIds: state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean),
+        });
         setStatus("已删除空白摘要节点");
         return true;
       }
@@ -12623,7 +12718,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.richEditor.classList.add("is-hidden");
       richTextSession.clear({ destroyAdapter: false });
       editBaselineSnapshot = null;
-      commitItemPatchHistory(before, item.id, null, "删除空白思维节点", "mind-node-edit");
+      commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "删除空白思维节点", "mind-node-edit", {
+        beforeOrderIds,
+        afterOrderIds: state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean),
+      });
       setStatus("已删除空白思维节点");
       return true;
     }
@@ -12639,7 +12737,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     prepareRichOverlayDetailHandoff(item);
     scheduleRichEditorHideAfterNextPaint();
     editBaselineSnapshot = null;
-    const changed = commitItemPatchHistory(before, item.id, item, "更新思维节点", "mind-node-edit");
+    const changed = commitItemsPatchHistory(
+      before,
+      getMindMapPatchItemIds(before),
+      "更新思维节点",
+      "mind-node-edit"
+    );
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -14669,7 +14772,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelImageMemoEdit();
     cancelTableEdit();
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "code-block";
@@ -14703,11 +14806,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       markCodeBlockOverlayDirty([], { fullRescan: true });
       return false;
     }
-    const before = editBaselineSnapshot || null;
-    const fallbackBefore = before || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || takeItemsHistorySnapshot([item.id]);
     const code = sanitizeText(codeBlockEditor.getValue() || "");
     if (!code.trim()) {
       const deletedItemId = item.id;
+      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
       state.board.items = state.board.items.filter((entry) => entry.id !== item.id);
       state.board.selectedIds = [];
       state.editingId = null;
@@ -14719,9 +14822,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       codeBlockEditor.clear();
       editBaselineSnapshot = null;
       markCodeBlockOverlayDirty(deletedItemId, { fullRescan: true });
-      before
-        ? commitCodeBlockPatchHistory(before, deletedItemId, null, "删除空白代码块")
-        : commitHistory(fallbackBefore, "删除空白代码块");
+      commitItemsPatchHistory(before, [deletedItemId], "删除空白代码块", "codeBlock-edit", {
+        beforeOrderIds,
+        afterOrderIds: state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean),
+        fullOverlayRescan: false,
+      });
       setStatus("已删除空白代码块");
       return true;
     }
@@ -14746,9 +14851,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     lastCodeBlockEditItemId = null;
     codeBlockEditor.clear();
     editBaselineSnapshot = null;
-    const changed = before
-      ? commitCodeBlockPatchHistory(before, item.id, item, "更新代码块")
-      : commitHistory(fallbackBefore, "更新代码块");
+    const changed = commitCodeBlockPatchHistory(before, item.id, item, "更新代码块");
     if (!changed) {
       syncBoard({ persist: false, emit: true, markDirty: false });
       return true;
@@ -14790,7 +14893,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelFileMemoEdit();
     cancelImageMemoEdit();
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "table";
@@ -14826,7 +14929,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       tableEditFrame = null;
       return false;
     }
-    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || takeItemsHistorySnapshot([item.id]);
     const matrix = buildTableMatrixFromEditor();
     const structure = createTableStructureFromMatrix(matrix, {
       title: item?.table?.title || item?.title || "表格",
@@ -14992,7 +15095,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelImageMemoEdit();
     item.memoVisible = true;
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "file-memo";
@@ -15020,7 +15123,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastFileMemoItemId = null;
       return false;
     }
-    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || takeItemsHistorySnapshot([item.id]);
     const value = sanitizeText(refs.fileMemoEditor.value || "");
     item.memo = value;
     state.editingId = null;
@@ -15102,7 +15205,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelFileMemoEdit();
     item.memoVisible = true;
     if (!editBaselineSnapshot) {
-      editBaselineSnapshot = takeHistorySnapshot(state);
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
     }
     state.editingId = item.id;
     state.editingType = "image-memo";
@@ -15130,7 +15233,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       lastImageMemoItemId = null;
       return false;
     }
-    const before = editBaselineSnapshot || takeHistorySnapshot(state);
+    const before = editBaselineSnapshot || takeItemsHistorySnapshot([item.id]);
     const value = sanitizeText(refs.imageMemoEditor.value || "");
     item.memo = value;
     state.editingId = null;
@@ -15395,9 +15498,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("图片已锁定，无法修改");
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([item.id]);
     updater(item);
-    commitHistory(before, reason);
+    commitItemPatchHistory(before, item.id, item, reason, "image-edit");
     if (statusText) {
       setStatus(statusText);
     }
@@ -17600,7 +17703,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.selectedIds.length) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(state.board.selectedIds, { includeOrder: true });
     const remove = new Set(state.board.selectedIds);
     const nextItems = [];
     let removedCount = 0;
@@ -17631,7 +17734,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     state.board.navigator = pruneCanvasNavigator(state.board.navigator, state.board.items);
     commitItemsPatchHistory(before, Array.from(remove), "删除元素", "item-delete-batch", {
-      beforeOrderIds: Array.isArray(before.items) ? before.items.map((item) => item.id) : [],
+      beforeOrderIds: Array.isArray(before.orderIds) ? before.orderIds : [],
       afterOrderIds: nextItems.map((item) => item.id),
     });
     setStatus(`已删除 ${removedCount} 个元素`);
@@ -17642,7 +17745,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function removeFileCardById(id) {
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([id], { includeOrder: true });
     const result = removeFileCardEntry(state.board.items, id);
     if (!result.removed) {
       return false;
@@ -17650,7 +17753,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.board.items = result.items;
     state.board.selectedIds = state.board.selectedIds.filter((itemId) => itemId !== id);
     state.board.navigator = pruneCanvasNavigator(state.board.navigator, state.board.items);
-    commitHistory(before, "删除文件卡");
+    commitItemsPatchHistory(before, [id], "删除文件卡", "item-delete", {
+      beforeOrderIds: Array.isArray(before.orderIds) ? before.orderIds : [],
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus("已删除文件卡");
     return true;
   }
@@ -18492,24 +18598,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
 
   function createEmptyText(anchorPoint) {
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
     const item = createTextElement(anchorPoint, "", "");
     state.board.items.push(item);
     state.board.selectedIds = [item.id];
-    commitHistory(before, "创建文本");
+    commitInsertedItemsPatchHistory(before, [item], "创建文本", "text-insert");
     beginTextEdit(item.id);
     return true;
   }
 
 
   function createMindNode(anchorPoint) {
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
     const item = createMindNodeElement(anchorPoint, "节点");
     item.rootId = item.id;
     item.branchSide = MIND_BRANCH_RIGHT;
     state.board.items.push(item);
     state.board.selectedIds = [item.id];
-    commitHistory(before, "创建节点");
+    commitInsertedItemsPatchHistory(before, [item], "创建节点", "mind-node-insert");
     setStatus("已添加节点");
     refs.canvas?.focus?.();
     return true;
@@ -18593,7 +18699,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("该节点已存在此链接");
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([node.id]);
     node.links = [
       ...links,
       {
@@ -18606,7 +18712,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     ];
     state.board.selectedIds = [node.id];
     mindNodeLinkPanelPinnedNodeId = node.id;
-    commitHistory(before, "添加节点链接");
+    commitItemPatchHistory(before, node.id, node, "添加节点链接", "mind-node-link-edit");
     setStatus("已创建节点链接");
     refs.canvas?.focus?.();
     return true;
@@ -18622,10 +18728,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (nextLinks.length === links.length) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([node.id]);
     node.links = nextLinks;
     state.board.selectedIds = [node.id];
-    commitHistory(before, "删除节点链接");
+    commitItemPatchHistory(before, node.id, node, "删除节点链接", "mind-node-link-edit");
     setStatus("已删除节点链接");
     refs.canvas?.focus?.();
     return true;
@@ -18636,10 +18742,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node || !getMindNodeLinks(node).length) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([node.id]);
     node.links = [];
     state.board.selectedIds = [node.id];
-    commitHistory(before, "清空节点链接");
+    commitItemPatchHistory(before, node.id, node, "清空节点链接", "mind-node-link-edit");
     setStatus("已清空节点链接");
     refs.canvas?.focus?.();
     return true;
@@ -19075,11 +19181,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function createFlowNode(anchorPoint) {
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
     const item = flowModule.createNode(anchorPoint);
     state.board.items.push(item);
     state.board.selectedIds = [item.id];
-    commitHistory(before, "创建节点");
+    commitInsertedItemsPatchHistory(before, [item], "创建节点", "flow-node-insert");
     setStatus("已添加节点");
     beginFlowNodeEdit(item.id);
     return true;
@@ -19111,7 +19217,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function createShapeAt(anchorPoint, shapeType) {
-    const before = takeHistorySnapshot(state);
+    const before = takeHistoryMetadataSnapshot(state);
     const start = { x: Number(anchorPoint?.x) || 0, y: Number(anchorPoint?.y) || 0 };
     const presets = {
       rect: { width: 200, height: 120 },
@@ -19128,7 +19234,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const item = shapeModule.createElement(shapeType, start, end);
     state.board.items.push(item);
     state.board.selectedIds = [item.id];
-    commitHistory(before, "创建图形");
+    commitInsertedItemsPatchHistory(before, [item], "创建图形", "shape-insert");
     setStatus("已添加图案");
     return true;
   }
@@ -19394,7 +19500,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         type: "resize-multi-selection",
         pointerId: event.pointerId,
         handle: multiSelectionHandle,
-        before: takeHistorySnapshot(state),
+        before: takeItemsHistorySnapshot(Array.from(baseSelection.items.keys())),
         baseSelection,
         preserveAspect: Boolean(event.shiftKey),
         scaleFromCenter: Boolean(event.altKey),
@@ -19426,7 +19532,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         center,
         startAngle,
         startRotation: Number(singleSelectedItem.rotation || 0),
-        before: takeHistorySnapshot(state),
+        before: takeItemsHistorySnapshot([singleSelectedItem.id]),
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
       state.hoverHandle = "rotate-image";
@@ -19454,7 +19560,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         center,
         startAngle,
         startRotation: Number(singleSelectedItem.rotation || 0),
-        before: takeHistorySnapshot(state),
+        before: takeItemsHistorySnapshot([singleSelectedItem.id]),
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
       state.hoverHandle = "rotate-shape";
@@ -19478,7 +19584,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           type: "round-rect",
           pointerId: event.pointerId,
           handle: activeHandle,
-          before: takeHistorySnapshot(state),
+          before: takeItemsHistorySnapshot([singleSelectedItem.id]),
           baseItem: clonePointerBase(singleSelectedItem),
           itemId: singleSelectedItem.id,
         };
@@ -19491,7 +19597,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         type: "resize-selection",
         pointerId: event.pointerId,
         handle: activeHandle,
-        before: takeHistorySnapshot(state),
+        before: takeItemsHistorySnapshot([singleSelectedItem.id]),
         baseItem: clonePointerBase(singleSelectedItem),
         itemId: singleSelectedItem.id,
       };
@@ -19550,7 +19656,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         type: "create-shape",
         pointerId: event.pointerId,
         startScene: scenePoint,
-        before: takeHistorySnapshot(state),
+        before: takeHistoryMetadataSnapshot(state),
       };
       state.draftElement = shapeModule.createDraftElement(state.tool, scenePoint);
       refs.canvas?.setPointerCapture?.(event.pointerId);
@@ -19599,13 +19705,33 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
 
       const baseItems = new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)]));
+      const pointerType = event.button === 0 && event.altKey && selectedItems.length >= 2
+        ? "duplicate-multi-selection"
+        : "move-selection";
+      const selectedItemMap = new Map(state.board.items.map((item) => [item.id, item]));
+      const moveHistoryItemIds = Array.from(
+        new Set([
+          ...selectedIds,
+          ...selectedItems
+            .map((item) => getCardPairId(item, selectedItemMap))
+            .filter(Boolean),
+        ])
+      );
+      const mindHistoryItemIds =
+        pointerType === "move-selection" && target?.type === "mindNode" ? getMindMapHistoryItemIds() : [];
+      const historyItemIds = Array.from(new Set([...moveHistoryItemIds, ...mindHistoryItemIds]));
       state.pointer = {
-        type: event.button === 0 && event.altKey && selectedItems.length >= 2 ? "duplicate-multi-selection" : "move-selection",
+        type: pointerType,
         pointerId: event.pointerId,
         startScene: scenePoint,
-        before: takeHistorySnapshot(state),
+        before: takeItemsHistorySnapshot(historyItemIds),
+        beforeOrderIds: pointerType === "duplicate-multi-selection"
+          ? state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean)
+          : [],
         baseSelectedIds: selectedIds.slice(),
         baseItems,
+        moveHistoryItemIds,
+        mindHistoryItemIds,
         mindSubtreeRootId: target?.type === "mindNode" ? String(target.id || "").trim() : "",
       };
       refs.canvas?.setPointerCapture?.(event.pointerId);
@@ -20047,14 +20173,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         ? flowModule.getConnectorHit(toNode, state.lastPointerScenePoint || scenePoint, state.board.view)
         : null;
       if (toNode && toSide && pointer.fromId && pointer.fromId !== toNode.id) {
-        const before = takeHistorySnapshot(state);
+        const before = takeHistoryMetadataSnapshot(state);
+        const beforeOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
         const edge = flowModule.createEdge(
           { id: pointer.fromId, side: pointer.fromSide },
           { id: toNode.id, side: toSide },
           pointer.style
         );
         state.board.items.unshift(edge);
-        commitHistory(before, "创建连线");
+        commitInsertedItemsPatchHistory(before, [edge], "创建连线", "flow-edge-insert", {
+          beforeOrderIds,
+          afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
+        });
       } else {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
@@ -20101,10 +20231,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           String(dropTarget.id || "").trim() !== String(movedMindNode.id || "").trim()
             ? dropTarget
             : null;
-      if (movedMindNode && nextParent && reparentMindNode(movedMindNode.id, nextParent.id)) {
-          commitItemsPatchHistory(pointer.before, movedIds, "调整思维导图层级", "mind-node-reparent");
+        if (movedMindNode && nextParent && reparentMindNode(movedMindNode.id, nextParent.id)) {
+          commitItemsPatchHistory(
+            pointer.before,
+            Array.isArray(pointer.mindHistoryItemIds) ? pointer.mindHistoryItemIds : movedIds,
+            "调整思维导图层级",
+            "mind-node-reparent"
+          );
         } else {
-          commitItemsPatchHistory(pointer.before, movedIds, "移动元素", "item-transform-batch");
+          commitItemsPatchHistory(
+            pointer.before,
+            Array.isArray(pointer.moveHistoryItemIds) ? pointer.moveHistoryItemIds : movedIds,
+            "移动元素",
+            "item-transform-batch"
+          );
         }
         markSceneGraphDirty({ hitTest: true });
         scheduleRender({
@@ -20129,7 +20269,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         state.board.items.push(...pasted);
         state.board.selectedIds = pasted.map((item) => item.id);
         commitItemsPatchHistory(pointer.before, pasted.map((item) => item.id), "复制元素", "item-insert-batch", {
-          beforeOrderIds: Array.isArray(pointer.before?.items) ? pointer.before.items.map((item) => item.id) : [],
+          beforeOrderIds: Array.isArray(pointer.beforeOrderIds) ? pointer.beforeOrderIds : [],
           afterOrderIds: state.board.items.map((item) => item.id),
         });
       } else {
@@ -20159,7 +20299,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         state.board.items.push(...pasted);
         state.board.selectedIds = pasted.map((item) => item.id);
         commitItemsPatchHistory(pointer.before, pasted.map((item) => item.id), "复制元素", "item-insert-batch", {
-          beforeOrderIds: Array.isArray(pointer.before?.items) ? pointer.before.items.map((item) => item.id) : [],
+          beforeOrderIds: Array.isArray(pointer.beforeOrderIds) ? pointer.beforeOrderIds : [],
           afterOrderIds: state.board.items.map((item) => item.id),
         });
       } else {
@@ -20206,7 +20346,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (!isTinyShape(draft)) {
         state.board.items.push(draft);
         state.board.selectedIds = [draft.id];
-        commitHistory(pointer.before, "创建图形");
+        commitInsertedItemsPatchHistory(pointer.before, [draft], "创建图形", "shape-insert");
       } else {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
@@ -21560,14 +21700,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                 return;
               }
             }
-            const before = takeHistorySnapshot(state);
+            const before = takeItemsHistorySnapshot([selected.id]);
             selected.memoVisible = false;
             selected.memo = "";
-            commitHistory(before, "删除图片标签");
+            commitItemPatchHistory(before, selected.id, selected, "删除图片标签", "image-memo-toggle");
           } else {
-            const before = takeHistorySnapshot(state);
+            const before = takeItemsHistorySnapshot([selected.id]);
             selected.memoVisible = true;
-            commitHistory(before, "显示图片标签");
+            commitItemPatchHistory(before, selected.id, selected, "显示图片标签", "image-memo-toggle");
           }
         }
       }
@@ -21613,14 +21753,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                 return;
               }
             }
-            const before = takeHistorySnapshot(state);
+            const before = takeItemsHistorySnapshot([selected.id]);
             selected.memoVisible = false;
             selected.memo = "";
-            commitHistory(before, "删除文件卡标签");
+            commitItemPatchHistory(before, selected.id, selected, "删除文件卡标签", "file-memo-toggle");
           } else {
-            const before = takeHistorySnapshot(state);
+            const before = takeItemsHistorySnapshot([selected.id]);
             selected.memoVisible = true;
-            commitHistory(before, "显示文件卡标签");
+            commitItemPatchHistory(before, selected.id, selected, "显示文件卡标签", "file-memo-toggle");
           }
         }
       }
@@ -22154,7 +22294,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
@@ -22252,7 +22392,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(state.board.selectedIds);
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
@@ -22358,7 +22498,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("文本已锁定，无法转换");
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([textItem.id]);
     const node = flowModule.createNode({ x: Number(textItem.x || 0), y: Number(textItem.y || 0) });
     const plainText = String(textItem.plainText || textItem.text || "");
     const html = String(textItem.html || "");
@@ -22404,7 +22544,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("节点已锁定，无法转换");
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot([nodeItem.id]);
     const textItem = createTextElement({ x: Number(nodeItem.x || 0), y: Number(nodeItem.y || 0) }, "", "");
     const plainText = String(nodeItem.plainText || nodeItem.text || "");
     const html = String(nodeItem.html || "");
@@ -22461,7 +22601,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const nextStyle = style === "dashed" || style === "arrow" || style === "solid" ? style : "solid";
     const nextArrowDirection = arrowDirection === "backward" ? "backward" : "forward";
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(selectedIds);
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "flowEdge" || !selectedIds.has(item.id)) {
@@ -22490,7 +22630,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds), { includeOrder: true });
     const nextItems = state.board.items.filter((item) => !(item.type === "flowEdge" && selectedIds.has(item.id)));
     if (nextItems.length === state.board.items.length) {
       return false;
@@ -22498,7 +22638,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.board.items = nextItems;
     state.board.selectedIds = state.board.selectedIds.filter((id) => !selectedIds.has(id));
     commitItemsPatchHistory(before, Array.from(selectedIds), "删除连线", "item-delete-batch", {
-      beforeOrderIds: Array.isArray(before.items) ? before.items.map((item) => item.id) : [],
+      beforeOrderIds: Array.isArray(before.orderIds) ? before.orderIds : [],
       afterOrderIds: state.board.items.map((item) => item.id),
     });
     setStatus("已删除连线");
@@ -23926,7 +24066,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-wrap") {
-      const before = takeHistorySnapshot(state);
+      const before = takeItemsHistorySnapshot([item.id]);
       Object.assign(item, updateCodeBlockElement(item, { wrap: item.wrap !== true }, { remeasure: true }));
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
@@ -23934,7 +24074,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-line-numbers") {
-      const before = takeHistorySnapshot(state);
+      const before = takeItemsHistorySnapshot([item.id]);
       Object.assign(
         item,
         updateCodeBlockElement(item, { showLineNumbers: item.showLineNumbers === false }, { remeasure: true })
@@ -23945,7 +24085,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-preview-toggle") {
-      const before = takeHistorySnapshot(state);
+      const before = takeItemsHistorySnapshot([item.id]);
       Object.assign(
         item,
         updateCodeBlockElement(
@@ -23977,7 +24117,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-language" && target instanceof HTMLSelectElement) {
-      const before = takeHistorySnapshot(state);
+      const before = takeItemsHistorySnapshot([item.id]);
       const language = normalizeCodeBlockLanguageTag(target.value || "");
       Object.assign(
         item,
@@ -24002,7 +24142,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     if (action === "code-font-size" && target instanceof HTMLSelectElement) {
-      const before = takeHistorySnapshot(state);
+      const before = takeItemsHistorySnapshot([item.id]);
       Object.assign(item, updateCodeBlockElement(item, { fontSize: Number(target.value) || 16 }, { remeasure: true }));
       clearCodeBlockEditLayoutCache(item.id);
       markCodeBlockOverlayDirty(item.id);
@@ -24896,7 +25036,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function undo() {
-    const entry = undoHistory(state.history, takeHistorySnapshot(state));
+    const pendingEntry = state.history.undo[state.history.undo.length - 1] || null;
+    const currentSnapshot = pendingEntry?.kind === "patch"
+      ? takeHistoryMetadataSnapshot(state)
+      : takeHistorySnapshot(state);
+    const entry = undoHistory(state.history, currentSnapshot);
     if (!entry) {
       return false;
     }
@@ -24910,7 +25054,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function redo() {
-    const entry = redoHistory(state.history, takeHistorySnapshot(state));
+    const pendingEntry = state.history.redo[state.history.redo.length - 1] || null;
+    const currentSnapshot = pendingEntry?.kind === "patch"
+      ? takeHistoryMetadataSnapshot(state)
+      : takeHistorySnapshot(state);
+    const entry = redoHistory(state.history, currentSnapshot);
     if (!entry) {
       return false;
     }
@@ -25047,7 +25195,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(selectedIds);
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
         return item;
@@ -25066,7 +25214,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.selectedIds.length) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(state.board.selectedIds);
     const result = toggleFileCardMarkEntry(state.board.items, state.board.selectedIds);
     if (!result.changed) {
       return false;
@@ -25082,7 +25230,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(selectedIds);
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
         return item;
@@ -25119,7 +25267,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     groupBounds.width = Math.max(1, groupBounds.right - groupBounds.left);
     groupBounds.height = Math.max(1, groupBounds.bottom - groupBounds.top);
 
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(selectedIds);
     state.board.items = state.board.items.map((item) => {
       const entry = boundsList.find((candidate) => candidate.item.id === item.id);
       if (!entry) {
@@ -25173,7 +25321,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     let cursor = minPos;
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(selectedIds);
     state.board.items = state.board.items.map((item) => {
       const entry = sorted.find((candidate) => candidate.item.id === item.id);
       if (!entry) {
@@ -25202,7 +25350,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const groupId = createId("group");
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
         return item;
@@ -25219,7 +25367,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id) || !item.groupId) {
@@ -25243,7 +25391,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selected = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const front = [];
     const back = [];
     state.board.items.forEach((item) => {
@@ -25264,7 +25412,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selected = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const front = [];
     const back = [];
     state.board.items.forEach((item) => {
@@ -25285,7 +25433,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selected = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selected), { includeOrder: true });
     const items = state.board.items.slice();
     let changed = false;
     if (direction === "down") {
@@ -25321,7 +25469,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "shape" || item.shapeType !== "arrow" || !selectedIds.has(item.id)) {
@@ -25361,7 +25509,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const nextDash = !targets.every((item) => Boolean(item.lineDash));
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id)) {
         return item;
@@ -25381,7 +25529,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id)) {
@@ -25411,7 +25559,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const allowed = new Set(["rect", "ellipse", "line", "arrow"]);
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "shape" || !allowed.has(item.shapeType) || !selectedIds.has(item.id)) {
@@ -25440,7 +25588,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const allowed = new Set(["rect", "ellipse"]);
     const selectedIds = new Set(state.board.selectedIds);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
       if (item.type !== "shape" || !allowed.has(item.shapeType) || !selectedIds.has(item.id)) {

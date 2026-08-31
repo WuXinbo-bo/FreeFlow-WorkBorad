@@ -154,6 +154,12 @@ export function createCanvas2DStore({
 
   let cachedBoardSnapshotRevision = -1;
   let cachedBoardSnapshot = null;
+  let boardItemsRevision = 1;
+  let cachedBoardItems = null;
+  let cachedBoardItemsSource = null;
+  let cachedBoardItemsRevision = -1;
+  let cachedBoardSelectedIdsSource = null;
+  let cachedBoardViewSource = null;
   let pendingPersistTimer = 0;
   let pendingPersistRevision = 0;
 
@@ -203,11 +209,29 @@ export function createCanvas2DStore({
   }
 
   function cloneBoardForSnapshot() {
-    if (cachedBoardSnapshotRevision === state.boardRevision && cachedBoardSnapshot) {
+    if (
+      cachedBoardSnapshotRevision === state.boardRevision &&
+      cachedBoardSnapshot &&
+      cachedBoardItemsSource === state.board.items &&
+      cachedBoardSelectedIdsSource === state.board.selectedIds &&
+      cachedBoardViewSource === state.board.view
+    ) {
       return cachedBoardSnapshot;
     }
-    cachedBoardSnapshot = clone(state.board);
+    if (
+      cachedBoardItemsRevision !== boardItemsRevision ||
+      cachedBoardItemsSource !== state.board.items ||
+      !cachedBoardItems
+    ) {
+      cachedBoardItems = clone(state.board.items);
+      cachedBoardItemsSource = state.board.items;
+      cachedBoardItemsRevision = boardItemsRevision;
+    }
+    cachedBoardSnapshot = clone({ ...state.board, items: [] });
+    cachedBoardSnapshot.items = cachedBoardItems;
     cachedBoardSnapshotRevision = state.boardRevision;
+    cachedBoardSelectedIdsSource = state.board.selectedIds;
+    cachedBoardViewSource = state.board.view;
     return cachedBoardSnapshot;
   }
 
@@ -271,7 +295,6 @@ export function createCanvas2DStore({
   }
 
   function emit() {
-    cachedBoardSnapshotRevision = -1;
     const snapshot = getSnapshot();
     if (typeof onStateChange === "function") {
       onStateChange(snapshot);
@@ -314,16 +337,22 @@ export function createCanvas2DStore({
     replaceBoard(board) {
       state.board = normalizeBoard(board);
       state.boardRevision += 1;
+      boardItemsRevision += 1;
       cachedBoardSnapshotRevision = -1;
+      cachedBoardItemsRevision = -1;
     },
     resetView() {
       state.board.view = clone(DEFAULT_VIEW);
       state.boardRevision += 1;
       cachedBoardSnapshotRevision = -1;
     },
-    touchBoard() {
+    touchBoard({ itemsChanged = true } = {}) {
       state.boardRevision += 1;
       cachedBoardSnapshotRevision = -1;
+      if (itemsChanged) {
+        boardItemsRevision += 1;
+        cachedBoardItemsRevision = -1;
+      }
     },
     setTool(tool) {
       state.tool = String(tool || "select").trim().toLowerCase() || "select";

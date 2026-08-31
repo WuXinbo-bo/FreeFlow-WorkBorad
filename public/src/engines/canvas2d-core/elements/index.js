@@ -169,6 +169,19 @@ function resizeFlowNode(element, handle, point) {
   return next;
 }
 
+function isStandaloneStructuredMathText(element = {}) {
+  if (element?.type !== "text") {
+    return false;
+  }
+  const structuredImport = element.structuredImport;
+  if (!structuredImport || typeof structuredImport !== "object") {
+    return false;
+  }
+  const blockRole = String(structuredImport.blockRole || "").trim().toLowerCase();
+  const sourceNodeType = String(structuredImport.sourceNodeType || "").trim().toLowerCase();
+  return blockRole === "math-block" || sourceNodeType === "mathblock";
+}
+
 function resizeText(element, handle, point) {
   const next = resizeRectElement(element, handle, point);
   if (next === element) {
@@ -182,7 +195,9 @@ function resizeText(element, handle, point) {
     { widthHint: next.width }
   );
   next.width = Math.max(80, minSize.width, next.width);
-  next.height = Math.max(40, minSize.height);
+  next.height = isStandaloneStructuredMathText(element)
+    ? Math.max(40, Number(element.height || 0) || 40, minSize.height)
+    : Math.max(40, minSize.height);
   next.y = originalTop;
   return next;
 }
