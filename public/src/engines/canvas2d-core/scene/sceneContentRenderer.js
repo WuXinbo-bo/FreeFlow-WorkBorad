@@ -6,6 +6,13 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
+export function resolveImageCssFilter(brightnessValue = 0, contrastValue = 0) {
+  const brightness = clamp(brightnessValue, -100, 100);
+  const contrast = clamp(contrastValue, -100, 100);
+  if (brightness === 0 && contrast === 0) return "";
+  return `brightness(${1 + brightness / 100}) contrast(${1 + contrast / 100})`;
+}
+
 function setStyle(node, property, value) {
   if (node.style[property] !== value) {
     node.style[property] = value;
@@ -184,9 +191,7 @@ function syncImageNode(node, item, context) {
   const scaleX = item.flipX ? -1 : 1;
   const scaleY = item.flipY ? -1 : 1;
   setStyle(transform, "transform", `rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`);
-  const brightness = 1 + clamp(item.brightness, -100, 100) / 100;
-  const contrast = 1 + clamp(item.contrast, -100, 100) / 100;
-  setStyle(image, "filter", `brightness(${brightness}) contrast(${contrast})`);
+  setStyle(image, "filter", resolveImageCssFilter(item.brightness, item.contrast));
   syncImageAnnotations(annotations, item);
   const showMemo = item.memoVisible && context.imageMemoEditingId !== item.id;
   memo.style.display = showMemo ? "flex" : "none";

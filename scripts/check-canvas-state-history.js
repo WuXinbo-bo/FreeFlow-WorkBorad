@@ -83,6 +83,71 @@ async function checkStoreSnapshotReuse() {
   }
 }
 
+async function checkDeferredPersistence() {
+  const { createCanvas2DStore } = await import("../public/src/engines/canvas2d-core/store.js");
+  const queued = [];
+  const persisted = [];
+  const store = createCanvas2DStore({
+    disableLocalStorage: true,
+    initialBoard: { items: [], selectedIds: [], view: { scale: 1, offsetX: 0, offsetY: 0 } },
+    onPersist: (board) => persisted.push(board),
+    persistDebounceMs: 0,
+    schedulePersistenceWork: (task) => {
+      const record = { task, canceled: false };
+      queued.push(record);
+      return () => { record.canceled = true; };
+    },
+  });
+  const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  try {
+    store.persist();
+    await waitForDebounce();
+    assert.strictEqual(persisted.length, 0, "persistence ran before the idle queue");
+    queued.shift().task();
+    assert.strictEqual(persisted.length, 1, "idle persistence did not flush");
+
+    store.setPersistencePaused(true);
+    store.state.board.view = { scale: 0.8, offsetX: 12, offsetY: 8 };
+    store.touchBoard({ itemsChanged: false });
+    store.persist();
+    await waitForDebounce();
+    assert.strictEqual(queued.length, 0, "active interaction queued persistence work");
+    assert.strictEqual(persisted.length, 1, "active interaction persisted the board");
+
+    store.setPersistencePaused(false);
+    const stale = queued.shift();
+    store.setPersistencePaused(true);
+    assert.strictEqual(stale.canceled, true, "re-entering interaction did not cancel idle persistence");
+    stale.task();
+    assert.strictEqual(persisted.length, 1, "stale persistence ran during repeated interaction");
+    store.setPersistencePaused(false);
+    queued.shift().task();
+    assert.strictEqual(persisted.length, 2, "interaction exit did not recover pending persistence");
+
+    store.setPersistencePaused(true);
+    store.state.board.view = { scale: 0.7, offsetX: 20, offsetY: 16 };
+    store.touchBoard({ itemsChanged: false });
+    store.persist();
+    store.flushPersist({ force: true });
+    assert.strictEqual(persisted.length, 3, "forced lifecycle flush lost pending board state");
+  } finally {
+    store.dispose();
+  }
+}
+
+async function checkDefaultImageFilter() {
+  const { resolveImageCssFilter } = await import(
+    "../public/src/engines/canvas2d-core/scene/sceneContentRenderer.js"
+  );
+  assert.strictEqual(resolveImageCssFilter(0, 0), "", "default image settings created a compositing filter");
+  assert.strictEqual(
+    resolveImageCssFilter(20, -25),
+    "brightness(1.2) contrast(0.75)",
+    "edited image settings lost their visual filter"
+  );
+}
+
 async function checkCompactHistorySignatures() {
   const {
     createHistoryState,
@@ -211,6 +276,8 @@ async function checkPatchRecovery() {
 
 async function main() {
   await checkStoreSnapshotReuse();
+  await checkDeferredPersistence();
+  await checkDefaultImageFilter();
   await checkCompactHistorySignatures();
   await checkPatchRecovery();
   console.log("[check-canvas-state-history] ok");

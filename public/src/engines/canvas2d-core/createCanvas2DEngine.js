@@ -5275,6 +5275,7 @@ let tablePointerSelectionState = {
     }
     interactionPriorityGate.activate(reason);
     scenePresentationCoordinator.beginInteraction(reason);
+    store.setPersistencePaused?.(true);
     presentationSnapshotController.setPaused(true);
     hydrationScheduler.setPaused(true);
   }
@@ -5310,6 +5311,7 @@ let tablePointerSelectionState = {
       interactionRecoveryTimer = 0;
       interactionPriorityGate.release();
       scenePresentationCoordinator.finishInteraction(presentationSessionId);
+      store.setPersistencePaused?.(false);
       presentationSnapshotController.setPaused(false);
       hydrationScheduler.setPaused(false);
       if (emit) {
@@ -25002,6 +25004,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       resizeObserver = null;
     });
     mounted = true;
+    store.setPersistencePaused?.(false);
     clearAlignmentSnap("mount");
     bindEvents();
     state.mode = normalizeMode(getCanvasOfficeEngineMode());
@@ -25049,7 +25052,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelDeferredStoreEmit = null;
     deferredStoreEmitHandle = 0;
     deferredStoreEmitPending = false;
-    store.flushPersist?.();
+    store.flushPersist?.({ force: true });
     cleanupFns.splice(0).forEach((cleanup) => {
       try {
         cleanup();

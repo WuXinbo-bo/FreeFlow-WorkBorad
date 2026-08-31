@@ -5,6 +5,15 @@ import { clone } from "./utils.js";
 
 const DEFAULT_PERSIST_DEBOUNCE_MS = 320;
 
+function scheduleIdlePersistence(callback) {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const id = globalThis.requestIdleCallback(callback, { timeout: 1200 });
+    return () => globalThis.cancelIdleCallback?.(id);
+  }
+  const id = globalThis.setTimeout(callback, 0);
+  return () => globalThis.clearTimeout(id);
+}
+
 /**
  * 从 localStorage 加载 board，包含时间戳同步检查
  * @returns {{board: object, meta: {savedAt?: number, fileTimestamp?: number, checksum?: string}}}
@@ -94,6 +103,8 @@ export function createCanvas2DStore({
   initialBoard,
   onPersist,
   storageKey = DEFAULT_STORAGE_KEY,
+  persistDebounceMs = DEFAULT_PERSIST_DEBOUNCE_MS,
+  schedulePersistenceWork = scheduleIdlePersistence,
 } = {}) {
   const subscribers = new Set();
   const resolvedStorageKey = String(storageKey || DEFAULT_STORAGE_KEY).trim() || DEFAULT_STORAGE_KEY;
@@ -165,15 +176,24 @@ export function createCanvas2DStore({
   const dirtyBoardItemIds = new Set();
   let pendingPersistTimer = 0;
   let pendingPersistRevision = 0;
+  let cancelPendingPersistWork = null;
+  let persistScheduleGeneration = 0;
+  let persistencePaused = false;
 
   function clearScheduledPersist() {
+    persistScheduleGeneration += 1;
     if (pendingPersistTimer) {
       clearTimeout(pendingPersistTimer);
       pendingPersistTimer = 0;
     }
+    cancelPendingPersistWork?.();
+    cancelPendingPersistWork = null;
   }
 
-  function flushPersist() {
+  function flushPersist({ force = true } = {}) {
+    if (persistencePaused && !force) {
+      return false;
+    }
     clearScheduledPersist();
     if (!pendingPersistRevision) {
       return false;
@@ -183,16 +203,30 @@ export function createCanvas2DStore({
     return true;
   }
 
-  function schedulePersist(delay = DEFAULT_PERSIST_DEBOUNCE_MS) {
+  function schedulePendingPersistWork() {
+    if (!pendingPersistRevision || persistencePaused || cancelPendingPersistWork) {
+      return false;
+    }
+    const targetGeneration = ++persistScheduleGeneration;
+    cancelPendingPersistWork = schedulePersistenceWork(() => {
+      cancelPendingPersistWork = null;
+      if (targetGeneration !== persistScheduleGeneration) return;
+      flushPersist({ force: false });
+    }) || null;
+    return true;
+  }
+
+  function schedulePersist(delay = persistDebounceMs) {
     pendingPersistRevision = state.boardRevision;
     clearScheduledPersist();
     pendingPersistTimer = setTimeout(() => {
-      flushPersist();
+      pendingPersistTimer = 0;
+      schedulePendingPersistWork();
     }, Math.max(0, Number(delay) || 0));
   }
 
   function handleLifecyclePersistFlush() {
-    flushPersist();
+    flushPersist({ force: true });
   }
 
   function handleVisibilityChange() {
@@ -342,8 +376,19 @@ export function createCanvas2DStore({
       schedulePersist();
     },
     flushPersist,
+    setPersistencePaused(nextPaused) {
+      const next = Boolean(nextPaused);
+      if (persistencePaused === next) return persistencePaused;
+      persistencePaused = next;
+      if (next) {
+        clearScheduledPersist();
+      } else {
+        schedulePendingPersistWork();
+      }
+      return persistencePaused;
+    },
     dispose() {
-      flushPersist();
+      flushPersist({ force: true });
       if (lifecycleTarget?.removeEventListener) {
         lifecycleTarget.removeEventListener("pagehide", handleLifecyclePersistFlush);
         lifecycleTarget.removeEventListener("beforeunload", handleLifecyclePersistFlush);
