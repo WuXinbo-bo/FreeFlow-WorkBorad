@@ -50,6 +50,17 @@ function supportsLayoutSnapshot(definition = null) {
   return definition?.capabilities?.presentation === "layout-snapshot";
 }
 
+function supportsExactSnapshot(definition = null) {
+  return supportsLayoutSnapshot(definition) || definition?.capabilities?.presentation === "cost-snapshot";
+}
+
+function getExactSnapshotCost(registry, item, definition) {
+  const threshold = Math.max(0, Number(definition?.capabilities?.exactSnapshotCost) || 0);
+  if (!threshold) return null;
+  const cost = Math.max(0, Number(registry?.invoke?.(item, "getPresentationCost")) || 0);
+  return Object.freeze({ cost, threshold });
+}
+
 function getBounds(registry, item) {
   const resolved = registry?.invoke?.(item, "getBounds");
   if (resolved) {
@@ -74,6 +85,7 @@ function resolveRepresentation({
   thresholds,
   previousEntry,
   textReadability,
+  exactSnapshotCost,
 }) {
   if (!visible) {
     return { representation: PRESENTATION_REPRESENTATIONS.CULLED, reason: "outside-visible-scene" };
@@ -82,8 +94,17 @@ function resolveRepresentation({
     return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "interaction-protected" };
   }
   const supportsLayoutPreservation = supportsLayoutSnapshot(definition);
+  const supportsExactPreservation = supportsExactSnapshot(definition);
   if (attentionProtected) {
     return { representation: PRESENTATION_REPRESENTATIONS.LIVE_DETAIL, reason: "attention-protected" };
+  }
+  if (supportsExactPreservation && exactSnapshotCost) {
+    const boundary = previousEntry?.representation === PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT
+      ? exactSnapshotCost.threshold * 0.75
+      : exactSnapshotCost.threshold;
+    if (exactSnapshotCost.cost >= boundary) {
+      return { representation: PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT, reason: "high-content-cost" };
+    }
   }
   if (scale <= thresholds.nativeCompactScale) {
     if (supportsLayoutPreservation) {
@@ -191,6 +212,7 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
       const projectedHeight = height * scale;
       const projectedArea = projectedWidth * projectedHeight;
       const textReadability = getProjectedTextSize(item, definition, scale);
+      const exactSnapshotCost = getExactSnapshotCost(registry, item, definition);
       const decision = resolveRepresentation({
         visible: visible == null || visible.has(id),
         interactionProtected: interactionProtectedIds.has(id),
@@ -203,6 +225,7 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
         thresholds: policy,
         previousEntry: previousPlan?.entries?.[id] || null,
         textReadability,
+        exactSnapshotCost,
       });
       entries[id] = freezeEntry({
         id,
@@ -215,6 +238,7 @@ export function createPresentationQualityPlanner({ registry = null, thresholds =
         projectedFontSize: textReadability
           ? Number(textReadability.projectedFontSizePx.toFixed(2))
           : null,
+        presentationCost: exactSnapshotCost ? exactSnapshotCost.cost : null,
       });
       counts[decision.representation] = (counts[decision.representation] || 0) + 1;
     });

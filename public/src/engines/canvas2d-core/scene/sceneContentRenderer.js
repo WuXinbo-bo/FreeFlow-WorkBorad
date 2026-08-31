@@ -1,6 +1,8 @@
 import { getMemoLayout } from "../memoLayout.js";
+import { PRESENTATION_REPRESENTATIONS } from "../runtime/presentationQualityPlanner.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+const tableContentSignatures = new WeakMap();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
@@ -24,6 +26,56 @@ function syncWorldBox(node, item) {
   setStyle(node, "top", `${Number(item.y || 0)}px`);
   setStyle(node, "width", `${Math.max(1, Number(item.width || 1))}px`);
   setStyle(node, "height", `${Math.max(1, Number(item.height || 1))}px`);
+}
+
+function hashString(hash, value) {
+  const text = String(value ?? "");
+  let next = hash >>> 0;
+  for (let index = 0; index < text.length; index += 1) {
+    next ^= text.charCodeAt(index);
+    next = Math.imul(next, 16777619);
+  }
+  return next >>> 0;
+}
+
+export function getTableContentSignature(item = {}) {
+  const table = item?.table && typeof item.table === "object" ? item.table : null;
+  if (!table) return "0:0:0";
+  const cached = tableContentSignatures.get(table);
+  if (cached) return cached;
+  const rows = Array.isArray(table.rows) ? table.rows : [];
+  let hash = hashString(2166136261, table.title);
+  hash = hashString(hash, table.columns);
+  hash = hashString(hash, table.hasHeader);
+  let cellCount = 0;
+  rows.forEach((row) => {
+    const cells = Array.isArray(row?.cells) ? row.cells : [];
+    hash = hashString(hash, cells.length);
+    cells.forEach((cell) => {
+      cellCount += 1;
+      hash = hashString(hash, cell?.id);
+      hash = hashString(hash, cell?.plainText);
+      hash = hashString(hash, cell?.html);
+      hash = hashString(hash, cell?.header);
+      hash = hashString(hash, cell?.align);
+      hash = hashString(hash, cell?.colSpan);
+      hash = hashString(hash, cell?.rowSpan);
+      if (cell?.richTextDocument) hash = hashString(hash, JSON.stringify(cell.richTextDocument));
+    });
+  });
+  const signature = `${rows.length}:${cellCount}:${hash.toString(36)}`;
+  tableContentSignatures.set(table, signature);
+  return signature;
+}
+
+function getPresentationState(context, itemId) {
+  const activePlan = context.frameContext?.quality?.activePlan || null;
+  return Object.freeze({
+    plannedRepresentation: String(
+      activePlan?.entries?.[String(itemId || "")]?.representation || PRESENTATION_REPRESENTATIONS.LIVE_DETAIL
+    ),
+    generation: Math.max(0, Number(activePlan?.generation) || 0),
+  });
 }
 
 function createSvgElement(tagName, attributes = {}) {
@@ -221,29 +273,48 @@ function syncTableNode(node, item, context) {
     return false;
   }
   syncWorldBox(node, item);
-  const signature = JSON.stringify(item.table || {});
-  if (node.dataset.contentSignature === signature) {
-    return true;
-  }
-  const table = document.createElement("table");
-  table.className = "canvas2d-scene-table";
-  const body = document.createElement("tbody");
-  const rows = Array.isArray(item.table?.rows) ? item.table.rows : [];
-  rows.forEach((row) => {
-    const rowNode = document.createElement("tr");
-    (Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
-      const cellNode = document.createElement(cell?.header ? "th" : "td");
-      cellNode.colSpan = Math.max(1, Number(cell?.colSpan || 1));
-      cellNode.rowSpan = Math.max(1, Number(cell?.rowSpan || 1));
-      cellNode.style.textAlign = ["left", "center", "right"].includes(cell?.align) ? cell.align : "left";
-      cellNode.innerHTML = context.renderTableCellHtml(cell);
-      rowNode.appendChild(cellNode);
+  const contentSignature = getTableContentSignature(item);
+  const presentation = getPresentationState(context, item.id);
+  const snapshotContext = context.resolveSnapshotContext(context.frameContext, item.id);
+  const snapshotSignature = [
+    "table",
+    item.id,
+    Number(item.width || 0),
+    Number(item.height || 0),
+    contentSignature,
+    snapshotContext.qualityKey,
+  ].join("|");
+  const snapshotState = context.snapshotController?.prepare(node, {
+    ...presentation,
+    signature: snapshotSignature,
+  }) || { snapshotActive: false };
+  if (!snapshotState.snapshotActive && node.dataset.contentSignature !== contentSignature) {
+    const table = document.createElement("table");
+    table.className = "canvas2d-scene-table";
+    const body = document.createElement("tbody");
+    const rows = Array.isArray(item.table?.rows) ? item.table.rows : [];
+    rows.forEach((row) => {
+      const rowNode = document.createElement("tr");
+      (Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+        const cellNode = document.createElement(cell?.header ? "th" : "td");
+        cellNode.colSpan = Math.max(1, Number(cell?.colSpan || 1));
+        cellNode.rowSpan = Math.max(1, Number(cell?.rowSpan || 1));
+        cellNode.style.textAlign = ["left", "center", "right"].includes(cell?.align) ? cell.align : "left";
+        cellNode.innerHTML = context.renderTableCellHtml(cell);
+        rowNode.appendChild(cellNode);
+      });
+      body.appendChild(rowNode);
     });
-    body.appendChild(rowNode);
+    table.appendChild(body);
+    node.replaceChildren(table);
+    node.dataset.contentSignature = contentSignature;
+  }
+  context.snapshotController?.commit(node, {
+    ...presentation,
+    signature: snapshotSignature,
+    density: snapshotContext.density,
+    ready: !snapshotState.snapshotActive && node.dataset.contentSignature === contentSignature,
   });
-  table.appendChild(body);
-  node.replaceChildren(table);
-  node.dataset.contentSignature = signature;
   return true;
 }
 
@@ -320,6 +391,8 @@ export function createSceneContentRenderer({
   resolveImageSource = () => "",
   renderTableCellHtml = (cell) => String(cell?.plainText || ""),
   onImageNaturalSize = null,
+  snapshotController = null,
+  resolveSnapshotContext = () => ({ density: 1, qualityKey: "1|default" }),
 } = {}) {
   const nodes = new Map();
   let ownedIds = new Set();
@@ -334,7 +407,10 @@ export function createSceneContentRenderer({
   }
 
   function clear() {
-    nodes.forEach((node) => node.remove?.());
+    nodes.forEach((node) => {
+      snapshotController?.remove(node);
+      node.remove?.();
+    });
     nodes.clear();
     ownedIds = new Set();
   }
@@ -346,6 +422,7 @@ export function createSceneContentRenderer({
     editingId = "",
     editingType = "",
     view = null,
+    frameContext = null,
     canOwnItem = () => true,
   } = {}) {
     if (frozen || !(host instanceof HTMLElement)) {
@@ -363,6 +440,9 @@ export function createSceneContentRenderer({
       resolveImageSource,
       renderTableCellHtml,
       onImageNaturalSize,
+      snapshotController,
+      resolveSnapshotContext,
+      frameContext,
     };
     (Array.isArray(items) ? items : []).forEach((item) => {
       const adapter = adapters.get(item?.type);
@@ -390,6 +470,7 @@ export function createSceneContentRenderer({
     });
     nodes.forEach((node, itemId) => {
       if (!activeIds.has(itemId)) {
+        snapshotController?.remove(node);
         node.remove?.();
         nodes.delete(itemId);
       }

@@ -3182,10 +3182,13 @@ export function createCanvas2DEngine(options = {}) {
   const dragHandlers = [];
   const commandHandlers = new Map();
   const renderer = createRenderer({ customRenderers: elementRenderers });
+  const presentationSnapshotController = createPresentationSnapshotController();
   const sceneContentRenderer = createSceneContentRenderer({
     resolveImageSource,
     renderTableCellHtml: (cell) => renderTableCellStaticHtml(cell),
     onImageNaturalSize: syncImageNaturalSize,
+    snapshotController: presentationSnapshotController,
+    resolveSnapshotContext: getOverlaySnapshotContext,
   });
   const sceneVectorRenderer = createSceneVectorRenderer();
   const elementLifecycleManager = createElementLifecycleManager({ registry: canvasElementRegistry });
@@ -3495,7 +3498,6 @@ let tablePointerSelectionState = {
     timeout: 96,
   });
   const overlayBudgetManager = createOverlayBudgetManager();
-  const presentationSnapshotController = createPresentationSnapshotController();
   const resourceBudgetRuntime = createResourceBudgetRuntime();
   resourceBudgetRuntime.register({
     id: "background-pattern",
@@ -5104,6 +5106,7 @@ let tablePointerSelectionState = {
           editingId: state.editingId,
           editingType: state.editingType,
           view: frameView,
+          frameContext,
           canOwnItem: (item) => !renderer.hasRuntimeElementRenderer(item),
         });
     const previousStats = refs.canvas?.__ffRenderStats || null;

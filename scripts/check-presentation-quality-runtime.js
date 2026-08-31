@@ -41,6 +41,19 @@ async function main() {
     type: "image",
     capabilities: { render: "canvas", resource: "image", cache: "live" },
   });
+  registry.register({
+    ...baseDefinition,
+    type: "table",
+    getPresentationCost: (item) => item.table.rows.reduce((total, row) => total + row.cells.length, 0),
+    capabilities: {
+      render: "canvas-dom",
+      cache: "live",
+      presentation: "cost-snapshot",
+      exactSnapshotCost: 64,
+      minimumReadableTextPx: 3.5,
+      nominalFontSizePx: 14,
+    },
+  });
 
   const items = [
     { id: "text-small", type: "text", x: 0, y: 0, width: 100, height: 20, fontSize: 30 },
@@ -48,6 +61,15 @@ async function main() {
     { id: "text-tiny", type: "text", x: 0, y: 260, width: 40, height: 20, fontSize: 30 },
     { id: "image-large", type: "image", x: 120, y: 0, width: 400, height: 300 },
     { id: "outside", type: "text", x: 1000, y: 1000, width: 200, height: 80 },
+    {
+      id: "table-large",
+      type: "table",
+      x: 0,
+      y: 1100,
+      width: 800,
+      height: 600,
+      table: { rows: Array.from({ length: 8 }, () => ({ cells: Array.from({ length: 8 }, () => ({})) })) },
+    },
   ];
   const planner = createPresentationQualityPlanner({ registry });
   const plan = planner.createPlan({
@@ -90,6 +112,31 @@ async function main() {
     plan.entries.outside.representation,
     PRESENTATION_REPRESENTATIONS.CULLED,
     "offscreen element was not culled"
+  );
+
+  const largeTablePlan = planner.createPlan({
+    items,
+    visibleIds: ["table-large"],
+    view: { scale: 1 },
+    revisionKey: "large-table",
+  });
+  assert.strictEqual(
+    largeTablePlan.entries["table-large"].representation,
+    PRESENTATION_REPRESENTATIONS.EXACT_SNAPSHOT,
+    "high-cost table did not use an exact snapshot"
+  );
+  assert.strictEqual(largeTablePlan.entries["table-large"].presentationCost, 64);
+  const selectedTablePlan = planner.createPlan({
+    items,
+    visibleIds: ["table-large"],
+    selectedIds: ["table-large"],
+    view: { scale: 1 },
+    revisionKey: "selected-table",
+  });
+  assert.strictEqual(
+    selectedTablePlan.entries["table-large"].representation,
+    PRESENTATION_REPRESENTATIONS.LIVE_DETAIL,
+    "selected high-cost table did not recover live detail"
   );
 
   const compactDomPlan = planner.createPlan({

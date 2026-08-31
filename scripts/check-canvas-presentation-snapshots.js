@@ -3,6 +3,36 @@ const { chromium } = require("playwright");
 const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
 const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
 
+function createLargeTable(now) {
+  const rows = Array.from({ length: 8 }, (_, rowIndex) => ({
+    rowIndex,
+    cells: Array.from({ length: 8 }, (_, columnIndex) => ({
+      id: `snapshot-table-${rowIndex}-${columnIndex}`,
+      plainText: rowIndex === 0 ? `Column ${columnIndex + 1}` : `R${rowIndex + 1} C${columnIndex + 1}`,
+      html: rowIndex === 0
+        ? `<p><strong>Column ${columnIndex + 1}</strong></p>`
+        : `<p>R${rowIndex + 1} C${columnIndex + 1}</p>`,
+      header: rowIndex === 0,
+      colSpan: 1,
+      rowSpan: 1,
+    })),
+  }));
+  return {
+    id: "snapshot-table",
+    type: "table",
+    x: 1000,
+    y: 650,
+    width: 960,
+    height: 640,
+    title: "Snapshot table",
+    columns: 8,
+    rows: 8,
+    table: { title: "Snapshot table", columns: 8, rows, hasHeader: true },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function createBoard() {
   const now = Date.now();
   return {
@@ -53,6 +83,7 @@ function createBoard() {
         createdAt: now,
         updatedAt: now,
       },
+      createLargeTable(now),
     ],
     selectedIds: [],
     view: { scale: 0.2, offsetX: 260, offsetY: 180 },
@@ -104,6 +135,34 @@ async function collect(page) {
   });
 }
 
+async function collectTable(page) {
+  return page.evaluate(() => {
+    const node = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+    return {
+      selected: window.__canvas2dEngine.getSnapshot().board.selectedIds.includes("snapshot-table"),
+      editingType: window.__canvas2dEngine.getSnapshot().editingType || "",
+      planned: node?.dataset.plannedRepresentation || "",
+      active: node?.dataset.activeRepresentation || "",
+      snapshotCount: node?.querySelectorAll(".canvas2d-presentation-snapshot").length || 0,
+      tableCount: node?.querySelectorAll(".canvas2d-scene-table").length || 0,
+      cellCount: node?.querySelectorAll("th, td").length || 0,
+      text: node?.textContent || "",
+      display: node ? getComputedStyle(node).display : "missing",
+      sameNode: node === window.__snapshotTableNode,
+    };
+  });
+}
+
+async function waitForTableRepresentation(page, representation) {
+  await page.waitForFunction((target) => {
+    const node = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+    if (!node || node.dataset.activeRepresentation !== target) return false;
+    return target === "exact-snapshot"
+      ? node.querySelectorAll(".canvas2d-presentation-snapshot").length === 1 && !node.querySelector("table")
+      : node.querySelectorAll("th, td").length === 64 && !node.querySelector(".canvas2d-presentation-snapshot");
+  }, representation, { timeout: 15_000 });
+}
+
 async function waitForFrozenDetails(page) {
   await page.waitForFunction(() => {
     const ids = ["snapshot-text", "snapshot-math", "snapshot-code"];
@@ -138,7 +197,12 @@ async function main() {
     ` });
     await page.evaluate(() => window.__canvas2dEngine.resize({ immediate: true, reason: "frozen-detail-check" }));
     await waitForFrozenDetails(page);
+    await waitForTableRepresentation(page, "exact-snapshot");
+    await page.evaluate(() => {
+      window.__snapshotTableNode = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+    });
     const initial = await collect(page);
+    const initialTable = await collectTable(page);
     await page.screenshot({ path: "tmp/presentation-snapshots.png", fullPage: false });
     Object.entries(initial.entries).forEach(([id, entry]) => {
       assert(entry.planned === "frozen-detail", `${id} was not planned as frozen detail`, initial);
@@ -147,6 +211,8 @@ async function main() {
       assert(String(entry.text || "").trim(), `${id} frozen detail was blank`, initial);
     });
     assert(initial.entries["snapshot-code"].lineBands >= 2, "code frozen detail collapsed its lines", initial);
+    assert(initialTable.planned === "exact-snapshot", "large table was not planned as an exact snapshot", initialTable);
+    assert(initialTable.snapshotCount === 1 && initialTable.cellCount === 0, "large table retained live cell DOM", initialTable);
 
     const expectedTextGeometry = await page.evaluate(() => {
       const engine = window.__canvas2dEngine;
@@ -217,8 +283,62 @@ async function main() {
       cycles.push({ detail: detail.entries["snapshot-text"], recovered: recovered.entries["snapshot-text"] });
     }
 
+    const tableCycles = [];
+    for (let index = 0; index < 3; index += 1) {
+      const box = await page.locator('.canvas2d-scene-table-item[data-id="snapshot-table"]').boundingBox();
+      assert(box, "snapshot table was not measurable", await collectTable(page));
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await waitForTableRepresentation(page, "live-detail");
+      const live = await collectTable(page);
+      assert(live.selected && live.cellCount === 64, "table selection did not restore live cells", live);
+      assert(live.sameNode, "table selection replaced the scene node", live);
+
+      await page.mouse.click(1320, 860);
+      await waitForTableRepresentation(page, "exact-snapshot");
+      const snapshot = await collectTable(page);
+      assert(!snapshot.selected && snapshot.snapshotCount === 1, "table deselection did not restore its snapshot", snapshot);
+      assert(snapshot.sameNode, "table snapshot recovery replaced the scene node", snapshot);
+      tableCycles.push({ live, snapshot });
+    }
+
+    const tableBox = await page.locator('.canvas2d-scene-table-item[data-id="snapshot-table"]').boundingBox();
+    await page.mouse.dblclick(tableBox.x + tableBox.width / 2, tableBox.y + tableBox.height / 2);
+    await page.waitForFunction(() => {
+      const editor = document.querySelector("#canvas-table-editor");
+      const node = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
+      return getComputedStyle(editor).display !== "none" && getComputedStyle(node).display === "none";
+    });
+    const editing = await collectTable(page);
+    assert(editing.editingType === "table" && editing.display === "none", "table did not enter live edit mode", editing);
+    await page.locator('#canvas-table-toolbar [data-action="table-done"]').click();
+    await waitForTableRepresentation(page, "live-detail");
+    const edited = await collectTable(page);
+    assert(edited.selected && edited.cellCount === 64, "table edit exit did not recover live detail", edited);
+    await page.mouse.click(1320, 860);
+    await waitForTableRepresentation(page, "exact-snapshot");
+
+    const beforeWheel = await collectTable(page);
+    const canvas = page.locator("#canvas-office-canvas");
+    const canvasBox = await canvas.boundingBox();
+    await page.keyboard.down("Control");
+    for (let index = 0; index < 12; index += 1) {
+      await page.mouse.move(canvasBox.x + 700, canvasBox.y + 460);
+      await page.mouse.wheel(0, index % 2 === 0 ? -3 : 3);
+    }
+    await page.keyboard.up("Control");
+    const duringWheel = await collectTable(page);
+    assert(duringWheel.sameNode, "continuous viewport interaction replaced the table node", duringWheel);
+    assert(duringWheel.active === beforeWheel.active, "continuous viewport interaction changed table representation", {
+      beforeWheel,
+      duringWheel,
+    });
+    await page.waitForFunction(() => document.querySelector("#canvas2d-scene-root")?.dataset.presentationPhase === "steady");
+    await waitForTableRepresentation(page, "exact-snapshot");
+    const wheelRecovered = await collectTable(page);
+    assert(wheelRecovered.sameNode && wheelRecovered.snapshotCount === 1, "table snapshot did not recover after viewport interaction", wheelRecovered);
+
     assert(errors.length === 0, "frozen presentation browser check produced page errors", errors);
-    console.log(JSON.stringify({ ok: true, initial, revised, cycles }, null, 2));
+    console.log(JSON.stringify({ ok: true, initial, initialTable, revised, cycles, tableCycles, edited, wheelRecovered }, null, 2));
   } catch (error) {
     let state = null;
     try {

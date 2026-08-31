@@ -211,6 +211,7 @@ function createDefinition(type, options = {}) {
     getBounds: options.getBounds || getRectBounds,
     translate: options.translate || translateRectElement,
     resize: options.resize || resizeRectElement,
+    getPresentationCost: options.getPresentationCost,
     capabilities: {
       render: "canvas",
       lod: "full",
@@ -258,7 +259,9 @@ function createBuiltinElementRegistry() {
     createDefinition("table", {
       normalize: normalizeTableElement,
       resize: withMinSize(resizeRectElement, TABLE_MIN_WIDTH, TABLE_MIN_HEIGHT),
-      capabilities: { render: "canvas-dom", lod: "table", editor: "table", overlay: "table-editor", cache: "live", minimumReadableTextPx: 3.5, nominalFontSizePx: 14 },
+      getPresentationCost: (item) => (Array.isArray(item?.table?.rows) ? item.table.rows : [])
+        .reduce((total, row) => total + (Array.isArray(row?.cells) ? row.cells.length : 0), 0),
+      capabilities: { render: "canvas-dom", lod: "table", editor: "table", overlay: "table-editor", cache: "live", presentation: "cost-snapshot", exactSnapshotCost: 64, minimumReadableTextPx: 3.5, nominalFontSizePx: 14 },
     }),
     createDefinition("mathBlock", {
       aliases: ["math"],
