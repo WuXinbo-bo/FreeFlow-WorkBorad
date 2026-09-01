@@ -7,6 +7,12 @@ async function main() {
   const { createCanvasUiRuntime, CANVAS_UI_HOST_KINDS } = await import(
     "../public/src/engines/canvas2d-core/uiRuntime/canvasUiRuntime.js"
   );
+  const { getCanvasShortcutFromEvent, normalizeCanvasShortcut } = await import(
+    "../public/src/engines/canvas2d-core/uiRuntime/commandRegistry.js"
+  );
+  const { buildSelectionInspectorModel } = await import(
+    "../public/src/engines/canvas2d-core/uiRuntime/selectionInspectorModel.js"
+  );
   const { createCanvas2DReactBridge } = await import(
     "../public/src/engines/canvas2d-core/reactBridge.js"
   );
@@ -26,6 +32,13 @@ async function main() {
   assert.strictEqual(runtime.commands.canRun("selection.delete", { selectedCount: 2 }), true);
   runtime.commands.run("selection.delete", { selectedCount: 2 }, "keyboard");
   assert.deepStrictEqual(calls, ["2:keyboard"]);
+  assert.strictEqual(normalizeCanvasShortcut("command+shift+z"), "Ctrl+Shift+Z");
+  assert.strictEqual(
+    getCanvasShortcutFromEvent({ key: "Tab", shiftKey: true, ctrlKey: false, metaKey: false, altKey: false }),
+    "Shift+Tab"
+  );
+  assert.strictEqual(runtime.commands.resolveShortcut("Delete", { selectedCount: 2 })?.id, "selection.delete");
+  assert.strictEqual(runtime.commands.resolveShortcut("Delete", { selectedCount: 0 }), null);
   assert.strictEqual(runtime.commands.list({ selectedCount: 0 })[0].enabled, false);
   assert.throws(() => runtime.commands.register({ id: "selection.delete", execute() {} }), /already registered/);
 
@@ -46,6 +59,17 @@ async function main() {
   assert.strictEqual(snapshot.input.pinchZoom, false);
   assert.strictEqual(snapshot.input.pen, false);
   assert.deepStrictEqual(snapshot.input.reserved, ["touch", "pinchZoom", "pen"]);
+
+  const inspector = buildSelectionInspectorModel([
+    { id: "shape-a", type: "shape", x: 10, y: 20, width: 100, height: 60 },
+    { id: "text-b", type: "text", x: 210, y: 80, width: 140, height: 40, locked: true },
+  ], { getElementUx: (item) => runtime.getElementUx(item) });
+  assert.strictEqual(inspector.count, 2);
+  assert.deepStrictEqual(inspector.types, ["shape", "text"]);
+  assert.strictEqual(inspector.lockedState, "mixed");
+  assert.strictEqual(inspector.geometry.x, 10);
+  assert.strictEqual(inspector.geometry.width, 340);
+  assert.strictEqual(inspector.geometry.xEditable, false);
 
   const host = {};
   const unregisterHost = runtime.registerHost("toolbar", host);

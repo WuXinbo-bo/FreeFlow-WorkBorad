@@ -560,6 +560,42 @@ async function rightClickCanvasItem(page, itemId) {
   await page.waitForTimeout(120);
 }
 
+async function rightClickBlankCanvas(page) {
+  const point = await page.evaluate((canvasSelector) => {
+    const canvas = document.querySelector(canvasSelector);
+    const snapshot = window.__canvas2dEngine?.getSnapshot?.() || null;
+    if (!(canvas instanceof HTMLCanvasElement) || !snapshot?.board) return null;
+    const rect = canvas.getBoundingClientRect();
+    const view = snapshot.board.view || { scale: 1, offsetX: 0, offsetY: 0 };
+    const scale = Math.max(0.01, Number(view.scale || 1) || 1);
+    const candidates = [
+      [0.18, 0.82],
+      [0.5, 0.82],
+      [0.82, 0.5],
+      [0.18, 0.5],
+    ];
+    for (const [ratioX, ratioY] of candidates) {
+      const x = rect.left + rect.width * ratioX;
+      const y = rect.top + rect.height * ratioY;
+      if (document.elementFromPoint(x, y) !== canvas) continue;
+      const sceneX = (x - rect.left - Number(view.offsetX || 0)) / scale;
+      const sceneY = (y - rect.top - Number(view.offsetY || 0)) / scale;
+      const hitsItem = snapshot.board.items.some((item) => {
+        const left = Number(item?.x || 0) - 24;
+        const top = Number(item?.y || 0) - 24;
+        const right = Number(item?.x || 0) + Number(item?.width || 0) + 24;
+        const bottom = Number(item?.y || 0) + Number(item?.height || 0) + 24;
+        return sceneX >= left && sceneX <= right && sceneY >= top && sceneY <= bottom;
+      });
+      if (!hitsItem) return { x, y };
+    }
+    return null;
+  }, MAIN_CANVAS_SELECTOR);
+  assert(point, "could not resolve an unobstructed blank canvas point");
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.waitForTimeout(120);
+}
+
 async function clickContextMenuAction(page, action) {
   const menuItem = page.locator(`#canvas2d-context-menu [data-action="${action}"]`).first();
   await menuItem.waitFor({ state: "visible", timeout: 2000 });
@@ -2681,9 +2717,7 @@ async function runElementContextMenuClipboardCheck(browser) {
     });
     await codeSession.page.waitForTimeout(120);
     await clickContextMenuAction(codeSession.page, "copy");
-    const canvasRect = await codeSession.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
-    await codeSession.page.mouse.click(canvasRect.x + canvasRect.width - 120, canvasRect.y + canvasRect.height - 120, { button: "right" });
-    await codeSession.page.waitForTimeout(120);
+    await rightClickBlankCanvas(codeSession.page);
     await clickContextMenuAction(codeSession.page, "paste");
     const clipboardSnapshot = await codeSession.page.evaluate(() => navigator.clipboard.__snapshot());
     const items = await codeSession.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);

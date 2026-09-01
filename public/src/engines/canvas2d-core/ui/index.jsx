@@ -1526,6 +1526,147 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
   return portalHost instanceof HTMLElement ? createPortal(previewElement, portalHost) : previewElement;
 }
 
+function SelectionInspector({ model = null, bridge = null, hidden = false }) {
+  const geometry = model?.geometry || null;
+  const geometrySignature = geometry
+    ? [geometry.x, geometry.y, geometry.width, geometry.height].join("|")
+    : "";
+  const [draft, setDraft] = useState(() => ({
+    x: geometry?.x ?? "",
+    y: geometry?.y ?? "",
+    width: geometry?.width ?? "",
+    height: geometry?.height ?? "",
+  }));
+
+  useEffect(() => {
+    setDraft({
+      x: geometry?.x ?? "",
+      y: geometry?.y ?? "",
+      width: geometry?.width ?? "",
+      height: geometry?.height ?? "",
+    });
+  }, [geometrySignature]);
+
+  if (hidden || !model?.visible || !model?.count) {
+    return null;
+  }
+
+  const commitGeometry = (field, rawValue = draft[field]) => {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) {
+      setDraft((current) => ({ ...current, [field]: geometry?.[field] ?? "" }));
+      return false;
+    }
+    return bridge?.runCommand?.("selection.set-geometry", { [field]: value }) ?? false;
+  };
+  const runSelectCommand = (event) => {
+    const command = String(event.target.value || "").trim();
+    if (command) bridge?.runCommand?.(command);
+    event.target.value = "";
+  };
+  const lockSelection = model.lockedState !== "on";
+  const groupCommand = model.groupedState === "on" ? "selection.ungroup" : "selection.group";
+
+  return (
+    <section
+      className="canvas2d-selection-inspector canvas-chrome-surface"
+      data-canvas-inspector-host="true"
+      data-canvas-ui-focus-scope="inspector"
+      data-selection-count={model.count}
+      data-selection-types={model.types.join(",")}
+      data-locked-state={model.lockedState}
+      aria-label="选中元素属性"
+      tabIndex={-1}
+    >
+      <div className="canvas2d-selection-inspector-head">
+        <strong>{model.title}</strong>
+        <span title={model.typeLabels.join("、")}>{model.typeLabels.join(" / ")}</span>
+      </div>
+      {geometry ? (
+        <div className="canvas2d-selection-inspector-geometry">
+          {["x", "y", "width", "height"].map((field) => {
+            const label = field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase();
+            const editable = geometry[`${field}Editable`] !== false;
+            return (
+              <label key={field}>
+                <span>{label}</span>
+                <input
+                  type="number"
+                  step="1"
+                  value={draft[field]}
+                  data-inspector-field={field}
+                  disabled={!editable}
+                  onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))}
+                  onBlur={(event) => commitGeometry(field, event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitGeometry(field, event.currentTarget.value);
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      bridge?.focusCanvasSurface?.();
+                    }
+                  }}
+                />
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      <div className="canvas2d-selection-inspector-actions">
+        <button
+          type="button"
+          data-inspector-action="lock"
+          aria-pressed={model.lockedState === "on"}
+          title={lockSelection ? "锁定选中元素" : "解锁选中元素"}
+          onClick={() => bridge?.runCommand?.("selection.set-locked", lockSelection)}
+        >
+          {lockSelection ? "锁定" : "解锁"}
+        </button>
+        <button
+          type="button"
+          data-inspector-action="group"
+          disabled={groupCommand === "selection.group" ? !model.actions.canGroup : !model.actions.canUngroup}
+          title={groupCommand === "selection.group" ? "组合选中元素" : "取消组合"}
+          onClick={() => bridge?.runCommand?.(groupCommand)}
+        >
+          {groupCommand === "selection.group" ? "组合" : "解组"}
+        </button>
+        <select defaultValue="" aria-label="对齐与分布" onChange={runSelectCommand} disabled={!model.actions.canAlign}>
+          <option value="" disabled>对齐</option>
+          <option value="selection.align-left">左对齐</option>
+          <option value="selection.align-center">水平居中</option>
+          <option value="selection.align-right">右对齐</option>
+          <option value="selection.align-top">上对齐</option>
+          <option value="selection.align-middle">垂直居中</option>
+          <option value="selection.align-bottom">下对齐</option>
+          {model.actions.canDistribute ? <option value="selection.distribute-horizontal">水平等距</option> : null}
+          {model.actions.canDistribute ? <option value="selection.distribute-vertical">垂直等距</option> : null}
+        </select>
+        <select defaultValue="" aria-label="图层顺序" onChange={runSelectCommand} disabled={model.lockedState === "on"}>
+          <option value="" disabled>图层</option>
+          <option value="selection.layer-front">置于顶层</option>
+          <option value="selection.layer-up">上移一层</option>
+          <option value="selection.layer-down">下移一层</option>
+          <option value="selection.layer-back">置于底层</option>
+        </select>
+        <button
+          type="button"
+          className="is-destructive"
+          data-inspector-action="delete"
+          disabled={!model.actions.canDelete}
+          title="删除选中元素"
+          aria-label="删除选中元素"
+          onClick={() => bridge?.runCommand?.("selection.delete")}
+        >
+          ×
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function formatExportRecordTime(value) {
   const numeric = Number(value || 0);
   if (!numeric) {
@@ -1860,6 +2001,8 @@ function Canvas2DControls({ engine }) {
     () => (Array.isArray(snapshot?.fileCardPreviewRequests) ? snapshot.fileCardPreviewRequests : []),
     [snapshot?.fileCardPreviewRequests]
   );
+  const selectionInspector = bridge.getSelectionInspectorSnapshot?.() || null;
+  const selectionInspectorHidden = Boolean(snapshot?.editingId || fileCardPreviewRequests.length);
   const navigatorView = useMemo(
     () => bridge.getCanvasNavigatorViewModel?.() || snapshot?.board?.navigator || { entries: [], collapsed: false },
     [bridge, snapshot]
@@ -1993,33 +2136,22 @@ function Canvas2DControls({ engine }) {
     };
   }, [searchOpen, exportHistoryOpen, uiViewport.width, uiViewport.height]);
 
-  useEffect(() => {
-    function onWindowKeyDown(event) {
-      const key = String(event.key || "").toLowerCase();
-      const target = event.target;
-      const isTypingTarget =
-        target instanceof HTMLElement &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable ||
-          Boolean(target.closest("input, textarea, [contenteditable='true']")));
-
-      if ((event.ctrlKey || event.metaKey) && key === "k") {
-        if (!searchOpen && isTypingTarget) {
-          return;
-        }
-        event.preventDefault();
-        setSearchOpen((value) => !value);
-        if (searchOpen) {
-          setSearchQuery("");
-          setSearchActiveIndex(0);
-        }
+  useEffect(() => bridge.registerCommand?.({
+    id: "ui.search",
+    label: "搜索画布",
+    category: "ui",
+    scope: "global",
+    shortcuts: ["Ctrl+K"],
+    execute: () => {
+      const nextOpen = !searchOpen;
+      setSearchOpen(nextOpen);
+      if (!nextOpen) {
+        setSearchQuery("");
+        setSearchActiveIndex(0);
       }
-    }
-
-    window.addEventListener("keydown", onWindowKeyDown, true);
-    return () => window.removeEventListener("keydown", onWindowKeyDown, true);
-  }, [searchOpen]);
+      return true;
+    },
+  }), [bridge, searchOpen]);
 
   const commitTitleRename = async () => {
     const nextName = String(titleDraft || "").trim();
@@ -3135,6 +3267,14 @@ function Canvas2DControls({ engine }) {
           bridge={bridge}
         />
       ))}
+
+      <div className="canvas2d-selection-inspector-dock">
+        <SelectionInspector
+          model={selectionInspector}
+          bridge={bridge}
+          hidden={selectionInspectorHidden}
+        />
+      </div>
 
       <div className="canvas2d-engine-corner canvas2d-engine-corner-bottom-right" aria-label="工作白板缩放区">
         <div className="canvas2d-floating-card canvas2d-floating-card-zoom canvas-chrome-surface canvas-chrome-viewport-dock">

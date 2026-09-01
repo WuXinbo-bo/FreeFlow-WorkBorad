@@ -32,6 +32,7 @@ import {
 import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds } from "./elements/fileCard.js";
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
+import { isLinearShape } from "./elements/shapes.js";
 import {
   createMindNodeElement,
   createMindSummaryElement,
@@ -181,6 +182,7 @@ import {
 } from "./perf/canvasRuntimeStats.js";
 import { createTransientMinimap } from "./ui/createTransientMinimap.js";
 import { createCanvasUiRuntime } from "./uiRuntime/canvasUiRuntime.js";
+import { buildSelectionInspectorModel } from "./uiRuntime/selectionInspectorModel.js";
 import { createDocumentPreviewRuntime } from "./documentPreview/documentPreviewRuntime.js";
 import {
   computeMultiSelectionResizedBounds,
@@ -3696,8 +3698,16 @@ let tablePointerSelectionState = {
   const richTextSession = createRichTextEditingSession({
     editorElement: refs.richEditor,
     onSelectionChange: () => syncRichTextToolbar(),
-    onRequestCommit: () => commitRichEdit(),
-    onRequestCancel: () => cancelRichEdit(),
+    onRequestCommit: () => {
+      const committed = commitRichEdit();
+      if (committed) focusCanvasSurface();
+      return committed;
+    },
+    onRequestCancel: () => {
+      const cancelled = cancelRichEdit();
+      if (cancelled) focusCanvasSurface();
+      return cancelled;
+    },
     onRequestExternalLink: () => runRichLinkCommand(),
   });
   const tableCellRichTextSession = createRichTextEditingSession({
@@ -4624,6 +4634,101 @@ let tablePointerSelectionState = {
       bounds,
       items: new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)])),
     };
+  }
+
+  function getSelectionInspectorSnapshot() {
+    return buildSelectionInspectorModel(getSelectedItemsFast(), {
+      getElementUx: (item) => canvasUiRuntime.getElementUx(item),
+    });
+  }
+
+  function setSelectionInspectorGeometry(patch = {}) {
+    const selectedItems = getSelectedItemsFast();
+    if (
+      !selectedItems.length ||
+      selectedItems.some((item) => isLockedItem(item) || item.type === "flowEdge" || item.type === "mindRelationship")
+    ) {
+      return false;
+    }
+    const baseBounds = getMultiSelectionBounds(selectedItems);
+    if (!baseBounds) {
+      return false;
+    }
+    const readPatchValue = (key, fallback) => {
+      if (!Object.prototype.hasOwnProperty.call(patch || {}, key)) {
+        return fallback;
+      }
+      const value = Number(patch[key]);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const targetLeft = readPatchValue("x", baseBounds.left);
+    const targetTop = readPatchValue("y", baseBounds.top);
+    const targetWidth = Math.max(1, readPatchValue("width", baseBounds.width));
+    const targetHeight = Math.max(1, readPatchValue("height", baseBounds.height));
+    const selectedIds = selectedItems.map((item) => item.id);
+    const before = takeItemsHistorySnapshot(selectedIds);
+
+    if (selectedItems.length === 1) {
+      const baseItem = selectedItems[0];
+      let nextItem = moveElement(baseItem, targetLeft - baseBounds.left, targetTop - baseBounds.top);
+      const nextBounds = getElementBounds(nextItem);
+      if (
+        Math.abs(targetWidth - baseBounds.width) > 0.001 ||
+        Math.abs(targetHeight - baseBounds.height) > 0.001
+      ) {
+        nextItem = resizeElement(nextItem, "se", {
+          x: nextBounds.left + targetWidth,
+          y: nextBounds.top + targetHeight,
+        });
+      }
+      state.board.items = state.board.items.map((item) => item.id === baseItem.id ? nextItem : item);
+    } else {
+      const baseSelection = createMultiSelectionPointerBase(selectedItems);
+      applyMultiSelectionResize(baseSelection, {
+        left: targetLeft,
+        top: baseBounds.top,
+        right: targetLeft + targetWidth,
+        bottom: baseBounds.bottom,
+        width: targetWidth,
+        height: baseBounds.height,
+      });
+      const deltaY = targetTop - baseBounds.top;
+      if (Math.abs(deltaY) > 0.001) {
+        const selectedIdSet = new Set(selectedIds);
+        state.board.items = state.board.items.map((item) =>
+          selectedIdSet.has(item.id) ? moveElement(item, 0, deltaY) : item
+        );
+      }
+    }
+
+    const changed = commitItemsPatchHistory(before, selectedIds, "更新元素属性", "item-inspector-batch");
+    if (changed) {
+      setStatus("已更新元素属性");
+    }
+    return changed;
+  }
+
+  function setSelectionLocked(locked) {
+    const selectedItems = getSelectedItemsFast();
+    if (!selectedItems.length) {
+      return false;
+    }
+    const nextLocked = locked === true;
+    const changedItems = selectedItems.filter((item) => (item.locked === true) !== nextLocked);
+    if (!changedItems.length) {
+      return false;
+    }
+    const changedIds = changedItems.map((item) => item.id);
+    const changedIdSet = new Set(changedIds);
+    const before = takeItemsHistorySnapshot(changedIds);
+    state.board.items = state.board.items.map((item) =>
+      changedIdSet.has(item.id) ? { ...item, locked: nextLocked } : item
+    );
+    const changed = commitItemsPatchHistory(before, changedIds, nextLocked ? "锁定元素" : "解锁元素", "item-lock-batch");
+    if (changed) {
+      setStatus(nextLocked ? "已锁定元素" : "已解锁元素");
+    }
+    return changed;
   }
 
   function constrainMultiSelectionBoundsToWidthOnly(baseBounds, nextBounds, handle) {
@@ -7462,6 +7567,7 @@ let tablePointerSelectionState = {
       try {
         const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
         loadMetrics.mark("deserialize-board");
+        clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
         state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
         loadMetrics.mark("repair-board");
         state.board.selectedIds = [];
@@ -7620,6 +7726,7 @@ let tablePointerSelectionState = {
     const folderPath = resolveBoardFolderPath(settingsPath) || settingsPath;
     const nextPath = await resolveUniqueBoardFilePath(folderPath);
     suppressDirtyTracking = true;
+    clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
     state.board = createEmptyBoard();
     state.board.selectedIds = [];
     state.history = createHistoryState();
@@ -16994,6 +17101,47 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return index >= 0 ? getFileCardPreviewRequests()[index] || null : null;
   }
 
+  function disposeFileCardPreviewRequest(request = null, { restoreMemo = true } = {}) {
+    if (!request) return false;
+    const requestId = String(request.id || "").trim();
+    const itemId = String(request.itemId || "").trim();
+    if (restoreMemo && request.restoreMemoVisible && itemId) {
+      const item = sceneRegistry.getItemById(itemId, "fileCard");
+      if (item) item.memoVisible = true;
+    }
+    hydrationScheduler.remove(`file-preview-read:${requestId}`);
+    documentPreviewRuntime.closeSession(String(request.previewSessionId || requestId).trim());
+    return true;
+  }
+
+  function clearFileCardPreviewRequestsByItemIds(itemIds = [], { restoreMemo = false, emit = false } = {}) {
+    const clearAll = itemIds == null;
+    const targets = new Set(
+      (clearAll ? [] : (Array.isArray(itemIds) ? itemIds : [itemIds]))
+        .map((itemId) => String(itemId || "").trim())
+        .filter(Boolean)
+    );
+    const requests = getFileCardPreviewRequests();
+    if (!requests.length || (!clearAll && !targets.size)) return false;
+    const removed = [];
+    const retained = [];
+    requests.forEach((request) => {
+      if (clearAll || targets.has(String(request?.itemId || ""))) {
+        removed.push(request);
+      } else {
+        retained.push(request);
+      }
+    });
+    if (!removed.length) return false;
+    removed.forEach((request) => disposeFileCardPreviewRequest(request, { restoreMemo }));
+    state.fileCardPreviewRequests = retained;
+    if (emit) {
+      store.emit();
+      scheduleRender({ overlayDirty: true });
+    }
+    return true;
+  }
+
   function patchFileCardPreviewRequest(requestId = "", patch = null) {
     const index = findFileCardPreviewRequestIndex(requestId);
     if (index < 0) {
@@ -17021,19 +17169,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const targetRequest = requests[targetIndex];
-    const activeItemId = String(targetRequest?.itemId || "").trim();
-    const restoreMemoVisible = Boolean(targetRequest?.restoreMemoVisible);
-    if (restoreMemoVisible && activeItemId) {
-      const item = sceneRegistry.getItemById(activeItemId, "fileCard");
-      if (item) {
-        item.memoVisible = true;
-      }
-    }
     const nextRequests = requests.slice();
     nextRequests.splice(targetIndex, 1);
     state.fileCardPreviewRequests = nextRequests;
-    hydrationScheduler.remove(`file-preview-read:${String(targetRequest?.id || "").trim()}`);
-    documentPreviewRuntime.closeSession(String(targetRequest?.previewSessionId || targetRequest?.id || "").trim());
+    disposeFileCardPreviewRequest(targetRequest, { restoreMemo: true });
     store.emit();
     scheduleRender({ overlayDirty: true });
     return true;
@@ -17226,6 +17365,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function openFileCardPreview(item = null) {
+    item = sceneRegistry.getItemById(String(item?.id || "").trim(), "fileCard") || item;
     const previewSpec = resolveFileCardPreviewSpec(item);
     if (!previewSpec) {
       setStatus("当前仅支持 DOCX / PDF 文件卡预览", "warning");
@@ -17239,6 +17379,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const hasDesktopFileBridge =
       typeof globalThis?.desktopShell?.readFilePreview === "function" ||
       typeof globalThis?.desktopShell?.readFileBase64 === "function";
+    const requests = getFileCardPreviewRequests();
+    const existingIndex = requests.findIndex((entry) => String(entry?.itemId || "").trim() === String(item.id || "").trim());
+    const existingRequest = existingIndex >= 0 ? requests[existingIndex] : null;
     const requestId = createId("file-card-preview");
     const previewSession = documentPreviewRuntime.createSession({
       id: requestId,
@@ -17247,14 +17390,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       sourcePath,
       fileName: String(item.fileName || item.name || "未命名文件").trim() || "未命名文件",
     });
-    const restoreMemoVisible = Boolean(item.memoVisible);
-    if (restoreMemoVisible) {
+    const restoreMemoVisible = Boolean(item.memoVisible || existingRequest?.restoreMemoVisible);
+    if (item.memoVisible) {
       item.memoVisible = false;
     }
     const anchorWidth = Math.max(1, Number(item.width || 336) || 336);
     const anchorHeight = Math.max(1, Number(item.height || 128) || 128);
-    const requests = getFileCardPreviewRequests();
-    const existingIndex = requests.findIndex((entry) => String(entry?.itemId || "").trim() === String(item.id || "").trim());
     const nextRequest = {
       id: requestId,
       open: true,
@@ -17292,7 +17433,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
     if (existingIndex >= 0) {
       const nextRequests = requests.slice();
-      const existingRequest = nextRequests[existingIndex];
       hydrationScheduler.remove(`file-preview-read:${String(existingRequest?.id || "").trim()}`);
       documentPreviewRuntime.closeSession(String(existingRequest?.previewSessionId || existingRequest?.id || "").trim());
       nextRequests[existingIndex] = {
@@ -18472,8 +18612,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.selectedIds.length) {
       return false;
     }
-    const before = takeItemsHistorySnapshot(state.board.selectedIds, { includeOrder: true });
     const remove = new Set(state.board.selectedIds);
+    const removableIds = state.board.items
+      .filter((item) => remove.has(item.id) && !isLockedItem(item))
+      .map((item) => item.id);
+    clearFileCardPreviewRequestsByItemIds(removableIds, { restoreMemo: true, emit: false });
+    const before = takeItemsHistorySnapshot(state.board.selectedIds, { includeOrder: true });
     const nextItems = [];
     let removedCount = 0;
     let lockedCount = 0;
@@ -18514,6 +18658,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function removeFileCardById(id) {
+    clearFileCardPreviewRequestsByItemIds([id], { restoreMemo: true, emit: false });
     const before = takeItemsHistorySnapshot([id], { includeOrder: true });
     const result = removeFileCardEntry(state.board.items, id);
     if (!result.removed) {
@@ -24192,12 +24337,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const key = String(event.key || "").toLowerCase();
     if (key === "enter" && !event.shiftKey) {
       event.preventDefault();
-      commitFileMemoEdit();
+      if (commitFileMemoEdit()) focusCanvasSurface();
       return;
     }
     if (key === "escape") {
       event.preventDefault();
-      cancelFileMemoEdit();
+      if (cancelFileMemoEdit()) focusCanvasSurface();
     }
   }
 
@@ -24217,12 +24362,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const key = String(event.key || "").toLowerCase();
     if (key === "enter" && !event.shiftKey) {
       event.preventDefault();
-      commitImageMemoEdit();
+      if (commitImageMemoEdit()) focusCanvasSurface();
       return;
     }
     if (key === "escape") {
       event.preventDefault();
-      cancelImageMemoEdit();
+      if (cancelImageMemoEdit()) focusCanvasSurface();
     }
   }
 
@@ -24591,12 +24736,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const key = String(event.key || "").toLowerCase();
     if (key === "escape") {
       event.preventDefault();
-      cancelTableEdit();
+      if (cancelTableEdit()) focusCanvasSurface();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "enter") {
       event.preventDefault();
-      commitTableEdit();
+      if (commitTableEdit()) focusCanvasSurface();
       return;
     }
     if ((key === "enter" || key === "f2") && !tableCellEditState.active) {
@@ -24746,7 +24891,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       openTableEditorContextMenuAt(rect.left + rect.width / 2, rect.bottom + 6);
       return;
     }
+    const completeEditing = target.getAttribute("data-action") === "table-done";
     onContextMenuClick(event);
+    if (completeEditing) focusCanvasSurface();
   }
 
   function onTableToolbarPointerEnter() {
@@ -24767,12 +24914,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const key = String(event.key || "").toLowerCase();
     if (key === "escape") {
       event.preventDefault();
-      cancelCodeBlockEdit();
+      if (cancelCodeBlockEdit()) focusCanvasSurface();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && key === "enter") {
       event.preventDefault();
-      commitCodeBlockEdit();
+      if (commitCodeBlockEdit()) focusCanvasSurface();
     }
   }
 
@@ -24820,7 +24967,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (action === "code-done") {
       if (state.editingType === "code-block") {
-        commitCodeBlockEdit();
+        if (commitCodeBlockEdit()) focusCanvasSurface();
       }
     }
   }
@@ -25253,234 +25400,170 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  function onWindowKeyDown(event) {
-    if (!isInteractiveMode()) {
-      return;
-    }
-    if (globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") {
-      return;
-    }
-    const key = String(event.key || "").toLowerCase();
-    if (key === "escape" && pendingRichExternalLinkEdit) {
-      event.preventDefault();
-      closeRichExternalLinkEditor({ restoreFocus: true });
-      return;
-    }
-    const isSaveShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && key === "s";
-    const target = event.target instanceof Element ? event.target : null;
-    const withinCanvas =
-      refs.surface?.contains(target) ||
-      refs.surface?.contains(document.activeElement) ||
-      document.activeElement === refs.canvas ||
-      pointerOverCanvas;
-    if (!withinCanvas) {
-      return;
-    }
+  function getCanvasFocusScope(target = document.activeElement) {
+    if (target === refs.canvas) return "canvas";
+    if (target instanceof Element && target.closest("[data-canvas-inspector-host]")) return "inspector";
     if (
-      !isSaveShortcut &&
-      state.editingId &&
-      (
-        target === refs.richEditor ||
-        target === refs.editor ||
-        target === refs.fileMemoEditor ||
-        refs.tableEditor?.contains(target) ||
-        refs.codeBlockEditor?.contains(target)
-      )
+      target === refs.richEditor ||
+      target === refs.editor ||
+      target === refs.fileMemoEditor ||
+      target === refs.imageMemoEditor ||
+      refs.tableEditor?.contains(target) ||
+      refs.codeBlockEditor?.contains(target)
     ) {
-      return;
+      return "editor";
     }
-    if (!isSaveShortcut && isEditableElement(target)) {
-      return;
+    if (target instanceof Element && refs.uiHost?.contains(target)) return "controls";
+    if (target instanceof Element && refs.surface?.contains(target)) return "canvas";
+    return "external";
+  }
+
+  function getCanvasFocusSnapshot() {
+    const activeElement = document.activeElement;
+    return {
+      owner: String(globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER || ""),
+      scope: getCanvasFocusScope(activeElement),
+      activeElementId: String(activeElement?.id || ""),
+    };
+  }
+
+  function focusCanvasSurface() {
+    if (!(refs.canvas instanceof HTMLCanvasElement)) return false;
+    refs.canvas.focus({ preventScroll: true });
+    globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER = "canvas";
+    return document.activeElement === refs.canvas;
+  }
+
+  function focusSelectionInspector() {
+    const host = refs.uiHost?.querySelector?.("[data-canvas-inspector-host]:not([hidden])");
+    if (!(host instanceof HTMLElement)) return false;
+    const target = host.querySelector(
+      "input:not(:disabled), button:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])"
+    );
+    const focusTarget = target instanceof HTMLElement ? target : host;
+    focusTarget.focus({ preventScroll: true });
+    return host.contains(document.activeElement);
+  }
+
+  function cycleKeyboardSelection(direction = 1) {
+    const items = state.board.items.filter((item) => item?.id);
+    if (!items.length) return false;
+    const step = direction < 0 ? -1 : 1;
+    const currentId = state.board.selectedIds.length === 1 ? state.board.selectedIds[0] : "";
+    const currentIndex = items.findIndex((item) => item.id === currentId);
+    const nextIndex = currentIndex < 0
+      ? (step > 0 ? 0 : items.length - 1)
+      : (currentIndex + step + items.length) % items.length;
+    state.board.selectedIds = [items[nextIndex].id];
+    state.lastSelectionSource = "keyboard";
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    return true;
+  }
+
+  function addMindMapRoot() {
+    const created = createMindNode(getCenterScenePoint());
+    if (created) {
+      const selected = getSingleSelectedItemFast();
+      if (selected?.type === "mindNode") {
+        beginMindNodeEdit(selected.id);
+      }
     }
-    if (key === "escape" && captureMode === "canvas") {
-      event.preventDefault();
+    return created;
+  }
+
+  function cancelCanvasKeyboardInteraction() {
+    if (captureMode === "canvas") {
       captureMode = null;
       state.captureModeActive = false;
       state.captureModeDragging = false;
       state.selectionRect = null;
       setStatus("已取消截图");
       scheduleRender();
-      return;
+      focusCanvasSurface();
+      return true;
     }
-    if ((event.ctrlKey || event.metaKey) && key === "z") {
+    if (resolvePendingCanvasLinkBindingMode()) {
+      pendingCanvasLinkBinding = false;
+      syncCanvasLinkBindingUi();
+      setStatus("已取消画布链接绑定");
+      focusCanvasSurface();
+      return true;
+    }
+    if (pendingCanvasNavigatorFolderTargetId) {
+      cancelCanvasNavigatorFolderTargetPick();
+      focusCanvasSurface();
+      return true;
+    }
+    hideContextMenu();
+    clearTransientState();
+    cancelTextEdit();
+    cancelMathEdit();
+    cancelFlowNodeEdit();
+    cancelMindNodeEdit();
+    cancelCodeBlockEdit();
+    cancelTableEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    finishImageEdit();
+    temporaryPanPreviousTool = "";
+    setTool("select");
+    focusCanvasSurface();
+    return true;
+  }
+
+  function isCanvasUiControlTarget(target) {
+    return Boolean(
+      target instanceof Element &&
+      target.closest(
+        "button, input, textarea, select, a[href], [contenteditable='true'], [role='dialog'], [role='menuitem'], [data-canvas-ui-focus-scope]"
+      )
+    );
+  }
+
+  function onWindowKeyDown(event) {
+    if (!isInteractiveMode() || globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") return;
+    const key = String(event.key || "").toLowerCase();
+    if (key === "escape" && pendingRichExternalLinkEdit) {
       event.preventDefault();
-      if (event.shiftKey) {
-        runCommand("canvas.redo");
-      } else {
-        runCommand("canvas.undo");
-      }
+      closeRichExternalLinkEditor({ restoreFocus: true });
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && key === "y") {
+    const target = event.target instanceof Element ? event.target : null;
+    const withinCanvas =
+      refs.surface?.contains(target) ||
+      refs.surface?.contains(document.activeElement) ||
+      document.activeElement === refs.canvas ||
+      pointerOverCanvas;
+    if (!withinCanvas) return;
+
+    const typingTarget = isEditableElement(target);
+    const keyboardFocusScope = getCanvasFocusScope(target || document.activeElement);
+    if (key === "escape" && keyboardFocusScope === "inspector") {
       event.preventDefault();
-      runCommand("canvas.redo");
+      focusCanvasSurface();
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && key === "s") {
-      event.preventDefault();
-      void runCommand("canvas.save");
-      return;
+    if ((event.ctrlKey || event.metaKey) && key === "c" && !state.board.selectedIds.length && state.hoverId) {
+      const hoverItem = getHoverItemFast("text");
+      if (hoverItem) state.board.selectedIds = [hoverItem.id];
     }
-    if ((event.ctrlKey || event.metaKey) && key === "c") {
-      event.preventDefault();
-      if (!state.board.selectedIds.length && state.hoverId) {
-        const hoverItem = getHoverItemFast("text");
-        if (hoverItem) {
-          state.board.selectedIds = [hoverItem.id];
-        }
-      }
-      void runCommand("selection.copy");
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && key === "x") {
-      event.preventDefault();
-      void runCommand("selection.cut");
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && key === "v") {
-      if (document.activeElement === refs.canvas) {
-        return;
-      }
-      event.preventDefault();
-      const hoverItem = getHoverItemFast();
-      const anchor = hoverItem ? { x: hoverItem.x + hoverItem.width + 24, y: hoverItem.y + 24 } : (state.lastPointerScenePoint || getCenterScenePoint());
-      void runCommand("selection.paste", anchor);
-      return;
-    }
-    if (key === "enter" && state.board.selectedIds.length === 1 && !state.editingId && state.tool === "select") {
-      const selected = getSingleSelectedItemFast();
-      if (["text", "flowNode", "mindNode", "mindSummary", "table", "codeBlock", "mathBlock", "mathInline"].includes(selected?.type)) {
-        event.preventDefault();
-        runCommand("element.edit");
-        return;
-      }
-    }
-    if ((event.ctrlKey || event.metaKey) && key === "l") {
-      event.preventDefault();
-      runCommand("selection.toggle-lock");
-      return;
-    }
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && (key === " " || key === "spacebar")) {
-      event.preventDefault();
-      enterTemporaryPanTool();
-      return;
-    }
-    if (state.board.selectedIds.length === 1 && state.tool === "select") {
-      const selected = getSingleSelectedItemFast();
-      if (selected?.type === "mindNode") {
-        if (key === "tab" && event.shiftKey) {
-          event.preventDefault();
-          runCommand("mind.promote", selected.id);
-          return;
-        }
-        if (key === "tab" && (event.ctrlKey || event.metaKey)) {
-          event.preventDefault();
-          runCommand("mind.demote", selected.id);
-          return;
-        }
-        if (key === "tab") {
-          event.preventDefault();
-          runCommand("mind.child", selected.id);
-          return;
-        }
-        if (key === " " || key === "spacebar") {
-          event.preventDefault();
-          runCommand("mind.collapse", selected.id);
-          return;
-        }
-        if (key === "enter" && event.shiftKey) {
-          event.preventDefault();
-          runCommand("mind.sibling", selected.id);
-          return;
-        }
-      }
-    }
-    if (event.ctrlKey || event.metaKey || event.altKey) {
-      return;
-    }
-    if (key === "f") {
-      event.preventDefault();
-      pendingImportAnchor = getCenterScenePoint();
-      refs.fileImportInput?.click();
-      return;
-    }
-    if (key === "i") {
-      event.preventDefault();
-      pendingImportAnchor = getCenterScenePoint();
-      refs.imageImportInput?.click();
-      return;
-    }
-    if (key === "n") {
-      event.preventDefault();
-      const created = createMindNode(getCenterScenePoint());
-      if (created) {
-        const selected = getSingleSelectedItemFast();
-        if (selected?.type === "mindNode") {
-          beginMindNodeEdit(selected.id);
-        }
-      }
-      return;
-    }
-    if (key === "p") {
-      event.preventDefault();
-      void startCanvasCapture();
-      return;
-    }
-    if (key === "delete" || key === "backspace") {
-      event.preventDefault();
-      if (!state.board.selectedIds.length && state.hoverId) {
-        const hoverItem = getHoverItemFast();
-        if (hoverItem?.type === "fileCard") {
-          removeFileCardById(hoverItem.id);
-          return;
-        }
-      }
-      runCommand("selection.delete");
-      return;
-    }
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
-      event.preventDefault();
-      const step = event.shiftKey ? 10 : 1;
-      if (key === "arrowup") {
-        runCommand("selection.nudge", 0, -step);
-      } else if (key === "arrowdown") {
-        runCommand("selection.nudge", 0, step);
-      } else if (key === "arrowleft") {
-        runCommand("selection.nudge", -step, 0);
-      } else if (key === "arrowright") {
-        runCommand("selection.nudge", step, 0);
-      }
-      return;
-    }
-    if (key === "escape") {
-      event.preventDefault();
-      if (resolvePendingCanvasLinkBindingMode()) {
-        pendingCanvasLinkBinding = false;
-        syncCanvasLinkBindingUi();
-        setStatus("已取消画布链接绑定");
-        return;
-      }
-      if (pendingCanvasNavigatorFolderTargetId) {
-        cancelCanvasNavigatorFolderTargetPick();
-        return;
-      }
-      hideContextMenu();
-      clearTransientState();
-      cancelTextEdit();
-      cancelFlowNodeEdit();
-      cancelCodeBlockEdit();
-      cancelFileMemoEdit();
-      cancelImageMemoEdit();
-      finishImageEdit();
-      temporaryPanPreviousTool = "";
-      setTool("select");
-      return;
-    }
-    if (TOOL_SHORTCUTS[key]) {
-      event.preventDefault();
-      temporaryPanPreviousTool = "";
-      setTool(TOOL_SHORTCUTS[key]);
-    }
+    const hoverItem = getHoverItemFast();
+    const shortcutContext = getCanvasCommandContext({
+      keyboardEvent: event,
+      keyboardFocusScope,
+      typingTarget,
+      hoverItem,
+      anchorPoint: hoverItem
+        ? { x: Number(hoverItem.x || 0) + Number(hoverItem.width || 0) + 24, y: Number(hoverItem.y || 0) + 24 }
+        : (state.lastPointerScenePoint || getCenterScenePoint()),
+    });
+    const command = canvasUiRuntime.commands.resolveShortcut(event, shortcutContext);
+    if (!command) return;
+    const editingTarget = state.editingId && keyboardFocusScope === "editor";
+    if ((editingTarget || typingTarget || isCanvasUiControlTarget(target)) && command.scope !== "global") return;
+    if (command.id === "selection.paste" && document.activeElement === refs.canvas) return;
+    event.preventDefault();
+    canvasUiRuntime.commands.run(command.id, shortcutContext);
   }
 
   function onWindowKeyUp(event) {
@@ -25635,7 +25718,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       image: refs.imageToolbar,
     })));
     cleanupFns.push(canvasUiRuntime.registerHost("context-menu", refs.contextMenu));
-    cleanupFns.push(canvasUiRuntime.registerHost("inspector", refs.richSelectionToolbar));
+    cleanupFns.push(canvasUiRuntime.registerHost("inspector", Object.freeze({
+      common: refs.uiHost,
+      rich: refs.richSelectionToolbar,
+    })));
     cleanupFns.push(canvasUiRuntime.registerHost("editor", Object.freeze({
       rich: refs.richEditor,
       math: refs.editor,
@@ -25900,6 +25986,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.items.length) {
       return false;
     }
+    clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: true, emit: false });
     const before = takeHistorySnapshot(state);
     state.board = createEmptyBoard();
     pushHistory(state.history, before, takeHistorySnapshot(state), "清空白板");
@@ -26475,13 +26562,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
   }
 
-  function registerCommand(name, handler) {
-    const key = String(name || "").trim();
-    if (!key || typeof handler !== "function") {
+  function registerCommand(nameOrDefinition, handler) {
+    const definition = nameOrDefinition && typeof nameOrDefinition === "object"
+      ? { ...nameOrDefinition }
+      : { id: String(nameOrDefinition || "").trim(), label: String(nameOrDefinition || "").trim() };
+    const execute = typeof handler === "function"
+      ? (nameOrDefinition && typeof nameOrDefinition === "object"
+          ? handler
+          : (_context, ...args) => handler(...args))
+      : definition.execute;
+    const key = String(definition.id || definition.name || "").trim();
+    if (!key || typeof execute !== "function") {
       return () => {};
     }
     return canvasUiRuntime.commands.register(
-      { id: key, label: key, execute: (_context, ...args) => handler(...args) },
+      { ...definition, id: key, label: String(definition.label || key), execute },
       null,
       { replace: true }
     );
@@ -26533,19 +26628,84 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
     const hasActiveTable = (context) => context.editingType === "table" || hasSingleType("table", { mutable: true })(context);
     const hasActiveRichText = (context) => ["text", "flow-node", "mind-node", "table"].includes(context.editingType);
+    const hasSelectedMindNode = (context) => context.selectedCount === 1 && context.selectedItems[0]?.type === "mindNode";
+    const hasEditableSelection = (context) => {
+      if (context.tool !== "select" || context.editingId || context.selectedCount !== 1 || context.mutableSelectedCount !== 1) {
+        return false;
+      }
+      const editor = String(canvasUiRuntime.getElementUx(context.mutableSelectedItems[0])?.editor || "none");
+      return editor !== "none" && editor !== "shape";
+    };
+    const getNudgeStep = (context) => context.keyboardEvent?.shiftKey ? 10 : 1;
     register({ id: "canvas.undo", label: "撤销", category: "history", shortcuts: ["Ctrl+Z"], when: (context) => context.canUndo }, () => undo());
     register({ id: "canvas.redo", label: "重做", category: "history", shortcuts: ["Ctrl+Y", "Ctrl+Shift+Z"], when: (context) => context.canRedo }, () => redo());
-    register({ id: "canvas.save", label: "保存", category: "file", shortcuts: ["Ctrl+S"] }, () => saveBoard());
+    register({ id: "canvas.save", label: "保存", category: "file", scope: "global", shortcuts: ["Ctrl+S"] }, () => saveBoard());
+    register({ id: "canvas.cancel", label: "取消当前操作", category: "canvas", shortcuts: ["Escape"] }, () => cancelCanvasKeyboardInteraction());
     register({ id: "view.zoom-in", label: "放大", category: "view" }, () => zoomIn());
     register({ id: "view.zoom-out", label: "缩小", category: "view" }, () => zoomOut());
     register({ id: "view.reset", label: "重置视图", category: "view" }, () => resetView());
     register({ id: "view.fit", label: "适配内容", category: "view" }, () => zoomToFit());
     register({ id: "tool.set", label: "切换工具", category: "tool" }, (_context, tool) => setTool(tool));
+    Object.entries(TOOL_SHORTCUTS).forEach(([shortcut, tool]) => {
+      register({ id: `tool.${tool}`, label: `切换到 ${tool} 工具`, category: "tool", shortcuts: [shortcut] }, () => {
+        temporaryPanPreviousTool = "";
+        setTool(tool);
+        return true;
+      });
+    });
+    register({
+      id: "tool.pan-temporary",
+      label: "临时平移",
+      category: "tool",
+      shortcuts: ["Space"],
+      when: (context) => !hasSelectedMindNode(context),
+    }, () => enterTemporaryPanTool());
+    register({ id: "file.import", label: "导入文件", category: "file", shortcuts: ["F"] }, () => {
+      pendingImportAnchor = getCenterScenePoint();
+      refs.fileImportInput?.click();
+      return true;
+    });
+    register({ id: "image.import", label: "导入图片", category: "file", shortcuts: ["I"] }, () => {
+      pendingImportAnchor = getCenterScenePoint();
+      refs.imageImportInput?.click();
+      return true;
+    });
+    register({ id: "mind.root", label: "新建思维节点", category: "mind", shortcuts: ["N"] }, () => addMindMapRoot());
+    register({ id: "canvas.share", label: "分享当前画布", category: "file", shortcuts: ["P"] }, () => startCanvasCapture());
+    register({ id: "ui.focus-inspector", label: "聚焦属性检查器", category: "ui", shortcuts: ["F6"], when: hasSelection }, () => focusSelectionInspector());
+    register({
+      id: "selection.next",
+      label: "选择下一个元素",
+      category: "selection",
+      shortcuts: ["Tab"],
+      when: (context) => !hasSelectedMindNode(context),
+    }, () => cycleKeyboardSelection(1));
+    register({
+      id: "selection.previous",
+      label: "选择上一个元素",
+      category: "selection",
+      shortcuts: ["Shift+Tab"],
+      when: (context) => !hasSelectedMindNode(context),
+    }, () => cycleKeyboardSelection(-1));
     register({ id: "selection.copy", label: "复制", category: "selection", shortcuts: ["Ctrl+C"], when: hasSelection }, () => copySelection());
     register({ id: "selection.cut", label: "剪切", category: "selection", shortcuts: ["Ctrl+X"], when: hasMutableSelection }, () => cutSelection());
     register({ id: "selection.paste", label: "粘贴", category: "selection", shortcuts: ["Ctrl+V"] }, (context, anchorPoint) => pasteFromSystemClipboard(anchorPoint || context.anchorPoint));
-    register({ id: "selection.delete", label: "删除", category: "selection", shortcuts: ["Delete", "Backspace"], destructive: true, when: hasMutableSelection }, () => removeSelected());
+    register({
+      id: "selection.delete",
+      label: "删除",
+      category: "selection",
+      shortcuts: ["Delete", "Backspace"],
+      destructive: true,
+      when: (context) => hasMutableSelection(context) || context.hoverItem?.type === "fileCard",
+    }, (context) => {
+      if (!context.selectedCount && context.hoverItem?.type === "fileCard") {
+        return removeFileCardById(context.hoverItem.id);
+      }
+      return removeSelected();
+    });
     register({ id: "selection.toggle-lock", label: "锁定/解锁", category: "selection", shortcuts: ["Ctrl+L"], when: hasSelection }, () => toggleLockOnSelection());
+    register({ id: "selection.set-locked", label: "设置锁定状态", category: "selection", when: hasSelection }, (_context, locked) => setSelectionLocked(locked));
+    register({ id: "selection.set-geometry", label: "设置位置与尺寸", category: "selection", when: (context) => context.selectedCount > 0 && context.selectedCount === context.mutableSelectedCount }, (_context, patch) => setSelectionInspectorGeometry(patch));
     register({ id: "selection.group", label: "组合", category: "arrange", when: hasMultipleSelection }, () => groupSelection());
     register({ id: "selection.ungroup", label: "取消组合", category: "arrange", when: hasMutableSelection }, () => ungroupSelection());
     register({ id: "selection.group-toggle", label: "组合/取消组合", category: "arrange", when: hasMutableSelection }, (context) => context.mutableSelectedItems.some((item) => item.groupId) ? ungroupSelection() : groupSelection());
@@ -26559,7 +26719,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "selection.layer-up", label: "上移一层", category: "arrange", when: hasMutableSelection }, () => moveSelectionByStep("up"));
     register({ id: "selection.layer-down", label: "下移一层", category: "arrange", when: hasMutableSelection }, () => moveSelectionByStep("down"));
     register({ id: "selection.nudge", label: "微移", category: "arrange", when: hasMutableSelection }, (_context, dx, dy) => nudgeSelection(dx, dy));
-    register({ id: "element.edit", label: "编辑", category: "element", when: (context) => context.selectedCount === 1 && context.mutableSelectedCount === 1 }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
+    register({ id: "selection.nudge-up", label: "向上微移", category: "arrange", shortcuts: ["ArrowUp", "Shift+ArrowUp"], when: hasMutableSelection }, (context) => nudgeSelection(0, -getNudgeStep(context)));
+    register({ id: "selection.nudge-down", label: "向下微移", category: "arrange", shortcuts: ["ArrowDown", "Shift+ArrowDown"], when: hasMutableSelection }, (context) => nudgeSelection(0, getNudgeStep(context)));
+    register({ id: "selection.nudge-left", label: "向左微移", category: "arrange", shortcuts: ["ArrowLeft", "Shift+ArrowLeft"], when: hasMutableSelection }, (context) => nudgeSelection(-getNudgeStep(context), 0));
+    register({ id: "selection.nudge-right", label: "向右微移", category: "arrange", shortcuts: ["ArrowRight", "Shift+ArrowRight"], when: hasMutableSelection }, (context) => nudgeSelection(getNudgeStep(context), 0));
+    register({ id: "element.edit", label: "编辑", category: "element", shortcuts: ["Enter"], when: hasEditableSelection }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
     register({ id: "shape.reverse", label: "反向箭头", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => reverseArrowSelection());
     register({ id: "shape.toggle-dash", label: "切换虚线", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleLineDash());
     register({ id: "shape.toggle-fill", label: "切换填充", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleShapeFill());
@@ -26595,11 +26759,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "text.link", label: "插入链接", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("link"));
     register({ id: "text.inline-math", label: "插入行内公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-inline"));
     register({ id: "text.block-math", label: "插入独立公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-block"));
-    register({ id: "mind.child", label: "添加子节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindChildNode(nodeId));
-    register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => createMindSiblingNode(nodeId));
-    register({ id: "mind.promote", label: "提升节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => promoteMindNode(nodeId));
-    register({ id: "mind.demote", label: "降低节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => demoteMindNode(nodeId));
-    register({ id: "mind.collapse", label: "折叠/展开节点", category: "mind", elementTypes: ["mindNode"] }, (_context, nodeId) => toggleMindNodeCollapsed(nodeId));
+    register({ id: "mind.child", label: "添加子节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Tab"], when: hasSelectedMindNode }, (context, nodeId) => createMindChildNode(nodeId || context.selectedItems[0]?.id));
+    register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Shift+Enter"], when: hasSelectedMindNode }, (context, nodeId) => createMindSiblingNode(nodeId || context.selectedItems[0]?.id));
+    register({ id: "mind.promote", label: "提升节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Shift+Tab"], when: hasSelectedMindNode }, (context, nodeId) => promoteMindNode(nodeId || context.selectedItems[0]?.id));
+    register({ id: "mind.demote", label: "降低节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Ctrl+Tab"], when: hasSelectedMindNode }, (context, nodeId) => demoteMindNode(nodeId || context.selectedItems[0]?.id));
+    register({ id: "mind.collapse", label: "折叠/展开节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Space"], when: hasSelectedMindNode }, (context, nodeId) => toggleMindNodeCollapsed(nodeId || context.selectedItems[0]?.id));
   }
 
   registerBuiltinCanvasCommands();
@@ -26653,16 +26817,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     getDocumentPreviewRuntimeSnapshot() {
       return documentPreviewRuntime.getStats();
     },
-    addMindMapRoot() {
-      const created = createMindNode(getCenterScenePoint());
-      if (created) {
-        const selected = getSingleSelectedItemFast();
-        if (selected?.type === "mindNode") {
-          beginMindNodeEdit(selected.id);
-        }
-      }
-      return created;
-    },
+    addMindMapRoot,
     addFlowNode() {
       return this.addMindMapRoot();
     },
@@ -26774,6 +26929,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     getCanvasUiRuntimeSnapshot(context = {}) {
       return canvasUiRuntime.getSnapshot(getCanvasCommandContext(context));
     },
+    getSelectionInspectorSnapshot,
+    getCanvasFocusSnapshot,
+    focusCanvasSurface,
+    focusSelectionInspector,
     getElementUxSnapshot: canvasUiRuntime.getElementUxSnapshot,
     getInputCapabilities: canvasUiRuntime.getInputCapabilities,
     getSnapshotData() {
@@ -26800,6 +26959,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     },
     loadStructuredBoardForExport(board = {}, options = {}) {
       const nextBoard = repairMisclassifiedCodeBlocksOnBoard(board, DEFAULT_TEXT_FONT_SIZE);
+      clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
       store.replaceBoard(nextBoard);
       state.board.selectedIds = Array.isArray(nextBoard?.selectedIds) ? [...nextBoard.selectedIds] : [];
       if (options?.resetView === true) {

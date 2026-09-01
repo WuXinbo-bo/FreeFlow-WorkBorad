@@ -114,6 +114,8 @@ async function main() {
         name: "preview-contract.pdf",
         ext: "pdf",
         sourcePath: "C:\\fixtures\\preview-contract.pdf",
+        memo: "Preview note",
+        memoVisible: true,
       };
       globalThis.__canvas2dEngine.loadStructuredBoardForExport({
         items: [item],
@@ -173,18 +175,26 @@ async function main() {
     assert(fileCardBox, "file card scene node is missing");
     await page.mouse.move(fileCardBox.x + fileCardBox.width / 2, fileCardBox.y + fileCardBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(fileCardBox.x + fileCardBox.width / 2 + 84, fileCardBox.y + fileCardBox.height / 2 + 52, { steps: 3 });
-    await page.waitForTimeout(20);
-    const liveAnchor = await page.evaluate(() => {
-      const card = document.querySelector('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]')?.getBoundingClientRect();
-      const preview = document.querySelector(".canvas2d-file-preview-react")?.getBoundingClientRect();
-      return card && preview ? {
-        centerDelta: Math.abs((card.left + card.width / 2) - (preview.left + preview.width / 2)),
-        topDelta: Math.abs(preview.top - (card.bottom - 20 * (card.width / 336))),
-      } : null;
-    });
-    assert(liveAnchor, "live preview anchor is missing while dragging");
-    assert(liveAnchor.centerDelta < 2 && liveAnchor.topDelta < 3, "preview drawer must follow the file card before pointer release");
+    const dragSamples = [];
+    for (let step = 1; step <= 6; step += 1) {
+      await page.mouse.move(
+        fileCardBox.x + fileCardBox.width / 2 + 14 * step,
+        fileCardBox.y + fileCardBox.height / 2 + 9 * step
+      );
+      dragSamples.push(await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => {
+        const card = document.querySelector('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]')?.getBoundingClientRect();
+        const preview = document.querySelector(".canvas2d-file-preview-react")?.getBoundingClientRect();
+        resolve(card && preview ? {
+          centerDelta: Math.abs((card.left + card.width / 2) - (preview.left + preview.width / 2)),
+          topDelta: Math.abs(preview.top - (card.bottom - 20 * (card.width / 336))),
+        } : null);
+      }))));
+    }
+    assert(dragSamples.every(Boolean), "live preview anchor is missing while dragging");
+    assert(
+      dragSamples.every((sample) => sample.centerDelta < 2 && sample.topDelta < 3),
+      `preview drawer must follow the file card in every sampled frame: ${JSON.stringify(dragSamples)}`
+    );
     await page.mouse.up();
 
     await page.evaluate(() => {
@@ -217,6 +227,11 @@ async function main() {
     await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests.length === 0);
     const closed = await page.evaluate(() => globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot());
     assert.strictEqual(closed.activeSessions, 0);
+    assert.strictEqual(
+      await page.evaluate(() => globalThis.__canvas2dEngine.getSnapshotData().items[0]?.memoVisible),
+      true,
+      "closing preview must restore the original file memo"
+    );
 
     const readsBeforeCachedOpen = await page.evaluate(() => globalThis.__FREEFLOW_PREVIEW_TEST.binaryReads);
     await page.evaluate(() => {
@@ -229,10 +244,49 @@ async function main() {
     }));
     assert.strictEqual(cachedPdfOpen.request.previewCacheHit, true);
     assert.strictEqual(cachedPdfOpen.binaryReads, readsBeforeCachedOpen, "same-version reopen must not read the PDF again");
+    const firstCachedRequestId = cachedPdfOpen.request.id;
+    await page.evaluate(() => {
+      globalThis.__canvas2dEngine.openFileCardPreview(globalThis.__canvas2dEngine.getSnapshotData().items[0]);
+    });
+    await page.waitForFunction((previousId) => {
+      const request = globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0];
+      return request?.id && request.id !== previousId && request.previewStatus === "ready";
+    }, firstCachedRequestId);
+    const repeatedOpen = await page.evaluate(() => ({
+      requests: globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests,
+      runtime: globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot(),
+      memoVisible: globalThis.__canvas2dEngine.getSnapshotData().items[0]?.memoVisible,
+    }));
+    assert.strictEqual(repeatedOpen.requests.length, 1);
+    assert.strictEqual(repeatedOpen.runtime.activeSessions, 1);
+    assert.strictEqual(repeatedOpen.requests[0].restoreMemoVisible, true);
+    assert.strictEqual(repeatedOpen.memoVisible, false);
     await page.evaluate(() => {
       const request = globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0];
       globalThis.__canvas2dEngine.closeFileCardPreview(request.id);
     });
+    await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests.length === 0);
+    assert.strictEqual(await page.evaluate(() => globalThis.__canvas2dEngine.getSnapshotData().items[0]?.memoVisible), true);
+
+    await page.evaluate(() => {
+      const engine = globalThis.__canvas2dEngine;
+      engine.openFileCardPreview(engine.getSnapshotData().items[0]);
+    });
+    await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0]?.previewStatus === "ready");
+    await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("selection.delete"));
+    await page.waitForFunction(() => {
+      const engine = globalThis.__canvas2dEngine;
+      return engine.getSnapshot().fileCardPreviewRequests.length === 0 && engine.getSnapshotData().items.length === 0;
+    });
+    const deletedPreview = await page.evaluate(() => globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot());
+    assert.strictEqual(deletedPreview.activeSessions, 0, "deleting a previewed file card must close its session");
+    await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
+    await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshotData().items.length === 1);
+    const restoredAfterDelete = await page.evaluate(() => ({
+      requests: globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests.length,
+      memoVisible: globalThis.__canvas2dEngine.getSnapshotData().items[0]?.memoVisible,
+    }));
+    assert.deepStrictEqual(restoredAfterDelete, { requests: 0, memoVisible: true });
 
     await page.evaluate(() => {
       globalThis.__FREEFLOW_PREVIEW_TEST.delay = 180;

@@ -603,7 +603,7 @@ async function runResizeContract(browser, url, kind, assertUnifiedPresentation, 
     await session.page.mouse.click(center.x, center.y);
     await waitForFrames(session.page, 40);
     const initial = await readState(session.page, fixture.id);
-    const recoveryCycles = kind === "formula" ? 3 : 1;
+    const recoveryCycles = kind === "formula" || kind === "table" ? 3 : 1;
     const cycles = [];
     for (let cycle = 0; cycle < recoveryCycles; cycle += 1) {
       const handle = await getScreenPoint(session.page, fixture.id, "se");
