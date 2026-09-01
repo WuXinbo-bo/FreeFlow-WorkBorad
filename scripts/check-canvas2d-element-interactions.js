@@ -342,6 +342,44 @@ function assertNear(actual, expected, message, details = null, tolerance = 2) {
   });
 }
 
+async function readElementEditorMapping(page, editorSelector, itemId) {
+  return page.evaluate(({ selector, targetId }) => {
+    const snapshot = window.__canvas2dEngine?.getSnapshot?.() || null;
+    const item = snapshot?.board?.items?.find?.((entry) => String(entry.id) === String(targetId)) || null;
+    const view = snapshot?.board?.view || { scale: 1, offsetX: 0, offsetY: 0 };
+    const canvasRect = document.querySelector("#canvas-office-canvas")?.getBoundingClientRect?.() || null;
+    const editor = document.querySelector(selector);
+    const editorRect = editor?.getBoundingClientRect?.() || null;
+    if (!item || !canvasRect || !editorRect) return null;
+    const scale = Number(view.scale || 1) || 1;
+    return {
+      actual: { left: editorRect.left, top: editorRect.top, width: editorRect.width, height: editorRect.height },
+      expected: {
+        left: canvasRect.left + Number(item.x || 0) * scale + Number(view.offsetX || 0),
+        top: canvasRect.top + Number(item.y || 0) * scale + Number(view.offsetY || 0),
+        width: Math.max(1, Number(item.width || 1) * scale),
+        height: Math.max(1, Number(item.height || 1) * scale),
+      },
+      placement: editor.dataset.editorPlacement || "",
+      editorType: editor.dataset.editorType || "",
+      itemId: editor.dataset.itemId || "",
+      view: { ...view },
+    };
+  }, { selector: editorSelector, targetId: itemId });
+}
+
+function assertElementEditorMapping(mapping, itemId, editorType, label, { size = true } = {}) {
+  assert(mapping, `${label}: editor mapping is unavailable`, mapping);
+  assert(mapping.placement === "element", `${label}: editor is not element-local`, mapping);
+  assert(mapping.itemId === itemId && mapping.editorType === editorType, `${label}: editor identity is stale`, mapping);
+  assertNear(mapping.actual.left, mapping.expected.left, `${label}: editor left is detached from the element`, mapping);
+  assertNear(mapping.actual.top, mapping.expected.top, `${label}: editor top is detached from the element`, mapping);
+  if (size) {
+    assertNear(mapping.actual.width, mapping.expected.width, `${label}: editor width is detached from the element`, mapping, 3);
+    assertNear(mapping.actual.height, mapping.expected.height, `${label}: editor height is detached from the element`, mapping, 3);
+  }
+}
+
 async function waitForFrames(page, timeout = 140) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   if (timeout > 0) {
@@ -612,6 +650,7 @@ async function runResizeContract(browser, url, kind, assertUnifiedPresentation, 
 
 const EDITOR_CONTRACTS = Object.freeze({
   text: { editingType: "text", selector: "#canvas-rich-editor" },
+  formula: { editingType: "math", selector: "#canvas-text-editor" },
   codeBlock: { editingType: "code-block", selector: "#canvas-code-block-editor" },
   table: { editingType: "table", selector: "#canvas-table-editor" },
   flowNode: { editingType: "flow-node", selector: "#canvas-rich-editor" },
@@ -633,6 +672,10 @@ async function runEditorContract(browser, url, kind, assertUnifiedPresentation) 
       const editorVisible = await session.page.locator(contract.selector).evaluate((node) => !node.classList.contains("is-hidden") && getComputedStyle(node).display !== "none");
       assert(active.editingId === fixture.id && active.editingType === contract.editingType, `${kind}: editor did not enter expected state`, active);
       assert(editorVisible === true, `${kind}: editor surface is hidden`, active);
+      if (assertUnifiedPresentation) {
+        const initialMapping = await readElementEditorMapping(session.page, contract.selector, fixture.id);
+        assertElementEditorMapping(initialMapping, fixture.id, contract.editingType, `${kind}: editor initial`, { size: kind !== "formula" });
+      }
       if (kind === "table") {
         await session.page.locator('#canvas-table-toolbar [data-action="table-done"]').click();
       } else {
@@ -852,10 +895,11 @@ async function runMemoEditorContract(browser, url, kind, assertUnifiedPresentati
     const expectedType = kind === "fileCard" ? "file-memo" : "image-memo";
     const cycles = [];
     for (let cycle = 0; cycle < 3; cycle += 1) {
+      let memoBox = null;
       if (assertUnifiedPresentation) {
-        const box = await session.page.locator(`.canvas2d-scene-content-item[data-id="${id}"] ${selector}`).boundingBox();
-        assert(box, `${kind}: memo presentation is missing`);
-        await session.page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+        memoBox = await session.page.locator(`.canvas2d-scene-content-item[data-id="${id}"] ${selector}`).boundingBox();
+        assert(memoBox, `${kind}: memo presentation is missing`);
+        await session.page.mouse.dblclick(memoBox.x + memoBox.width / 2, memoBox.y + memoBox.height / 2);
       } else {
         const memoPoint = await getScreenPoint(session.page, id, "memo");
         await session.page.mouse.dblclick(memoPoint.x, memoPoint.y);
@@ -866,6 +910,19 @@ async function runMemoEditorContract(browser, url, kind, assertUnifiedPresentati
       if (assertUnifiedPresentation) assertPresentation(active, `${kind} memo editing ${cycle + 1}`);
       const visible = await session.page.locator(editorSelector).evaluate((node) => !node.classList.contains("is-hidden"));
       assert(visible, `${kind}: memo editor is hidden`, active);
+      if (assertUnifiedPresentation) {
+        const editorBox = await session.page.locator(editorSelector).boundingBox();
+        const identity = await session.page.locator(editorSelector).evaluate((node) => ({
+          placement: node.dataset.editorPlacement || "",
+          editorType: node.dataset.editorType || "",
+          itemId: node.dataset.itemId || "",
+        }));
+        assert(identity.placement === "element" && identity.editorType === expectedType && identity.itemId === id, `${kind}: memo editor identity is stale`, identity);
+        assertNear(editorBox.x, memoBox.x, `${kind}: memo editor left is detached from the memo`, { editorBox, memoBox });
+        assertNear(editorBox.y, memoBox.y, `${kind}: memo editor top is detached from the memo`, { editorBox, memoBox });
+        assertNear(editorBox.width, memoBox.width, `${kind}: memo editor width is detached from the memo`, { editorBox, memoBox }, 3);
+        assertNear(editorBox.height, memoBox.height, `${kind}: memo editor height is detached from the memo`, { editorBox, memoBox }, 3);
+      }
       await session.page.keyboard.press("Escape");
       await waitForFrames(session.page, 180);
       const recovered = await readState(session.page, id);

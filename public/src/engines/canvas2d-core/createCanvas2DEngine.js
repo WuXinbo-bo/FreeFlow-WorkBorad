@@ -3236,15 +3236,15 @@ export function createCanvas2DEngine(options = {}) {
       fileCardSourceHydrationQueue.clear();
     },
   });
-  editorAdapterManager.register("text", { begin: beginTextEdit, commit: commitTextEdit, cancel: cancelTextEdit });
-  editorAdapterManager.register("math", { begin: beginMathEdit, commit: commitMathEdit, cancel: cancelMathEdit });
-  editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
-  editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
-  editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
-  editorAdapterManager.register("table", { begin: beginTableEdit, commit: commitTableEdit, cancel: cancelTableEdit });
-  editorAdapterManager.register("file-memo", { begin: beginFileMemoEdit, commit: commitFileMemoEdit, cancel: cancelFileMemoEdit });
-  editorAdapterManager.register("image-memo", { begin: beginImageMemoEdit, commit: commitImageMemoEdit, cancel: cancelImageMemoEdit });
-  editorAdapterManager.register("image", { begin: beginImageEdit, commit: finishImageEdit, cancel: finishImageEdit });
+  editorAdapterManager.register("text", { begin: beginTextEdit, sync: syncRichElementEditorLayout, commit: commitTextEdit, cancel: cancelTextEdit });
+  editorAdapterManager.register("math", { begin: beginMathEdit, sync: syncMathEditorLayout, commit: commitMathEdit, cancel: cancelMathEdit });
+  editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, sync: syncRichElementEditorLayout, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
+  editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, sync: syncRichElementEditorLayout, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
+  editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, sync: syncCodeBlockEditorLayout, commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
+  editorAdapterManager.register("table", { begin: beginTableEdit, sync: syncTableEditorLayout, commit: commitTableEdit, cancel: cancelTableEdit });
+  editorAdapterManager.register("file-memo", { begin: beginFileMemoEdit, sync: syncFileMemoLayout, commit: commitFileMemoEdit, cancel: cancelFileMemoEdit });
+  editorAdapterManager.register("image-memo", { begin: beginImageMemoEdit, sync: syncImageMemoLayout, commit: commitImageMemoEdit, cancel: cancelImageMemoEdit });
+  editorAdapterManager.register("image", { begin: beginImageEdit, sync: syncImageEditorLayout, commit: finishImageEdit, cancel: finishImageEdit });
   const clipboardBroker = createClipboardBroker({
     readClipboardText: async () => {
       if (typeof globalThis?.desktopShell?.readClipboardText === "function") {
@@ -9646,6 +9646,74 @@ let tablePointerSelectionState = {
     refs.mindNodeLinkPanel.setAttribute("aria-hidden", "false");
   }
 
+  function syncElementEditorHostIdentity(host, item, editorType = "") {
+    if (!(host instanceof HTMLElement) || !item?.id) {
+      return;
+    }
+    host.dataset.editorPlacement = "element";
+    host.dataset.editorType = String(editorType || "");
+    host.dataset.itemId = String(item.id);
+  }
+
+  function syncImageEditorLayout() {
+    refs.editor?.classList.add("is-hidden");
+    refs.richEditor?.classList.add("is-hidden");
+    refs.codeBlockEditor?.classList.add("is-hidden");
+    refs.fileMemoEditor?.classList.add("is-hidden");
+    refs.imageMemoEditor?.classList.add("is-hidden");
+    refs.tableEditor?.classList.add("is-hidden");
+    refs.tableToolbar?.classList.add("is-hidden");
+    refs.codeBlockToolbar?.classList.add("is-hidden");
+  }
+
+  function syncRichElementEditorLayout() {
+    if (!(refs.richEditor instanceof HTMLDivElement)) {
+      return;
+    }
+    const isFlowNode = state.editingType === "flow-node";
+    const isMindNode = isMindNodeEditingType(state.editingType);
+    const item = isMindNode
+      ? sceneRegistry.getItemById(state.editingId, "mindNode") || sceneRegistry.getItemById(state.editingId, "mindSummary")
+      : sceneRegistry.getItemById(state.editingId, isFlowNode ? "flowNode" : "text");
+    if (!item) {
+      state.editingId = null;
+      state.editingType = null;
+      refs.richEditor.classList.add("is-hidden");
+      richTextSession.clear({ destroyAdapter: false });
+      return;
+    }
+    if (isFlowNode ? isLockedItem(item) : isMindNode ? isLockedItem(item) : isLockedText(item)) {
+      if (isFlowNode) {
+        cancelFlowNodeEdit();
+      } else if (isMindNode) {
+        cancelMindNodeEdit();
+      } else {
+        cancelTextEdit();
+      }
+      return;
+    }
+    const editingContent = isMindNode ? normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true }) : null;
+    richTextSession.syncContent({
+      itemId: item.id,
+      html: isMindNode
+        ? editingContent.html
+        : normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
+      plainText: isMindNode ? editingContent.plainText : item.plainText || item.text || "",
+      fontSize: item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
+    });
+    richFontSize = normalizeRichEditorFontSize(
+      item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
+      isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE
+    );
+    syncRichTextFontSize();
+    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
+    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+    syncElementEditorHostIdentity(refs.richEditor, item, state.editingType);
+    refs.editor?.classList.add("is-hidden");
+    refs.richEditor.classList.remove("is-hidden");
+    syncRichTextToolbar();
+  }
+
   function syncEditorLayout() {
     const hasEditing = Boolean(state.editingId);
     if (!hasEditing) {
@@ -9692,85 +9760,12 @@ let tablePointerSelectionState = {
       return;
     }
 
-    if (state.editingType === "file-memo") {
-      syncFileMemoLayout();
+    const adapter = editorAdapterManager.get(state.editingType);
+    if (typeof adapter?.sync !== "function") {
+      cancelRichEdit();
       return;
     }
-    if (state.editingType === "image-memo") {
-      syncImageMemoLayout();
-      return;
-    }
-    if (state.editingType === "image") {
-      refs.editor?.classList.add("is-hidden");
-      refs.richEditor?.classList.add("is-hidden");
-      refs.codeBlockEditor?.classList.add("is-hidden");
-      refs.fileMemoEditor?.classList.add("is-hidden");
-      refs.imageMemoEditor?.classList.add("is-hidden");
-      refs.tableEditor?.classList.add("is-hidden");
-      refs.tableToolbar?.classList.add("is-hidden");
-      refs.codeBlockToolbar?.classList.add("is-hidden");
-      return;
-    }
-
-    if (state.editingType === "math") {
-      syncMathEditorLayout();
-      return;
-    }
-
-    if (state.editingType === "table") {
-      syncTableEditorLayout();
-      return;
-    }
-
-    if (state.editingType === "code-block") {
-      syncCodeBlockEditorLayout();
-      return;
-    }
-
-    if (!(refs.richEditor instanceof HTMLDivElement)) {
-      return;
-    }
-    const isFlowNode = state.editingType === "flow-node";
-    const isMindNode = isMindNodeEditingType(state.editingType);
-    const item = isMindNode
-      ? sceneRegistry.getItemById(state.editingId, "mindNode") || sceneRegistry.getItemById(state.editingId, "mindSummary")
-      : sceneRegistry.getItemById(state.editingId, isFlowNode ? "flowNode" : "text");
-    if (!item) {
-      state.editingId = null;
-      state.editingType = null;
-      refs.richEditor.classList.add("is-hidden");
-      richTextSession.clear({ destroyAdapter: false });
-      return;
-    }
-    if (isFlowNode ? isLockedItem(item) : isMindNode ? isLockedItem(item) : isLockedText(item)) {
-      if (isFlowNode) {
-        cancelFlowNodeEdit();
-      } else if (isMindNode) {
-        cancelMindNodeEdit();
-      } else {
-        cancelTextEdit();
-      }
-      return;
-    }
-    const editingContent = isMindNode ? normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true }) : null;
-    richTextSession.syncContent({
-      itemId: item.id,
-      html: isMindNode
-        ? editingContent.html
-        : normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
-      plainText: isMindNode ? editingContent.plainText : item.plainText || item.text || "",
-      fontSize: item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
-    });
-    richFontSize = normalizeRichEditorFontSize(
-      item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
-      isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE
-    );
-    syncRichTextFontSize();
-    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
-    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
-    refs.editor?.classList.add("is-hidden");
-    refs.richEditor.classList.remove("is-hidden");
-    syncRichTextToolbar();
+    adapter.sync();
   }
 
   function getActiveRichEditingItem() {
@@ -12594,13 +12589,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const view = state.board.view;
     const scale = Math.max(0.1, Number(view?.scale || 1));
+    const frame = getElementScreenBounds(view, item);
     Object.assign(refs.editor.style, {
-      left: `${Number(item.x || 0) * scale + Number(view?.offsetX || 0)}px`,
-      top: `${Number(item.y || 0) * scale + Number(view?.offsetY || 0)}px`,
-      width: `${Math.max(220, Number(item.width || 0) * scale)}px`,
-      height: `${Math.max(72, Number(item.height || 0) * scale)}px`,
+      left: `${frame.left}px`,
+      top: `${frame.top}px`,
+      width: `${Math.max(220, frame.width)}px`,
+      height: `${Math.max(72, frame.height)}px`,
       fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20) * scale))}px`,
     });
+    syncElementEditorHostIdentity(refs.editor, item, "math");
     refs.editor.classList.add("is-math");
     refs.editor.classList.remove("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
@@ -13215,50 +13212,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return Math.min(safeMax, Math.max(safeMin, value));
   }
 
-  function getTableEditorViewportSize() {
-    const surfaceWidth = Math.max(
-      240,
-      Number(refs.fixedOverlayHost?.clientWidth || refs.surface?.clientWidth || refs.canvas?.clientWidth || refs.canvas?.width || 0) || 240
-    );
-    const surfaceHeight = Math.max(
-      180,
-      Number(refs.fixedOverlayHost?.clientHeight || refs.surface?.clientHeight || refs.canvas?.clientHeight || refs.canvas?.height || 0) || 180
-    );
-    return { width: surfaceWidth, height: surfaceHeight };
-  }
-
-  function resolveTableEditorDimension(value, minSize, availableSize, preferredMax) {
-    const preferred = Math.min(preferredMax, Math.max(minSize, Number(value || 0) || minSize));
-    const lowerBound = Math.min(minSize, availableSize);
-    return clampTableEditorValue(preferred, lowerBound, availableSize);
-  }
-
   function getTableEditorScreenRect(item) {
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
-    const width = Math.max(1, Number(item.width || 1)) * scale;
-    const height = Math.max(1, Number(item.height || 1)) * scale;
-    return { left, top, width, height };
+    return getElementScreenBounds(state.board.view, item);
   }
 
-  function resolveTableEditFrame(item, { baseFrame = null } = {}) {
-    const viewport = getTableEditorViewportSize();
-    const availableWidth = Math.max(1, viewport.width - 32);
-    const availableHeight = Math.max(1, viewport.height - 32);
-    const width = Math.round(
-      resolveTableEditorDimension(Number(item?.width || baseFrame?.width || 0), 320, availableWidth, 960)
-    );
-    const height = Math.round(
-      resolveTableEditorDimension(Number(item?.height || baseFrame?.height || 0), 180, availableHeight, 720)
-    );
-    const left = Math.round((viewport.width - width) / 2);
-    const top = Math.round((viewport.height - height) / 2);
+  function resolveTableEditFrame(item) {
+    const screenRect = getTableEditorScreenRect(item);
     return {
-      left,
-      top,
-      width,
-      height,
+      left: Math.round(screenRect.left),
+      top: Math.round(screenRect.top),
+      width: Math.max(1, Math.round(screenRect.width)),
+      height: Math.max(1, Math.round(screenRect.height)),
     };
   }
 
@@ -13268,10 +13232,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return null;
     }
     if (!tableEditFrame || options.force) {
-      tableEditFrame = resolveTableEditFrame(item, { baseFrame: options.baseFrame || tableEditFrame });
+      tableEditFrame = resolveTableEditFrame(item);
       return tableEditFrame;
     }
-    tableEditFrame = resolveTableEditFrame(item, { baseFrame: tableEditFrame });
+    tableEditFrame = resolveTableEditFrame(item);
     return tableEditFrame;
   }
 
@@ -14906,6 +14870,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.tableEditor.style.setProperty("--canvas-table-editor-cell-pad-y", `${cellPadY}px`);
     refs.tableEditor.style.setProperty("--canvas-table-editor-line-height", `${lineHeight}px`);
     refs.tableEditor.style.setProperty("--canvas-table-editor-row-height", `${rowHeight}px`);
+    syncElementEditorHostIdentity(refs.tableEditor, item, "table");
     refs.tableEditor.classList.remove("is-hidden");
     syncTableToolbarLayout(item);
     syncTableEditorSelectionUI();
@@ -15152,9 +15117,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const left = Number(item.x || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(item.y || 0) * scale + Number(state.board.view.offsetY || 0);
-    const width = Math.max(1, Number(item.width || 1)) * scale;
+    const frame = getElementScreenBounds(state.board.view, item);
     const hasEditorDraft = codeBlockEditor.isEditing(item.id);
     const draftCode = hasEditorDraft ? codeBlockEditor.getValue() : "";
     const sessionCode = hasEditorDraft ? draftCode : getCodeBlockContent(item);
@@ -15177,9 +15140,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       widthHint: Number(item.width || 0),
       mode: layoutMode,
     });
-    refs.codeBlockEditor.style.left = `${Math.round(left)}px`;
-    refs.codeBlockEditor.style.top = `${Math.round(top)}px`;
-    refs.codeBlockEditor.style.width = `${Math.round(width)}px`;
+    refs.codeBlockEditor.style.left = `${Math.round(frame.left)}px`;
+    refs.codeBlockEditor.style.top = `${Math.round(frame.top)}px`;
+    refs.codeBlockEditor.style.width = `${Math.round(frame.width)}px`;
     refs.codeBlockEditor.style.height = `${Math.round(Math.max(item.autoHeight !== false ? draftLayout.height : item.height, 48) * scale)}px`;
     refs.codeBlockEditor.style.setProperty("--code-editor-font-size", `${Math.max(12, Number(item.fontSize || 16)) * scale}px`);
     refs.codeBlockEditor.style.setProperty("background", "#ffffff", "important");
@@ -15188,6 +15151,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.codeBlockEditor.style.setProperty("box-shadow", "0 8px 24px rgba(15, 23, 42, 0.12)", "important");
     refs.codeBlockEditor.dataset.layoutMode = String(draftLayout.layoutMode || layoutMode || "precise");
     refs.codeBlockEditor.dataset.dirty = getCodeBlockDraftDirtyState(item) ? "1" : "0";
+    syncElementEditorHostIdentity(refs.codeBlockEditor, item, "code-block");
     refs.codeBlockEditor.setAttribute(
       "title",
       getCodeBlockDraftDirtyState(item) ? "代码块正在编辑，存在未提交改动" : "代码块正在编辑"
@@ -15656,6 +15620,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.fileMemoEditor.style.width = `${memoWidth}px`;
     refs.fileMemoEditor.style.height = `${memoHeight}px`;
     refs.fileMemoEditor.style.fontSize = `${Math.max(12, Number(memoLayout.fontSize || 14) * scale)}px`;
+    syncElementEditorHostIdentity(refs.fileMemoEditor, item, "file-memo");
     refs.fileMemoEditor.classList.remove("is-hidden");
   }
 
@@ -15766,6 +15731,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.imageMemoEditor.style.width = `${memoWidth}px`;
     refs.imageMemoEditor.style.height = `${memoHeight}px`;
     refs.imageMemoEditor.style.fontSize = `${Math.max(12, Number(memoLayout.fontSize || 14) * scale)}px`;
+    syncElementEditorHostIdentity(refs.imageMemoEditor, item, "image-memo");
     refs.imageMemoEditor.classList.remove("is-hidden");
   }
 

@@ -575,6 +575,49 @@ function assert(condition, message, details = null) {
   }
 }
 
+async function readElementEditorMapping(page, editorSelector, itemId) {
+  return page.evaluate(({ selector, targetId }) => {
+    const snapshot = window.__canvas2dEngine?.getSnapshot?.() || null;
+    const item = snapshot?.board?.items?.find?.((entry) => entry.id === targetId) || null;
+    const view = snapshot?.board?.view || { scale: 1, offsetX: 0, offsetY: 0 };
+    const canvasRect = document.querySelector("#canvas-office-canvas")?.getBoundingClientRect?.() || null;
+    const editor = document.querySelector(selector);
+    const editorRect = editor?.getBoundingClientRect?.() || null;
+    if (!item || !canvasRect || !editorRect) return null;
+    const scale = Number(view.scale || 1) || 1;
+    return {
+      actual: {
+        left: editorRect.left,
+        top: editorRect.top,
+        width: editorRect.width,
+        height: editorRect.height,
+      },
+      expected: {
+        left: canvasRect.left + Number(item.x || 0) * scale + Number(view.offsetX || 0),
+        top: canvasRect.top + Number(item.y || 0) * scale + Number(view.offsetY || 0),
+        width: Math.max(1, Number(item.width || 1) * scale),
+        height: Math.max(1, Number(item.height || 1) * scale),
+      },
+      placement: editor.dataset.editorPlacement || "",
+      editorType: editor.dataset.editorType || "",
+      itemId: editor.dataset.itemId || "",
+      view: { ...view },
+    };
+  }, { selector: editorSelector, targetId: itemId });
+}
+
+function assertElementEditorMapping(mapping, label, { size = true } = {}) {
+  assert(mapping, `${label}: editor mapping is unavailable`, mapping);
+  assert(mapping.placement === "element", `${label}: editor is not element-local`, mapping);
+  assert(mapping.itemId, `${label}: editor did not publish its item identity`, mapping);
+  assert(Math.abs(mapping.actual.left - mapping.expected.left) <= 2, `${label}: editor left is detached from the element`, mapping);
+  assert(Math.abs(mapping.actual.top - mapping.expected.top) <= 2, `${label}: editor top is detached from the element`, mapping);
+  if (size) {
+    assert(Math.abs(mapping.actual.width - mapping.expected.width) <= 2, `${label}: editor width is detached from the element`, mapping);
+    assert(Math.abs(mapping.actual.height - mapping.expected.height) <= 2, `${label}: editor height is detached from the element`, mapping);
+  }
+}
+
 async function runCodeBlockOverlayCheck(browser, { desktopShell = false } = {}) {
   const board = createBoard([
     createCodeBlockItem("code-check", 160, 160, "const answer = 42;\\nconsole.log(answer);"),
@@ -668,14 +711,14 @@ async function runTableEditorCheck(browser) {
         screenCenterX: Number(item.x || 0) * scale + Number(view.offsetX || 0) + Math.max(1, Number(item.width || 1) * scale) / 2,
         screenCenterY: Number(item.y || 0) * scale + Number(view.offsetY || 0) + Math.max(1, Number(item.height || 1) * scale) / 2,
         scaledWidth: Math.max(1, Number(item.width || 1) * scale),
-        logicalWidth: Math.max(1, Number(item.width || 1)),
+        scaledHeight: Math.max(1, Number(item.height || 1) * scale),
       };
     });
     assert(metrics, "table editor check could not resolve table metrics", metrics);
     const canvasRect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     await session.page.mouse.dblclick(canvasRect.x + metrics.screenCenterX, canvasRect.y + metrics.screenCenterY);
     await session.page.waitForTimeout(220);
-    const editorBox = await session.page.locator("#canvas-table-editor").boundingBox();
+    let editorBox = await session.page.locator("#canvas-table-editor").boundingBox();
     await session.page.evaluate(() => {
       const firstCell = document.querySelector('#canvas-table-editor [data-row-index="0"][data-column-index="0"]');
       const secondCell = document.querySelector('#canvas-table-editor [data-row-index="1"][data-column-index="1"]');
@@ -685,6 +728,9 @@ async function runTableEditorCheck(browser) {
     const selectedCellsBeforeContext = await session.page.evaluate(
       () => Array.from(document.querySelectorAll("#canvas-table-editor .is-selected")).length
     );
+    const initialMapping = await readElementEditorMapping(session.page, "#canvas-table-editor", "table-check");
+    assertElementEditorMapping(initialMapping, "table editor initial");
+    editorBox = await session.page.locator("#canvas-table-editor").boundingBox();
     await session.page.mouse.click(editorBox.x + 160, editorBox.y + 48, { button: "right" });
     await session.page.waitForTimeout(120);
     const result = await session.page.evaluate(() => {
@@ -733,19 +779,8 @@ async function runTableEditorCheck(browser) {
     assert(result.toolbarVisible === true, "table toolbar did not enter visible mode", result);
     assert(result.codeBlockHostVisible === false, "codeBlock overlay host should be hidden while table editing", result);
     assert(result.sceneTableReleased === true, "table scene ownership was not released during editing", result);
-    assert(result.editorWidth >= 320, "table editor width is below fixed-frame minimum", { result, metrics });
-    assert(result.editorWidth > Math.round(metrics.scaledWidth), "table editor is still following canvas scale", { result, metrics });
-    assert(result.editorWidth <= Math.round(metrics.logicalWidth + 24), "table editor width drifted beyond logical size", { result, metrics });
-    assert(
-      Math.abs(result.editorLeft + Math.round(result.editorWidth / 2) - result.overlayCenterX) <= 2,
-      "table editor is not horizontally centered in overlay host",
-      result
-    );
-    assert(
-      Math.abs(result.editorTop + Math.round(result.editorHeight / 2) - result.overlayCenterY) <= 2,
-      "table editor is not vertically centered in overlay host",
-      result
-    );
+    assert(Math.abs(result.editorWidth - Math.round(metrics.scaledWidth)) <= 2, "table editor width is detached from the table element", { result, metrics });
+    assert(Math.abs(result.editorHeight - Math.round(metrics.scaledHeight)) <= 2, "table editor height is detached from the table element", { result, metrics });
     assert(result.selectedCellsBeforeContext >= 4, "table range selection did not expand beyond a single cell", result);
     assert(result.toolButtons.length === 3, "table toolbar button count mismatch", result);
     assert(result.toolButtons.every((button) => button.text === ""), "table toolbar should use icon-only controls", result);
@@ -792,7 +827,7 @@ async function runTableEditorCheck(browser) {
       );
     }
     assert(session.getErrors().length === 0, "rapid table edit cycles produced page errors", session.getErrors());
-    return { ...result, restored, rapidCycles: 3 };
+    return { ...result, initialMapping, restored, rapidCycles: 3 };
   } finally {
     await session.page.close();
   }
