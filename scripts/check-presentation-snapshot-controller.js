@@ -37,6 +37,7 @@ async function main() {
     "../public/src/engines/canvas2d-core/overlay/presentationSnapshotController.js"
   );
   const requests = new Map();
+  const readyNotifications = [];
   const controller = createPresentationSnapshotController({
     capture: (_, { density }) => {
       const request = createDeferred();
@@ -49,6 +50,7 @@ async function main() {
       const id = setTimeout(callback, 0);
       return () => clearTimeout(id);
     },
+    onSnapshotReady: (event) => readyNotifications.push(event),
   });
   const node = createFakeNode();
 
@@ -93,6 +95,11 @@ async function main() {
   assert.strictEqual(node.dataset.activeRepresentation, "exact-snapshot", "ready snapshot was not committed");
   assert.strictEqual(node.children.length, 1, "snapshot was not atomically inserted");
   assert.strictEqual(node.children[0].src, "data:image/png;base64,current");
+  assert.deepStrictEqual(
+    readyNotifications.at(-1),
+    { applied: true, signature: "v2", generation: 3 },
+    "ready snapshot did not publish its resource change"
+  );
 
   node.dataset.contentMode = "snapshot";
   controller.prepare(node, {

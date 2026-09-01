@@ -5960,6 +5960,7 @@ body.desktop-mode .canvas-viewport.is-dragover {
 
 .canvas-office-page #canvas-office-root {
   display: block;
+  height: 100vh;
   min-height: 100vh;
 }
 
@@ -6263,6 +6264,16 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   transform-origin: 0 0;
   will-change: transform;
   contain: layout style;
+}
+
+.canvas2d-document-preview-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 121;
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .canvas2d-interaction-canvas {
@@ -11091,12 +11102,12 @@ body.is-office-embedded #right-pane-resizer {
   z-index: 121;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 8px;
-  padding: 16px;
-  border: 1px solid rgba(221, 229, 240, 0.96);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 16px 36px rgba(148, 163, 184, 0.14);
+  gap: 0;
+  padding: 0;
+  border: 1px solid rgba(203, 213, 225, 0.98);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
   overflow: hidden;
   pointer-events: auto;
   box-sizing: border-box;
@@ -11112,7 +11123,12 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-file-preview-react-head {
   justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 10px 7px 12px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.96);
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .canvas2d-file-preview-react-title {
@@ -11139,39 +11155,41 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-file-preview-react-close,
 .canvas2d-file-preview-react-actions button {
   border: 1px solid rgba(226, 232, 240, 0.95);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+  background: #fff;
   color: #334155;
   font-size: 13px;
   font-weight: 800;
 }
 
 .canvas2d-file-preview-react-close {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .canvas2d-file-preview-react-actions {
-  gap: 8px;
-  padding: 7px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.84);
+  gap: 6px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.96);
+  background: #f8fafc;
+  box-sizing: border-box;
 }
 
 .canvas2d-file-preview-react-actions button {
-  min-width: 38px;
-  height: 34px;
-  padding: 0 12px;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 9px;
 }
 
 .canvas2d-file-preview-react-shell {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.94);
-  border-radius: 16px;
-  background: #f8fafc;
+  border: 0;
+  border-radius: 0;
+  background: #e2e8f0;
 }
 
 .canvas2d-file-preview-react-scroll {
@@ -11180,7 +11198,7 @@ body.is-office-embedded #right-pane-resizer {
   overflow: auto;
   overscroll-behavior: contain;
   padding: 18px 18px 26px;
-  background: #f8fafc;
+  background: #e2e8f0;
   scrollbar-gutter: stable both-edges;
   box-sizing: border-box;
 }
@@ -11223,7 +11241,8 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   box-sizing: border-box;
   width: 794px;
   margin: 0 auto;
-  border: 1px solid rgba(226, 232, 240, 0.92);
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: 4px;
   background: #fff;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
   overflow: hidden;
@@ -11268,158 +11287,60 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 8px;
-  padding: 88px 24px 24px;
-  background: rgba(250, 251, 253, 0.94);
+  gap: 7px;
+  padding: 24px;
+  background: rgba(226, 232, 240, 0.9);
   color: #64748b;
   text-align: center;
 }
 
 .canvas2d-file-preview-react-placeholder strong {
+  position: relative;
+  z-index: 2;
   color: #475569;
   font-size: 14px;
   font-weight: 900;
 }
 
 .canvas2d-file-preview-react-placeholder span {
+  position: relative;
+  z-index: 2;
   max-width: 32ch;
   font-size: 12px;
   line-height: 1.55;
 }
 
-.canvas2d-file-preview-placeholder-card {
-  position: absolute;
-  z-index: 121;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid rgba(203, 213, 225, 0.96);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 18px rgba(148, 163, 184, 0.14);
-  box-sizing: border-box;
-  overflow: hidden;
-  pointer-events: auto;
-}
-
-.canvas2d-file-preview-placeholder-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.canvas2d-file-preview-placeholder-card-foot {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.canvas2d-file-preview-placeholder-card-foot > div:first-child {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.canvas2d-file-preview-placeholder-card-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-.canvas2d-file-preview-placeholder-card-actions button {
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid rgba(203, 213, 225, 0.96);
-  border-radius: 6px;
+.canvas2d-file-preview-react-placeholder > button {
+  position: relative;
+  z-index: 2;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.74);
+  border-radius: 4px;
   background: #fff;
   color: #334155;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.canvas2d-file-preview-placeholder-card-badge,
-.canvas2d-file-preview-placeholder-card-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.canvas2d-file-preview-placeholder-card-badge {
-  border: 1px solid rgba(59, 130, 246, 0.16);
-  background: rgba(59, 130, 246, 0.08);
-  color: #285ea8;
-}
-
-.canvas2d-file-preview-placeholder-card-status {
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  background: rgba(248, 250, 252, 0.92);
-  color: #64748b;
-}
-
-.canvas2d-file-preview-placeholder-card-body {
-  min-height: 0;
+.canvas2d-file-preview-react-skeleton {
+  position: absolute;
+  inset: 18px;
   overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.92));
-  padding: 10px;
-  box-sizing: border-box;
+  opacity: 0.7;
 }
 
-.canvas2d-file-preview-placeholder-card-body .canvas2d-file-preview-skeleton-page {
+.canvas2d-file-preview-react-skeleton .canvas2d-file-preview-skeleton-page {
   width: 100%;
   min-height: 100%;
   height: 100%;
-  gap: 10px;
-  padding: 14px 14px 16px;
-  border-radius: 10px;
-  box-shadow: none;
+  padding: 34px 32px;
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
 }
 
-.canvas2d-file-preview-placeholder-card-body .canvas2d-file-preview-skeleton-page.is-secondary {
+.canvas2d-file-preview-react-skeleton .canvas2d-file-preview-skeleton-page.is-secondary {
   display: none;
-}
-
-.canvas2d-file-preview-placeholder-card-body .canvas2d-file-preview-skeleton-strip {
-  width: 42%;
-  height: 10px;
-}
-
-.canvas2d-file-preview-placeholder-card-body .canvas2d-file-preview-skeleton-body {
-  gap: 10px;
-}
-
-.canvas2d-file-preview-placeholder-card-body .canvas2d-file-preview-skeleton-line {
-  height: 8px;
-}
-
-.canvas2d-file-preview-placeholder-card-foot {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.canvas2d-file-preview-placeholder-card-foot strong {
-  color: #334155;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.canvas2d-file-preview-placeholder-card-foot span {
-  color: #64748b;
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .canvas2d-file-preview-skeleton-page {

@@ -29,7 +29,7 @@ import {
   normalizeElement,
   resizeElement,
 } from "./elements/index.js";
-import { createFileCardElement, getFileCardMemoBounds } from "./elements/fileCard.js";
+import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds } from "./elements/fileCard.js";
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import {
@@ -3197,7 +3197,17 @@ export function createCanvas2DEngine(options = {}) {
   const dragHandlers = [];
   const canvasUiRuntime = createCanvasUiRuntime({ elementRegistry: canvasElementRegistry });
   const renderer = createRenderer({ customRenderers: elementRenderers });
-  const presentationSnapshotController = createPresentationSnapshotController();
+  const presentationSnapshotController = createPresentationSnapshotController({
+    onSnapshotReady: () => {
+      canvasPerformanceRuntime.requestResourceReconcile();
+      scheduleRender({
+        lane: CANVAS_PERFORMANCE_LANES.BACKGROUND,
+        reason: "presentation-snapshot-ready",
+        interactionDirty: false,
+        overlayDirty: true,
+      });
+    },
+  });
   const sceneContentRenderer = createSceneContentRenderer({
     resolveImageSource,
     renderTableCellHtml: (cell) => renderTableCellStaticHtml(cell),
@@ -3347,6 +3357,7 @@ export function createCanvas2DEngine(options = {}) {
     canvas: null,
     interactionCanvas: null,
     sceneRoot: null,
+    documentPreviewLayer: null,
     vectorLayer: null,
     contentLayer: null,
     ctx: null,
@@ -5074,12 +5085,34 @@ let tablePointerSelectionState = {
       refs.sceneRoot.style.transform = matrix;
       refs.sceneRoot.dataset.cameraMatrix = matrix;
     }
+    if (refs.documentPreviewLayer instanceof HTMLDivElement && refs.documentPreviewLayer.dataset.cameraMatrix !== matrix) {
+      refs.documentPreviewLayer.style.transform = matrix;
+      refs.documentPreviewLayer.dataset.cameraMatrix = matrix;
+    }
     setStyleIfNeeded(refs.sceneRoot, "willChange", "transform");
     refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
     refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
     refs.sceneRoot.dataset.presentationPhase = interactionPhase;
     refs.sceneRoot.dataset.qualityMode = String(frameContext?.quality?.mode || "off");
     refs.sceneRoot.dataset.qualityGeneration = String(frameContext?.quality?.generation || 0);
+    if (refs.documentPreviewLayer instanceof HTMLDivElement) {
+      refs.documentPreviewLayer.dataset.presentationPhase = interactionPhase;
+      refs.documentPreviewLayer.querySelectorAll("[data-document-preview-anchor]").forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const itemId = String(node.dataset.itemId || "").trim();
+        const item = itemId ? sceneRegistry.getItemById(itemId, "fileCard") : null;
+        if (!item) {
+          node.style.visibility = "hidden";
+          return;
+        }
+        const bounds = getFileCardPreviewBounds(item, { expanded: node.dataset.expanded === "true" });
+        setStyleIfNeeded(node, "left", `${bounds.left}px`);
+        setStyleIfNeeded(node, "top", `${bounds.top}px`);
+        setStyleIfNeeded(node, "width", `${bounds.width}px`);
+        setStyleIfNeeded(node, "height", `${bounds.height}px`);
+        setStyleIfNeeded(node, "visibility", "visible");
+      });
+    }
     if (typeof window !== "undefined") {
       window.__ffPresentationQuality = frameContext?.quality || null;
     }
@@ -9040,6 +9073,14 @@ let tablePointerSelectionState = {
       refs.sceneRoot.id = "canvas2d-scene-root";
       refs.sceneRoot.className = "canvas2d-scene-root";
       refs.surface.appendChild(refs.sceneRoot);
+    }
+
+    refs.documentPreviewLayer = refs.surface.querySelector("#canvas2d-document-preview-layer");
+    if (!(refs.documentPreviewLayer instanceof HTMLDivElement)) {
+      refs.documentPreviewLayer = document.createElement("div");
+      refs.documentPreviewLayer.id = "canvas2d-document-preview-layer";
+      refs.documentPreviewLayer.className = "canvas2d-document-preview-layer";
+      refs.surface.appendChild(refs.documentPreviewLayer);
     }
 
     refs.vectorLayer = refs.sceneRoot.querySelector("#canvas2d-vector-layer");
@@ -17082,7 +17123,36 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const isMissingFileForPreview =
         /^c:[/\\]missing[/\\]/i.test(targetPath) ||
         /^__ff_missing_preview__/i.test(targetPath);
-      if (typeof globalThis?.desktopShell?.readFileBase64 === "function") {
+      if (!isMissingFileForPreview && typeof globalThis?.desktopShell?.getFilePreviewMetadata === "function") {
+        const metadata = await globalThis.desktopShell.getFilePreviewMetadata(targetPath).catch(() => null);
+        const cachedHandle = metadata?.ok && metadata?.contentKey
+          ? documentPreviewRuntime.attachCached(activeRequestId, previewGeneration, metadata.contentKey)
+          : null;
+        if (cachedHandle?.status === "ready") {
+          patchFileCardPreviewRequest(activeRequestId, {
+            previewStatus: "ready",
+            previewMessage: `${previewSpec?.fileLabel || "文件"}预览已从缓存恢复`,
+            previewSessionId: cachedHandle.id,
+            previewGeneration: cachedHandle.generation,
+            previewByteLength: cachedHandle.byteLength,
+            previewMime: mimeType,
+            previewCacheHit: true,
+            previewDiagnostics: buildFileCardPreviewDiagnostics({
+              loadState: "缓存命中",
+              parseState: "待恢复",
+              pageCount: 0,
+              contentNodeCount: 0,
+              runtimeLabel: "缓存命中",
+            }),
+          });
+          store.emit();
+          scheduleRender({ overlayDirty: true });
+          return true;
+        }
+      }
+      if (typeof globalThis?.desktopShell?.readFilePreview === "function") {
+        result = await globalThis.desktopShell.readFilePreview(targetPath).catch(() => null);
+      } else if (typeof globalThis?.desktopShell?.readFileBase64 === "function") {
         result = await globalThis.desktopShell.readFileBase64(targetPath).catch(() => null);
       }
       if (!result?.ok && isMissingFileForPreview) {
@@ -17116,14 +17186,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         return false;
       }
       const mime = String(result?.mime || "").trim().toLowerCase();
-      const fileBase64 = String(result?.data || "").trim();
+      const fileBase64 = typeof result?.data === "string" ? result.data.trim() : "";
+      const binaryData = result?.data;
+      const fileBytes = binaryData instanceof ArrayBuffer
+        ? new Uint8Array(binaryData)
+        : ArrayBuffer.isView(binaryData)
+          ? new Uint8Array(binaryData.buffer, binaryData.byteOffset, binaryData.byteLength)
+          : null;
       const expectedMime = String(previewSpec?.mimeType || "").trim().toLowerCase();
       const mimeAccepted = !mime || mime === expectedMime || mime === "application/octet-stream";
-      const previewHandle = result?.ok && fileBase64 && mimeAccepted
+      const previewHandle = result?.ok && (fileBytes?.byteLength || fileBase64) && mimeAccepted
         ? documentPreviewRuntime.commit(activeRequestId, previewGeneration, {
+            bytes: fileBytes,
             base64: fileBase64,
             kind: previewSpec?.kind,
             mime: expectedMime,
+            contentKey: String(result?.contentKey || "").trim(),
           })
         : documentPreviewRuntime.fail(
             activeRequestId,
@@ -17141,6 +17219,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         previewGeneration: previewHandle?.generation || previewGeneration,
         previewByteLength: previewHandle?.byteLength || 0,
         previewMime: mimeAccepted ? expectedMime : "",
+        previewCacheHit: false,
         previewDiagnostics: buildFileCardPreviewDiagnostics({
           loadState: previewReady ? "文档已加载" : "加载失败",
           parseState: "待开始",
@@ -17191,7 +17270,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("文件路径为空，无法预览", "warning");
       return false;
     }
-    const hasDesktopFileBridge = typeof globalThis?.desktopShell?.readFileBase64 === "function";
+    const hasDesktopFileBridge =
+      typeof globalThis?.desktopShell?.readFilePreview === "function" ||
+      typeof globalThis?.desktopShell?.readFileBase64 === "function";
     const requestId = createId("file-card-preview");
     const previewSession = documentPreviewRuntime.createSession({
       id: requestId,
@@ -17238,6 +17319,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       previewSessionId: previewSession.id,
       previewGeneration: previewSession.generation,
       previewByteLength: 0,
+      previewCacheHit: false,
       expanded: false,
       previewZoom: 0.82,
       restoreMemoVisible,
@@ -26592,6 +26674,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     retryFileCardPreview,
     getDocumentPreviewSessionData(sessionId, generation) {
       return documentPreviewRuntime.getData(sessionId, generation);
+    },
+    getDocumentPreviewPortalHost() {
+      return refs.documentPreviewLayer instanceof HTMLDivElement ? refs.documentPreviewLayer : null;
+    },
+    getDocumentPreviewArtifact(sessionId, generation, artifactKey) {
+      return documentPreviewRuntime.getArtifact(sessionId, generation, artifactKey);
+    },
+    setDocumentPreviewArtifact(sessionId, generation, artifactKey, value) {
+      return documentPreviewRuntime.setArtifact(sessionId, generation, artifactKey, value);
     },
     getDocumentPreviewRuntimeSnapshot() {
       return documentPreviewRuntime.getStats();

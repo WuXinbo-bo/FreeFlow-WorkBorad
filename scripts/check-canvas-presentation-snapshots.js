@@ -205,6 +205,10 @@ async function main() {
       window.__snapshotTableNode = document.querySelector('.canvas2d-scene-table-item[data-id="snapshot-table"]');
       window.__canvas2dEngine.resize({ immediate: true, reason: "table-snapshot-budget-check" });
     });
+    await page.waitForFunction(() => {
+      const cache = document.querySelector("#canvas-office-canvas")?.__ffRenderStats?.resourceCaches || {};
+      return cache.presentationSnapshot?.size >= 1 && cache.presentationSnapshot?.byteSize > 0;
+    });
     const initial = await collect(page);
     const initialTable = await collectTable(page);
     await page.screenshot({ path: "tmp/presentation-snapshots.png", fullPage: false });

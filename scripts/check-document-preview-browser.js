@@ -38,10 +38,54 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   await page.addInitScript(({ fixture }) => {
-    globalThis.__FREEFLOW_PREVIEW_TEST = { mode: "success", delay: 0, fixture };
+    const decodeFixture = (base64) => {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
+    globalThis.__FREEFLOW_PREVIEW_TEST = {
+      mode: "success",
+      delay: 0,
+      fixture,
+      version: 1,
+      binaryReads: 0,
+      base64Reads: 0,
+    };
     globalThis.desktopShell = {
+      getFilePreviewMetadata: async (targetPath) => {
+        const state = globalThis.__FREEFLOW_PREVIEW_TEST;
+        return {
+          ok: true,
+          filePath: targetPath,
+          size: state.fixture.length,
+          modifiedAt: state.version,
+          contentKey: `${targetPath}:${state.fixture.length}:${state.version}`,
+          mime: state.mime || "application/pdf",
+        };
+      },
+      readFilePreview: async (targetPath) => {
+        const state = globalThis.__FREEFLOW_PREVIEW_TEST;
+        state.binaryReads += 1;
+        if (state.delay) {
+          await new Promise((resolve) => setTimeout(resolve, state.delay));
+        }
+        if (state.mode === "fail") {
+          return { ok: false, error: "fixture failure", data: null, mime: state.mime || "application/pdf" };
+        }
+        return {
+          ok: true,
+          filePath: targetPath,
+          data: decodeFixture(state.fixture),
+          size: state.fixture.length,
+          modifiedAt: state.version,
+          contentKey: `${targetPath}:${state.fixture.length}:${state.version}`,
+          mime: state.mime || "application/pdf",
+        };
+      },
       readFileBase64: async () => {
         const state = globalThis.__FREEFLOW_PREVIEW_TEST;
+        state.base64Reads += 1;
         if (state.delay) {
           await new Promise((resolve) => setTimeout(resolve, state.delay));
         }
@@ -62,8 +106,8 @@ async function main() {
       const item = {
         id: "preview-pdf-card",
         type: "fileCard",
-        x: 220,
-        y: 160,
+        x: 720,
+        y: 180,
         width: 336,
         height: 128,
         fileName: "preview-contract.pdf",
@@ -106,6 +150,42 @@ async function main() {
     assert.strictEqual(Object.prototype.hasOwnProperty.call(opened.request, "previewFileBase64"), false);
     assert.strictEqual(opened.runtime.activeSessions, 1);
     assert(opened.runtime.byteSize > 0);
+    assert.strictEqual(await page.evaluate(() => globalThis.__FREEFLOW_PREVIEW_TEST.binaryReads), 1);
+    assert.strictEqual(await page.evaluate(() => globalThis.__FREEFLOW_PREVIEW_TEST.base64Reads), 0);
+    assert.strictEqual(
+      await page.evaluate(() => document.querySelector(".canvas2d-file-preview-react")?.parentElement?.id || ""),
+      "canvas2d-document-preview-layer",
+      "document previews must render in the scene-synchronized preview layer"
+    );
+
+    await page.evaluate(() => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      canvas.dispatchEvent(new WheelEvent("wheel", { deltaX: 42, deltaY: 28, bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(32);
+    const cameraSync = await page.evaluate(() => ({
+      scene: document.querySelector("#canvas2d-scene-root")?.style?.transform || "",
+      preview: document.querySelector("#canvas2d-document-preview-layer")?.style?.transform || "",
+    }));
+    assert(cameraSync.scene && cameraSync.scene === cameraSync.preview, "preview and scene camera matrices must update in the same frame");
+
+    const fileCardBox = await page.locator('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]').boundingBox();
+    assert(fileCardBox, "file card scene node is missing");
+    await page.mouse.move(fileCardBox.x + fileCardBox.width / 2, fileCardBox.y + fileCardBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(fileCardBox.x + fileCardBox.width / 2 + 84, fileCardBox.y + fileCardBox.height / 2 + 52, { steps: 3 });
+    await page.waitForTimeout(20);
+    const liveAnchor = await page.evaluate(() => {
+      const card = document.querySelector('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]')?.getBoundingClientRect();
+      const preview = document.querySelector(".canvas2d-file-preview-react")?.getBoundingClientRect();
+      return card && preview ? {
+        centerDelta: Math.abs((card.left + card.width / 2) - (preview.left + preview.width / 2)),
+        topDelta: Math.abs(preview.top - (card.bottom - 20 * (card.width / 336))),
+      } : null;
+    });
+    assert(liveAnchor, "live preview anchor is missing while dragging");
+    assert(liveAnchor.centerDelta < 2 && liveAnchor.topDelta < 3, "preview drawer must follow the file card before pointer release");
+    await page.mouse.up();
 
     await page.evaluate(() => {
       document.querySelector(".canvas2d-file-preview-react-pdf-canvas").dataset.previewRenderToken = "stable-render";
@@ -138,8 +218,25 @@ async function main() {
     const closed = await page.evaluate(() => globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot());
     assert.strictEqual(closed.activeSessions, 0);
 
+    const readsBeforeCachedOpen = await page.evaluate(() => globalThis.__FREEFLOW_PREVIEW_TEST.binaryReads);
+    await page.evaluate(() => {
+      globalThis.__canvas2dEngine.openFileCardPreview(globalThis.__canvas2dEngine.getSnapshotData().items[0]);
+    });
+    await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0]?.previewStatus === "ready");
+    const cachedPdfOpen = await page.evaluate(() => ({
+      request: globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0],
+      binaryReads: globalThis.__FREEFLOW_PREVIEW_TEST.binaryReads,
+    }));
+    assert.strictEqual(cachedPdfOpen.request.previewCacheHit, true);
+    assert.strictEqual(cachedPdfOpen.binaryReads, readsBeforeCachedOpen, "same-version reopen must not read the PDF again");
+    await page.evaluate(() => {
+      const request = globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0];
+      globalThis.__canvas2dEngine.closeFileCardPreview(request.id);
+    });
+
     await page.evaluate(() => {
       globalThis.__FREEFLOW_PREVIEW_TEST.delay = 180;
+      globalThis.__FREEFLOW_PREVIEW_TEST.version += 1;
       const item = globalThis.__canvas2dEngine.getSnapshotData().items[0];
       globalThis.__canvas2dEngine.openFileCardPreview(item);
       const request = globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0];
@@ -156,6 +253,7 @@ async function main() {
     await page.evaluate(() => {
       globalThis.__FREEFLOW_PREVIEW_TEST.delay = 0;
       globalThis.__FREEFLOW_PREVIEW_TEST.mode = "fail";
+      globalThis.__FREEFLOW_PREVIEW_TEST.version += 1;
       globalThis.__canvas2dEngine.openFileCardPreview(globalThis.__canvas2dEngine.getSnapshotData().items[0]);
     });
     await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0]?.previewStatus === "failed");
@@ -174,11 +272,12 @@ async function main() {
       globalThis.__canvas2dEngine.closeFileCardPreview(currentRequest.id);
       globalThis.__FREEFLOW_PREVIEW_TEST.fixture = fixture;
       globalThis.__FREEFLOW_PREVIEW_TEST.mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      globalThis.__FREEFLOW_PREVIEW_TEST.version += 1;
       const item = {
         id: "preview-docx-card",
         type: "fileCard",
-        x: 220,
-        y: 160,
+        x: 720,
+        y: 180,
         width: 336,
         height: 128,
         fileName: "preview-contract.docx",
@@ -233,6 +332,12 @@ async function main() {
         "FreeFlow Word preview contract"
       )
     );
+    const cachedDocx = await page.evaluate(() => ({
+      request: globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0],
+      runtime: globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot(),
+    }));
+    assert.strictEqual(cachedDocx.request.previewCacheHit, true);
+    assert(cachedDocx.runtime.artifactByteSize > 0, "DOCX parsed output should remain in the preview cache");
     await page.evaluate(() => {
       const request = globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0];
       globalThis.__canvas2dEngine.closeFileCardPreview(request.id);

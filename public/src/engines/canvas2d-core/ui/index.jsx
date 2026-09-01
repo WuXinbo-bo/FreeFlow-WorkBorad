@@ -1,4 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createCanvas2DReactBridge } from "../reactBridge.js";
 import {
   createCanvasTutorialBridge,
@@ -960,6 +961,8 @@ const FILE_CARD_PREVIEW_ZOOM_MAX = 1.9;
 const FILE_CARD_PREVIEW_DEFAULT_ZOOM = 0.82;
 const FILE_CARD_PREVIEW_DOCX_PAGE_WIDTH = 794;
 const FILE_CARD_PREVIEW_PDF_PAGE_WIDTH = 794;
+const DOCX_PREVIEW_HTML_ARTIFACT = "docx-html-v1";
+const PDF_PREVIEW_FIRST_PAGE_ARTIFACT = "pdf-first-page-webp-v1";
 
 function buildFallbackFileCardPreviewItem(request = null) {
   const anchor = request?.anchor && typeof request.anchor === "object" ? request.anchor : null;
@@ -975,27 +978,6 @@ function buildFallbackFileCardPreviewItem(request = null) {
     height: Math.max(1, Number(anchor.height || 0) || 0),
     fileName: String(request?.fileName || "文件预览"),
     name: String(request?.fileName || "文件预览"),
-  };
-}
-
-function resolveFileCardElementPlacement(item = null, board = null) {
-  if (!item || !board?.view) {
-    return null;
-  }
-  const scale = Math.max(0.1, Number(board.view.scale || 1));
-  const left = Number(item.x || 0) || 0;
-  const top = Number(item.y || 0) || 0;
-  const width = Math.max(1, Number(item.width || 336) || 336);
-  const height = Math.max(1, Number(item.height || 128) || 128);
-  return {
-    screenWidth: width * scale,
-    screenHeight: height * scale,
-    style: {
-      left: `${Math.round(left * scale + Number(board.view.offsetX || 0))}px`,
-      top: `${Math.round(top * scale + Number(board.view.offsetY || 0))}px`,
-      width: `${Math.round(width * scale)}px`,
-      height: `${Math.round(height * scale)}px`,
-    },
   };
 }
 
@@ -1061,61 +1043,6 @@ function getPreviewDisplayLabel(request = null) {
   };
 }
 
-function FileCardPreviewPlaceholder({
-  request = null,
-  board = null,
-  item = null,
-  renderState = null,
-  previewLabel = null,
-  previewStatus = "",
-  bridge = null,
-}) {
-  const placement = useMemo(() => resolveFileCardElementPlacement(item, board), [board, item]);
-  if (!request?.open || !placement?.style) {
-    return null;
-  }
-  const normalizedStatus = String(previewStatus || renderState?.status || "loading").trim() || "loading";
-  const isFailed = normalizedStatus === "failed" || normalizedStatus === "unavailable";
-  const kind = String(request?.previewKind || "docx").trim().toLowerCase();
-  const title = isFailed ? previewLabel?.unavailableText : `${previewLabel?.noun || "文档"}预览`;
-  const message =
-    !item
-      ? "文件卡锚点缺失"
-      : String(request?.previewMessage || renderState?.message || "").trim() ||
-        (isFailed ? previewLabel?.failedText : previewLabel?.generatingText);
-  const badge = String(request?.previewBadgeLabel || previewLabel?.badge || "DOCX");
-  const runtimeLabel = getFileCardPreviewRuntimeLabel(previewStatus, renderState?.status);
-  return (
-    <div
-      className="canvas2d-file-preview-placeholder-card"
-      style={placement.style}
-      data-render-state={String(renderState?.status || "loading").trim() || "loading"}
-      data-preview-kind={kind}
-    >
-      <div className="canvas2d-file-preview-placeholder-card-head">
-        <span className="canvas2d-file-preview-placeholder-card-badge">{badge}</span>
-        <span className="canvas2d-file-preview-placeholder-card-status">{runtimeLabel}</span>
-      </div>
-      <div
-        className="canvas2d-file-preview-placeholder-card-body"
-        dangerouslySetInnerHTML={{ __html: buildFilePreviewInteractionSkeletonMarkup({ kind }) }}
-      />
-      <div className="canvas2d-file-preview-placeholder-card-foot">
-        <div>
-          <strong>{title}</strong>
-          <span>{message}</span>
-        </div>
-        <div className="canvas2d-file-preview-placeholder-card-actions">
-          {isFailed ? (
-            <button type="button" onClick={() => bridge?.retryFileCardPreview?.(request.id)}>重试</button>
-          ) : null}
-          <button type="button" onClick={() => bridge?.closeFileCardPreview?.(request.id)}>关闭</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function FileCardAttachedPreview({ request = null, board = null, bridge = null }) {
   const hostRef = useRef(null);
   const scrollRef = useRef(null);
@@ -1123,6 +1050,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
   const docxFrameRef = useRef(null);
   const zoomRef = useRef(FILE_CARD_PREVIEW_DEFAULT_ZOOM);
   const previewLabel = useMemo(() => getPreviewDisplayLabel(request), [request?.previewKind]);
+  const portalHost = useMemo(() => bridge?.getDocumentPreviewPortalHost?.() || null, [bridge]);
   const [fitScale, setFitScale] = useState(1);
   const [contentHeight, setContentHeight] = useState(1123);
   const [renderState, setRenderState] = useState({
@@ -1143,7 +1071,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
   }, [board?.items, request?.itemId]);
 
   const placement = useMemo(() => {
-    if (!request?.open || !board?.view) {
+    if (!request?.open) {
       return null;
     }
     const bounds = item
@@ -1154,17 +1082,15 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           width: 360,
           height: request?.expanded ? 920 : 468,
         };
-    const scale = Math.max(0.1, Number(board.view.scale || 1));
+    const scale = Math.max(0.1, Number(board?.view?.scale || 1));
     return {
       screenWidth: bounds.width * scale,
       screenHeight: bounds.height * scale,
       style: {
-        left: `${Math.round(bounds.left * scale + Number(board.view.offsetX || 0))}px`,
-        top: `${Math.round(bounds.top * scale + Number(board.view.offsetY || 0))}px`,
-        width: `${Math.round(bounds.width)}px`,
-        height: `${Math.round(bounds.height)}px`,
-        transform: `scale(${scale})`,
-        transformOrigin: "top left",
+        left: `${bounds.left}px`,
+        top: `${bounds.top}px`,
+        width: `${bounds.width}px`,
+        height: `${bounds.height}px`,
       },
     };
   }, [board?.view, item, request?.expanded, request?.open]);
@@ -1188,9 +1114,6 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     FILE_CARD_PREVIEW_ZOOM_MIN,
     FILE_CARD_PREVIEW_ZOOM_MAX
   );
-  const placeholderMode =
-    !item || livePreviewSuppressed || previewStatus !== "ready" || !fileBytes?.byteLength;
-
   useEffect(() => {
     zoomRef.current = previewZoom;
   }, [previewZoom]);
@@ -1287,6 +1210,21 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       let pages = 0;
       let nodes = 0;
       if (previewKind === "pdf") {
+        const cachedFirstPage = bridge?.getDocumentPreviewArtifact?.(
+          String(request?.previewSessionId || request?.id || "").trim(),
+          Number(request?.previewGeneration || 0) || 0,
+          PDF_PREVIEW_FIRST_PAGE_ARTIFACT
+        );
+        if (typeof cachedFirstPage === "string" && cachedFirstPage.startsWith("data:image/")) {
+          const cachedShell = document.createElement("div");
+          cachedShell.className = "canvas2d-file-preview-react-pdf-page is-cached";
+          const cachedImage = document.createElement("img");
+          cachedImage.className = "canvas2d-file-preview-react-pdf-canvas";
+          cachedImage.src = cachedFirstPage;
+          cachedImage.alt = "PDF 首屏缓存";
+          cachedShell.appendChild(cachedImage);
+          host.replaceChildren(cachedShell);
+        }
         const module = await loadVendorEsmModule("pdfjs-dist");
         const { getDocument, GlobalWorkerOptions } = module || {};
         if (typeof getDocument !== "function" || !GlobalWorkerOptions) {
@@ -1322,6 +1260,19 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           },
         });
         nodes = pdfPageRenderer.getStats().renderedCount;
+        const firstCanvas = host.querySelector(".canvas2d-file-preview-react-pdf-canvas");
+        if (firstCanvas instanceof HTMLCanvasElement) {
+          try {
+            bridge?.setDocumentPreviewArtifact?.(
+              String(request?.previewSessionId || request?.id || "").trim(),
+              Number(request?.previewGeneration || 0) || 0,
+              PDF_PREVIEW_FIRST_PAGE_ARTIFACT,
+              firstCanvas.toDataURL("image/webp", 0.84)
+            );
+          } catch {
+            // The live first page remains available when snapshot encoding is unavailable.
+          }
+        }
         setContentHeight(Math.max(1123, Number(host.scrollHeight || host.offsetHeight || 0) || 1123));
       } else {
         const iframe = host;
@@ -1330,48 +1281,67 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         if (!doc || !win) {
           throw new Error("Word 预览窗口初始化失败");
         }
-        const jszipUrl = new URL("../../../../assets/vendor/jszip/jszip.min.js", import.meta.url).toString();
-        const previewUrl = new URL("../../../../assets/vendor/docx-preview/docx-preview.mjs", import.meta.url).toString();
+        const cachedHtml = bridge?.getDocumentPreviewArtifact?.(
+          String(request?.previewSessionId || request?.id || "").trim(),
+          Number(request?.previewGeneration || 0) || 0,
+          DOCX_PREVIEW_HTML_ARTIFACT
+        );
         doc.open();
-        doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+        if (typeof cachedHtml === "string" && cachedHtml.includes("id=\"preview-host\"")) {
+          doc.write(cachedHtml);
+        } else {
+          doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
           html,body{margin:0;padding:0;width:794px;min-height:1123px;overflow:hidden;background:transparent}
           .preview-host{width:794px;min-height:1123px}
-          .preview-host .docx-wrapper{background:transparent!important;padding:0!important}
-          .preview-host section.docx{box-sizing:border-box;width:794px!important;min-height:1123px!important;margin:0 auto 14px!important;border:1px solid rgba(203,213,225,.9);border-radius:4px;background:#fff!important;box-shadow:0 12px 28px rgba(15,23,42,.12);overflow:hidden}
-          .preview-host section.docx>article{background:#fff!important}
+          .preview-host .docx-wrapper,.preview-host .canvas2d-file-card-docx-preview-document-wrapper{background:transparent!important;padding:0!important}
+          .preview-host section.docx,.preview-host section.canvas2d-file-card-docx-preview-document{box-sizing:border-box;width:794px!important;min-height:1123px!important;margin:0 auto 14px!important;border:1px solid rgba(203,213,225,.9)!important;border-radius:4px!important;background:#fff!important;box-shadow:0 12px 28px rgba(15,23,42,.12)!important;overflow:hidden}
+          .preview-host section.docx>article,.preview-host section.canvas2d-file-card-docx-preview-document>article{background:#fff!important}
           .preview-host header,.preview-host footer{background:transparent!important;border:0!important;box-shadow:none!important}
-          .preview-host section.docx:last-child{margin-bottom:0!important}
-        </style></head><body><div id="preview-host" class="preview-host"></div></body></html>`);
-        doc.close();
-        const jszipScript = doc.createElement("script");
-        jszipScript.src = jszipUrl;
-        await new Promise((resolve, reject) => {
-          jszipScript.onload = resolve;
-          jszipScript.onerror = () => reject(new Error("Word 预览依赖加载失败"));
-          doc.head.appendChild(jszipScript);
-        });
-        const module = await win.eval(`import("${previewUrl}")`);
-        const renderAsync = module?.renderAsync;
-        if (typeof renderAsync !== "function") {
-          throw new Error("docx-preview 未提供 renderAsync");
+          .preview-host section.docx:last-child,.preview-host section.canvas2d-file-card-docx-preview-document:last-child{margin-bottom:0!important}
+          </style></head><body><div id="preview-host" class="preview-host"></div></body></html>`);
         }
+        doc.close();
         const docxHost = doc.getElementById("preview-host");
         if (!docxHost) {
           throw new Error("Word 预览容器缺失");
         }
-        const iframeBytes = new win.Uint8Array(bytes.length);
-        iframeBytes.set(bytes);
-        await renderAsync(iframeBytes.buffer, docxHost, null, {
-          className: "canvas2d-file-card-docx-preview-document",
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          breakPages: true,
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          useBase64URL: true,
-        });
+        if (!(typeof cachedHtml === "string" && cachedHtml.includes("id=\"preview-host\""))) {
+          const jszipUrl = new URL("../../../../assets/vendor/jszip/jszip.min.js", import.meta.url).toString();
+          const previewUrl = new URL("../../../../assets/vendor/docx-preview/docx-preview.mjs", import.meta.url).toString();
+          const jszipScript = doc.createElement("script");
+          jszipScript.src = jszipUrl;
+          await new Promise((resolve, reject) => {
+            jszipScript.onload = resolve;
+            jszipScript.onerror = () => reject(new Error("Word 预览依赖加载失败"));
+            doc.head.appendChild(jszipScript);
+          });
+          const module = await win.eval(`import("${previewUrl}")`);
+          const renderAsync = module?.renderAsync;
+          if (typeof renderAsync !== "function") {
+            throw new Error("docx-preview 未提供 renderAsync");
+          }
+          const iframeBytes = new win.Uint8Array(bytes.length);
+          iframeBytes.set(bytes);
+          await renderAsync(iframeBytes.buffer, docxHost, null, {
+            className: "canvas2d-file-card-docx-preview-document",
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            breakPages: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+            useBase64URL: true,
+          });
+          const snapshotRoot = doc.documentElement.cloneNode(true);
+          snapshotRoot.querySelectorAll("script").forEach((node) => node.remove());
+          bridge?.setDocumentPreviewArtifact?.(
+            String(request?.previewSessionId || request?.id || "").trim(),
+            Number(request?.previewGeneration || 0) || 0,
+            DOCX_PREVIEW_HTML_ARTIFACT,
+            `<!DOCTYPE html>${snapshotRoot.outerHTML}`
+          );
+        }
         if (cancelled) return;
         const docxHeight = Math.max(1123, Number(doc.documentElement?.scrollHeight || doc.body?.scrollHeight || 0) || 1123);
         iframe.style.height = `${docxHeight}px`;
@@ -1480,38 +1450,26 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
     return null;
   }
 
-  if (placeholderMode) {
-    return (
-      <FileCardPreviewPlaceholder
-        request={request}
-        board={board}
-        item={item}
-        renderState={renderState}
-        previewLabel={previewLabel}
-        previewStatus={previewStatus}
-        bridge={bridge}
-      />
-    );
-  }
-
   const diagnosticStyle = style || {
     left: "24px",
     top: "24px",
     width: "360px",
     height: "468px",
-    transform: "scale(1)",
-    transformOrigin: "top left",
   };
   const missingAnchor = !item || !style;
-  const showPlaceholder = false;
+  const showPlaceholder = missingAnchor || livePreviewSuppressed || previewStatus !== "ready" || !fileBytes?.byteLength || renderState.status !== "ready";
+  const previewFailed = previewStatus === "failed" || renderState.status === "failed";
   const fileName = String(request?.fileName || item?.fileName || item?.name || "未命名文件").trim() || "未命名文件";
 
-  return (
+  const previewElement = (
     <div
       className="canvas2d-file-preview-react"
       style={diagnosticStyle}
       data-render-state={missingAnchor ? "failed" : renderState.status}
       data-preview-kernel={previewKind === "pdf" ? "react-pdfjs-v1" : "react-docx-v2"}
+      data-document-preview-anchor="true"
+      data-item-id={String(request?.itemId || "")}
+      data-expanded={request?.expanded ? "true" : "false"}
     >
       <div className="canvas2d-file-preview-react-head">
         <div className="canvas2d-file-preview-react-title">
@@ -1549,13 +1507,23 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
         </div>
         {showPlaceholder ? (
           <div className="canvas2d-file-preview-react-placeholder">
-            <strong>{renderState.status === "failed" ? previewLabel.unavailableText : previewLabel.generatingText}</strong>
-            <span>{missingAnchor ? "预览锚点缺失：当前文件卡位置数据不可用，已显示诊断壳。" : renderState.message}</span>
+            {!previewFailed ? (
+              <div
+                className="canvas2d-file-preview-react-skeleton"
+                dangerouslySetInnerHTML={{ __html: buildFilePreviewInteractionSkeletonMarkup({ kind: previewKind }) }}
+              />
+            ) : null}
+            <strong>{previewFailed ? previewLabel.unavailableText : previewLabel.generatingText}</strong>
+            <span>{missingAnchor ? "文件卡位置不可用" : renderState.message}</span>
+            {previewFailed ? (
+              <button type="button" onClick={() => bridge?.retryFileCardPreview?.(request.id)}>重试</button>
+            ) : null}
           </div>
         ) : null}
       </div>
     </div>
   );
+  return portalHost instanceof HTMLElement ? createPortal(previewElement, portalHost) : previewElement;
 }
 
 function formatExportRecordTime(value) {

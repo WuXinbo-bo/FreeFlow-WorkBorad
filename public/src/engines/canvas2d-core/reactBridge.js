@@ -91,6 +91,15 @@ export function createCanvas2DReactBridge(engine) {
     getDocumentPreviewSessionData(sessionId, generation) {
       return engine?.getDocumentPreviewSessionData?.(sessionId, generation) || null;
     },
+    getDocumentPreviewPortalHost() {
+      return engine?.getDocumentPreviewPortalHost?.() || null;
+    },
+    getDocumentPreviewArtifact(sessionId, generation, artifactKey) {
+      return engine?.getDocumentPreviewArtifact?.(sessionId, generation, artifactKey) || null;
+    },
+    setDocumentPreviewArtifact(sessionId, generation, artifactKey, value) {
+      return engine?.setDocumentPreviewArtifact?.(sessionId, generation, artifactKey, value) || false;
+    },
     getDocumentPreviewRuntimeSnapshot() {
       return engine?.getDocumentPreviewRuntimeSnapshot?.() || null;
     },

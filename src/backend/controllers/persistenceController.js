@@ -338,12 +338,18 @@ function createPersistenceController(deps) {
       try {
         const permissions = await permissionsService.readPermissionsStore();
         const resolvedPath = await permissionsService.resolveAllowedExistingPath(filePath, permissions.allowedRoots);
-        const buffer = await fs.promises.readFile(resolvedPath);
+        const [buffer, stat] = await Promise.all([
+          fs.promises.readFile(resolvedPath),
+          fs.promises.stat(resolvedPath),
+        ]);
         res.json({
           ok: true,
           filePath: resolvedPath,
           data: buffer.toString("base64"),
           mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          size: Number(stat.size || 0) || 0,
+          modifiedAt: Number(stat.mtimeMs || 0) || 0,
+          contentKey: `${resolvedPath}:${Number(stat.size || 0) || 0}:${Math.round(Number(stat.mtimeMs || 0) || 0)}`,
         });
       } catch (error) {
         res.status(error.statusCode || 500).json({
@@ -391,12 +397,18 @@ function createPersistenceController(deps) {
       try {
         const permissions = await permissionsService.readPermissionsStore();
         const resolvedPath = await permissionsService.resolveAllowedExistingPath(filePath, permissions.allowedRoots);
-        const buffer = await fs.promises.readFile(resolvedPath);
+        const [buffer, stat] = await Promise.all([
+          fs.promises.readFile(resolvedPath),
+          fs.promises.stat(resolvedPath),
+        ]);
         res.json({
           ok: true,
           filePath: resolvedPath,
           data: buffer.toString("base64"),
           mime: "application/pdf",
+          size: Number(stat.size || 0) || 0,
+          modifiedAt: Number(stat.mtimeMs || 0) || 0,
+          contentKey: `${resolvedPath}:${Number(stat.size || 0) || 0}:${Math.round(Number(stat.mtimeMs || 0) || 0)}`,
         });
       } catch (error) {
         res.status(error.statusCode || 500).json({

@@ -196,7 +196,7 @@ export function getFileCardPreviewBounds(element = {}, options = {}) {
   const width = Math.max(FILE_CARD_MIN_WIDTH, Number(element.width || FILE_CARD_DEFAULT_WIDTH) || FILE_CARD_DEFAULT_WIDTH);
   const height = Math.max(FILE_CARD_MIN_HEIGHT, Number(element.height || FILE_CARD_DEFAULT_HEIGHT) || FILE_CARD_DEFAULT_HEIGHT);
   const expanded = Boolean(options.expanded);
-  const previewWidth = Math.max(Math.min(width - 52, 560), Math.round(width * 0.82));
+  const previewWidth = Math.min(560, Math.max(420, Math.round(width * 1.55)));
   const previewHeight = expanded ? 920 : 468;
   const gap = -20;
   const left = x + width / 2 - previewWidth / 2;

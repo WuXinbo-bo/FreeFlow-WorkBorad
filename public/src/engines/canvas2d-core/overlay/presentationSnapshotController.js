@@ -120,6 +120,7 @@ export function createPresentationSnapshotController({
   maxPixels = DEFAULT_MAX_PIXELS,
   maxConcurrentCaptures = DEFAULT_MAX_CONCURRENT_CAPTURES,
   scheduleWork = scheduleIdleWork,
+  onSnapshotReady = null,
 } = {}) {
   const cache = createByteBudgetLru({
     maxEntries: Math.max(1, Number(cacheLimit) || DEFAULT_CACHE_LIMIT),
@@ -357,12 +358,17 @@ export function createPresentationSnapshotController({
         if (!snapshot?.dataUrl) throw new Error("presentation snapshot result is empty");
         writeCache(normalizedSignature, snapshot);
         const current = nodeStates.get(node);
-        applySnapshot(node, snapshot, {
+        const applied = applySnapshot(node, snapshot, {
           signature: normalizedSignature,
           generation: current?.generation ?? normalizedGeneration,
           token: current?.token ?? token,
           controllerToken,
         });
+        onSnapshotReady?.(Object.freeze({
+          applied,
+          signature: normalizedSignature,
+          generation: current?.generation ?? normalizedGeneration,
+        }));
       })
       .catch((error) => {
         const current = nodeStates.get(node);

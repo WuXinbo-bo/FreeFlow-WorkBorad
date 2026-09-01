@@ -3429,6 +3429,52 @@ ipcMain.handle("desktop-shell:read-file", async (_event, targetPath) => {
   }
 });
 
+function buildFilePreviewMetadata(targetPath, stat) {
+  const resolvedPath = path.resolve(String(targetPath || "").trim());
+  const size = Math.max(0, Number(stat?.size || 0) || 0);
+  const modifiedAt = Math.max(0, Number(stat?.mtimeMs || 0) || 0);
+  return {
+    filePath: resolvedPath,
+    size,
+    modifiedAt,
+    contentKey: `${process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath}:${size}:${Math.round(modifiedAt)}`,
+    mime: getMimeFromExtension(resolvedPath),
+  };
+}
+
+ipcMain.handle("desktop-shell:get-file-preview-metadata", async (_event, targetPath) => {
+  const normalizedPath = String(targetPath || "").trim();
+  if (!normalizedPath) {
+    return { ok: false, error: "路径不能为空", contentKey: "" };
+  }
+  try {
+    const stat = await fs.promises.stat(normalizedPath);
+    if (!stat.isFile()) {
+      return { ok: false, error: "预览路径不是文件", contentKey: "" };
+    }
+    return { ok: true, ...buildFilePreviewMetadata(normalizedPath, stat) };
+  } catch (error) {
+    return { ok: false, error: error.message || "读取文件信息失败", contentKey: "" };
+  }
+});
+
+ipcMain.handle("desktop-shell:read-file-preview", async (_event, targetPath) => {
+  const normalizedPath = String(targetPath || "").trim();
+  if (!normalizedPath) {
+    return { ok: false, error: "路径不能为空", data: null, contentKey: "", mime: "" };
+  }
+  try {
+    const [buffer, stat] = await Promise.all([
+      fs.promises.readFile(normalizedPath),
+      fs.promises.stat(normalizedPath),
+    ]);
+    const bytes = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    return { ok: true, data: bytes, ...buildFilePreviewMetadata(normalizedPath, stat) };
+  } catch (error) {
+    return { ok: false, error: error.message || "读取预览文件失败", data: null, contentKey: "", mime: "" };
+  }
+});
+
 ipcMain.handle("desktop-shell:read-file-base64", async (_event, targetPath) => {
   const normalizedPath = String(targetPath || "").trim();
   if (!normalizedPath) {

@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
   exportWordDocx: (payload) => ipcRenderer.invoke("desktop-shell:export-word-docx", payload),
   previewWordDocx: (payload) => ipcRenderer.invoke("desktop-shell:preview-word-docx", payload),
   readFile: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file", targetPath),
+  getFilePreviewMetadata: (targetPath) => ipcRenderer.invoke("desktop-shell:get-file-preview-metadata", targetPath),
+  readFilePreview: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file-preview", targetPath),
   readFileBase64: (targetPath) => ipcRenderer.invoke("desktop-shell:read-file-base64", targetPath),
   writeFile: (targetPath, data) => ipcRenderer.invoke("desktop-shell:write-file", targetPath, data),
   renamePath: (sourcePath, targetPath) => ipcRenderer.invoke("desktop-shell:rename-path", sourcePath, targetPath),
