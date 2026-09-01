@@ -151,6 +151,8 @@ export function createTableContextMenuSchema({ editing = false, selectionMode = 
     action("复制选区", "table-copy-selection"),
     action("剪切选区", "table-cut-selection"),
     action("清空选区", "table-clear-selection"),
+    action("合并单元格", "table-merge-cells"),
+    action("拆分单元格", "table-split-cell"),
     submenu("插入", "插入", insertItems),
     submenu("移动", "移动", moveItems),
     ...deleteItems,

@@ -163,6 +163,7 @@ export function flattenTableStructureToMatrix(structure = {}) {
   const normalized = normalizeTableStructure(structure);
   const rowCount = Math.max(1, normalized.rows.length || 1);
   const columnCount = Math.max(1, Number(normalized.columns || 1));
+  const occupied = Array.from({ length: rowCount }, () => Array.from({ length: columnCount }, () => false));
   const matrix = Array.from({ length: rowCount }, (_, rowIndex) =>
     Array.from({ length: columnCount }, (_, columnIndex) => ({
       rowIndex,
@@ -172,6 +173,11 @@ export function flattenTableStructureToMatrix(structure = {}) {
       richTextDocument: null,
       header: rowIndex === 0 && Boolean(normalized.hasHeader),
       align: "",
+      colSpan: 1,
+      rowSpan: 1,
+      covered: false,
+      anchorRowIndex: rowIndex,
+      anchorColumnIndex: columnIndex,
       sourceRowIndex: rowIndex,
       sourceCellIndex: columnIndex,
     }))
@@ -180,14 +186,18 @@ export function flattenTableStructureToMatrix(structure = {}) {
   normalized.rows.forEach((row, rowIndex) => {
     let cursor = 0;
     row.cells.forEach((cell, cellIndex) => {
-      while (cursor < columnCount && matrix[rowIndex][cursor].plainText) {
+      while (cursor < columnCount && occupied[rowIndex][cursor]) {
         cursor += 1;
       }
+      if (cursor >= columnCount) {
+        return;
+      }
       const startColumn = Math.min(columnCount - 1, cursor);
-      const span = Math.max(1, Number(cell?.colSpan || 1));
-      const rowSpan = Math.max(1, Number(cell?.rowSpan || 1));
+      const span = Math.min(columnCount - startColumn, Math.max(1, Number(cell?.colSpan || 1)));
+      const rowSpan = Math.min(rowCount - rowIndex, Math.max(1, Number(cell?.rowSpan || 1)));
       for (let y = rowIndex; y < Math.min(rowCount, rowIndex + rowSpan); y += 1) {
         for (let x = startColumn; x < Math.min(columnCount, startColumn + span); x += 1) {
+          occupied[y][x] = true;
           matrix[y][x] = {
             rowIndex: y,
             columnIndex: x,
@@ -199,6 +209,11 @@ export function flattenTableStructureToMatrix(structure = {}) {
                 : null,
             header: Boolean(cell?.header),
             align: String(cell?.align || ""),
+            colSpan: span,
+            rowSpan,
+            covered: y !== rowIndex || x !== startColumn,
+            anchorRowIndex: rowIndex,
+            anchorColumnIndex: startColumn,
             sourceRowIndex: rowIndex,
             sourceCellIndex: cellIndex,
           };
@@ -222,6 +237,9 @@ export function createTableStructureFromMatrix(matrix = [], options = {}) {
   const rows = Array.from({ length: Math.max(1, safeRows.length || 1) }, (_, rowIndex) => {
     const cells = Array.from({ length: columnCount }, (_, columnIndex) => {
       const value = safeRows?.[rowIndex]?.[columnIndex];
+      if (value && typeof value === "object" && value.covered) {
+        return null;
+      }
       const text = typeof value === "object" && value
         ? String(value.plainText || value.text || "")
         : String(value || "");
@@ -236,11 +254,13 @@ export function createTableStructureFromMatrix(matrix = [], options = {}) {
               : null,
           header: typeof value === "object" && value != null ? Boolean(value.header) : rowIndex === 0 && hasHeader,
           align: typeof value === "object" && value != null ? value.align : "",
+          colSpan: typeof value === "object" && value != null ? value.colSpan : 1,
+          rowSpan: typeof value === "object" && value != null ? value.rowSpan : 1,
         },
         rowIndex,
         columnIndex
       );
-    });
+    }).filter(Boolean);
     return {
       rowIndex,
       cells,
@@ -252,6 +272,144 @@ export function createTableStructureFromMatrix(matrix = [], options = {}) {
     hasHeader,
     rows,
   });
+}
+
+export function getTableMatrixAnchor(matrix = [], rowIndex = 0, columnIndex = 0) {
+  const cell = matrix?.[rowIndex]?.[columnIndex];
+  if (!cell) {
+    return null;
+  }
+  const anchorRowIndex = Math.max(0, Number(cell.anchorRowIndex ?? rowIndex) || 0);
+  const anchorColumnIndex = Math.max(0, Number(cell.anchorColumnIndex ?? columnIndex) || 0);
+  return matrix?.[anchorRowIndex]?.[anchorColumnIndex] || cell;
+}
+
+export function mergeTableMatrixRange(matrix = [], range = {}) {
+  const nextMatrix = cloneTableMatrixWithSpans(matrix);
+  if (!nextMatrix.length || !(nextMatrix[0] || []).length) {
+    return { matrix: nextMatrix, changed: false, bounds: null };
+  }
+  const rowCount = nextMatrix.length;
+  const columnCount = nextMatrix[0].length;
+  const bounds = {
+    startRow: Math.max(0, Math.min(rowCount - 1, Number(range.startRow) || 0)),
+    endRow: Math.max(0, Math.min(rowCount - 1, Number(range.endRow) || 0)),
+    startColumn: Math.max(0, Math.min(columnCount - 1, Number(range.startColumn) || 0)),
+    endColumn: Math.max(0, Math.min(columnCount - 1, Number(range.endColumn) || 0)),
+  };
+  if (bounds.startRow > bounds.endRow) [bounds.startRow, bounds.endRow] = [bounds.endRow, bounds.startRow];
+  if (bounds.startColumn > bounds.endColumn) [bounds.startColumn, bounds.endColumn] = [bounds.endColumn, bounds.startColumn];
+  expandBoundsToMergedCells(nextMatrix, bounds);
+  if (bounds.startRow === bounds.endRow && bounds.startColumn === bounds.endColumn) {
+    return { matrix: nextMatrix, changed: false, bounds };
+  }
+  const anchors = [];
+  const seen = new Set();
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    for (let columnIndex = bounds.startColumn; columnIndex <= bounds.endColumn; columnIndex += 1) {
+      const cell = nextMatrix[rowIndex][columnIndex];
+      const key = `${cell.anchorRowIndex}:${cell.anchorColumnIndex}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        anchors.push(getTableMatrixAnchor(nextMatrix, rowIndex, columnIndex));
+      }
+    }
+  }
+  const anchor = nextMatrix[bounds.startRow][bounds.startColumn];
+  const plainText = anchors.map((cell) => String(cell?.plainText || "").trim()).filter(Boolean).join("\n");
+  const html = anchors.map((cell) => String(cell?.html || "").trim()).filter(Boolean).join("<br>");
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    for (let columnIndex = bounds.startColumn; columnIndex <= bounds.endColumn; columnIndex += 1) {
+      const covered = rowIndex !== bounds.startRow || columnIndex !== bounds.startColumn;
+      nextMatrix[rowIndex][columnIndex] = {
+        ...nextMatrix[rowIndex][columnIndex],
+        plainText: covered ? "" : plainText,
+        html: covered ? "" : html,
+        richTextDocument: null,
+        colSpan: bounds.endColumn - bounds.startColumn + 1,
+        rowSpan: bounds.endRow - bounds.startRow + 1,
+        covered,
+        anchorRowIndex: bounds.startRow,
+        anchorColumnIndex: bounds.startColumn,
+      };
+    }
+  }
+  nextMatrix[bounds.startRow][bounds.startColumn].header = Boolean(anchor.header);
+  return { matrix: nextMatrix, changed: true, bounds };
+}
+
+export function splitTableMatrixCell(matrix = [], rowIndex = 0, columnIndex = 0) {
+  const nextMatrix = cloneTableMatrixWithSpans(matrix);
+  const anchor = getTableMatrixAnchor(nextMatrix, rowIndex, columnIndex);
+  if (!anchor || (Number(anchor.rowSpan || 1) <= 1 && Number(anchor.colSpan || 1) <= 1)) {
+    return { matrix: nextMatrix, changed: false };
+  }
+  const anchorRowIndex = Number(anchor.anchorRowIndex ?? anchor.rowIndex) || 0;
+  const anchorColumnIndex = Number(anchor.anchorColumnIndex ?? anchor.columnIndex) || 0;
+  const rowSpan = Math.max(1, Number(anchor.rowSpan || 1));
+  const colSpan = Math.max(1, Number(anchor.colSpan || 1));
+  for (let y = anchorRowIndex; y < Math.min(nextMatrix.length, anchorRowIndex + rowSpan); y += 1) {
+    for (let x = anchorColumnIndex; x < Math.min(nextMatrix[y].length, anchorColumnIndex + colSpan); x += 1) {
+      const isAnchor = y === anchorRowIndex && x === anchorColumnIndex;
+      nextMatrix[y][x] = {
+        ...nextMatrix[y][x],
+        plainText: isAnchor ? String(anchor.plainText || "") : "",
+        html: isAnchor ? String(anchor.html || "") : "",
+        richTextDocument: isAnchor && anchor.richTextDocument ? JSON.parse(JSON.stringify(anchor.richTextDocument)) : null,
+        colSpan: 1,
+        rowSpan: 1,
+        covered: false,
+        anchorRowIndex: y,
+        anchorColumnIndex: x,
+      };
+    }
+  }
+  return { matrix: nextMatrix, changed: true };
+}
+
+function cloneTableMatrixWithSpans(matrix = []) {
+  return (Array.isArray(matrix) ? matrix : []).map((row, rowIndex) =>
+    (Array.isArray(row) ? row : []).map((cell, columnIndex) => ({
+      ...(cell && typeof cell === "object" ? cell : { plainText: String(cell || "") }),
+      richTextDocument: cell?.richTextDocument && typeof cell.richTextDocument === "object"
+        ? JSON.parse(JSON.stringify(cell.richTextDocument))
+        : null,
+      rowIndex,
+      columnIndex,
+      colSpan: Math.max(1, Number(cell?.colSpan || 1)),
+      rowSpan: Math.max(1, Number(cell?.rowSpan || 1)),
+      covered: Boolean(cell?.covered),
+      anchorRowIndex: Math.max(0, Number(cell?.anchorRowIndex ?? rowIndex) || 0),
+      anchorColumnIndex: Math.max(0, Number(cell?.anchorColumnIndex ?? columnIndex) || 0),
+    }))
+  );
+}
+
+function expandBoundsToMergedCells(matrix, bounds) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+      for (let columnIndex = bounds.startColumn; columnIndex <= bounds.endColumn; columnIndex += 1) {
+        const anchor = getTableMatrixAnchor(matrix, rowIndex, columnIndex);
+        if (!anchor) continue;
+        const anchorRow = Number(anchor.anchorRowIndex ?? anchor.rowIndex) || 0;
+        const anchorColumn = Number(anchor.anchorColumnIndex ?? anchor.columnIndex) || 0;
+        const endRow = anchorRow + Math.max(1, Number(anchor.rowSpan || 1)) - 1;
+        const endColumn = anchorColumn + Math.max(1, Number(anchor.colSpan || 1)) - 1;
+        const next = {
+          startRow: Math.min(bounds.startRow, anchorRow),
+          endRow: Math.max(bounds.endRow, endRow),
+          startColumn: Math.min(bounds.startColumn, anchorColumn),
+          endColumn: Math.max(bounds.endColumn, endColumn),
+        };
+        if (next.startRow !== bounds.startRow || next.endRow !== bounds.endRow || next.startColumn !== bounds.startColumn || next.endColumn !== bounds.endColumn) {
+          Object.assign(bounds, next);
+          changed = true;
+        }
+      }
+    }
+  }
 }
 
 export function updateTableElementStructure(element = {}, structure = {}) {
@@ -269,6 +427,7 @@ export function updateTableElementStructure(element = {}, structure = {}) {
 }
 
 function normalizeTableRow(row = {}, rowIndex = 0) {
+  const hasExplicitCells = Array.isArray(row?.cells) || Array.isArray(row?.content);
   const cells = Array.isArray(row?.cells)
     ? row.cells
     : Array.isArray(row?.content)
@@ -279,7 +438,9 @@ function normalizeTableRow(row = {}, rowIndex = 0) {
     .map((cell, cellIndex) => normalizeTableCell(cell, rowIndex, cellIndex));
   return {
     rowIndex,
-    cells: normalizedCells.length ? normalizedCells : [normalizeTableCell({ plainText: "" }, rowIndex, 0)],
+    cells: normalizedCells.length || hasExplicitCells
+      ? normalizedCells
+      : [normalizeTableCell({ plainText: "" }, rowIndex, 0)],
   };
 }
 

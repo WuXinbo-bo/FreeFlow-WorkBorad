@@ -56,6 +56,9 @@ import {
   createEditableTableElement,
   createTableStructureFromMatrix,
   flattenTableStructureToMatrix,
+  getTableMatrixAnchor,
+  mergeTableMatrixRange,
+  splitTableMatrixCell,
   TABLE_MIN_HEIGHT,
   TABLE_MIN_WIDTH,
   updateTableElementStructure,
@@ -94,7 +97,12 @@ import {
   TEXT_RESIZE_MODE_WRAP,
   TEXT_WRAP_MODE_MANUAL,
 } from "./elements/text.js";
-import { buildTextElementFromMathElement } from "./elements/mathText.js";
+import {
+  buildTextElementFromMathElement,
+  getStructuredMathTextState,
+  isStructuredMathTextElement,
+  updateStructuredMathTextElement,
+} from "./elements/mathText.js";
 import { measureTextElementLayout } from "./textLayout/measureTextElementLayout.js";
 import { createLightImageEditor } from "./editors/lightImageEditor.js";
 import { createCodeBlockEditor } from "./editors/codeBlockEditor.js";
@@ -2952,6 +2960,9 @@ function getHandleCursor(handle) {
   if (handle === "flow-connector") {
     return "crosshair";
   }
+  if (typeof handle === "string" && handle.startsWith("flow-edge-")) {
+    return "crosshair";
+  }
   if (handle === "start" || handle === "end") {
     return "crosshair";
   }
@@ -3216,6 +3227,7 @@ export function createCanvas2DEngine(options = {}) {
     },
   });
   editorAdapterManager.register("text", { begin: beginTextEdit, commit: commitTextEdit, cancel: cancelTextEdit });
+  editorAdapterManager.register("math", { begin: beginMathEdit, commit: commitMathEdit, cancel: cancelMathEdit });
   editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
   editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
   editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
@@ -8507,6 +8519,7 @@ let tablePointerSelectionState = {
     state.editingType = snapshot.editingType || null;
     if (!state.editingId) {
       refs.editor?.classList.add("is-hidden");
+      refs.editor?.classList.remove("is-math");
       refs.richEditor?.classList.add("is-hidden");
       refs.codeBlockEditor?.classList.add("is-hidden");
       refs.codeBlockToolbar?.classList.add("is-hidden");
@@ -9655,6 +9668,11 @@ let tablePointerSelectionState = {
       refs.tableEditor?.classList.add("is-hidden");
       refs.tableToolbar?.classList.add("is-hidden");
       refs.codeBlockToolbar?.classList.add("is-hidden");
+      return;
+    }
+
+    if (state.editingType === "math") {
+      syncMathEditorLayout();
       return;
     }
 
@@ -12515,6 +12533,113 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function getMathEditItem() {
+    if (state.editingType !== "math" || !state.editingId) {
+      return null;
+    }
+    const item = sceneRegistry.getItemById(state.editingId, "text");
+    return isStructuredMathTextElement(item) ? item : null;
+  }
+
+  function syncMathEditorLayout() {
+    const item = getMathEditItem();
+    if (!item || !(refs.editor instanceof HTMLTextAreaElement)) {
+      cancelMathEdit();
+      return;
+    }
+    if (isLockedText(item)) {
+      cancelMathEdit();
+      return;
+    }
+    const view = state.board.view;
+    const scale = Math.max(0.1, Number(view?.scale || 1));
+    Object.assign(refs.editor.style, {
+      left: `${Number(item.x || 0) * scale + Number(view?.offsetX || 0)}px`,
+      top: `${Number(item.y || 0) * scale + Number(view?.offsetY || 0)}px`,
+      width: `${Math.max(220, Number(item.width || 0) * scale)}px`,
+      height: `${Math.max(72, Number(item.height || 0) * scale)}px`,
+      fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20) * scale))}px`,
+    });
+    refs.editor.classList.add("is-math");
+    refs.editor.classList.remove("is-hidden");
+    refs.richEditor?.classList.add("is-hidden");
+    refs.codeBlockEditor?.classList.add("is-hidden");
+    refs.tableEditor?.classList.add("is-hidden");
+  }
+
+  function beginMathEdit(itemId) {
+    const item = sceneRegistry.getItemById(itemId, "text");
+    const mathState = getStructuredMathTextState(item);
+    if (!item || !mathState || !(refs.editor instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    if (isLockedText(item)) {
+      setStatus("公式已锁定，无法编辑");
+      return false;
+    }
+    finishImageEdit();
+    cancelFlowNodeEdit();
+    cancelPendingRichEditorHide();
+    if (!editBaselineSnapshot) {
+      editBaselineSnapshot = takeItemsHistorySnapshot([item.id]);
+    }
+    state.editingId = item.id;
+    state.editingType = "math";
+    state.board.selectedIds = [item.id];
+    refs.editor.value = mathState.formula;
+    refs.editor.setAttribute("aria-label", mathState.displayMode ? "编辑独立公式 LaTeX" : "编辑行内公式 LaTeX");
+    syncMathEditorLayout();
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    requestAnimationFrame(() => {
+      refs.editor?.focus?.({ preventScroll: true });
+      refs.editor?.select?.();
+    });
+    return true;
+  }
+
+  function commitMathEdit() {
+    const item = getMathEditItem();
+    if (!item || !(refs.editor instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    const formula = String(refs.editor.value || "").trim();
+    if (!formula) {
+      setStatus("公式内容不能为空", "warning");
+      refs.editor.focus({ preventScroll: true });
+      return false;
+    }
+    const before = editBaselineSnapshot || takeItemsHistorySnapshot([item.id]);
+    const updated = updateStructuredMathTextElement(item, formula);
+    state.board.items = state.board.items.map((entry) => entry.id === item.id ? updated : entry);
+    state.editingId = null;
+    state.editingType = null;
+    state.board.selectedIds = [item.id];
+    refs.editor.classList.add("is-hidden");
+    refs.editor.classList.remove("is-math");
+    editBaselineSnapshot = null;
+    const changed = commitItemPatchHistory(before, item.id, updated, "更新公式", "math-edit");
+    if (!changed) {
+      syncBoard({ persist: false, emit: true, markDirty: false });
+    } else {
+      setStatus("公式已更新");
+      persistCommittedBoardIfPossible();
+    }
+    return true;
+  }
+
+  function cancelMathEdit() {
+    if (state.editingType !== "math") {
+      return false;
+    }
+    state.editingId = null;
+    state.editingType = null;
+    refs.editor?.classList.add("is-hidden");
+    refs.editor?.classList.remove("is-math");
+    editBaselineSnapshot = null;
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    return true;
+  }
+
   function beginFlowNodeEdit(itemId) {
     const item = sceneRegistry.getItemById(itemId, "flowNode");
     if (!item || !(refs.richEditor instanceof HTMLDivElement)) {
@@ -13024,7 +13149,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!item) {
       return false;
     }
-    const editorType = canvasElementRegistry.resolveElement(item)?.capabilities?.editor || "none";
+    const editorType = isStructuredMathTextElement(item)
+      ? "math"
+      : canvasElementRegistry.resolveElement(item)?.capabilities?.editor || "none";
     if (editorType === "none" || editorType === "shape") {
       return false;
     }
@@ -13131,6 +13258,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                   <tr data-row-index="${rowIndex}">
                     ${row
                       .map((cell, columnIndex) => {
+                        if (cell.covered) {
+                          return "";
+                        }
                         const tag = cell.header ? "th" : "td";
                         const cellHtml = renderTableCellStaticHtml(cell);
                         const cellPlainText = sanitizeText(String(cell?.plainText || htmlToPlainText(cellHtml)));
@@ -13140,6 +13270,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                             tabindex="-1"
                             data-row-index="${rowIndex}"
                             data-column-index="${columnIndex}"
+                            data-row-span="${Math.max(1, Number(cell.rowSpan || 1))}"
+                            data-column-span="${Math.max(1, Number(cell.colSpan || 1))}"
+                            rowspan="${Math.max(1, Number(cell.rowSpan || 1))}"
+                            colspan="${Math.max(1, Number(cell.colSpan || 1))}"
                             data-header="${cell.header ? "1" : "0"}"
                             data-cell-html="${escapeRichTextHtml(String(cell?.html || ""))}"
                             data-cell-plain-text="${escapeRichTextHtml(cellPlainText)}"
@@ -13222,9 +13356,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function getTableEditorCellElement(rowIndex = 0, columnIndex = 0) {
-    return refs.tableEditor?.querySelector?.(
+    const direct = refs.tableEditor?.querySelector?.(
       `[data-row-index="${Math.max(0, Number(rowIndex) || 0)}"][data-column-index="${Math.max(0, Number(columnIndex) || 0)}"]`
     ) || null;
+    if (direct) {
+      return direct;
+    }
+    const matrix = flattenTableStructureToMatrix(getTableEditItem()?.table || {});
+    const anchor = getTableMatrixAnchor(matrix, rowIndex, columnIndex);
+    return anchor
+      ? refs.tableEditor?.querySelector?.(
+          `[data-row-index="${anchor.anchorRowIndex}"][data-column-index="${anchor.anchorColumnIndex}"]`
+        ) || null
+      : null;
   }
 
   function normalizeTableCellCoordinate(rowIndex = 0, columnIndex = 0) {
@@ -13492,6 +13636,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             : null,
         header: Boolean(cell?.header),
         align: String(cell?.align || ""),
+        colSpan: Math.max(1, Number(cell?.colSpan || 1)),
+        rowSpan: Math.max(1, Number(cell?.rowSpan || 1)),
+        covered: Boolean(cell?.covered),
+        anchorRowIndex: Math.max(0, Number(cell?.anchorRowIndex ?? rowIndex) || 0),
+        anchorColumnIndex: Math.max(0, Number(cell?.anchorColumnIndex ?? columnIndex) || 0),
         rowIndex,
         columnIndex,
       }))
@@ -13505,6 +13654,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextDocument: null,
       header: rowIndex === 0 && hasHeader,
       align: "",
+      colSpan: 1,
+      rowSpan: 1,
+      covered: false,
+      anchorRowIndex: rowIndex,
+      anchorColumnIndex: columnIndex,
       rowIndex,
       columnIndex,
     };
@@ -14508,9 +14662,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!(refs.tableEditor instanceof HTMLDivElement)) {
       return [];
     }
-    const rows = Array.from(refs.tableEditor.querySelectorAll("tr[data-row-index]"));
-    return rows.map((rowEl, rowIndex) =>
-      Array.from(rowEl.querySelectorAll("[data-column-index]")).map((cellEl, columnIndex) => {
+    const matrix = flattenTableStructureToMatrix(getTableEditItem()?.table || {});
+    const cells = Array.from(refs.tableEditor.querySelectorAll("[data-row-index][data-column-index]"));
+    cells.forEach((cellEl) => {
+        const rowIndex = Math.max(0, Number(cellEl.getAttribute("data-row-index")) || 0);
+        const columnIndex = Math.max(0, Number(cellEl.getAttribute("data-column-index")) || 0);
+        if (!matrix[rowIndex]?.[columnIndex]) {
+          return;
+        }
         const rawHtml = String(cellEl.getAttribute("data-cell-html") || "").trim();
         const plainText = sanitizeText(
           cellEl.getAttribute("data-cell-plain-text") || htmlToPlainText(rawHtml) || cellEl.textContent || ""
@@ -14525,16 +14684,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
             )
           : null;
-        return {
+        matrix[rowIndex][columnIndex] = {
+          ...matrix[rowIndex][columnIndex],
           plainText: content?.plainText || plainText,
           html: content?.html || rawHtml,
           richTextDocument: content?.richTextDocument || null,
           header: String(cellEl.getAttribute("data-header") || "") === "1",
+          colSpan: Math.max(1, Number(cellEl.getAttribute("data-column-span")) || 1),
+          rowSpan: Math.max(1, Number(cellEl.getAttribute("data-row-span")) || 1),
+          covered: false,
+          anchorRowIndex: rowIndex,
+          anchorColumnIndex: columnIndex,
           rowIndex,
           columnIndex,
         };
-      })
-    );
+      });
+    return matrix;
   }
 
   function getTableEditorCellFromEventTarget(target) {
@@ -15216,7 +15381,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function mutateTableEditor(mutator) {
     const item = getTableEditItem();
     if (!(refs.tableEditor instanceof HTMLDivElement) || !item || typeof mutator !== "function") {
-      return;
+      return false;
     }
     if (tableCellEditState.active) {
       commitActiveTableCellRichEdit({ keepFocus: false });
@@ -15260,6 +15425,45 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         syncTableEditorSelectionUI();
       }
     });
+    return true;
+  }
+
+  function mergeSelectedTableCells() {
+    if (!ensureTableEditorReadyForAction()) {
+      return false;
+    }
+    const matrix = buildTableMatrixFromEditor();
+    const bounds = getTableEditSelectionBounds(matrix);
+    const result = mergeTableMatrixRange(matrix, bounds);
+    if (!result.changed) {
+      setStatus("请选择至少两个单元格", "warning");
+      return false;
+    }
+    tableEditSelection = normalizeTableCellCoordinate(result.bounds.startRow, result.bounds.startColumn);
+    tableEditRange = createTableSelectionRange(tableEditSelection, tableEditSelection);
+    syncTableSelectionMode(result.matrix, "cell");
+    mutateTableEditor(() => result.matrix);
+    setStatus("已合并单元格");
+    return true;
+  }
+
+  function splitSelectedTableCell() {
+    if (!ensureTableEditorReadyForAction()) {
+      return false;
+    }
+    const matrix = buildTableMatrixFromEditor();
+    const anchor = getTableMatrixAnchor(matrix, tableEditSelection.rowIndex, tableEditSelection.columnIndex);
+    const result = splitTableMatrixCell(matrix, tableEditSelection.rowIndex, tableEditSelection.columnIndex);
+    if (!result.changed) {
+      setStatus("当前单元格未合并", "warning");
+      return false;
+    }
+    tableEditSelection = normalizeTableCellCoordinate(anchor?.anchorRowIndex || 0, anchor?.anchorColumnIndex || 0);
+    tableEditRange = createTableSelectionRange(tableEditSelection, tableEditSelection);
+    syncTableSelectionMode(result.matrix, "cell");
+    mutateTableEditor(() => result.matrix);
+    setStatus("已拆分单元格");
+    return true;
   }
 
   function runTableStructureCommand(kind = "", options = {}) {
@@ -16007,7 +16211,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
-  function getFlowEdgeBounds(edge) {
+  function getFlowEdgeEndpoints(edge) {
     if (!edge || edge.type !== "flowEdge") {
       return null;
     }
@@ -16020,6 +16224,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const toConnectors = flowModule.getConnectors(toNode);
     const fromPoint = fromConnectors[edge.fromSide] || fromConnectors.right || fromNode;
     const toPoint = toConnectors[edge.toSide] || toConnectors.left || toNode;
+    return { fromPoint, toPoint, fromNode, toNode };
+  }
+
+  function hitTestFlowEdgeEndpoint(edge, scenePoint, view = state.board.view) {
+    const endpoints = getFlowEdgeEndpoints(edge);
+    if (!endpoints) {
+      return null;
+    }
+    const radius = 10 / Math.max(0.1, Number(view?.scale || 1));
+    if (Math.hypot(Number(scenePoint?.x || 0) - endpoints.fromPoint.x, Number(scenePoint?.y || 0) - endpoints.fromPoint.y) <= radius) {
+      return "from";
+    }
+    if (Math.hypot(Number(scenePoint?.x || 0) - endpoints.toPoint.x, Number(scenePoint?.y || 0) - endpoints.toPoint.y) <= radius) {
+      return "to";
+    }
+    return null;
+  }
+
+  function getFlowEdgeBounds(edge) {
+    const endpoints = getFlowEdgeEndpoints(edge);
+    if (!endpoints) {
+      return null;
+    }
+    const { fromPoint, toPoint } = endpoints;
     const left = Math.min(fromPoint.x, toPoint.x);
     const top = Math.min(fromPoint.y, toPoint.y);
     const right = Math.max(fromPoint.x, toPoint.x);
@@ -18008,6 +18236,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function hideEditingUiForDeferredBlankExit(editingType = "") {
+    if (editingType === "math") {
+      refs.editor?.classList.add("is-hidden");
+      refs.editor?.classList.remove("is-math");
+      return;
+    }
     if (editingType === "text" || editingType === "flow-node" || editingType === "mind-node") {
       refs.editor?.classList.add("is-hidden");
       refs.richEditor?.classList.add("is-hidden");
@@ -18176,6 +18409,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!isInteractiveMode()) {
       clearTransientState();
       cancelTextEdit();
+      cancelMathEdit();
       cancelFlowNodeEdit();
       cancelMindNodeEdit();
       cancelTableEdit();
@@ -19750,6 +19984,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else {
           nextHoverHandle = hitTestHandle(selectedItem, scenePoint, state.board.view.scale);
         }
+      } else if (!nextHoverHandle && selectedItem && selectedItem.type === "flowEdge") {
+        const endpoint = hitTestFlowEdgeEndpoint(selectedItem, scenePoint, state.board.view);
+        nextHoverHandle = endpoint ? `flow-edge-${endpoint}` : null;
       } else if (!nextHoverHandle) {
         nextHoverHandle = selectedItem ? hitTestHandle(selectedItem, scenePoint, state.board.view.scale) : null;
       }
@@ -19944,6 +20181,38 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (relationshipDeleteId) {
         event.preventDefault();
         removeMindRelationship(relationshipDeleteId);
+        return;
+      }
+      const selectedFlowEdge = state.tool === "select" ? sceneRegistry.getSingleSelectedItem("flowEdge") : null;
+      const reconnectEndpoint = selectedFlowEdge
+        ? hitTestFlowEdgeEndpoint(selectedFlowEdge, scenePoint, state.board.view)
+        : null;
+      if (selectedFlowEdge && reconnectEndpoint) {
+        if (isLockedItem(selectedFlowEdge)) {
+          return;
+        }
+        const endpoints = getFlowEdgeEndpoints(selectedFlowEdge);
+        if (!endpoints) {
+          return;
+        }
+        event.preventDefault();
+        state.pointer = {
+          type: "flow-edge-reconnect",
+          pointerId: event.pointerId,
+          edgeId: selectedFlowEdge.id,
+          endpoint: reconnectEndpoint,
+          fixedNodeId: reconnectEndpoint === "from" ? selectedFlowEdge.toId : selectedFlowEdge.fromId,
+          before: takeItemsHistorySnapshot([selectedFlowEdge.id]),
+        };
+        flowDraft = {
+          edgeId: selectedFlowEdge.id,
+          endpoint: reconnectEndpoint,
+          toPoint: reconnectEndpoint === "from" ? endpoints.fromPoint : endpoints.toPoint,
+          style: selectedFlowEdge.style,
+        };
+        refs.canvas?.setPointerCapture?.(event.pointerId);
+        state.hoverHandle = `flow-edge-${reconnectEndpoint}`;
+        scheduleRender();
         return;
       }
       if (flowTarget?.type === "flowNode") {
@@ -20317,6 +20586,25 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
 
+    if (pointer.type === "flow-edge-reconnect") {
+      const target = hitTestCanvasElement(scenePoint, state.board.view.scale);
+      const targetNode = target?.type === "flowNode" && target.id !== pointer.fixedNodeId ? target : null;
+      const targetSide = targetNode ? flowModule.getConnectorHit(targetNode, scenePoint, state.board.view) : null;
+      const targetPoint = targetNode && targetSide
+        ? flowModule.getConnectors(targetNode)[targetSide]
+        : scenePoint;
+      pointer.targetId = targetNode && targetSide ? targetNode.id : "";
+      pointer.targetSide = targetSide || "";
+      flowDraft = {
+        ...flowDraft,
+        toPoint: targetPoint,
+        targetId: pointer.targetId,
+        targetSide: pointer.targetSide,
+      };
+      scheduleRender();
+      return;
+    }
+
     if (pointer.type === "rotate-image") {
       const item = getImageItemById(pointer.itemId);
       if (!item) {
@@ -20676,6 +20964,31 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
       }
       flowDraft = null;
+      return;
+    }
+
+    if (pointer.type === "flow-edge-reconnect") {
+      const edge = sceneRegistry.getItemById(pointer.edgeId, "flowEdge");
+      const dropPoint = state.lastPointerScenePoint || scenePoint;
+      const dropTarget = hitTestCanvasElement(dropPoint, state.board.view.scale);
+      const dropNode = dropTarget?.type === "flowNode" && dropTarget.id !== pointer.fixedNodeId ? dropTarget : null;
+      const dropSide = dropNode ? flowModule.getConnectorHit(dropNode, dropPoint, state.board.view) : null;
+      const targetId = String(dropNode && dropSide ? dropNode.id : pointer.targetId || "");
+      const targetSide = String(dropSide || pointer.targetSide || "");
+      flowDraft = null;
+      if (!edge || isLockedItem(edge) || !targetId || !targetSide || targetId === pointer.fixedNodeId) {
+        syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+        return;
+      }
+      if (pointer.endpoint === "from") {
+        edge.fromId = targetId;
+        edge.fromSide = targetSide;
+      } else {
+        edge.toId = targetId;
+        edge.toSide = targetSide;
+      }
+      commitItemPatchHistory(pointer.before, edge.id, edge, "重新连接流程线", "flow-edge-reconnect");
+      setStatus("流程线已重新连接");
       return;
     }
 
@@ -21485,7 +21798,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             buildCodeBlockContextMenuHtml() +
             `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
             buildLockDeleteTailHtml(lockLabel);
-        } else if (selectedItem?.type === "mathBlock" || selectedItem?.type === "mathInline") {
+        } else if (
+          selectedItem?.type === "mathBlock" ||
+          selectedItem?.type === "mathInline" ||
+          isStructuredMathTextElement(selectedItem)
+        ) {
           refs.contextMenu.innerHTML =
             buildMathContextMenuHtml() +
             `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
@@ -21980,6 +22297,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (action === "table-clear-selection") {
       runCommand("table.clear-selection");
+      hideContextMenu();
+    }
+    if (action === "table-merge-cells") {
+      runCommand("table.merge-cells");
+      hideContextMenu();
+    }
+    if (action === "table-split-cell") {
+      runCommand("table.split-cell");
       hideContextMenu();
     }
     if (action === "table-add-row") {
@@ -23786,6 +24111,28 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
+  function onMathEditorBlur() {
+    if (state.editingType === "math") {
+      commitMathEdit();
+    }
+  }
+
+  function onMathEditorKeyDown(event) {
+    const key = String(event.key || "").toLowerCase();
+    if (key === "escape") {
+      event.preventDefault();
+      cancelMathEdit();
+      refs.canvas?.focus?.({ preventScroll: true });
+      return;
+    }
+    if (key === "enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      if (commitMathEdit()) {
+        refs.canvas?.focus?.({ preventScroll: true });
+      }
+    }
+  }
+
   function onFileMemoBlur() {
     if (deferredBlankEditExit && state.editingType === "file-memo") {
       return;
@@ -24886,6 +25233,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       state.editingId &&
       (
         target === refs.richEditor ||
+        target === refs.editor ||
         target === refs.fileMemoEditor ||
         refs.tableEditor?.contains(target) ||
         refs.codeBlockEditor?.contains(target)
@@ -25132,6 +25480,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.richEditor, "paste", onRichEditorPaste);
     bind(refs.richEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.richEditor, "contextmenu", onRichEditorContextMenu);
+    bind(refs.editor, "blur", onMathEditorBlur);
+    bind(refs.editor, "keydown", onMathEditorKeyDown);
     bind(refs.fileMemoEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.fileMemoEditor, "blur", onFileMemoBlur);
     bind(refs.fileMemoEditor, "input", onFileMemoInput);
@@ -25240,6 +25590,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cleanupFns.push(canvasUiRuntime.registerHost("inspector", refs.richSelectionToolbar));
     cleanupFns.push(canvasUiRuntime.registerHost("editor", Object.freeze({
       rich: refs.richEditor,
+      math: refs.editor,
       code: refs.codeBlockEditor,
       table: refs.tableEditor,
       fileMemo: refs.fileMemoEditor,
@@ -25326,6 +25677,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     richTextSession.destroy();
     codeBlockEditor.clear();
     cancelTextEdit();
+    cancelMathEdit();
     cancelFlowNodeEdit();
     cancelCodeBlockEdit();
     cancelFileMemoEdit();
@@ -26183,6 +26535,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "table.copy-selection", label: "复制表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => copyTableSelectionToClipboard({ cut: false }));
     register({ id: "table.cut-selection", label: "剪切表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => copyTableSelectionToClipboard({ cut: true }));
     register({ id: "table.clear-selection", label: "清空表格选区", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => mutateTableEditor((matrix) => clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })));
+    register({ id: "table.merge-cells", label: "合并单元格", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => mergeSelectedTableCells());
+    register({ id: "table.split-cell", label: "拆分单元格", category: "table", elementTypes: ["table"], when: hasActiveTable }, () => splitSelectedTableCell());
     register({ id: "table.insert", label: "插入表格行列", category: "table", elementTypes: ["table"], when: hasActiveTable }, (_context, options) => runTableStructureCommand("insert", options));
     register({ id: "table.move", label: "移动表格行列", category: "table", elementTypes: ["table"], when: hasActiveTable }, (_context, options) => runTableStructureCommand("move", options));
     register({ id: "table.delete", label: "删除表格行列", category: "table", elementTypes: ["table"], destructive: true, when: hasActiveTable }, (_context, options) => runTableStructureCommand("delete", options));

@@ -114,12 +114,14 @@ function createFlowEdgeNode() {
   node.append(
     createSvgElement("line", "canvas2d-scene-flow-edge-line"),
     createSvgElement("line", "canvas2d-scene-flow-edge-focus"),
-    createSvgElement("polygon", "canvas2d-scene-flow-edge-arrow")
+    createSvgElement("polygon", "canvas2d-scene-flow-edge-arrow"),
+    createSvgElement("circle", "canvas2d-scene-flow-edge-endpoint is-from"),
+    createSvgElement("circle", "canvas2d-scene-flow-edge-endpoint is-to")
   );
   return node;
 }
 
-function syncFlowEdgeNode(node, item, itemById, selectedIds, hoverId) {
+function syncFlowEdgeNode(node, item, itemById, selectedIds, hoverId, view, flowDraft) {
   const fromNode = itemById.get(String(item.fromId || ""));
   const toNode = itemById.get(String(item.toId || ""));
   if (!fromNode || !toNode) {
@@ -127,12 +129,27 @@ function syncFlowEdgeNode(node, item, itemById, selectedIds, hoverId) {
   }
   const fromConnectors = getFlowNodeConnectors(fromNode);
   const toConnectors = getFlowNodeConnectors(toNode);
-  const fromPoint = fromConnectors[item.fromSide] || fromConnectors.right;
-  const toPoint = toConnectors[item.toSide] || toConnectors.left;
+  let fromPoint = fromConnectors[item.fromSide] || fromConnectors.right;
+  let toPoint = toConnectors[item.toSide] || toConnectors.left;
+  if (String(flowDraft?.edgeId || "") === String(item.id || "") && flowDraft?.toPoint) {
+    if (flowDraft.endpoint === "from") {
+      fromPoint = flowDraft.toPoint;
+    } else if (flowDraft.endpoint === "to") {
+      toPoint = flowDraft.toPoint;
+    }
+  }
   const line = node.querySelector(".canvas2d-scene-flow-edge-line");
   const focus = node.querySelector(".canvas2d-scene-flow-edge-focus");
   const arrow = node.querySelector(".canvas2d-scene-flow-edge-arrow");
-  if (!(line instanceof SVGElement) || !(focus instanceof SVGElement) || !(arrow instanceof SVGElement)) {
+  const fromEndpoint = node.querySelector(".canvas2d-scene-flow-edge-endpoint.is-from");
+  const toEndpoint = node.querySelector(".canvas2d-scene-flow-edge-endpoint.is-to");
+  if (
+    !(line instanceof SVGElement) ||
+    !(focus instanceof SVGElement) ||
+    !(arrow instanceof SVGElement) ||
+    !(fromEndpoint instanceof SVGElement) ||
+    !(toEndpoint instanceof SVGElement)
+  ) {
     return false;
   }
   [line, focus].forEach((entry) => {
@@ -150,6 +167,19 @@ function syncFlowEdgeNode(node, item, itemById, selectedIds, hoverId) {
   setAttribute(focus, "stroke", selected ? "rgba(37, 99, 235, 0.95)" : "rgba(59, 130, 246, 0.5)");
   setAttribute(focus, "stroke-width", 2.4);
   focus.style.display = selected || hovered ? "block" : "none";
+  const scale = Math.max(0.1, Number(view?.scale || 1));
+  [
+    [fromEndpoint, fromPoint, "from"],
+    [toEndpoint, toPoint, "to"],
+  ].forEach(([endpointNode, point, endpoint]) => {
+    setAttribute(endpointNode, "cx", point.x);
+    setAttribute(endpointNode, "cy", point.y);
+    setAttribute(endpointNode, "r", 6 / scale);
+    setAttribute(endpointNode, "fill", flowDraft?.endpoint === endpoint ? "rgba(37, 99, 235, 0.98)" : "#ffffff");
+    setAttribute(endpointNode, "stroke", "rgba(37, 99, 235, 0.98)");
+    setAttribute(endpointNode, "stroke-width", 2 / scale);
+    endpointNode.style.display = selected ? "block" : "none";
+  });
   if (item.style === "arrow") {
     const forward = item.arrowDirection !== "backward";
     const start = forward ? fromPoint : toPoint;
@@ -613,7 +643,7 @@ export function createSceneVectorRenderer({ host = null } = {}) {
         }
         const key = `flow-edge:${itemId}`;
         const node = ensureNode(key, createFlowEdgeNode);
-        if (!syncFlowEdgeNode(node, item, itemById, selectedIdSet, hoverId)) {
+        if (!syncFlowEdgeNode(node, item, itemById, selectedIdSet, hoverId, view, flowDraft)) {
           return;
         }
         node.dataset.id = itemId;
@@ -669,7 +699,7 @@ export function createSceneVectorRenderer({ host = null } = {}) {
       }
     });
 
-    if (flowDraft?.fromId && flowDraft?.toPoint) {
+    if (flowDraft?.fromId && flowDraft?.toPoint && !flowDraft?.edgeId) {
       const key = "flow-draft";
       const node = ensureNode(key, createFlowDraftNode);
       if (syncFlowDraftNode(node, flowDraft, itemById)) {

@@ -156,6 +156,7 @@ export function createFlowEdgeElement(from, to, style = "solid") {
     toSide: String(to?.side || "left"),
     style: style || "solid",
     arrowDirection: "forward",
+    locked: false,
     createdAt: Date.now(),
   };
 }
@@ -174,6 +175,7 @@ export function normalizeFlowEdgeElement(element = {}) {
     toSide: String(element.toSide || "left"),
     style,
     arrowDirection,
+    locked: Boolean(element.locked),
     createdAt: Number(element.createdAt) || Date.now(),
   };
 }

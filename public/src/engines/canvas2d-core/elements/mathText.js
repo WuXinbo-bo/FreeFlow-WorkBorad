@@ -10,6 +10,73 @@ import {
 } from "./text.js";
 import { normalizeMathElement } from "./math.js";
 
+export function isStructuredMathTextElement(element = {}) {
+  if (element?.type !== "text" || !element.structuredImport || typeof element.structuredImport !== "object") {
+    return false;
+  }
+  const blockRole = String(element.structuredImport.blockRole || "").trim().toLowerCase();
+  const sourceNodeType = String(element.structuredImport.sourceNodeType || "").trim().toLowerCase();
+  return blockRole === "math-block" || sourceNodeType === "mathblock" || sourceNodeType === "mathinline";
+}
+
+export function getStructuredMathTextState(element = {}) {
+  if (!isStructuredMathTextElement(element)) {
+    return null;
+  }
+  const structuredImport = element.structuredImport;
+  const canonicalFragment = structuredImport.canonicalFragment && typeof structuredImport.canonicalFragment === "object"
+    ? structuredImport.canonicalFragment
+    : {};
+  const sourceNodeType = String(structuredImport.sourceNodeType || canonicalFragment.type || "").trim().toLowerCase();
+  const blockRole = String(structuredImport.blockRole || "").trim().toLowerCase();
+  const displayMode = sourceNodeType !== "mathinline" && blockRole !== "paragraph";
+  return {
+    formula: String(canonicalFragment.text ?? element.plainText ?? element.text ?? ""),
+    displayMode,
+    sourceFormat: String(canonicalFragment?.attrs?.sourceFormat || "latex"),
+    renderState: String(canonicalFragment?.attrs?.renderState || "ready"),
+  };
+}
+
+export function updateStructuredMathTextElement(element = {}, formula = "") {
+  const mathState = getStructuredMathTextState(element);
+  if (!mathState) {
+    return element;
+  }
+  const nextFormula = String(formula || "").trim();
+  const displayMode = mathState.displayMode;
+  const html = displayMode
+    ? `<div data-role="math-block">${escapeHtml(nextFormula)}</div>`
+    : `<span data-role="math-inline">${escapeHtml(nextFormula)}</span>`;
+  const sourceNodeType = displayMode ? "mathBlock" : "mathInline";
+  const previousFragment = element.structuredImport?.canonicalFragment;
+  const canonicalFragment = {
+    ...(previousFragment && typeof previousFragment === "object" ? JSON.parse(JSON.stringify(previousFragment)) : {}),
+    type: sourceNodeType,
+    attrs: {
+      ...(previousFragment?.attrs && typeof previousFragment.attrs === "object" ? previousFragment.attrs : {}),
+      sourceFormat: mathState.sourceFormat,
+      displayMode,
+      renderState: mathState.renderState,
+    },
+    text: nextFormula,
+  };
+  return normalizeTextElement({
+    ...element,
+    title: buildTextTitle(nextFormula || (displayMode ? "公式" : "行内公式")),
+    text: nextFormula,
+    plainText: nextFormula,
+    html,
+    richTextDocument: null,
+    structuredImport: {
+      ...element.structuredImport,
+      blockRole: displayMode ? "math-block" : "paragraph",
+      sourceNodeType,
+      canonicalFragment,
+    },
+  });
+}
+
 export function buildTextElementFromMathElement(element = {}, options = {}) {
   const normalizedMath = normalizeMathElement({
     ...element,

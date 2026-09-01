@@ -42,6 +42,7 @@
     "test:element-registry": "node scripts/check-builtin-element-registry.js",
     "test:canvas-ui-runtime": "node scripts/check-canvas-ui-runtime.js",
     "test:canvas-command-integration": "node scripts/check-canvas-command-integration.js",
+    "test:canvas-advanced-elements": "node scripts/check-canvas-advanced-element-interactions.js",
     "test:document-preview-runtime": "node scripts/check-document-preview-runtime.js",
     "test:document-preview-browser": "node scripts/check-document-preview-browser.js",
     "test:canvas-element-interactions": "node scripts/check-canvas2d-element-interactions.js",

@@ -57,7 +57,7 @@ export const BUILTIN_ELEMENT_UX = Object.freeze({
     editor: "table",
     inspector: "table",
     contextMenu: "table",
-    commands: [...COMMON_COMMANDS, "element.edit", "table.insert", "table.move", "table.delete", "table.toggle-header"],
+    commands: [...COMMON_COMMANDS, "element.edit", "table.insert", "table.move", "table.delete", "table.merge-cells", "table.split-cell", "table.toggle-header"],
     acceptance: [...COMMON_ACCEPTANCE, "edit-commit-cancel", "cell-range", "row-column", "clipboard"],
   }),
   mathBlock: descriptor({
