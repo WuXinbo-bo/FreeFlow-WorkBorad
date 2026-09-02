@@ -2789,7 +2789,18 @@ async function runElementContextMenuClipboardCheck(browser) {
     ),
   });
   try {
-    await rightClickCanvasItem(mixedSession.page, "mixed-copy-text");
+    await mixedSession.page.evaluate(() => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const rect = canvas?.getBoundingClientRect?.();
+      canvas?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: Number(rect?.left || 0) + 440,
+        clientY: Number(rect?.top || 0) + 230,
+        button: 2,
+      }));
+    });
+    await mixedSession.page.waitForTimeout(120);
     await mixedSession.page.evaluate(() => {
       document.querySelector('#canvas2d-context-menu [data-action="copy-selected-html"]')?.click();
     });
