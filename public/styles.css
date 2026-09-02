@@ -10024,6 +10024,7 @@ body.is-office-embedded #right-pane-resizer {
   background:
     linear-gradient(180deg, rgb(var(--theme-floating-surface-rgb) / 0.08), rgb(var(--theme-floating-surface-rgb) / 0.02)),
     rgb(var(--theme-panel-surface-rgb) / 0.18);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.34);
 }
 
 .canvas2d-react-ui-host {
@@ -14289,6 +14290,18 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 .canvas2d-engine-corner-bottom-right {
   right: 18px;
   bottom: 18px;
+}
+
+.canvas2d-engine-menu-portal {
+  position: fixed;
+  right: auto !important;
+  bottom: auto;
+  transform: none !important;
+  z-index: 42;
+  overflow-x: hidden;
+  overflow-y: auto;
+  pointer-events: auto;
+  box-sizing: border-box;
 }
 
 .canvas2d-floating-card {

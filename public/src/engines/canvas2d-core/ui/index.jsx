@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createCanvas2DReactBridge } from "../reactBridge.js";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../search/canvasSearchIndex.js";
 import { getElementBounds } from "../elements/index.js";
 import { getFileCardPreviewBounds } from "../elements/fileCard.js";
+import { computeAnchoredMenuPlacement } from "../menuPositioning.js";
 import { timeAssetTask } from "../perf/canvasRuntimeStats.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 import { createPdfVisiblePageRenderer } from "../documentPreview/pdfVisiblePageRenderer.js";
@@ -220,6 +221,93 @@ function FitViewIcon() {
 
 function ChevronIcon({ open = false }) {
   return <span className={`canvas2d-engine-menu-chevron${open ? " is-open" : ""}`} aria-hidden="true">⌄</span>;
+}
+
+function FloatingToolbarMenu({
+  open,
+  anchorRef,
+  boundaryRef,
+  panelRef,
+  align = "start",
+  className = "",
+  children,
+}) {
+  useLayoutEffect(() => {
+    if (!open || !(panelRef.current instanceof HTMLElement) || !(anchorRef.current instanceof HTMLElement)) {
+      return undefined;
+    }
+    const panel = panelRef.current;
+    const anchor = anchorRef.current;
+    let frameId = 0;
+    const updatePosition = () => {
+      frameId = 0;
+      if (!panel.isConnected || !anchor.isConnected) {
+        return;
+      }
+      const viewportBoundary = {
+        left: 0,
+        top: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+      const rootRect = boundaryRef.current?.getBoundingClientRect?.();
+      const boundaryRect = rootRect?.width && rootRect?.height ? rootRect : viewportBoundary;
+      panel.style.visibility = "hidden";
+      panel.style.maxWidth = `${Math.max(120, Math.round(boundaryRect.width - 24))}px`;
+      panel.style.maxHeight = `${Math.max(120, Math.round(boundaryRect.height - 24))}px`;
+      const placement = computeAnchoredMenuPlacement({
+        anchorRect: anchor.getBoundingClientRect(),
+        panelRect: panel.getBoundingClientRect(),
+        boundaryRect,
+        align,
+      });
+      panel.style.left = `${placement.left}px`;
+      panel.style.top = `${placement.top}px`;
+      panel.style.maxWidth = `${placement.maxWidth}px`;
+      panel.style.maxHeight = `${placement.maxHeight}px`;
+      panel.dataset.placementX = placement.placementX;
+      panel.dataset.placementY = placement.placementY;
+      panel.style.visibility = "visible";
+    };
+    const schedulePosition = () => {
+      if (!frameId) {
+        frameId = requestAnimationFrame(updatePosition);
+      }
+    };
+    updatePosition();
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, true);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedulePosition) : null;
+    observer?.observe(anchor);
+    observer?.observe(panel);
+    if (boundaryRef.current instanceof HTMLElement) {
+      observer?.observe(boundaryRef.current);
+    }
+    return () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      observer?.disconnect();
+      window.removeEventListener("resize", schedulePosition);
+      window.removeEventListener("scroll", schedulePosition, true);
+    };
+  }, [align, anchorRef, boundaryRef, open, panelRef]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+  const portalHost = document.getElementById("global-overlay-layer") || document.body;
+  return createPortal(
+    <div
+      ref={panelRef}
+      className={`canvas2d-engine-menu canvas2d-engine-menu-portal${className ? ` ${className}` : ""}`}
+      role="menu"
+      style={{ visibility: "hidden" }}
+    >
+      {children}
+    </div>,
+    portalHost
+  );
 }
 
 function formatPathLabel(pathValue = "", emptyText = "未设置") {
@@ -1674,6 +1762,11 @@ function Canvas2DControls({ engine }) {
   const insertMenuRef = useRef(null);
   const captureMenuRef = useRef(null);
   const menuRef = useRef(null);
+  const drawMenuPanelRef = useRef(null);
+  const imageMenuPanelRef = useRef(null);
+  const insertMenuPanelRef = useRef(null);
+  const captureMenuPanelRef = useRef(null);
+  const mainMenuPanelRef = useRef(null);
   const searchRef = useRef(null);
   const exportHistoryRef = useRef(null);
   const searchInputRef = useRef(null);
@@ -1756,6 +1849,13 @@ function Canvas2DControls({ engine }) {
       if (menuRef.current && menuRef.current.contains(event.target)) {
         return;
       }
+      if (
+        [drawMenuPanelRef, imageMenuPanelRef, insertMenuPanelRef, captureMenuPanelRef, mainMenuPanelRef].some(
+          (ref) => ref.current?.contains?.(event.target)
+        )
+      ) {
+        return;
+      }
       if (toolbarRef.current && toolbarRef.current.contains(event.target)) {
         return;
       }
@@ -1778,6 +1878,30 @@ function Canvas2DControls({ engine }) {
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, []);
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key !== "Escape" || !(drawMenuOpen || imageMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen)) {
+        return;
+      }
+      const trigger = toolbarRef.current?.querySelector?.('[aria-expanded="true"]');
+      event.preventDefault();
+      setDrawMenuOpen(false);
+      setImageMenuOpen(false);
+      setInsertMenuOpen(false);
+      setCaptureMenuOpen(false);
+      setCapturePdfMenuOpen(false);
+      setCapturePngMenuOpen(false);
+      setMenuOpen(false);
+      setExportMenuOpen(false);
+      setAlignmentSnapMenuOpen(false);
+      setBackgroundMenuOpen(false);
+      setAboutMenuOpen(false);
+      requestAnimationFrame(() => trigger?.focus?.());
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [captureMenuOpen, drawMenuOpen, imageMenuOpen, insertMenuOpen, menuOpen]);
 
   useEffect(() => {
     const message = String(snapshot?.boardSaveToastMessage || "").trim();
@@ -2375,8 +2499,12 @@ function Canvas2DControls({ engine }) {
               </span>
               <span className="canvas2d-engine-tool-shortcut">{activeDrawTool.shortcut}</span>
             </button>
-            {drawMenuOpen ? (
-              <div className="canvas2d-engine-menu" role="menu">
+            <FloatingToolbarMenu
+              open={drawMenuOpen}
+              anchorRef={drawMenuRef}
+              boundaryRef={rootRef}
+              panelRef={drawMenuPanelRef}
+            >
                 {DRAW_TOOLS.map((tool) => (
                   <button
                     key={tool.key}
@@ -2393,8 +2521,7 @@ function Canvas2DControls({ engine }) {
                     <kbd>{tool.shortcut}</kbd>
                   </button>
                 ))}
-              </div>
-            ) : null}
+            </FloatingToolbarMenu>
           </div>
 
           <button
@@ -2466,8 +2593,13 @@ function Canvas2DControls({ engine }) {
               </span>
               <span className="canvas2d-engine-tool-shortcut">I</span>
             </button>
-            {imageMenuOpen ? (
-              <div className="canvas2d-engine-menu canvas2d-engine-menu-image" role="menu">
+            <FloatingToolbarMenu
+              open={imageMenuOpen}
+              anchorRef={imageMenuRef}
+              boundaryRef={rootRef}
+              panelRef={imageMenuPanelRef}
+              className="canvas2d-engine-menu-image"
+            >
                 <div className="canvas2d-engine-menu-section">
                   <div className="canvas2d-engine-menu-title">图片</div>
                   <button
@@ -2493,8 +2625,7 @@ function Canvas2DControls({ engine }) {
                     <span>系统截屏</span>
                   </button>
                 </div>
-              </div>
-            ) : null}
+            </FloatingToolbarMenu>
           </div>
           <input
             ref={imageInputRef}
@@ -2555,8 +2686,14 @@ function Canvas2DControls({ engine }) {
               </span>
               <span className="canvas2d-engine-tool-shortcut">+</span>
             </button>
-            {insertMenuOpen ? (
-              <div className="canvas2d-engine-menu canvas2d-engine-insert-menu" role="menu">
+            <FloatingToolbarMenu
+              open={insertMenuOpen}
+              anchorRef={insertMenuRef}
+              boundaryRef={rootRef}
+              panelRef={insertMenuPanelRef}
+              align="center"
+              className="canvas2d-engine-insert-menu"
+            >
                 <div className="canvas2d-engine-menu-title">插入</div>
                 {INSERT_TOOLS.map((tool) => (
                   <button
@@ -2582,8 +2719,7 @@ function Canvas2DControls({ engine }) {
                     <kbd>{tool.shortcut}</kbd>
                   </button>
                 ))}
-              </div>
-            ) : null}
+            </FloatingToolbarMenu>
           </div>
 
           <div className="canvas2d-engine-tool-group" ref={captureMenuRef}>
@@ -2619,8 +2755,14 @@ function Canvas2DControls({ engine }) {
               </span>
               <span className="canvas2d-engine-tool-shortcut">P</span>
             </button>
-            {captureMenuOpen ? (
-              <div className="canvas2d-engine-menu canvas2d-engine-menu-share" role="menu">
+            <FloatingToolbarMenu
+              open={captureMenuOpen}
+              anchorRef={captureMenuRef}
+              boundaryRef={rootRef}
+              panelRef={captureMenuPanelRef}
+              align="end"
+              className="canvas2d-engine-menu-share"
+            >
                 <div className="canvas2d-engine-menu-section">
                   <div className="canvas2d-engine-menu-title">分享</div>
                   <button
@@ -2719,8 +2861,7 @@ function Canvas2DControls({ engine }) {
                     </div>
                   ) : null}
                 </div>
-              </div>
-            ) : null}
+            </FloatingToolbarMenu>
           </div>
 
           <span className="canvas2d-engine-tool-spacer" aria-hidden="true" />
@@ -2759,8 +2900,14 @@ function Canvas2DControls({ engine }) {
                 <MenuIcon />
               </span>
             </button>
-            {menuOpen ? (
-              <div className="canvas2d-engine-menu canvas2d-engine-menu-wide" role="menu">
+            <FloatingToolbarMenu
+              open={menuOpen}
+              anchorRef={menuRef}
+              boundaryRef={rootRef}
+              panelRef={mainMenuPanelRef}
+              align="end"
+              className="canvas2d-engine-menu-wide"
+            >
                 <div className="canvas2d-engine-menu-section">
                   <div className="canvas2d-engine-menu-title">画布管理</div>
                   <button
@@ -2991,8 +3138,7 @@ function Canvas2DControls({ engine }) {
                     </div>
                   ) : null}
                 </div>
-              </div>
-            ) : null}
+            </FloatingToolbarMenu>
           </div>
         </div>
       </div>

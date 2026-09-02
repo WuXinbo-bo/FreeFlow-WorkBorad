@@ -17,6 +17,54 @@ function toRectLike(rect = {}) {
   };
 }
 
+export function computeAnchoredMenuPlacement({
+  anchorRect,
+  panelRect,
+  boundaryRect,
+  align = "start",
+  gap = 10,
+  padding = 12,
+} = {}) {
+  const anchor = toRectLike(anchorRect);
+  const panel = toRectLike(panelRect);
+  const boundary = toRectLike(boundaryRect);
+  const safePadding = Math.max(0, Number(padding) || 0);
+  const safeGap = Math.max(0, Number(gap) || 0);
+  const leftLimit = boundary.left + safePadding;
+  const topLimit = boundary.top + safePadding;
+  const rightLimit = Math.max(leftLimit, boundary.right - safePadding);
+  const bottomLimit = Math.max(topLimit, boundary.bottom - safePadding);
+  const availableWidth = Math.max(0, rightLimit - leftLimit);
+  const availableHeight = Math.max(0, bottomLimit - topLimit);
+  const width = Math.min(panel.width, availableWidth);
+  const height = Math.min(panel.height, availableHeight);
+
+  let preferredLeft = anchor.left;
+  if (align === "end") {
+    preferredLeft = anchor.right - width;
+  } else if (align === "center") {
+    preferredLeft = anchor.left + (anchor.width - width) / 2;
+  }
+  const left = clamp(preferredLeft, leftLimit, Math.max(leftLimit, rightLimit - width));
+
+  const belowTop = anchor.bottom + safeGap;
+  const aboveTop = anchor.top - safeGap - height;
+  const fitsBelow = belowTop + height <= bottomLimit;
+  const fitsAbove = aboveTop >= topLimit;
+  const openAbove = !fitsBelow && (fitsAbove || anchor.top - topLimit > bottomLimit - anchor.bottom);
+  const preferredTop = openAbove ? aboveTop : belowTop;
+  const top = clamp(preferredTop, topLimit, Math.max(topLimit, bottomLimit - height));
+
+  return {
+    left: Math.round(left),
+    top: Math.round(top),
+    maxWidth: Math.round(availableWidth),
+    maxHeight: Math.round(availableHeight),
+    placementX: align,
+    placementY: openAbove ? "up" : "down",
+  };
+}
+
 export function getViewportBounds(padding = 12) {
   const safePadding = Math.max(0, Number(padding) || 0);
   return {

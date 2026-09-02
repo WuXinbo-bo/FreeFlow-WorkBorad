@@ -64,6 +64,37 @@ async function moveAway(page, viewport) {
   await page.waitForTimeout(200);
 }
 
+async function assertPortalMenu(page, selector, viewport) {
+  const result = await page.locator(selector).evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const root = document.querySelector(".canvas2d-engine-ui")?.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 80));
+    return {
+      parentId: element.parentElement?.id || "",
+      rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      root: root ? { left: root.left, top: root.top, right: root.right, bottom: root.bottom } : null,
+      hitInside: Boolean(hit && element.contains(hit)),
+      inline: { left: element.style.left, top: element.style.top, right: element.style.right },
+      computed: { left: getComputedStyle(element).left, right: getComputedStyle(element).right },
+      placement: { x: element.dataset.placementX || "", y: element.dataset.placementY || "" },
+    };
+  });
+  assert(result.parentId === "global-overlay-layer", "canvas toolbar menu did not use the global overlay host", {
+    viewport,
+    selector,
+    result,
+  });
+  assert(
+    result.rect.left >= Math.max(0, result.root?.left || 0) &&
+      result.rect.right <= Math.min(viewport.width, result.root?.right || viewport.width) &&
+      result.rect.top >= Math.max(0, result.root?.top || 0) &&
+      result.rect.bottom <= Math.min(viewport.height, result.root?.bottom || viewport.height),
+    "canvas toolbar menu escaped its safe boundary",
+    { viewport, selector, result }
+  );
+  assert(result.hitInside, "canvas toolbar menu is visually present but not pointer hittable", { viewport, selector, result });
+}
+
 function rectanglesOverlap(a, b, gap = 0) {
   return a.left < b.right + gap && a.right + gap > b.left && a.top < b.bottom + gap && a.bottom + gap > b.top;
 }
@@ -751,10 +782,11 @@ async function checkViewport(browser, viewport) {
       viewport,
       shareSurface,
     });
+    await assertPortalMenu(page, ".canvas2d-engine-menu-share", viewport);
     await shareButton.click();
 
     const menuButton = page.locator('.canvas2d-engine-tool[title="菜单"]');
-    const menu = page.locator(".canvas2d-engine-tool-group > .canvas2d-engine-menu-wide");
+    const menu = page.locator(".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide");
     await menuButton.click();
     await menu.getByRole("menuitem", { name: "自动对齐吸附" }).click();
     assert(await menu.getByRole("menuitemcheckbox", { name: /启用自动吸附/ }).isVisible(), "alignment submenu did not open", viewport);
@@ -764,13 +796,23 @@ async function checkViewport(browser, viewport) {
     await menu.getByRole("menuitem", { name: "关于画布" }).click();
     assert((await menu.getByRole("menuitem", { name: "背景" }).getAttribute("aria-expanded")) === "false", "background submenu did not close", viewport);
     assert(await menu.locator(".canvas2d-engine-menu-group-about").isVisible(), "about submenu did not open", viewport);
-    const menuSurface = await readSurface(page, ".canvas2d-engine-tool-group > .canvas2d-engine-menu-wide");
+    const menuSurface = await readSurface(page, ".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide");
     assert(menuSurface.background === "rgb(255, 255, 255)" && menuSurface.hitInside, "main menu is not a usable white surface", {
       viewport,
       menuSurface,
     });
     assert(menuSurface.rect.bottom <= viewport.height, "main menu extends below the viewport", { viewport, menuSurface });
-    await menuButton.click();
+    await assertPortalMenu(page, ".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide", viewport);
+    await page.keyboard.press("Escape");
+    assert(!(await menu.isVisible()), "Escape did not close the canvas menu", viewport);
+    assert(await menuButton.evaluate((button) => document.activeElement === button), "menu trigger focus was not restored", viewport);
+
+    const canvasBoundary = await page.locator("#canvas-canvas2d-host").evaluate((element) => {
+      const shadow = getComputedStyle(element).boxShadow;
+      const before = element.getBoundingClientRect();
+      return { shadow, width: before.width, height: before.height };
+    });
+    assert(canvasBoundary.shadow !== "none", "canvas surface does not expose a desktop boundary", { viewport, canvasBoundary });
 
     const zoomText = page.locator(".canvas2d-zoom-display strong");
     const initialZoom = await zoomText.textContent();

@@ -13,6 +13,9 @@ async function main() {
   const { createCanvas2DReactBridge } = await import(
     "../public/src/engines/canvas2d-core/reactBridge.js"
   );
+  const { computeAnchoredMenuPlacement } = await import(
+    "../public/src/engines/canvas2d-core/menuPositioning.js"
+  );
 
   const runtime = createCanvasUiRuntime({ elementRegistry: canvasElementRegistry });
   const calls = [];
@@ -88,6 +91,31 @@ async function main() {
     ["selection.distribute-vertical"],
     ["selection.layer-up"],
   ]);
+
+  assert.deepStrictEqual(
+    computeAnchoredMenuPlacement({
+      anchorRect: { left: 930, top: 20, width: 32, height: 32 },
+      panelRect: { width: 240, height: 360 },
+      boundaryRect: { left: 100, top: 0, width: 880, height: 700 },
+      align: "end",
+    }),
+    {
+      left: 722,
+      top: 62,
+      maxWidth: 856,
+      maxHeight: 676,
+      placementX: "end",
+      placementY: "down",
+    }
+  );
+  assert.strictEqual(
+    computeAnchoredMenuPlacement({
+      anchorRect: { left: 500, top: 650, width: 32, height: 32 },
+      panelRect: { width: 220, height: 300 },
+      boundaryRect: { left: 100, top: 0, width: 880, height: 700 },
+    }).placementY,
+    "up"
+  );
   console.log("[check-canvas-ui-runtime] ok");
 }
 
