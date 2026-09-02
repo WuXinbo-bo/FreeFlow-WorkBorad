@@ -1,4 +1,5 @@
 import { getCodeBlockLanguageFileExtension } from "../codeBlock/languageRegistry.js";
+import { canvasElementRegistry } from "../elements/index.js";
 
 const COPY_EXPORT_PROTOCOL = Object.freeze({
   text: Object.freeze({
@@ -169,15 +170,9 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
 });
 
 function normalizeType(type = "") {
-  const raw = String(type || "").trim();
-  if (!raw) {
-    return "";
-  }
-  if (COPY_EXPORT_PROTOCOL[raw]) {
-    return raw;
-  }
-  const entry = Object.entries(COPY_EXPORT_PROTOCOL).find(([, value]) => Array.isArray(value.aliases) && value.aliases.includes(raw));
-  return entry ? entry[0] : "";
+  const definition = canvasElementRegistry.resolve(type, { fallback: false });
+  const protocolType = String(definition?.capabilities?.copyExportProtocol || "").trim();
+  return COPY_EXPORT_PROTOCOL[protocolType] ? protocolType : "";
 }
 
 function resolveProtocol(type = "") {
@@ -239,7 +234,7 @@ export function resolveCopyExportAction(action = "") {
         type,
         format: copySpec.format,
         spec: copySpec,
-        targetTypes: type === "text" ? ["text", "flowNode"] : [type],
+        targetTypes: getProtocolTargetTypes(type),
       };
     }
     const exportSpec = protocol.exportFormats.find((entry) => entry.action === normalizedAction);
@@ -249,11 +244,38 @@ export function resolveCopyExportAction(action = "") {
         type,
         format: exportSpec.format,
         spec: exportSpec,
-        targetTypes: type === "text" ? ["text", "flowNode"] : [type],
+        targetTypes: getProtocolTargetTypes(type),
       };
     }
   }
   return null;
+}
+
+function getProtocolTargetTypes(protocolType = "") {
+  return canvasElementRegistry
+    .list()
+    .filter((definition) => definition.capabilities?.copyExportProtocol === protocolType)
+    .map((definition) => definition.type);
+}
+
+export function getElementTransferCapabilities(type = "") {
+  const definition = canvasElementRegistry.resolve(type, { fallback: false });
+  if (!definition) {
+    return null;
+  }
+  const capabilities = definition.capabilities || {};
+  return {
+    type: definition.type,
+    objectCopy: capabilities.objectCopy === true,
+    contentCopy: String(capabilities.contentCopy || "none"),
+    selectionCopy: String(capabilities.selectionCopy || "none"),
+    copyExportProtocol: String(capabilities.copyExportProtocol || "none"),
+    visualExport: Array.isArray(capabilities.visualExport) ? [...capabilities.visualExport] : [],
+    semanticExport: Array.isArray(capabilities.semanticExport) ? [...capabilities.semanticExport] : [],
+    dependencyClosure: String(capabilities.dependencyClosure || "none"),
+    measurement: String(capabilities.measurement || "bounds"),
+    persistence: String(capabilities.persistence || "inline"),
+  };
 }
 
 export function getCopyOperationMeta(type = "", format = "") {

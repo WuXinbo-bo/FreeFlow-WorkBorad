@@ -8,9 +8,19 @@ export function createContextMenuPasteAdapter(options = {}) {
   const readClipboardHtml = asAsyncFunction(options.readClipboardHtml);
   const readClipboardMarkdown = asAsyncFunction(options.readClipboardMarkdown);
   const readClipboardUriList = asAsyncFunction(options.readClipboardUriList);
+  const readClipboardSnapshot = typeof options.readClipboardSnapshot === "function"
+    ? options.readClipboardSnapshot
+    : null;
   const getInternalPayload = asAsyncFunction(options.getInternalPayload);
 
   async function readSnapshot(context = {}) {
+    if (readClipboardSnapshot) {
+      const [snapshot, internalPayload] = await Promise.all([
+        readClipboardSnapshot(),
+        getInternalPayload(),
+      ]);
+      return normalizeSnapshot(snapshot, internalPayload, context);
+    }
     const [
       text,
       filePaths,
@@ -27,17 +37,13 @@ export function createContextMenuPasteAdapter(options = {}) {
       getInternalPayload(),
     ]);
 
-    return {
+    return normalizeSnapshot({
       text: stringOrEmpty(text),
       html: stringOrEmpty(html),
       markdown: stringOrEmpty(markdown),
       uriList: stringOrEmpty(uriList),
       filePaths: normalizeStringArray(filePaths),
-      internalPayload: internalPayload || null,
-      sourceApp: stringOrEmpty(context.sourceApp),
-      sourceUrl: stringOrEmpty(context.sourceUrl),
-      sourceFilePath: stringOrEmpty(context.sourceFilePath),
-    };
+    }, internalPayload, context);
   }
 
   async function createDescriptor(context = {}) {
@@ -51,6 +57,20 @@ export function createContextMenuPasteAdapter(options = {}) {
   return {
     readSnapshot,
     createDescriptor,
+  };
+}
+
+function normalizeSnapshot(snapshot = {}, internalPayload = null, context = {}) {
+  return {
+    text: stringOrEmpty(snapshot?.text),
+    html: stringOrEmpty(snapshot?.html),
+    markdown: stringOrEmpty(snapshot?.markdown),
+    uriList: stringOrEmpty(snapshot?.uriList),
+    filePaths: normalizeStringArray(snapshot?.filePaths),
+    internalPayload: internalPayload || snapshot?.internalPayload || null,
+    sourceApp: stringOrEmpty(context.sourceApp || snapshot?.sourceApp),
+    sourceUrl: stringOrEmpty(context.sourceUrl || snapshot?.sourceUrl),
+    sourceFilePath: stringOrEmpty(context.sourceFilePath || snapshot?.sourceFilePath),
   };
 }
 

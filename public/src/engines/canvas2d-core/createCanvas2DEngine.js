@@ -4170,6 +4170,7 @@ let tablePointerSelectionState = {
     internalClipboardMime: CANVAS_CLIPBOARD_MIME,
     readClipboardText: () => clipboardBroker.readSystemClipboardText(),
     readClipboardFiles: () => clipboardBroker.readSystemClipboardFiles(),
+    readClipboardSnapshot: () => clipboardBroker.readSystemClipboardSnapshot(),
     getInternalPayload: async () => ((await shouldUseInternalClipboard()) ? clipboardBroker.getPayload() : null),
   });
   const exportAssetAdapter = createHostExportAssetAdapter({
@@ -21885,10 +21886,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const groupLabel = hasGrouped ? "取消组合" : "组合";
       const canMergeTexts = selectedItems.length >= 2 && selectedItems.every((item) => isMergeableRichTextItem(item));
       refs.contextMenu.innerHTML = `
-        <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制</button>
+        <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制元素</button>
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">复制所选</button>
-          <div class="canvas2d-context-submenu-panel" role="menu" aria-label="复制所选">
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">复制内容</button>
+          <div class="canvas2d-context-submenu-panel" role="menu" aria-label="复制内容">
             <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-html">富文本（Word 直通）</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-markdown">Markdown</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-plain">纯文本</button>
@@ -21963,7 +21964,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "flowEdge") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <div class="canvas2d-context-submenu">
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
@@ -21994,7 +21995,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "rect") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
@@ -22018,7 +22019,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "ellipse") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="shape-fill-toggle">填充切换</button>
@@ -22042,7 +22043,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "arrow") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="arrow-reverse">反转方向</button>
@@ -22066,7 +22067,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "shape" && selectedItem.shapeType === "line") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <div class="canvas2d-context-submenu">
@@ -22095,7 +22096,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         } else if (selectedItem?.type === "mindNode") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-add-child">添加子节点</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-add-sibling">添加同级节点</button>
@@ -22162,7 +22163,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       } else if (selectedItem) {
         refs.contextMenu.innerHTML = `
           <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-          <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制</button>
+          <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
           ${isMindRelationshipSourceEligible(selectedItem) ? '<button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>' : ""}
           <button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>
@@ -27098,7 +27099,28 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     },
     getElementRegistrySnapshot() {
       return canvasElementRegistry.validate({
-        requiredCapabilities: ["normalize", "getBounds", "translate", "resize", "render", "lod", "hitTest", "editor", "overlay", "resource", "layer"],
+        requiredCapabilities: [
+          "normalize",
+          "getBounds",
+          "translate",
+          "resize",
+          "render",
+          "lod",
+          "hitTest",
+          "editor",
+          "overlay",
+          "resource",
+          "layer",
+          "objectCopy",
+          "contentCopy",
+          "selectionCopy",
+          "copyExportProtocol",
+          "visualExport",
+          "semanticExport",
+          "dependencyClosure",
+          "measurement",
+          "persistence",
+        ],
       });
     },
     getElementRuntimeSnapshot() {

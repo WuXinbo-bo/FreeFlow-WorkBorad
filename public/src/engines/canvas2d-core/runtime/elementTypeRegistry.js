@@ -30,6 +30,17 @@ function freezeUxDefinition(ux = {}) {
   });
 }
 
+function freezeCapabilities(capabilities = {}) {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(capabilities).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? Object.freeze([...value]) : value,
+      ])
+    )
+  );
+}
+
 export function createElementTypeRegistry({ fallbackType = "text" } = {}) {
   const definitions = new Map();
   const aliases = new Map();
@@ -54,7 +65,7 @@ export function createElementTypeRegistry({ fallbackType = "text" } = {}) {
       ...definition,
       type,
       aliases: normalizedAliases,
-      capabilities: Object.freeze({ ...(definition.capabilities || {}) }),
+      capabilities: freezeCapabilities(definition.capabilities || {}),
       lifecycle: Object.freeze({ ...(definition.lifecycle || {}) }),
       ux: freezeUxDefinition(definition.ux || {}),
     });

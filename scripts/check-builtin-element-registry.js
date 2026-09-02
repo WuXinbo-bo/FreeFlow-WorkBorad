@@ -8,6 +8,19 @@ async function main() {
     normalizeElement,
     resizeElement,
   } = await import("../public/src/engines/canvas2d-core/elements/index.js");
+  const {
+    getCopyMenuItems,
+    getElementTransferCapabilities,
+    getExportMenuItems,
+    resolveCopyExportAction,
+  } = await import("../public/src/engines/canvas2d-core/export/copyExportProtocol.js");
+  const {
+    createCodeBlockContextMenuSchema,
+    createElementTransferActionsSchema,
+    createRichEditorContextMenuSchema,
+    createRichTextItemContextMenuSchema,
+    createTableContextMenuSchema,
+  } = await import("../public/src/engines/canvas2d-core/contextMenu/menuSchemaBuilders.js");
 
   const expectedTypes = [
     "shape",
@@ -25,10 +38,36 @@ async function main() {
     "text",
   ];
   const validation = canvasElementRegistry.validate({
-    requiredCapabilities: ["normalize", "getBounds", "translate", "resize", "render", "lod", "hitTest", "handles", "editor", "overlay", "resource", "layer", "cache", "marquee", "visibility"],
+    requiredCapabilities: ["normalize", "getBounds", "translate", "resize", "render", "lod", "hitTest", "handles", "editor", "overlay", "resource", "layer", "cache", "marquee", "visibility", "objectCopy", "contentCopy", "selectionCopy", "copyExportProtocol", "visualExport", "semanticExport", "dependencyClosure", "measurement", "persistence"],
   });
   assert.strictEqual(validation.ok, true, validation.missing.join(", "));
   assert.deepStrictEqual(validation.types, expectedTypes);
+  expectedTypes.forEach((type) => {
+    const capabilities = getElementTransferCapabilities(type);
+    assert(capabilities, `missing transfer capabilities for ${type}`);
+    assert.strictEqual(capabilities.objectCopy, true, `${type} must support object copy`);
+    assert.deepStrictEqual(capabilities.visualExport, ["png", "pdf"], `${type} visual export mismatch`);
+    assert(capabilities.measurement !== "", `${type} measurement contract missing`);
+    assert(capabilities.persistence !== "", `${type} persistence contract missing`);
+    const copyMenu = getCopyMenuItems(type);
+    const exportMenu = getExportMenuItems(type);
+    assert.strictEqual(copyMenu.length > 0, capabilities.contentCopy !== "none", `${type} copy menu mismatch`);
+    assert.strictEqual(exportMenu.length > 0, capabilities.semanticExport.length > 0 && capabilities.copyExportProtocol !== "none", `${type} export menu mismatch`);
+  });
+
+  assert.deepStrictEqual(resolveCopyExportAction("copy-text-html").targetTypes, ["flowNode", "text"]);
+  assert.deepStrictEqual(resolveCopyExportAction("table-export-xlsx").targetTypes, ["table"]);
+  assert.deepStrictEqual(resolveCopyExportAction("code-export-source").targetTypes, ["codeBlock"]);
+
+  const transferLabels = (schema) => schema.map((entry) => entry.label);
+  assert.deepStrictEqual(
+    transferLabels(createElementTransferActionsSchema("text")),
+    ["剪切", "复制元素", "复制内容", "粘贴", "导出"]
+  );
+  assert(transferLabels(createRichTextItemContextMenuSchema()).includes("复制内容"));
+  assert(transferLabels(createCodeBlockContextMenuSchema()).includes("复制内容"));
+  assert(transferLabels(createTableContextMenuSchema()).includes("复制内容"));
+  assert(transferLabels(createRichEditorContextMenuSchema()).includes("复制选区"));
 
   assert.strictEqual(normalizeElement({ type: "file", name: "a" }).type, "fileCard");
   assert.strictEqual(normalizeElement({ type: "code", code: "x" }).type, "codeBlock");

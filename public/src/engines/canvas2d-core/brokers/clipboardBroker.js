@@ -243,6 +243,42 @@ export function createClipboardBroker({
     }
   }
 
+  async function readSystemClipboardSnapshot() {
+    const [text, filePaths, clipboardItems] = await Promise.all([
+      readSystemClipboardText(),
+      readSystemClipboardFiles(),
+      readSystemClipboardItems(),
+    ]);
+    const richFormats = {
+      html: "",
+      markdown: "",
+      uriList: "",
+    };
+    const mimeTargets = {
+      "text/html": "html",
+      "text/markdown": "markdown",
+      "text/uri-list": "uriList",
+    };
+    for (const item of clipboardItems) {
+      const types = Array.isArray(item?.types) ? item.types : [];
+      for (const [mimeType, target] of Object.entries(mimeTargets)) {
+        if (richFormats[target] || !types.includes(mimeType) || typeof item?.getType !== "function") {
+          continue;
+        }
+        try {
+          richFormats[target] = String(await (await item.getType(mimeType)).text()) || "";
+        } catch {
+          // Keep the remaining clipboard formats available when one MIME read fails.
+        }
+      }
+    }
+    return {
+      text,
+      filePaths,
+      ...richFormats,
+    };
+  }
+
   return {
     setPayload,
     clearPayload,
@@ -253,5 +289,6 @@ export function createClipboardBroker({
     readSystemClipboardItems,
     readSystemClipboardText,
     readSystemClipboardFiles,
+    readSystemClipboardSnapshot,
   };
 }

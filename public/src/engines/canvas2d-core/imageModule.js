@@ -12,7 +12,7 @@ export function buildImageContextMenuHtml(item = {}) {
   const lockLabel = locked ? "解锁" : "锁定";
   return `
     <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
-    <button type="button" class="canvas2d-context-menu-item" data-action="image-copy">复制</button>
+    <button type="button" class="canvas2d-context-menu-item" data-action="image-copy">复制元素</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="image-edit">轻量编辑图片</button>
     <button type="button" class="canvas2d-context-menu-item" data-action="image-restore">恢复原图</button>

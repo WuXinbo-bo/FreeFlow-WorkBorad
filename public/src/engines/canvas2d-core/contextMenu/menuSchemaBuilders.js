@@ -1,4 +1,8 @@
-import { getCopyMenuItems, getExportMenuItems } from "../export/copyExportProtocol.js";
+import {
+  getCopyMenuItems,
+  getElementTransferCapabilities,
+  getExportMenuItems,
+} from "../export/copyExportProtocol.js";
 import { renderContextMenuSchema } from "./renderContextMenuSchema.js";
 
 function action(label, actionId, extra = {}) {
@@ -40,16 +44,34 @@ function layerSubmenuSchema() {
 function baseElementActionsSchema() {
   return [
     action("剪切", "cut"),
-    action("复制", "copy"),
+    action("复制元素", "copy"),
     action("粘贴", "paste"),
     layerSubmenuSchema(),
   ];
 }
 
+export function createElementTransferActionsSchema(type = "") {
+  const capabilities = getElementTransferCapabilities(type);
+  if (!capabilities) {
+    return [];
+  }
+  return [
+    action("剪切", "cut"),
+    capabilities.objectCopy ? action("复制元素", "copy") : null,
+    capabilities.contentCopy !== "none"
+      ? copyExportSubmenu("复制内容", "复制内容", getCopyMenuItems(type))
+      : null,
+    action("粘贴", "paste"),
+    capabilities.semanticExport.length
+      ? copyExportSubmenu("导出", "导出", getExportMenuItems(type))
+      : null,
+  ].filter(Boolean);
+}
+
 export function createRichEditorContextMenuSchema() {
   return [
     action("剪切", "rich-cut"),
-    action("复制", "rich-copy"),
+    action("复制选区", "rich-copy"),
     action("粘贴", "rich-paste"),
     action("全选", "rich-select-all"),
     submenu("格式", "文本格式", [
@@ -87,12 +109,11 @@ export function buildRichEditorContextMenuHtml() {
 }
 
 export function createRichTextItemContextMenuSchema({ isNode = false } = {}) {
+  const transferActions = createElementTransferActionsSchema(isNode ? "flowNode" : "text");
   return [
-    ...baseElementActionsSchema().slice(0, 2),
-    copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("text")),
-    baseElementActionsSchema()[2],
+    ...transferActions.slice(0, 4),
     ...(!isNode ? [action("连接节点", "connect-node")] : []),
-    copyExportSubmenu("导出", "导出", getExportMenuItems("text")),
+    ...transferActions.slice(4),
     baseElementActionsSchema()[3],
   ];
 }
@@ -102,11 +123,9 @@ export function buildRichTextItemContextMenuHtml(options = {}) {
 }
 
 export function createCodeBlockContextMenuSchema() {
+  const transferActions = createElementTransferActionsSchema("codeBlock");
   return [
-    ...baseElementActionsSchema().slice(0, 2),
-    copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("codeBlock")),
-    copyExportSubmenu("导出", "导出", getExportMenuItems("codeBlock")),
-    baseElementActionsSchema()[2],
+    ...transferActions,
     action("连接节点", "connect-node"),
     baseElementActionsSchema()[3],
   ];
@@ -137,12 +156,10 @@ export function createTableContextMenuSchema({ editing = false, selectionMode = 
     showColumnActions ? action("删除所选列", "table-delete-column") : null,
   ].filter(Boolean);
   if (!editing) {
+    const transferActions = createElementTransferActionsSchema("table");
     return [
       action("编辑表格", "table-edit"),
-      ...baseElementActionsSchema().slice(0, 2),
-      copyExportSubmenu("复制文本", "复制文本", getCopyMenuItems("table")),
-      copyExportSubmenu("导出", "导出", getExportMenuItems("table")),
-      baseElementActionsSchema()[2],
+      ...transferActions,
       action("连接节点", "connect-node"),
       baseElementActionsSchema()[3],
     ];
@@ -167,7 +184,7 @@ export function buildTableContextMenuHtml(options = {}) {
 
 export function createMathContextMenuSchema() {
   return [
-    ...baseElementActionsSchema().slice(0, 3),
+    ...createElementTransferActionsSchema("mathBlock"),
     action("连接节点", "connect-node"),
     baseElementActionsSchema()[3],
   ];

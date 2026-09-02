@@ -48,6 +48,26 @@ async function main() {
   assert(descriptor.sourceKind === INPUT_SOURCE_KINDS.MIXED, "context-menu sourceKind mismatch");
   assert(descriptor.entries.length === 3, "context-menu entries mismatch");
 
+  let snapshotReads = 0;
+  const snapshotAdapter = createContextMenuPasteAdapter({
+    async readClipboardSnapshot() {
+      snapshotReads += 1;
+      return {
+        text: "Fallback text",
+        html: "<p>Rich text</p>",
+        markdown: "**Rich text**",
+        uriList: "https://example.com/",
+        filePaths: ["D:\\tmp\\rich.docx"],
+      };
+    },
+  });
+  const richSnapshot = await snapshotAdapter.readSnapshot({ sourceApp: "Browser" });
+  assert(snapshotReads === 1, "clipboard snapshot should be read once");
+  assert(richSnapshot.html === "<p>Rich text</p>", "snapshot HTML mismatch");
+  assert(richSnapshot.markdown === "**Rich text**", "snapshot Markdown mismatch");
+  assert(richSnapshot.uriList === "https://example.com/", "snapshot URI mismatch");
+  assert(richSnapshot.filePaths.length === 1, "snapshot file path mismatch");
+
   const emptyAdapter = createContextMenuPasteAdapter({});
   const emptyDescriptor = await emptyAdapter.createDescriptor({});
   assert(

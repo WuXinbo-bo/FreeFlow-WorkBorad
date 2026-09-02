@@ -137,6 +137,7 @@ export function createStructuredImportRuntime(options = {}) {
     readClipboardHtml: options.readClipboardHtml,
     readClipboardMarkdown: options.readClipboardMarkdown,
     readClipboardUriList: options.readClipboardUriList,
+    readClipboardSnapshot: options.readClipboardSnapshot,
     getInternalPayload: options.getInternalPayload,
   });
 
