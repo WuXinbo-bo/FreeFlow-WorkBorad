@@ -1510,7 +1510,7 @@ let screenSourceHeaderMenuLayoutFrame = 0;
 let conversationShellMenuLayoutFrame = 0;
 let panelTransformDependentSyncFrame = 0;
 let screenSourceHeaderMenuOpen = false;
-let screenSourceHeaderPanelLastPosition = null;
+let screenSourceTargetRefreshGeneration = 0;
 let activeClipboardZone = "";
 let embeddedWindowOverlayHidden = false;
 let screenSourceActivationOverlayEl = null;
@@ -1682,42 +1682,26 @@ function isScreenSourceHeaderAnchorAvailable() {
   return computedStyle.display !== "none" && computedStyle.visibility !== "hidden";
 }
 
-function getScreenSourceHeaderFallbackPosition(panelRect) {
-  const viewportPadding = 12;
-  const width = Math.max(220, Math.round(panelRect?.width || screenSourceHeaderPanelEl?.offsetWidth || 296));
-  const height = Math.max(180, Math.round(panelRect?.height || screenSourceHeaderPanelEl?.offsetHeight || 260));
-  const rawLeft =
-    Number(screenSourceHeaderPanelLastPosition?.left) ||
-    Math.round(window.innerWidth - viewportPadding - width);
-  const rawTop =
-    Number(screenSourceHeaderPanelLastPosition?.top) ||
-    Math.round(viewportPadding + 52);
-  return {
-    left: Math.min(
-      Math.max(viewportPadding, rawLeft),
-      Math.max(viewportPadding, window.innerWidth - viewportPadding - width)
-    ),
-    top: Math.min(
-      Math.max(viewportPadding, rawTop),
-      Math.max(viewportPadding, window.innerHeight - viewportPadding - height)
-    ),
-  };
-}
-
-function setScreenSourceHeaderMenuOpen(open) {
+function setScreenSourceHeaderMenuOpen(open, { restoreFocus = false } = {}) {
   const nextOpen = Boolean(open);
   if (!screenSourceHeaderPanelEl) {
     return;
   }
 
   screenSourceHeaderMenuOpen = nextOpen;
-  screenSourceHeaderMenuEl?.removeAttribute("open");
+  screenSourceHeaderMenuEl?.toggleAttribute("open", nextOpen);
   screenSourceHeaderMenuEl?.classList.toggle("is-open", nextOpen);
+  screenSourceHeaderMenuSummaryEl?.setAttribute("aria-expanded", String(nextOpen));
   screenSourceHeaderPanelEl.classList.toggle("is-hidden", !nextOpen);
 
   if (!nextOpen) {
+    closeScreenSourceTargetMenu();
+    closeScreenSourceOverflowMenu();
     screenSourceHeaderPanelEl.style.removeProperty("max-width");
     screenSourceHeaderPanelEl.style.removeProperty("max-height");
+    if (restoreFocus) {
+      screenSourceHeaderMenuSummaryEl?.focus({ preventScroll: true });
+    }
     syncEmbeddedWindowOverlayVisibility();
     dispatchTutorialUiEvent({
       type: TUTORIAL_EVENT_TYPES.MENU_CLOSED,
@@ -2347,7 +2331,7 @@ async function resumeScreenSourceAfterClickThrough() {
   }
 }
 
-function setScreenSourceActionButtonsState(action, { text, disabled } = {}) {
+function setScreenSourceActionButtonsState(action, { text, disabled, busy } = {}) {
   const buttons = screenSourceActionButtonEls[action] || [];
   for (const button of buttons) {
     if (typeof text === "string") {
@@ -2355,6 +2339,9 @@ function setScreenSourceActionButtonsState(action, { text, disabled } = {}) {
     }
     if (typeof disabled === "boolean") {
       button.disabled = disabled;
+    }
+    if (typeof busy === "boolean") {
+      button.setAttribute("aria-busy", String(busy));
     }
   }
 }
@@ -2473,6 +2460,11 @@ function syncScreenSourceHeaderMenuLayout() {
 
   screenSourceHeaderPanelEl.classList.remove("is-hidden");
 
+  if (!isScreenSourceHeaderAnchorAvailable()) {
+    closeScreenSourceHeaderMenu();
+    return;
+  }
+
   const viewportPadding = 12;
   const verticalGap = 10;
   const maxWidth = Math.max(260, window.innerWidth - viewportPadding * 2);
@@ -2484,31 +2476,23 @@ function syncScreenSourceHeaderMenuLayout() {
   screenSourceHeaderPanelEl.style.setProperty("top", "0px");
 
   const panelRect = screenSourceHeaderPanelEl.getBoundingClientRect();
-  if (isScreenSourceHeaderAnchorAvailable()) {
-    const anchorRect = screenSourceHeaderMenuEl.getBoundingClientRect();
-    const clampedLeft = Math.min(
-      Math.max(viewportPadding, anchorRect.left),
-      Math.max(viewportPadding, window.innerWidth - viewportPadding - panelRect.width)
-    );
-    const canOpenUpward = anchorRect.top - verticalGap - panelRect.height >= viewportPadding;
-    const overflowsBottom = anchorRect.bottom + verticalGap + panelRect.height > window.innerHeight - viewportPadding;
-    const top = overflowsBottom && canOpenUpward
-      ? Math.max(viewportPadding, Math.round(anchorRect.top - verticalGap - panelRect.height))
-      : Math.min(
-          Math.max(viewportPadding, Math.round(anchorRect.bottom + verticalGap)),
-          Math.max(viewportPadding, window.innerHeight - viewportPadding - panelRect.height)
-        );
-    const left = Math.round(clampedLeft);
-    const resolvedTop = Math.round(top);
-    screenSourceHeaderPanelLastPosition = { left, top: resolvedTop };
-    screenSourceHeaderPanelEl.style.setProperty("left", `${left}px`);
-    screenSourceHeaderPanelEl.style.setProperty("top", `${resolvedTop}px`);
-    return;
-  }
-
-  const fallbackPosition = getScreenSourceHeaderFallbackPosition(panelRect);
-  screenSourceHeaderPanelEl.style.setProperty("left", `${Math.round(fallbackPosition.left)}px`);
-  screenSourceHeaderPanelEl.style.setProperty("top", `${Math.round(fallbackPosition.top)}px`);
+  const anchorRect = screenSourceHeaderMenuEl.getBoundingClientRect();
+  const clampedLeft = Math.min(
+    Math.max(viewportPadding, anchorRect.left),
+    Math.max(viewportPadding, window.innerWidth - viewportPadding - panelRect.width)
+  );
+  const canOpenUpward = anchorRect.top - verticalGap - panelRect.height >= viewportPadding;
+  const overflowsBottom = anchorRect.bottom + verticalGap + panelRect.height > window.innerHeight - viewportPadding;
+  const top = overflowsBottom && canOpenUpward
+    ? Math.max(viewportPadding, Math.round(anchorRect.top - verticalGap - panelRect.height))
+    : Math.min(
+        Math.max(viewportPadding, Math.round(anchorRect.bottom + verticalGap)),
+        Math.max(viewportPadding, window.innerHeight - viewportPadding - panelRect.height)
+      );
+  const left = Math.round(clampedLeft);
+  const resolvedTop = Math.round(top);
+  screenSourceHeaderPanelEl.style.setProperty("left", `${left}px`);
+  screenSourceHeaderPanelEl.style.setProperty("top", `${resolvedTop}px`);
 }
 
 function scheduleScreenSourceHeaderMenuLayoutSync() {
@@ -2583,8 +2567,18 @@ function scheduleScreenSourceToolbarLayoutSync() {
   });
 }
 
-function closeScreenSourceTargetMenu() {
-  screenSourceSelectMenuEl?.removeAttribute("open");
+function setScreenSourceTargetMenuOpen(open, { restoreFocus = false } = {}) {
+  const nextOpen = Boolean(open) && !screenSourceSelectMenuEl?.classList.contains("is-disabled");
+  screenSourceSelectMenuEl?.toggleAttribute("open", nextOpen);
+  screenSourceSelectTriggerEl?.setAttribute("aria-expanded", String(nextOpen));
+  if (restoreFocus) {
+    screenSourceSelectTriggerEl?.focus({ preventScroll: true });
+  }
+  scheduleScreenSourceHeaderMenuLayoutSync();
+}
+
+function closeScreenSourceTargetMenu(options = {}) {
+  setScreenSourceTargetMenuOpen(false, options);
 }
 
 function updateScreenSourceSelection(nextSourceId = "") {
@@ -2614,9 +2608,27 @@ function renderScreenSourceState() {
   const hasActiveProjection = hasEmbeddedWindow || hasStream;
   const renderMode = normalizeScreenSourceRenderMode(state.screenSource.renderMode);
   const canEmbedWindow = canUseSelectedEmbeddedScreenSourceMode();
+  const activeSourceId = String(state.screenSource.activeTargetId || "").trim();
+  const activeSource = state.screenSource.availableSources.find((item) => item.id === activeSourceId) || null;
+  const selectionDiffersFromActive = Boolean(
+    hasActiveProjection && selectedSource?.id && activeSourceId && selectedSource.id !== activeSourceId
+  );
+  let visibleStatus = state.screenSource.statusText || (hasActiveProjection ? "映射中" : "未启动");
+  let visibleStatusState = hasActiveProjection ? "active" : selectedSource ? "ready" : "idle";
+  if (state.screenSource.refreshing) {
+    visibleStatus = "正在刷新目标";
+    visibleStatusState = "loading";
+  } else if (selectionDiffersFromActive) {
+    visibleStatus = `当前映射 ${activeSource?.label || activeSource?.name || "原目标"} · 已选择 ${selectedSource.label || selectedSource.name}`;
+    visibleStatusState = "switch-pending";
+  } else if (hasActiveProjection && activeSourceId) {
+    visibleStatus = `映射中 · ${activeSource?.label || activeSource?.name || state.screenSource.embeddedSourceLabel || "当前目标"}`;
+    visibleStatusState = "active";
+  }
 
   if (screenSourceStatusPillEl) {
-    screenSourceStatusPillEl.textContent = state.screenSource.statusText || (hasActiveProjection ? "映射中" : "未启动");
+    screenSourceStatusPillEl.textContent = visibleStatus;
+    screenSourceStatusPillEl.dataset.state = visibleStatusState;
   }
   if (screenSourceEmptyEl) {
     screenSourceEmptyEl.classList.toggle("is-hidden", hasActiveProjection);
@@ -2640,8 +2652,9 @@ function renderScreenSourceState() {
     screenSourceVideoEl.classList.toggle("is-hidden", hasEmbeddedWindow);
   }
   setScreenSourceActionButtonsState("refresh", {
-    disabled: Boolean(state.screenSource.startPromise),
+    disabled: Boolean(state.screenSource.startPromise) || state.screenSource.refreshing,
     text: "刷新目标",
+    busy: state.screenSource.refreshing,
   });
   const shouldShowRefreshEmbedButton = Boolean(selectedSource && hasActiveProjection);
   setScreenSourceActionButtonsState("refreshEmbed", {
@@ -2657,7 +2670,7 @@ function renderScreenSourceState() {
   });
   if (screenSourceSelectEl) {
     const sources = Array.isArray(state.screenSource.availableSources) ? state.screenSource.availableSources : [];
-    const disabled = !sources.length || Boolean(state.screenSource.startPromise);
+    const disabled = !sources.length || Boolean(state.screenSource.startPromise) || state.screenSource.refreshing;
     screenSourceSelectEl.value = state.screenSource.selectedSourceId || "";
     screenSourceSelectEl.disabled = disabled;
     if (screenSourceSelectCurrentEl) {
@@ -2972,29 +2985,57 @@ function normalizeScreenSourceEntries(entries = []) {
 }
 
 async function refreshScreenSourceTargets({ preserveSelection = true } = {}) {
+  const refreshGeneration = ++screenSourceTargetRefreshGeneration;
+  state.screenSource.refreshing = true;
+  renderScreenSourceState();
+
   if (!IS_DESKTOP_APP || typeof DESKTOP_SHELL?.listAiMirrorTargets !== "function") {
-    state.screenSource.availableSources = [];
-    state.screenSource.selectedSourceId = "";
-    state.screenSource.selectedSourceLabel = "";
-    state.screenSource.statusText = "当前环境不支持 AI 镜像目标";
-    renderScreenSourceState();
+    if (refreshGeneration === screenSourceTargetRefreshGeneration) {
+      state.screenSource.availableSources = [];
+      state.screenSource.selectedSourceId = "";
+      state.screenSource.selectedSourceLabel = "";
+      state.screenSource.statusText = "当前环境不支持 AI 镜像目标";
+      state.screenSource.refreshing = false;
+      renderScreenSourceState();
+    }
     return [];
   }
 
-  const sources = normalizeScreenSourceEntries(await listAiMirrorTargets());
-  const previousId = preserveSelection ? state.screenSource.selectedSourceId : "";
-  const nextSelected = sources.find((source) => source.id === previousId) || sources[0] || null;
+  try {
+    const sources = normalizeScreenSourceEntries(await listAiMirrorTargets());
+    if (refreshGeneration !== screenSourceTargetRefreshGeneration) {
+      return state.screenSource.availableSources;
+    }
 
-  state.screenSource.availableSources = sources;
-  state.screenSource.selectedSourceId = nextSelected?.id || "";
-  state.screenSource.selectedSourceLabel = nextSelected?.label || nextSelected?.name || "";
+    const previousId = preserveSelection ? state.screenSource.selectedSourceId : "";
+    const preservedSource = previousId ? sources.find((source) => source.id === previousId) || null : null;
+    const nextSelected = preservedSource || (!previousId ? sources[0] || null : null);
 
-  if (!state.screenSource.stream && !isEmbeddedScreenSourceActive()) {
-    state.screenSource.statusText = nextSelected ? `已选择 ${state.screenSource.selectedSourceLabel}` : "暂无可用 AI 镜像目标";
+    state.screenSource.availableSources = sources;
+    state.screenSource.selectedSourceId = nextSelected?.id || "";
+    state.screenSource.selectedSourceLabel = nextSelected?.label || nextSelected?.name || "";
+
+    if (!state.screenSource.stream && !isEmbeddedScreenSourceActive()) {
+      state.screenSource.statusText = previousId && !preservedSource && sources.length
+        ? "原映射目标已失效，请重新选择"
+        : nextSelected
+          ? `已选择 ${state.screenSource.selectedSourceLabel}`
+          : "暂无可用 AI 镜像目标";
+    }
+
+    return sources;
+  } catch (error) {
+    if (refreshGeneration !== screenSourceTargetRefreshGeneration) {
+      return state.screenSource.availableSources;
+    }
+    state.screenSource.statusText = `刷新目标失败：${error.message}`;
+    throw error;
+  } finally {
+    if (refreshGeneration === screenSourceTargetRefreshGeneration) {
+      state.screenSource.refreshing = false;
+      renderScreenSourceState();
+    }
   }
-
-  renderScreenSourceState();
-  return sources;
 }
 
 async function ensureScreenSourcePreviewWorkspaceReady() {
@@ -3232,6 +3273,7 @@ function renderRightPanelView() {
     closeConversationModelMenu();
   }
   if (activeView !== "screen") {
+    closeScreenSourceHeaderMenu();
     closeScreenSourceOverflowMenu();
   }
   scheduleScreenSourceHeaderMenuLayoutSync();
@@ -6322,6 +6364,10 @@ function syncPaneVisibility({ syncShape = true } = {}) {
   const canvasPanelCollapsed = Boolean(state.panelLayout?.left?.collapsed || state.panelLayout?.left?.hidden);
   const chatPanelCollapsed = Boolean(state.panelLayout?.right?.collapsed || state.panelLayout?.right?.hidden);
 
+  if (chatPanelCollapsed) {
+    closeScreenSourceHeaderMenu();
+  }
+
   workspaceEl.classList.toggle("left-collapsed", leftDockCollapsed);
   workspaceEl.classList.toggle("right-collapsed", rightDockCollapsed);
   sidePanelEl?.classList.toggle("is-collapsed", canvasPanelCollapsed);
@@ -8763,6 +8809,18 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && screenSourceSelectMenuEl?.hasAttribute("open")) {
+    event.preventDefault();
+    closeScreenSourceTargetMenu({ restoreFocus: true });
+    return;
+  }
+
+  if (event.key === "Escape" && screenSourceHeaderMenuOpen) {
+    event.preventDefault();
+    setScreenSourceHeaderMenuOpen(false, { restoreFocus: true });
+    return;
+  }
+
   if (event.key === "Escape" && canvasImageLightboxEl && !canvasImageLightboxEl.classList.contains("is-hidden")) {
     closeCanvasImageLightbox();
     return;
@@ -9024,16 +9082,21 @@ for (const button of screenSourceActionButtonEls.embedToggle) {
 }
 
 screenSourceSelectMenuEl?.addEventListener("toggle", () => {
+  screenSourceSelectTriggerEl?.setAttribute(
+    "aria-expanded",
+    String(screenSourceSelectMenuEl.hasAttribute("open"))
+  );
   scheduleScreenSourceHeaderMenuLayoutSync();
 });
 
 screenSourceSelectTriggerEl?.addEventListener("click", (event) => {
-  if (!screenSourceSelectMenuEl?.classList.contains("is-disabled")) {
-    return;
-  }
   event.preventDefault();
   event.stopPropagation();
-  closeScreenSourceTargetMenu();
+  if (screenSourceSelectMenuEl?.classList.contains("is-disabled")) {
+    closeScreenSourceTargetMenu();
+    return;
+  }
+  setScreenSourceTargetMenuOpen(!screenSourceSelectMenuEl?.hasAttribute("open"));
 });
 
 screenSourceSelectPanelEl?.addEventListener("click", (event) => {
@@ -9041,11 +9104,13 @@ screenSourceSelectPanelEl?.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement)) {
     return;
   }
+  event.stopPropagation();
   const nextSourceId = String(target.getAttribute("data-screen-source-option") || "").trim();
   if (!nextSourceId) {
     return;
   }
   updateScreenSourceSelection(nextSourceId);
+  closeScreenSourceTargetMenu({ restoreFocus: true });
 });
 
 screenSourceRenderModeSelectEl?.addEventListener("change", async () => {
@@ -9090,8 +9155,14 @@ screenSourceFitModeSelectEl?.addEventListener("change", async () => {
   }
 });
 
-screenSourceHeaderMenuEl?.addEventListener("toggle", () => {
-  screenSourceHeaderMenuEl.removeAttribute("open");
+screenSourceHeaderMenuEl?.addEventListener("toggle", (event) => {
+  if (event.target !== screenSourceHeaderMenuEl) {
+    return;
+  }
+  const nativeOpen = screenSourceHeaderMenuEl.hasAttribute("open");
+  if (nativeOpen !== screenSourceHeaderMenuOpen) {
+    setScreenSourceHeaderMenuOpen(nativeOpen);
+  }
 });
 
 screenSourceHeaderMenuSummaryEl?.addEventListener("click", (event) => {

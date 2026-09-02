@@ -146,6 +146,7 @@ export function createInitialState() {
     screenSource: {
       stream: null,
       startPromise: null,
+      refreshing: false,
       statusText: "未启动",
       availableSources: [],
       selectedSourceId: "",

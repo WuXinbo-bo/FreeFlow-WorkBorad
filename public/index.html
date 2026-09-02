@@ -444,8 +444,13 @@
                 </button>
                 <div id="screen-source-header-slot" class="screen-source-header-slot is-hidden">
                   <details id="screen-source-header-menu" class="screen-source-header-menu">
-                    <summary class="conversation-pill ui-chrome-trigger" title="映射控制">映射控制</summary>
-                    <div class="screen-source-header-panel ui-chrome-popover">
+                    <summary
+                      class="conversation-pill ui-chrome-trigger"
+                      title="映射控制"
+                      aria-expanded="false"
+                      aria-controls="screen-source-header-panel"
+                    >映射控制</summary>
+                    <div id="screen-source-header-panel" class="screen-source-header-panel ui-chrome-popover">
                       <div id="screen-source-toolbar" class="screen-source-toolbar">
                         <label class="screen-source-picker ui-chrome-content">
                           <span class="label">映射目标</span>
@@ -454,6 +459,9 @@
                               id="screen-source-select-trigger"
                               class="screen-source-select-trigger ui-chrome-inline-field"
                               aria-label="选择映射目标"
+                              aria-expanded="false"
+                              aria-controls="screen-source-select-panel"
+                              aria-haspopup="listbox"
                             >
                               <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
                               <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true">⌄</span>

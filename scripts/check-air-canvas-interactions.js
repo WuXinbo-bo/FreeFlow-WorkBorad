@@ -409,6 +409,71 @@ async function checkRightWorkspaceGlass(page, viewport) {
   const mappingTrigger = page.locator("#screen-source-header-menu > summary");
   await mappingTrigger.click();
   await page.waitForFunction(() => !document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"));
+  await page.waitForFunction(() => document.querySelector("#screen-source-select-trigger")?.getAttribute("aria-disabled") === "false");
+  const mappingOpenState = await page.evaluate(() => ({
+    nativeOpen: document.querySelector("#screen-source-header-menu")?.hasAttribute("open"),
+    expanded: document.querySelector("#screen-source-header-menu > summary")?.getAttribute("aria-expanded"),
+    controls: document.querySelector("#screen-source-header-menu > summary")?.getAttribute("aria-controls"),
+  }));
+  assert(
+    mappingOpenState.nativeOpen && mappingOpenState.expanded === "true" && mappingOpenState.controls === "screen-source-header-panel",
+    "mapping parent menu did not synchronize native and accessible open state",
+    { viewport, mappingOpenState }
+  );
+
+  const targetTrigger = page.locator("#screen-source-select-trigger");
+  await targetTrigger.click();
+  await page.waitForFunction(() => document.querySelector("#screen-source-select-menu")?.hasAttribute("open"));
+  assert((await targetTrigger.getAttribute("aria-expanded")) === "true", "mapping target menu did not expose expanded state", viewport);
+  await page.keyboard.press("Escape");
+  const targetEscapeState = await page.evaluate(() => ({
+    targetOpen: document.querySelector("#screen-source-select-menu")?.hasAttribute("open"),
+    targetExpanded: document.querySelector("#screen-source-select-trigger")?.getAttribute("aria-expanded"),
+    parentOpen: document.querySelector("#screen-source-header-menu")?.hasAttribute("open"),
+    focusedId: document.activeElement?.id || "",
+  }));
+  assert(
+    !targetEscapeState.targetOpen && targetEscapeState.targetExpanded === "false" && targetEscapeState.parentOpen && targetEscapeState.focusedId === "screen-source-select-trigger",
+    "Escape did not close only the deepest mapping menu and restore focus",
+    { viewport, targetEscapeState }
+  );
+
+  await targetTrigger.click();
+  const secondTarget = page.locator("[data-screen-source-option]").nth(1);
+  const secondTargetLabel = await secondTarget.locator(".screen-source-select-option-title").textContent();
+  await secondTarget.click();
+  const targetSelectionState = await page.evaluate(() => ({
+    targetOpen: document.querySelector("#screen-source-select-menu")?.hasAttribute("open"),
+    targetExpanded: document.querySelector("#screen-source-select-trigger")?.getAttribute("aria-expanded"),
+    parentOpen: document.querySelector("#screen-source-header-menu")?.hasAttribute("open"),
+    focusedId: document.activeElement?.id || "",
+    selectedLabel: document.querySelector("#screen-source-select-current")?.textContent || "",
+  }));
+  assert(
+    !targetSelectionState.targetOpen &&
+      targetSelectionState.targetExpanded === "false" &&
+      targetSelectionState.parentOpen &&
+      targetSelectionState.focusedId === "screen-source-select-trigger" &&
+      targetSelectionState.selectedLabel === secondTargetLabel,
+    "mapping target selection did not close the child menu, preserve the parent, and restore focus",
+    { viewport, secondTargetLabel, targetSelectionState }
+  );
+
+  await page.keyboard.press("Escape");
+  const parentEscapeState = await page.evaluate(() => ({
+    parentOpen: document.querySelector("#screen-source-header-menu")?.hasAttribute("open"),
+    parentExpanded: document.querySelector("#screen-source-header-menu > summary")?.getAttribute("aria-expanded"),
+    panelHidden: document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"),
+    focused: document.activeElement === document.querySelector("#screen-source-header-menu > summary"),
+  }));
+  assert(
+    !parentEscapeState.parentOpen && parentEscapeState.parentExpanded === "false" && parentEscapeState.panelHidden && parentEscapeState.focused,
+    "Escape did not close the mapping parent and restore trigger focus",
+    { viewport, parentEscapeState }
+  );
+
+  await mappingTrigger.click();
+  await page.waitForFunction(() => !document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"));
   await page.waitForFunction(() => getComputedStyle(document.querySelector("#screen-source-header-menu > summary"), "::before").backgroundColor === "rgba(255, 255, 255, 0.8)");
   const mappingGlass = await page.evaluate(() => {
     const read = (selector) => {
@@ -472,6 +537,45 @@ async function checkRightWorkspaceGlass(page, viewport) {
     "AI mirror text hierarchy is too light for the transparent workspace",
     { viewport, mappingGlass }
   );
+
+  const refreshState = await page.evaluate(() => {
+    window.__queueAiMirrorTargetResponses?.([
+      {
+        delay: 140,
+        targets: [
+          { id: "target-b", name: "Target B", label: "Target B", note: "current" },
+          { id: "target-stale", name: "Stale Target", label: "Stale Target", note: "stale" },
+        ],
+      },
+      {
+        delay: 20,
+        targets: [
+          { id: "target-b", name: "Target B", label: "Target B", note: "current" },
+          { id: "target-latest", name: "Latest Target", label: "Latest Target", note: "latest" },
+        ],
+      },
+    ]);
+    const refresh = document.querySelector("#screen-source-refresh-btn");
+    refresh?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refresh?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return {
+      disabled: refresh?.disabled,
+      busy: refresh?.getAttribute("aria-busy"),
+    };
+  });
+  assert(refreshState.disabled && refreshState.busy === "true", "mapping refresh did not expose a loading guard", {
+    viewport,
+    refreshState,
+  });
+  await page.waitForTimeout(220);
+  await targetTrigger.click();
+  const refreshResult = await page.locator("#screen-source-select-panel").textContent();
+  assert(
+    refreshResult.includes("Latest Target") && !refreshResult.includes("Stale Target"),
+    "an older mapping refresh overwrote the latest response",
+    { viewport, refreshResult }
+  );
+  await page.keyboard.press("Escape");
 
   await page.mouse.click(2, Math.round(viewport.height / 2));
   await page.waitForFunction(() => document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"));
@@ -763,6 +867,26 @@ async function checkViewport(browser, viewport) {
   });
 
   try {
+    await page.addInitScript(() => {
+      const defaultTargets = [
+        { id: "target-a", name: "Target A", label: "Target A", note: "primary" },
+        { id: "target-b", name: "Target B", label: "Target B", note: "secondary" },
+      ];
+      let queuedResponses = [];
+      window.__queueAiMirrorTargetResponses = (responses = []) => {
+        queuedResponses = Array.isArray(responses) ? responses.slice() : [];
+      };
+      window.desktopShell = {
+        isDesktop: true,
+        async listAiMirrorTargets() {
+          const response = queuedResponses.shift() || { delay: 0, targets: defaultTargets };
+          if (response.delay) {
+            await new Promise((resolve) => window.setTimeout(resolve, response.delay));
+          }
+          return { ok: true, targets: response.targets };
+        },
+      };
+    });
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15_000 });
 
