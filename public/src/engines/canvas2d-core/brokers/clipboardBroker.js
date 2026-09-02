@@ -1,4 +1,8 @@
 import { clone } from "../utils.js";
+import {
+  CANVAS_OPERATION_STATUS,
+  createCanvasOperationResult,
+} from "../operations/canvasOperationResult.js";
 
 function getItemLabel(item = {}) {
   return (
@@ -155,7 +159,12 @@ export function createClipboardBroker({
 
   async function copyPayloadToClipboard(nextPayload = null) {
     if (!nextPayload || typeof nextPayload !== "object") {
-      return null;
+      return createCanvasOperationResult({
+        operation: "copy",
+        status: CANVAS_OPERATION_STATUS.FAILED,
+        code: "COPY_INVALID_PAYLOAD",
+        message: "没有可复制的内容",
+      });
     }
     setPayload(nextPayload);
 
@@ -163,45 +172,109 @@ export function createClipboardBroker({
     const filePaths = Array.isArray(nextPayload.filePaths) ? nextPayload.filePaths : [];
     const fileBackedCount = countFileBacked(cleanItems);
     const onlyFileBacked = fileBackedCount > 0 && fileBackedCount === cleanItems.length;
+    const requestedFormats = onlyFileBacked && filePaths.length
+      ? ["files"]
+      : [
+          nextPayload.html ? "text/html" : "",
+          nextPayload.markdown ? "text/markdown" : "",
+          nextPayload.text ? "text/plain" : "",
+        ].filter(Boolean);
+    const attempts = [];
+    const errors = [];
+    const recordFailure = (stage, error = null) => {
+      errors.push({
+        code: "CLIPBOARD_WRITE_FAILED",
+        message: String(error?.message || ""),
+        stage,
+      });
+      attempts.push({ id: stage, type: "clipboard-write", status: "failed", reason: "write-failed" });
+    };
+    const buildResult = ({ providedFormats = [], fallbackUsed = false, code = "" } = {}) => {
+      const systemWritten = providedFormats.length > 0;
+      const status = systemWritten && requestedFormats.every((format) => providedFormats.includes(format))
+        ? CANVAS_OPERATION_STATUS.SUCCESS
+        : CANVAS_OPERATION_STATUS.DEGRADED;
+      return {
+        ...createCanvasOperationResult({
+          operation: "copy",
+          status,
+          code: status === CANVAS_OPERATION_STATUS.SUCCESS
+            ? "COPY_OK"
+            : code || (systemWritten ? "COPY_DOWNGRADED" : "COPY_INTERNAL_ONLY"),
+          message: systemWritten
+            ? status === CANVAS_OPERATION_STATUS.SUCCESS
+              ? "已写入系统剪贴板"
+              : "已降级写入系统剪贴板"
+            : "系统剪贴板不可用，内容仅保留在画布内",
+          internalStored: true,
+          systemWritten,
+          fallbackUsed,
+          requestedFormats,
+          providedFormats,
+          entries: attempts,
+          errors,
+        }),
+        payload: nextPayload,
+      };
+    };
+
     if (onlyFileBacked && filePaths.length && typeof copyFilesToClipboard === "function") {
       try {
         const result = await copyFilesToClipboard(filePaths);
         if (result?.ok) {
-          return nextPayload;
+          attempts.push({ id: "files", type: "clipboard-write", status: "written", providedFormat: "files" });
+          return buildResult({ providedFormats: ["files"], code: "COPY_OK" });
         }
-      } catch {
-        // Ignore system clipboard failures.
+        recordFailure("files");
+      } catch (error) {
+        recordFailure("files", error);
       }
     }
 
     if (typeof writeClipboardPayload === "function") {
       try {
-        const ok = await writeClipboardPayload(nextPayload);
+        const result = await writeClipboardPayload(nextPayload);
+        const ok = result === true || result?.ok === true;
         if (ok) {
-          return nextPayload;
+          const providedFormats = Array.isArray(result?.writtenFormats) && result.writtenFormats.length
+            ? result.writtenFormats
+            : requestedFormats;
+          attempts.push({ id: "rich-payload", type: "clipboard-write", status: "written" });
+          return buildResult({ providedFormats, code: "COPY_OK" });
         }
-      } catch {
-        // Ignore system clipboard failures.
-      }
-    }
-
-    if (typeof writeClipboardText === "function" && nextPayload.text) {
-      try {
-        await writeClipboardText(nextPayload.text);
-      } catch {
-        // Ignore system clipboard failures.
+        recordFailure("rich-payload");
+      } catch (error) {
+        recordFailure("rich-payload", error);
       }
     }
 
     if (typeof writeClipboardHtml === "function" && nextPayload.html) {
       try {
-        await writeClipboardHtml(nextPayload.html, nextPayload.text || "");
-      } catch {
-        // Ignore system clipboard failures.
+        const result = await writeClipboardHtml(nextPayload.html, nextPayload.text || "");
+        if (result === true || result?.ok === true) {
+          attempts.push({ id: "html", type: "clipboard-write", status: "written" });
+          return buildResult({ providedFormats: ["text/html", "text/plain"], fallbackUsed: true });
+        }
+        recordFailure("html");
+      } catch (error) {
+        recordFailure("html", error);
       }
     }
 
-    return nextPayload;
+    if (typeof writeClipboardText === "function" && nextPayload.text) {
+      try {
+        const result = await writeClipboardText(nextPayload.text);
+        if (result === true || result?.ok === true) {
+          attempts.push({ id: "plain-text", type: "clipboard-write", status: "written" });
+          return buildResult({ providedFormats: ["text/plain"], fallbackUsed: true });
+        }
+        recordFailure("plain-text");
+      } catch (error) {
+        recordFailure("plain-text", error);
+      }
+    }
+
+    return buildResult({ providedFormats: [], fallbackUsed: attempts.length > 1 });
   }
 
   async function copyItemsToClipboard(items = []) {

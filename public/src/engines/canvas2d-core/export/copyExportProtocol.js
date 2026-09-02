@@ -169,6 +169,11 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
   }),
 });
 
+const VISUAL_EXPORT_FORMATS = Object.freeze({
+  png: Object.freeze({ format: "png", action: "export-element-png", menuLabel: "导出为 PNG" }),
+  pdf: Object.freeze({ format: "pdf", action: "export-element-pdf", menuLabel: "导出为 PDF" }),
+});
+
 function normalizeType(type = "") {
   const definition = canvasElementRegistry.resolve(type, { fallback: false });
   const protocolType = String(definition?.capabilities?.copyExportProtocol || "").trim();
@@ -215,10 +220,15 @@ export function getCopyMenuItems(type = "", { visibleOnly = true } = {}) {
 
 export function getExportMenuItems(type = "", { visibleOnly = true } = {}) {
   const protocol = resolveProtocol(type);
-  if (!protocol) {
-    return [];
-  }
-  return protocol.exportFormats.filter((entry) => !visibleOnly || entry.visible !== false);
+  const semanticFormats = protocol
+    ? protocol.exportFormats.filter((entry) => !visibleOnly || entry.visible !== false)
+    : [];
+  const semanticFormatIds = new Set(semanticFormats.map((entry) => String(entry.format || "").toLowerCase()));
+  const capabilities = getElementTransferCapabilities(type);
+  const visualFormats = (Array.isArray(capabilities?.visualExport) ? capabilities.visualExport : [])
+    .map((format) => VISUAL_EXPORT_FORMATS[String(format || "").toLowerCase()] || null)
+    .filter((entry) => entry && !semanticFormatIds.has(entry.format));
+  return [...semanticFormats, ...visualFormats];
 }
 
 export function resolveCopyExportAction(action = "") {

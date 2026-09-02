@@ -1,4 +1,7 @@
 import { sanitizeText } from "../../utils.js";
+import { flattenTableStructureToMatrix } from "../../elements/table.js";
+import { serializeTableMatrixToMarkdown } from "../../elements/tableFormats.js";
+import { serializeRichTextDocumentToMarkdown } from "../../textModel/serializeRichTextDocumentToMarkdown.js";
 
 export const COPY_DOWNGRADE_RULES_VERSION = "1.0.0";
 
@@ -13,6 +16,7 @@ export function buildDowngradedCopyPayloadFromItems(items = [], options = {}) {
     entries,
     text: entries.map((entry) => entry.text).filter(Boolean).join("\n\n").trim(),
     html: entries.map((entry) => entry.html).filter(Boolean).join(""),
+    markdown: entries.map((entry) => entry.markdown || entry.text).filter(Boolean).join("\n\n").trim(),
     stats: {
       itemCount: cleanItems.length,
       entryCount: entries.length,
@@ -48,12 +52,19 @@ export function downgradeItemForCopy(item = {}, index = 0) {
 }
 
 function downgradeTextItem(item, index) {
+  const text = sanitizeText(item?.plainText || item?.text || "");
   return {
     itemId: String(item?.id || `text-${index}`),
     itemType: "text",
     downgradedFrom: "text",
-    text: sanitizeText(item?.plainText || item?.text || ""),
+    text,
     html: String(item?.html || wrapParagraph(item?.plainText || item?.text || "")),
+    markdown: sanitizeText(serializeRichTextDocumentToMarkdown(item?.richTextDocument, {
+      html: item?.html || "",
+      plainText: text,
+      text,
+      fontSize: item?.fontSize,
+    })).trim() || text,
   };
 }
 
@@ -66,6 +77,7 @@ function downgradeCodeBlockItem(item, index) {
     downgradedFrom: "codeBlock",
     text: buildCodeText(code, language),
     html: `<pre data-copy-role="code-block"${language ? ` data-language="${escapeAttribute(language)}"` : ""}><code>${escapeHtml(code)}</code></pre>`,
+    markdown: `\`\`\`${language}\n${code}\n\`\`\``,
   };
 }
 
@@ -103,6 +115,7 @@ function downgradeTableItem(item, index) {
     downgradedFrom: "table",
     text,
     html,
+    markdown: serializeTableMatrixToMarkdown(flattenTableStructureToMatrix(table)) || text,
   };
 }
 
@@ -116,6 +129,7 @@ function downgradeMathItem(item, index) {
     downgradedFrom: "math",
     text: fallbackText,
     html: `<span data-copy-role="${displayMode ? "math-block" : "math-inline"}">${escapeHtml(fallbackText)}</span>`,
+    markdown: displayMode ? `$$\n${formula}\n$$` : `$${formula}$`,
   };
 }
 
@@ -134,6 +148,7 @@ function downgradeImageItem(item, index) {
     html: src
       ? `<img data-copy-role="image" src="${escapeAttribute(String(src))}" alt="${escapeAttribute(label)}">`
       : `<span data-copy-role="image">${escapeHtml(`[图片] ${label}`)}</span>`,
+    markdown: src ? `![${escapeMarkdownLabel(label)}](${String(src)})` : `[图片] ${label}`.trim(),
   };
 }
 
@@ -152,6 +167,7 @@ function downgradeFileCardItem(item, index) {
     downgradedFrom: "fileCard",
     text,
     html,
+    markdown: text,
   };
 }
 
@@ -163,6 +179,7 @@ function downgradeLegacyNativeItem(item, index) {
     downgradedFrom: "legacy-native",
     text: buildLegacyNativeText(item),
     html: wrapParagraph(buildLegacyNativeText(item)),
+    markdown: buildLegacyNativeText(item),
   };
 }
 
@@ -175,6 +192,7 @@ function downgradeUnknownItem(item, index) {
     downgradedFrom: "unknown",
     text,
     html: wrapParagraph(text),
+    markdown: text,
   };
 }
 
@@ -224,4 +242,8 @@ function escapeHtml(value = "") {
 
 function escapeAttribute(value = "") {
   return escapeHtml(value).replace(/'/g, "&#39;");
+}
+
+function escapeMarkdownLabel(value = "") {
+  return String(value || "").replace(/([\\\[\]])/g, "\\$1");
 }

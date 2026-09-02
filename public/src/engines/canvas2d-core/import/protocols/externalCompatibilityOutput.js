@@ -17,6 +17,7 @@ export function buildExternalCompatibilityOutputFromItems(items = [], options = 
     createdAt: Number(options.createdAt) || Date.now(),
     text: String(downgradedCopy.text || ""),
     html: String(downgradedCopy.html || ""),
+    markdown: String(downgradedCopy.markdown || ""),
     filePaths,
     canonicalCopy,
     downgradedCopy,

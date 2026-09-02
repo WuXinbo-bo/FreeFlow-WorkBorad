@@ -257,6 +257,30 @@ async function checkPatchRecovery() {
     false,
     "stabilization overwrote a later edit of the imported batch"
   );
+  const deletedHistory = createHistoryState();
+  pushPatchHistory(deletedHistory, { patchKind: "structured-import-batch", itemIds: ["first"], afterItems: [firstBatch] });
+  pushPatchHistory(deletedHistory, { patchKind: "item-delete", itemIds: ["first"], beforeItems: [firstBatch], afterItems: [] });
+  assert.strictEqual(
+    replaceRecentPatchAfterItems(deletedHistory, {
+      patchKind: "structured-import-batch",
+      itemIds: ["first"],
+      afterItems: [{ ...firstBatch, x: 100 }],
+    }),
+    false,
+    "deleted import accepted a stale deferred writeback"
+  );
+  const undoneHistory = createHistoryState();
+  pushPatchHistory(undoneHistory, { patchKind: "structured-import-batch", itemIds: ["first"], afterItems: [firstBatch] });
+  undoHistory(undoneHistory, createSnapshot([firstBatch]));
+  assert.strictEqual(
+    replaceRecentPatchAfterItems(undoneHistory, {
+      patchKind: "structured-import-batch",
+      itemIds: ["first"],
+      afterItems: [{ ...firstBatch, x: 100 }],
+    }),
+    false,
+    "undone import accepted a stale deferred writeback"
+  );
   let insertedSnapshot = applyPatchEntryToHistorySnapshot(
     insertEntry,
     createSnapshot(beforeItems),

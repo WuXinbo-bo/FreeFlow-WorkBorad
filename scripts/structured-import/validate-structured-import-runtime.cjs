@@ -37,6 +37,9 @@ async function main() {
   assert.equal(statusOf(result, "html"), "consumed");
   assert.equal(statusOf(result, "plain"), "deduplicated");
   assert.equal(statusOf(result, "bad-image"), "failed");
+  assert.equal(result.operationResult.operation, "import");
+  assert.equal(result.operationResult.status, "degraded");
+  assert.equal(result.operationResult.failedCount, 1);
   assert.equal(result.commitResult.layoutIssues.length, 0);
   console.log("[structured-import-runtime] ok: composed import retained semantics, attachments and failure manifest");
 }

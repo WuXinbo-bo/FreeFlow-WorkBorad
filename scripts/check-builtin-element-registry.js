@@ -52,7 +52,9 @@ async function main() {
     const copyMenu = getCopyMenuItems(type);
     const exportMenu = getExportMenuItems(type);
     assert.strictEqual(copyMenu.length > 0, capabilities.contentCopy !== "none", `${type} copy menu mismatch`);
-    assert.strictEqual(exportMenu.length > 0, capabilities.semanticExport.length > 0 && capabilities.copyExportProtocol !== "none", `${type} export menu mismatch`);
+    assert.strictEqual(exportMenu.length > 0, capabilities.visualExport.length > 0, `${type} export menu mismatch`);
+    assert(exportMenu.some((entry) => entry.format === "png"), `${type} PNG export is missing`);
+    assert(exportMenu.some((entry) => entry.format === "pdf"), `${type} PDF export is missing`);
   });
 
   assert.deepStrictEqual(resolveCopyExportAction("copy-text-html").targetTypes, ["flowNode", "text"]);
@@ -68,6 +70,7 @@ async function main() {
   assert(transferLabels(createCodeBlockContextMenuSchema()).includes("复制内容"));
   assert(transferLabels(createTableContextMenuSchema()).includes("复制内容"));
   assert(transferLabels(createRichEditorContextMenuSchema()).includes("复制选区"));
+  assert(transferLabels(createElementTransferActionsSchema("shape")).includes("导出"));
 
   assert.strictEqual(normalizeElement({ type: "file", name: "a" }).type, "fileCard");
   assert.strictEqual(normalizeElement({ type: "code", code: "x" }).type, "codeBlock");

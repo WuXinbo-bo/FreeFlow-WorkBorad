@@ -30,6 +30,7 @@ import {
 } from "../host/hostPersistenceAdapter.js";
 import { buildHostFlowbackPayload } from "../host/hostFlowbackAdapter.js";
 import { createHostHistoryAdapter } from "../host/hostHistoryAdapter.js";
+import { createCanvasOperationResult } from "../../operations/canvasOperationResult.js";
 import {
   createPlainTextParser,
   PLAIN_TEXT_PARSER_ID,
@@ -193,6 +194,21 @@ export function createStructuredImportRuntime(options = {}) {
       parserId: String(groupResult?.pipelineOutput?.parseResult?.parserId || ""),
       errorCode: String(groupResult?.pipelineOutput?.parseResult?.error?.code || ""),
     }));
+    result.operationResult = createCanvasOperationResult({
+      operation: "import",
+      code: result?.ok ? "IMPORT_OK" : "IMPORT_FAILED",
+      message: String(result?.reason || ""),
+      available: result?.ok === true,
+      entries: settledPlan.manifest.map((entry) => ({
+        id: entry.entryId,
+        type: entry.kind,
+        status: entry.status,
+        reason: entry.reason,
+      })),
+      errors: settledPlan.manifest
+        .filter((entry) => entry.status === INPUT_REPRESENTATION_STATUS.FAILED)
+        .map((entry) => ({ code: "IMPORT_REPRESENTATION_FAILED", message: entry.reason, stage: entry.kind })),
+    });
     logCollector.pushTrace({
       descriptor,
       parseResult: result?.pipelineOutput?.parseResult || null,

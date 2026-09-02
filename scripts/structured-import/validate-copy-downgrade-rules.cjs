@@ -71,6 +71,8 @@ async function main() {
   assert(payload.entries.length === 4, "downgrade entry count mismatch");
   assert(payload.text.includes("Name\tValue"), "table downgrade text mismatch");
   assert(payload.html.includes("<table"), "table downgrade html mismatch");
+  assert(payload.markdown.includes("| Name | Value |"), "table downgrade markdown mismatch");
+  assert(payload.markdown.includes("```js"), "code downgrade markdown mismatch");
   assert(payload.html.includes("$$\\frac{a}{b}$$"), "math downgrade html mismatch");
   assert(payload.text.includes("[文件] report.pdf"), "fileCard downgrade text mismatch");
 

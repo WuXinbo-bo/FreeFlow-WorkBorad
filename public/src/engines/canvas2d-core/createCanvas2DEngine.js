@@ -294,6 +294,10 @@ import { buildSelectionWordExportPlan } from "./export/word/buildWordExportAst.j
 import { buildWordExportPreviewModel } from "./export/word/buildWordExportPreviewModel.js";
 import { createStructuredExportRuntime } from "./export/runtime/createStructuredExportRuntime.js";
 import {
+  CANVAS_OPERATION_STATUS,
+  createCanvasOperationResult,
+} from "./operations/canvasOperationResult.js";
+import {
   createInputDescriptor,
   INPUT_CHANNELS,
   INPUT_ENTRY_KINDS,
@@ -3294,6 +3298,7 @@ export function createCanvas2DEngine(options = {}) {
       }
       const text = String(payload?.text || "");
       const html = String(payload?.html || "");
+      const markdown = String(payload?.markdown || "");
       const marker = buildInternalClipboardMarker({
         clipboardId: String(payload?.clipboardId || ""),
         copiedAt: Number(payload?.copiedAt) || Date.now(),
@@ -3305,9 +3310,13 @@ export function createCanvas2DEngine(options = {}) {
         [CANVAS_CLIPBOARD_MIME]: new Blob([marker], { type: CANVAS_CLIPBOARD_MIME }),
         "text/plain": new Blob([text], { type: "text/plain" }),
         "text/html": new Blob([html], { type: "text/html" }),
+        ...(markdown ? { "text/markdown": new Blob([markdown], { type: "text/markdown" }) } : {}),
       });
       await navigator.clipboard.write([item]);
-      return true;
+      return {
+        ok: true,
+        writtenFormats: [CANVAS_CLIPBOARD_MIME, "text/plain", "text/html", markdown ? "text/markdown" : ""].filter(Boolean),
+      };
     },
     writeClipboardText: async (text) => {
       if (navigator.clipboard?.writeText) {
@@ -6352,12 +6361,16 @@ let tablePointerSelectionState = {
   }
 
   function findTextItemById(itemId = "") {
-    return getItemByIdFast(itemId, "text");
+    const item = sceneRegistry.getItemById(itemId);
+    return item && (item.type === "text" || item.type === "flowNode" || isMindNodeTextItem(item)) ? item : null;
   }
 
   function mergeTextItemUrlMeta(itemId = "", url = "", meta = null) {
     const item = findTextItemById(itemId);
-    if (!item || !url || !meta || typeof meta !== "object") {
+    const normalizedUrl = normalizeComparableUrl(url);
+    const stillReferencesUrl = (Array.isArray(item?.linkTokens) ? item.linkTokens : [])
+      .some((token) => normalizeComparableUrl(token?.url || "") === normalizedUrl);
+    if (!mounted || !item || !normalizedUrl || !stillReferencesUrl || !meta || typeof meta !== "object") {
       return false;
     }
     const nextCache = {
@@ -6444,12 +6457,22 @@ let tablePointerSelectionState = {
     if (typeof globalThis?.desktopShell?.getFileId !== "function") {
       return;
     }
+    const sourcePath = String(item.sourcePath || "");
     fileCardIdHydrationInFlight.add(normalizedId);
     try {
-      const result = await globalThis.desktopShell.getFileId(String(item.sourcePath || ""));
+      const result = await globalThis.desktopShell.getFileId(sourcePath);
       const fileId = String(result?.fileId || result || "");
-      if (fileId && item.fileId !== fileId) {
-        item.fileId = fileId;
+      const currentItem = sceneRegistry.getItemById(normalizedId);
+      if (
+        fileId &&
+        currentItem &&
+        (currentItem.type === "fileCard" || currentItem.type === "image") &&
+        String(currentItem.sourcePath || "") === sourcePath &&
+        currentItem.fileId !== fileId
+      ) {
+        const nextItem = { ...currentItem, fileId };
+        mergeDeferredItemIntoInsertionHistory(normalizedId, nextItem);
+        currentItem.fileId = fileId;
         scheduleDeferredHydrationSync(normalizedId, {
           sceneChange: false,
           reason: "resolve-file-card-id",
@@ -6614,7 +6637,7 @@ let tablePointerSelectionState = {
   }
 
   function scheduleUrlMetaHydrationForItem(item = null) {
-    if (!linkSemanticEnabled || !item || (item.type !== "text" && !isMindNodeTextItem(item))) {
+    if (!linkSemanticEnabled || !item || (item.type !== "text" && item.type !== "flowNode" && !isMindNodeTextItem(item))) {
       return;
     }
     const tokens = Array.isArray(item.linkTokens) ? item.linkTokens : [];
@@ -8354,6 +8377,45 @@ let tablePointerSelectionState = {
     return changed;
   }
 
+  function findDeferredInsertionHistoryEntry(itemId = "") {
+    const targetId = String(itemId || "").trim();
+    if (!targetId) {
+      return null;
+    }
+    for (let index = state.history.undo.length - 1; index >= 0; index -= 1) {
+      const entry = state.history.undo[index];
+      if (entry?.kind !== "patch") {
+        return null;
+      }
+      const entryIds = Array.isArray(entry.itemIds) ? entry.itemIds.map(String) : [];
+      if (!entryIds.includes(targetId)) {
+        continue;
+      }
+      return entry.patchKind === "item-insert-batch" || entry.patchKind === "structured-import-batch"
+        ? entry
+        : null;
+    }
+    return null;
+  }
+
+  function mergeDeferredItemIntoInsertionHistory(itemId, nextItem) {
+    const entry = findDeferredInsertionHistoryEntry(itemId);
+    if (!entry || !nextItem) {
+      return false;
+    }
+    const targetId = String(itemId || "").trim();
+    const afterItems = (Array.isArray(entry.afterItems) ? entry.afterItems : [])
+      .map((item) => String(item?.id || "") === targetId ? nextItem : item);
+    if (!afterItems.some((item) => String(item?.id || "") === targetId)) {
+      return false;
+    }
+    return replaceRecentPatchAfterItems(state.history, {
+      patchKind: entry.patchKind,
+      itemIds: entry.itemIds,
+      afterItems,
+    });
+  }
+
   function pushItems(items = [], { reason = "", statusText = "" } = {}) {
     if (!Array.isArray(items) || !items.length) {
       return false;
@@ -8725,8 +8787,33 @@ let tablePointerSelectionState = {
     });
   }
 
+  function getDeferredImageSourceSignature(item = {}) {
+    const dataUrl = String(item?.dataUrl || "");
+    return JSON.stringify({
+      sourcePath: String(item?.sourcePath || ""),
+      dataUrlLength: dataUrl.length,
+      dataUrlHead: dataUrl.slice(0, 64),
+      dataUrlTail: dataUrl.slice(-64),
+      name: String(item?.name || item?.fileName || ""),
+      mime: String(item?.mime || ""),
+      crop: item?.crop || null,
+      rotation: Number(item?.rotation || 0),
+      flipX: item?.flipX === true,
+      flipY: item?.flipY === true,
+      brightness: Number(item?.brightness || 0),
+      contrast: Number(item?.contrast || 0),
+    });
+  }
+
   function scheduleDeferredImportedAssetPersistence(items = [], { reason = "clipboard-import-asset-persist" } = {}) {
-    const targets = (Array.isArray(items) ? items : []).filter((item) => item?.type === "image");
+    const targets = (Array.isArray(items) ? items : [])
+      .filter((item) => item?.type === "image")
+      .map((item) => ({
+        id: String(item.id || ""),
+        sourceSignature: getDeferredImageSourceSignature(item),
+        draft: clone(item),
+      }))
+      .filter((entry) => entry.id);
     if (!targets.length) {
       return false;
     }
@@ -8735,17 +8822,32 @@ let tablePointerSelectionState = {
         await yieldToIdleWindow(120);
         let saved = 0;
         const changedIds = [];
-        for (const item of targets) {
+        for (const target of targets) {
+          const currentBeforeSave = sceneRegistry.getItemById(target.id, "image");
+          if (
+            !currentBeforeSave ||
+            getDeferredImageSourceSignature(currentBeforeSave) !== target.sourceSignature ||
+            !findDeferredInsertionHistoryEntry(target.id)
+          ) {
+            continue;
+          }
           try {
-            const ok = await saveImageItemToImportFolder(item);
+            const persistedItem = clone(target.draft);
+            const ok = await saveImageItemToImportFolder(persistedItem);
             if (!ok) {
               continue;
             }
-            saved += 1;
-            const itemId = String(item?.id || "").trim();
-            if (itemId) {
-              changedIds.push(itemId);
+            const currentAfterSave = sceneRegistry.getItemById(target.id, "image");
+            if (
+              !currentAfterSave ||
+              getDeferredImageSourceSignature(currentAfterSave) !== target.sourceSignature ||
+              !mergeDeferredItemIntoInsertionHistory(target.id, persistedItem)
+            ) {
+              continue;
             }
+            Object.assign(currentAfterSave, persistedItem);
+            saved += 1;
+            changedIds.push(target.id);
           } catch {
             // Ignore background asset persistence failures for pasted content.
           }
@@ -8813,7 +8915,12 @@ let tablePointerSelectionState = {
       try {
         const result = await globalThis.desktopShell.findPathByFileId(fileId);
         const resolvedPath = String(result?.path || result || "").trim();
-        if (!resolvedPath) {
+        if (
+          !resolvedPath ||
+          sceneRegistry.getItemById(String(item?.id || "")) !== item ||
+          String(item.fileId || "") !== fileId ||
+          String(item.sourcePath || "").trim() !== sourcePath
+        ) {
           continue;
         }
         const fileName = getFileName(resolvedPath);
@@ -15251,43 +15358,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     button.setAttribute("title", copied ? "代码已复制" : defaultLabel);
   }
 
-  async function writeClipboardTextWithFallback(text = "") {
-    const content = String(text || "");
-    if (!content) {
-      return false;
-    }
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(content);
-        return true;
-      }
-    } catch {
-      // Fall through to execCommand-based fallback for older/electron-limited runtimes.
-    }
-    if (typeof document === "undefined" || typeof document.execCommand !== "function") {
-      return false;
-    }
-    const helper = document.createElement("textarea");
-    helper.value = content;
-    helper.setAttribute("readonly", "true");
-    helper.style.position = "fixed";
-    helper.style.opacity = "0";
-    helper.style.pointerEvents = "none";
-    helper.style.left = "-9999px";
-    helper.style.top = "-9999px";
-    document.body.appendChild(helper);
-    helper.focus();
-    helper.select();
-    let copied = false;
-    try {
-      copied = document.execCommand("copy");
-    } catch {
-      copied = false;
-    }
-    helper.remove();
-    return copied;
-  }
-
   function collectCodeBlockCopyButtons(itemId = "") {
     const buttons = [];
     const normalizedId = String(itemId || "").trim();
@@ -15337,14 +15407,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("代码块为空");
       return false;
     }
-    const copied = await writeClipboardTextWithFallback(content);
-    if (!copied) {
+    const result = await writeClipboardTextAndHtml({ text: content });
+    if (!result.ok) {
       setStatus("代码复制失败", "warning");
       return false;
     }
     flashCodeBlockCopyFeedback(item.id);
     setStatus("代码已复制");
-    return true;
+    return result;
   }
 
   async function copyCodeBlockTextContent(item, format = "plain") {
@@ -15354,14 +15424,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("代码块为空");
       return false;
     }
-    const copied = await writeClipboardTextWithFallback(content);
-    if (!copied) {
+    const result = await writeClipboardTextAndHtml({
+      text: content,
+      markdown: meta?.format === "markdown" ? content : "",
+    });
+    if (!result.ok) {
       setStatus("复制失败", "warning");
       return false;
     }
     flashCodeBlockCopyFeedback(item?.id || "");
     setStatus(`已复制${meta?.label || "纯文本"}`);
-    return true;
+    return result;
   }
 
   function syncCodeBlockToolbar() {
@@ -18215,36 +18288,80 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
   }
 
-  async function writeClipboardTextAndHtml({ text = "", html = "" } = {}) {
+  async function writeClipboardTextAndHtml({ text = "", html = "", markdown = "" } = {}) {
     const plainText = sanitizeText(String(text || ""));
     const richHtml = String(html || "").trim();
-    if (!plainText && !richHtml) {
-      return false;
+    const markdownText = sanitizeText(String(markdown || "")).trim();
+    const requestedFormats = [
+      richHtml ? "text/html" : "",
+      markdownText ? "text/markdown" : "",
+      plainText || richHtml || markdownText ? "text/plain" : "",
+    ].filter(Boolean);
+    const attempts = [];
+    const errors = [];
+    const resultFor = (providedFormats = [], fallbackUsed = false) => {
+      const status = providedFormats.length && requestedFormats.every((format) => providedFormats.includes(format))
+        ? CANVAS_OPERATION_STATUS.SUCCESS
+        : providedFormats.length
+          ? CANVAS_OPERATION_STATUS.DEGRADED
+          : CANVAS_OPERATION_STATUS.FAILED;
+      return createCanvasOperationResult({
+        operation: "copy",
+        status,
+        code: status === CANVAS_OPERATION_STATUS.SUCCESS
+          ? "COPY_OK"
+          : status === CANVAS_OPERATION_STATUS.DEGRADED
+            ? "COPY_DOWNGRADED"
+            : "COPY_FAILED",
+        message: status === CANVAS_OPERATION_STATUS.FAILED ? "复制失败" : "",
+        systemWritten: providedFormats.length > 0,
+        fallbackUsed,
+        requestedFormats,
+        providedFormats,
+        entries: attempts,
+        errors,
+      });
+    };
+    const recordFailure = (stage, error = null) => {
+      attempts.push({ id: stage, type: "clipboard-write", status: "failed", reason: "write-failed" });
+      errors.push({ code: "CLIPBOARD_WRITE_FAILED", message: String(error?.message || ""), stage });
+    };
+    if (!requestedFormats.length) {
+      return resultFor();
     }
     if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
       try {
+        const fallbackText = plainText || markdownText || htmlToPlainText(richHtml);
         await navigator.clipboard.write([
           new ClipboardItem({
             ...(richHtml ? { "text/html": new Blob([richHtml], { type: "text/html" }) } : {}),
-            "text/plain": new Blob([plainText || htmlToPlainText(richHtml)], { type: "text/plain" }),
+            ...(markdownText ? { "text/markdown": new Blob([markdownText], { type: "text/markdown" }) } : {}),
+            "text/plain": new Blob([fallbackText], { type: "text/plain" }),
           }),
         ]);
-        return true;
-      } catch {
-        // fallback below
+        const providedFormats = [
+          richHtml ? "text/html" : "",
+          markdownText ? "text/markdown" : "",
+          "text/plain",
+        ].filter(Boolean);
+        attempts.push({ id: "clipboard-item", type: "clipboard-write", status: "written" });
+        return resultFor(providedFormats);
+      } catch (error) {
+        recordFailure("clipboard-item", error);
       }
     }
     if (navigator.clipboard?.writeText) {
       try {
-        await navigator.clipboard.writeText(plainText || htmlToPlainText(richHtml));
-        return true;
-      } catch {
-        // fallback below
+        await navigator.clipboard.writeText(plainText || markdownText || htmlToPlainText(richHtml));
+        attempts.push({ id: "write-text", type: "clipboard-write", status: "written" });
+        return resultFor(["text/plain"], true);
+      } catch (error) {
+        recordFailure("write-text", error);
       }
     }
     if (typeof document?.execCommand === "function") {
       const textarea = document.createElement("textarea");
-      textarea.value = plainText || htmlToPlainText(richHtml);
+      textarea.value = plainText || markdownText || htmlToPlainText(richHtml);
       textarea.setAttribute("readonly", "true");
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
@@ -18259,9 +18376,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         copied = false;
       }
       textarea.remove();
-      return copied;
+      if (copied) {
+        attempts.push({ id: "exec-command", type: "clipboard-write", status: "written" });
+        return resultFor(["text/plain"], true);
+      }
+      recordFailure("exec-command");
     }
-    return false;
+    return resultFor();
   }
 
   async function copyRichTextContent(item, format = "plain") {
@@ -18271,25 +18392,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("仅富文本元素支持此操作");
       return false;
     }
-    let copied = false;
+    let copyResult = null;
     if (meta.format === "html" || meta.format === "ppt-html") {
-      copied = await writeClipboardTextAndHtml({
+      copyResult = await writeClipboardTextAndHtml({
         text: payload.plainText || htmlToPlainText(payload.html || ""),
         html: payload.html,
       });
     } else if (meta.format === "markdown") {
-      copied = await writeClipboardTextAndHtml({ text: payload.markdown });
+      copyResult = await writeClipboardTextAndHtml({ text: payload.markdown, markdown: payload.markdown });
     } else if (meta.format === "object-link") {
-      copied = await writeClipboardTextAndHtml({ text: payload.objectLink });
+      copyResult = await writeClipboardTextAndHtml({ text: payload.objectLink });
     } else {
-      copied = await writeClipboardTextAndHtml({ text: payload.plainText });
+      copyResult = await writeClipboardTextAndHtml({ text: payload.plainText });
     }
-    if (!copied) {
+    if (!copyResult?.ok) {
       setStatus("复制失败");
       return false;
     }
-    setStatus(`已复制${meta.label}`);
-    return true;
+    setStatus(
+      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED
+        ? `已复制${meta.label}（已降级为纯文本）`
+        : `已复制${meta.label}`,
+      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+    );
+    return copyResult;
   }
 
   function buildTableClipboardContent(item) {
@@ -18324,6 +18450,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       ...baseClipboardPayload,
       text: String(externalOutput.text || baseClipboardPayload?.text || ""),
       html: String(externalOutput.html || baseClipboardPayload?.html || ""),
+      markdown: String(externalOutput.markdown || baseClipboardPayload?.markdown || ""),
       filePaths:
         Array.isArray(externalOutput.filePaths) && externalOutput.filePaths.length
           ? externalOutput.filePaths.slice()
@@ -18343,6 +18470,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const htmlParts = [];
     const markdownParts = [];
     const plainParts = [];
+    const entries = plan.skippedEntries.map((entry) => ({
+      id: entry.id,
+      type: entry.type || "unknown",
+      status: "skipped",
+      reason: entry.reason || "unsupported-type",
+    }));
+    const markCompleted = (item) => {
+      entries.push({ id: String(item?.id || ""), type: String(item?.type || "unknown"), status: "completed" });
+    };
+    const markEmpty = (item) => {
+      entries.push({ id: String(item?.id || ""), type: String(item?.type || "unknown"), status: "skipped", reason: "empty-content" });
+    };
 
     orderedItems.forEach((item) => {
       if (!item || typeof item !== "object") {
@@ -18359,6 +18498,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         if (payload?.plainText) {
           plainParts.push(payload.plainText);
         }
+        if (payload?.html || payload?.markdown || payload?.plainText) {
+          markCompleted(item);
+        } else {
+          markEmpty(item);
+        }
         return;
       }
       if (item.type === "table") {
@@ -18366,34 +18510,39 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         if (payload?.plain) {
           const plain = sanitizeText(payload.plain).trim();
           const markdown = sanitizeText(payload.markdown || payload.plain).trim();
-          const rows = plain.split("\n").filter(Boolean);
-          const htmlRows = rows
-            .map((row, rowIndex) => {
-              const cells = row.split("\t");
-              const cellTag = rowIndex === 0 ? "th" : "td";
-              return `<tr>${cells.map((cell) => `<${cellTag}>${escapeHtml(cell)}</${cellTag}>`).join("")}</tr>`;
-            })
-            .join("");
-          htmlParts.push(`<table>${htmlRows}</table>`);
+          htmlParts.push(payload.html || `<pre>${escapeHtml(plain)}</pre>`);
           markdownParts.push(markdown);
           plainParts.push(plain);
+          markCompleted(item);
+        } else {
+          markEmpty(item);
         }
         return;
       }
       if (item.type === "codeBlock") {
         const plain = getCodeBlockContent(item);
         const markdown = serializeCodeBlockToMarkdown(item);
-        htmlParts.push(`<pre><code>${escapeHtml(plain)}</code></pre>`);
-        markdownParts.push(markdown);
-        plainParts.push(plain);
+        if (plain.trim()) {
+          const language = String(item.language || "").trim().toLowerCase();
+          htmlParts.push(`<pre data-copy-role="code-block"${language ? ` data-language="${escapeHtml(language)}"` : ""}><code>${escapeHtml(plain)}</code></pre>`);
+          markdownParts.push(markdown);
+          plainParts.push(plain);
+          markCompleted(item);
+        } else {
+          markEmpty(item);
+        }
         return;
       }
       if (item.type === "mathBlock" || item.type === "mathInline") {
         const formula = sanitizeText(String(item.formula || item.plainText || item.text || "")).trim();
         if (formula) {
-          htmlParts.push(`<p>${escapeHtml(formula)}</p>`);
+          const role = item.type === "mathInline" ? "math-inline" : "math-block";
+          htmlParts.push(`<span data-copy-role="${role}" data-latex="${escapeHtml(formula)}">${escapeHtml(formula)}</span>`);
           markdownParts.push(item.type === "mathBlock" ? `$$\n${formula}\n$$` : `$${formula}$`);
           plainParts.push(formula);
+          markCompleted(item);
+        } else {
+          markEmpty(item);
         }
       }
     });
@@ -18406,6 +18555,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           html,
           markdown,
           plainText,
+          entries,
+          skippedItems: entries.filter((entry) => entry.status === "skipped"),
         }
       : null;
   }
@@ -18417,24 +18568,44 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("未选中可复制内容", "warning");
       return false;
     }
-    let copied = false;
+    let copyResult = null;
     if (format === "markdown") {
-      copied = await writeClipboardTextAndHtml({ text: payload.markdown || payload.plainText });
+      copyResult = await writeClipboardTextAndHtml({
+        text: payload.markdown || payload.plainText,
+        markdown: payload.markdown || payload.plainText,
+      });
     } else if (format === "plain") {
-      copied = await writeClipboardTextAndHtml({ text: payload.plainText });
+      copyResult = await writeClipboardTextAndHtml({ text: payload.plainText });
     } else {
-      copied = await writeClipboardTextAndHtml({
+      copyResult = await writeClipboardTextAndHtml({
         text: payload.plainText || htmlToPlainText(payload.html || ""),
         html: payload.html,
       });
     }
-    if (!copied) {
+    if (!copyResult?.ok) {
       setStatus("复制失败", "warning");
       return false;
     }
+    const selectionResult = createCanvasOperationResult({
+      operation: "copy",
+      internalStored: copyResult.internalStored,
+      systemWritten: copyResult.systemWritten,
+      fallbackUsed: copyResult.fallbackUsed,
+      requestedFormats: copyResult.requestedFormats,
+      providedFormats: copyResult.providedFormats,
+      entries: payload.entries,
+      errors: copyResult.errors,
+    });
     const label = format === "markdown" ? "Markdown" : format === "plain" ? "纯文本" : "富文本";
-    setStatus(`已复制所选${label}`);
-    return true;
+    const notes = [];
+    if (payload.skippedItems.length) {
+      notes.push(`跳过 ${payload.skippedItems.length} 个不支持或空元素`);
+    }
+    if (copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED) {
+      notes.push("系统剪贴板已降级");
+    }
+    setStatus(`已复制所选${label}${notes.length ? `（${notes.join("，")}）` : ""}`, notes.length ? "warning" : "success");
+    return selectionResult;
   }
 
   async function copyTableTextContent(item, format = "plain") {
@@ -18444,7 +18615,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("仅表格元素支持此操作");
       return false;
     }
-    const copied =
+    const copyResult =
       meta.format === "html"
         ? await writeClipboardTextAndHtml({
             text: payload.directPlainText || payload.plain,
@@ -18457,13 +18628,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                 : meta.format === "tsv"
                   ? payload.tsv
                   : payload.plain,
+            markdown: meta.format === "markdown" ? payload.markdown : "",
           });
-    if (!copied) {
+    if (!copyResult?.ok) {
       setStatus("复制失败");
       return false;
     }
-    setStatus(`已复制${meta.label}`);
-    return true;
+    setStatus(
+      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED
+        ? `已复制${meta.label}（已降级为纯文本）`
+        : `已复制${meta.label}`,
+      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+    );
+    return copyResult;
   }
 
   async function startCanvasCapture() {
@@ -18974,13 +19151,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
     }
     const nextClipboard = buildDirectClipboardPayloadForItems(items);
-    const copied = nextClipboard
+    const copyResult = nextClipboard
       ? await clipboardBroker.copyPayloadToClipboard(nextClipboard)
       : null;
     if (items.length >= 24) {
       await yieldToNextFrame();
     }
-    state.clipboard = copied ? { ...copied, pasteCount: 0 } : copied;
+    state.clipboard = copyResult?.payload ? { ...copyResult.payload, pasteCount: 0 } : null;
     if (fileBacked.length && fileBacked.length === items.length) {
       const hasPaths = (state.clipboard?.filePaths || []).length > 0;
       if (!hasPaths) {
@@ -18988,7 +19165,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         return state.clipboard;
       }
     }
-    setStatus(`已复制 ${items.length} 个元素`);
+    if (copyResult?.status === CANVAS_OPERATION_STATUS.DEGRADED && !copyResult.systemWritten) {
+      setStatus(`已复制 ${items.length} 个元素到画布内；系统剪贴板不可用`, "warning");
+    } else if (copyResult?.status === CANVAS_OPERATION_STATUS.DEGRADED) {
+      setStatus(`已复制 ${items.length} 个元素（系统剪贴板已降级）`, "warning");
+    } else if (!copyResult?.ok) {
+      setStatus("复制失败", "warning");
+      return null;
+    } else {
+      setStatus(`已复制 ${items.length} 个元素`);
+    }
     return state.clipboard;
   }
 
@@ -19257,16 +19443,49 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return pushItems(items, { reason: "导入文件", statusText: `已导入 ${items.length} 个文件` });
   }
 
+  function getDeferredTextUpgradeSignature(item = {}) {
+    return JSON.stringify({
+      id: String(item?.id || ""),
+      type: String(item?.type || ""),
+      plainText: sanitizeText(item?.plainText || item?.text || htmlToPlainText(item?.html || "")),
+      html: String(item?.html || ""),
+      x: Number(item?.x || 0),
+      y: Number(item?.y || 0),
+      width: Number(item?.width || 0),
+      height: Number(item?.height || 0),
+      fontSize: Number(item?.fontSize || DEFAULT_TEXT_FONT_SIZE),
+      layoutMode: String(item?.textBoxLayoutMode || ""),
+      resizeMode: String(item?.textResizeMode || ""),
+      locked: item?.locked === true,
+    });
+  }
+
   function scheduleDeferredSemanticUpgradeForTextItem(itemId, sourceText = "") {
     const targetItemId = String(itemId || "").trim();
     const plainSourceText = sanitizeText(String(sourceText || ""));
     if (!targetItemId || !plainSourceText.trim() || deferredTextSemanticUpgradeTasks.has(targetItemId)) {
       return;
     }
+    const initialItem = sceneRegistry.getItemById(targetItemId, "text");
+    if (!initialItem || !findDeferredInsertionHistoryEntry(targetItemId)) {
+      return;
+    }
+    const token = {
+      itemSignature: getDeferredTextUpgradeSignature(initialItem),
+    };
+    deferredTextSemanticUpgradeTasks.set(targetItemId, token);
     const task = (async () => {
       await yieldToIdleWindow(120);
+      if (!mounted || deferredTextSemanticUpgradeTasks.get(targetItemId) !== token) {
+        return;
+      }
       const item = sceneRegistry.getItemById(targetItemId, "text");
-      if (!item || isLockedText(item)) {
+      if (
+        !item ||
+        isLockedText(item) ||
+        getDeferredTextUpgradeSignature(item) !== token.itemSignature ||
+        !findDeferredInsertionHistoryEntry(targetItemId)
+      ) {
         return;
       }
       const currentPlainText = sanitizeText(item.plainText || item.text || htmlToPlainText(item.html || ""));
@@ -19357,6 +19576,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         width: nextWidth,
         height: nextHeight,
       });
+      if (
+        deferredTextSemanticUpgradeTasks.get(targetItemId) !== token ||
+        getDeferredTextUpgradeSignature(item) !== token.itemSignature ||
+        !mergeDeferredItemIntoInsertionHistory(targetItemId, normalizedItem)
+      ) {
+        return;
+      }
       Object.assign(item, normalizedItem);
       scheduleUrlMetaHydrationForItem(item);
       syncBoard({
@@ -19370,9 +19596,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     })()
       .catch(() => {})
       .finally(() => {
-        deferredTextSemanticUpgradeTasks.delete(targetItemId);
+        if (deferredTextSemanticUpgradeTasks.get(targetItemId) === token) {
+          deferredTextSemanticUpgradeTasks.delete(targetItemId);
+        }
       });
-    deferredTextSemanticUpgradeTasks.set(targetItemId, task);
+    token.task = task;
   }
 
   function insertTextAt(anchorPoint, text, options = {}) {
@@ -26079,6 +26307,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     structuredImportControllers.forEach((controller) => controller.abort?.());
     structuredImportControllers.clear();
     importedBatchStabilizationTokens.clear();
+    deferredTextSemanticUpgradeTasks.clear();
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
       interactionRecoveryTimer = 0;

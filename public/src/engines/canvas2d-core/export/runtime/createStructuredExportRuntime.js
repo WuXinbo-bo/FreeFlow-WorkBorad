@@ -16,6 +16,7 @@ import {
 } from "../../elements/tableFormats.js";
 import { buildWordExportAstFromCanvasSelection, buildWordExportAstFromRichTextItem } from "../word/buildWordExportAst.js";
 import * as XLSX from "../../../../../vendor/xlsx/xlsx.mjs";
+import { attachCanvasOperationManifest } from "../../operations/canvasOperationResult.js";
 
 function normalizeWordExportFontName(fontFamily = "") {
   const raw = String(fontFamily || "").trim();
@@ -1066,19 +1067,26 @@ export function createStructuredExportRuntime({
     };
   }
 
+  const withExportResult = async (format, task) => attachCanvasOperationManifest(await task(), {
+    operation: "export",
+    requestedFormats: [format],
+    providedFormats: [format],
+    stage: "write-output",
+  });
+
   return {
     buildSnapshot,
     renderSnapshotToCanvas,
     renderBoardToCanvas,
-    exportBoardAsPng,
-    exportBoardAsPdf,
-    exportItemsAsImage,
-    exportRichTextItemAsWordFile,
-    exportSelectionAsWordFile,
-    exportRichTextItemAsPdf,
-    exportRichTextItemAsPng,
-    exportTextItem,
-    exportTableItem,
-    exportCodeBlockItem,
+    exportBoardAsPng: (...args) => withExportResult("png", () => exportBoardAsPng(...args)),
+    exportBoardAsPdf: (...args) => withExportResult("pdf", () => exportBoardAsPdf(...args)),
+    exportItemsAsImage: (...args) => withExportResult("png", () => exportItemsAsImage(...args)),
+    exportRichTextItemAsWordFile: (...args) => withExportResult("docx", () => exportRichTextItemAsWordFile(...args)),
+    exportSelectionAsWordFile: (...args) => withExportResult("docx", () => exportSelectionAsWordFile(...args)),
+    exportRichTextItemAsPdf: (...args) => withExportResult("pdf", () => exportRichTextItemAsPdf(...args)),
+    exportRichTextItemAsPng: (...args) => withExportResult("png", () => exportRichTextItemAsPng(...args)),
+    exportTextItem: (...args) => withExportResult("txt", () => exportTextItem(...args)),
+    exportTableItem: (item, format, ...args) => withExportResult(format || "xlsx", () => exportTableItem(item, format, ...args)),
+    exportCodeBlockItem: (item, format, ...args) => withExportResult(format || "source", () => exportCodeBlockItem(item, format, ...args)),
   };
 }

@@ -356,6 +356,7 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
       items: [],
       text: "",
       html: "",
+      markdown: "",
     };
 
     class FreeFlowClipboardItem {
@@ -382,6 +383,7 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
         clipboardStore.items = Array.isArray(items) ? items.slice() : [];
         clipboardStore.text = "";
         clipboardStore.html = "";
+        clipboardStore.markdown = "";
         for (const item of clipboardStore.items) {
           const types = Array.isArray(item?.types) ? item.types : [];
           if (!clipboardStore.text && types.includes("text/plain") && typeof item?.getType === "function") {
@@ -389,6 +391,9 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
           }
           if (!clipboardStore.html && types.includes("text/html") && typeof item?.getType === "function") {
             clipboardStore.html = await (await item.getType("text/html")).text();
+          }
+          if (!clipboardStore.markdown && types.includes("text/markdown") && typeof item?.getType === "function") {
+            clipboardStore.markdown = await (await item.getType("text/markdown")).text();
           }
         }
       },
@@ -398,6 +403,7 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
       async writeText(text = "") {
         clipboardStore.text = String(text || "");
         clipboardStore.html = "";
+        clipboardStore.markdown = "";
         clipboardStore.items = [
           new FreeFlowClipboardItem({
             "text/plain": new Blob([clipboardStore.text], { type: "text/plain" }),
@@ -411,6 +417,8 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
         return {
           text: clipboardStore.text,
           html: clipboardStore.html,
+          markdown: clipboardStore.markdown,
+          types: clipboardStore.items.flatMap((item) => Array.isArray(item?.types) ? item.types : []),
           itemCount: clipboardStore.items.length,
         };
       },
@@ -2716,6 +2724,19 @@ async function runElementContextMenuClipboardCheck(browser) {
       );
     });
     await codeSession.page.waitForTimeout(120);
+    await codeSession.page.evaluate(() => {
+      document.querySelector('#canvas2d-context-menu [data-action="code-copy-text-markdown"]')?.click();
+    });
+    await codeSession.page.waitForTimeout(120);
+    const markdownClipboard = await codeSession.page.evaluate(() => navigator.clipboard.__snapshot());
+    assert(markdownClipboard?.types?.includes("text/markdown"), "code Markdown copy omitted text/markdown", markdownClipboard);
+    assert(markdownClipboard?.markdown?.includes("```"), "code Markdown clipboard payload lost fenced code", markdownClipboard);
+    await codeSession.page.evaluate(() => {
+      document.querySelector('.canvas2d-code-block-item[data-id="code-copy"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 460, clientY: 220, button: 2 })
+      );
+    });
+    await codeSession.page.waitForTimeout(120);
     await clickContextMenuAction(codeSession.page, "copy");
     await rightClickBlankCanvas(codeSession.page);
     await clickContextMenuAction(codeSession.page, "paste");
@@ -2756,6 +2777,34 @@ async function runElementContextMenuClipboardCheck(browser) {
     };
   } finally {
     await tableSession.page.close();
+  }
+
+  const mixedSession = await createPage(browser, {
+    board: createBoard(
+      [
+        createTextItem("mixed-copy-text", 220, 180, "Structured text"),
+        createRectShape("mixed-copy-shape", 480, 180, 160, 100),
+      ],
+      ["mixed-copy-text", "mixed-copy-shape"]
+    ),
+  });
+  try {
+    await rightClickCanvasItem(mixedSession.page, "mixed-copy-text");
+    await mixedSession.page.evaluate(() => {
+      document.querySelector('#canvas2d-context-menu [data-action="copy-selected-html"]')?.click();
+    });
+    await mixedSession.page.waitForTimeout(180);
+    const mixedCopy = await mixedSession.page.evaluate(async () => ({
+      clipboard: await navigator.clipboard.__snapshot(),
+      statusText: window.__canvas2dEngine?.getSnapshot?.()?.statusText || "",
+    }));
+    assert(mixedCopy.clipboard?.types?.includes("text/html"), "mixed selection copy omitted rich HTML", mixedCopy);
+    assert(mixedCopy.clipboard?.html?.includes("Structured text"), "mixed selection copy lost supported text", mixedCopy);
+    assert(/跳过\s*1\s*个/.test(mixedCopy.statusText), "mixed selection copy hid skipped-element feedback", mixedCopy);
+    assert(mixedSession.getErrors().length === 0, "mixed selection copy produced page errors", mixedSession.getErrors());
+    result.mixedSelection = mixedCopy;
+  } finally {
+    await mixedSession.page.close();
   }
 
   return result;

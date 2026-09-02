@@ -71,6 +71,7 @@ async function main() {
   assert(output.filePaths.length === 2, "external output file path mismatch");
   assert(output.canonicalCopy.kind === "structured-canonical-copy", "external canonical copy mismatch");
   assert(output.downgradedCopy.kind === "structured-copy-downgrade", "external downgraded copy mismatch");
+  assert(output.markdown, "external markdown representation missing");
 
   console.log("[external-compatibility-output] ok: 1 scenario validated");
 }

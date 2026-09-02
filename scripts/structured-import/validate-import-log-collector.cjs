@@ -75,6 +75,7 @@ async function main() {
   assert.equal(trace.kind, "import-trace");
   assert.equal(trace.descriptor.descriptorId, "desc-log-1");
   assert.equal(trace.parse.parserId, "markdown-gfm");
+  assert.equal(trace.parse.outputKind, "canonical-document");
   assert.equal(trace.decision.finalPipeline, "legacy");
   assert.equal(trace.decision.killSwitchActive, true);
 
@@ -95,7 +96,23 @@ async function main() {
   assert.equal(entries[0].kind, "import-trace");
   assert.equal(entries[1].kind, "import-diff");
 
-  console.log("[import-log-collector] ok: 2 scenarios validated");
+  const nestedTrace = collector.pushTrace({
+    descriptor,
+    parseResult: {
+      ...parseResult,
+      document: undefined,
+      result: {
+        document: parseResult.document,
+      },
+    },
+    diagnostics,
+    switchDecision,
+    finalDecision,
+    timestamp: "2026-04-16T16:00:02.000Z",
+  });
+  assert.equal(nestedTrace.parse.outputKind, "canonical-document");
+
+  console.log("[import-log-collector] ok: 3 scenarios validated");
 }
 
 main().catch((error) => {

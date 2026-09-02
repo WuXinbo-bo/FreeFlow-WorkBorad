@@ -55,6 +55,7 @@ export function createElementTransferActionsSchema(type = "") {
   if (!capabilities) {
     return [];
   }
+  const exportItems = getExportMenuItems(type);
   return [
     action("剪切", "cut"),
     capabilities.objectCopy ? action("复制元素", "copy") : null,
@@ -62,8 +63,8 @@ export function createElementTransferActionsSchema(type = "") {
       ? copyExportSubmenu("复制内容", "复制内容", getCopyMenuItems(type))
       : null,
     action("粘贴", "paste"),
-    capabilities.semanticExport.length
-      ? copyExportSubmenu("导出", "导出", getExportMenuItems(type))
+    exportItems.length
+      ? copyExportSubmenu("导出", "导出", exportItems)
       : null,
   ].filter(Boolean);
 }

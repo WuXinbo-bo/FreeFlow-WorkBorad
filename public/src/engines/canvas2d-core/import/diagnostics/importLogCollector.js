@@ -118,9 +118,10 @@ function summarizeDescriptor(descriptor = {}) {
 function summarizeParseResult(parseResult = {}) {
   const attempts = Array.isArray(parseResult.attempts) ? parseResult.attempts : [];
   const matches = Array.isArray(parseResult.matches) ? parseResult.matches : [];
-  const document = parseResult.document && typeof parseResult.document === "object" ? parseResult.document : null;
-  const compatibility = parseResult.compatibility && typeof parseResult.compatibility === "object"
-    ? parseResult.compatibility
+  const output = parseResult.result && typeof parseResult.result === "object" ? parseResult.result : parseResult;
+  const document = output.document && typeof output.document === "object" ? output.document : null;
+  const compatibility = output.compatibility && typeof output.compatibility === "object"
+    ? output.compatibility
     : null;
 
   return {
