@@ -192,7 +192,6 @@ import {
 } from "./perf/canvasRuntimeStats.js";
 import { createTransientMinimap } from "./ui/createTransientMinimap.js";
 import { createCanvasUiRuntime } from "./uiRuntime/canvasUiRuntime.js";
-import { buildSelectionInspectorModel } from "./uiRuntime/selectionInspectorModel.js";
 import { createDocumentPreviewRuntime } from "./documentPreview/documentPreviewRuntime.js";
 import {
   computeMultiSelectionResizedBounds,
@@ -4651,12 +4650,6 @@ let tablePointerSelectionState = {
       bounds,
       items: new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)])),
     };
-  }
-
-  function getSelectionInspectorSnapshot() {
-    return buildSelectionInspectorModel(getSelectedItemsFast(), {
-      getElementUx: (item) => canvasUiRuntime.getElementUx(item),
-    });
   }
 
   function setSelectionInspectorGeometry(patch = {}) {
@@ -25678,7 +25671,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function getCanvasFocusScope(target = document.activeElement) {
     if (target === refs.canvas) return "canvas";
-    if (target instanceof Element && target.closest("[data-canvas-inspector-host]")) return "inspector";
     if (
       target === refs.richEditor ||
       target === refs.editor ||
@@ -25708,17 +25700,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.canvas.focus({ preventScroll: true });
     globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER = "canvas";
     return document.activeElement === refs.canvas;
-  }
-
-  function focusSelectionInspector() {
-    const host = refs.uiHost?.querySelector?.("[data-canvas-inspector-host]:not([hidden])");
-    if (!(host instanceof HTMLElement)) return false;
-    const target = host.querySelector(
-      "input:not(:disabled), button:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])"
-    );
-    const focusTarget = target instanceof HTMLElement ? target : host;
-    focusTarget.focus({ preventScroll: true });
-    return host.contains(document.activeElement);
   }
 
   function cycleKeyboardSelection(direction = 1) {
@@ -25814,11 +25795,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     const typingTarget = isEditableElement(target);
     const keyboardFocusScope = getCanvasFocusScope(target || document.activeElement);
-    if (key === "escape" && keyboardFocusScope === "inspector") {
-      event.preventDefault();
-      focusCanvasSurface();
-      return;
-    }
     if ((event.ctrlKey || event.metaKey) && key === "c" && !state.board.selectedIds.length && state.hoverId) {
       const hoverItem = getHoverItemFast("text");
       if (hoverItem) state.board.selectedIds = [hoverItem.id];
@@ -26951,7 +26927,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     register({ id: "mind.root", label: "新建思维节点", category: "mind", shortcuts: ["N"] }, () => addMindMapRoot());
     register({ id: "canvas.share", label: "分享当前画布", category: "file", shortcuts: ["P"] }, () => startCanvasCapture());
-    register({ id: "ui.focus-inspector", label: "聚焦属性检查器", category: "ui", shortcuts: ["F6"], when: hasSelection }, () => focusSelectionInspector());
     register({
       id: "selection.next",
       label: "选择下一个元素",
@@ -27208,10 +27183,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     getCanvasUiRuntimeSnapshot(context = {}) {
       return canvasUiRuntime.getSnapshot(getCanvasCommandContext(context));
     },
-    getSelectionInspectorSnapshot,
     getCanvasFocusSnapshot,
     focusCanvasSurface,
-    focusSelectionInspector,
     getElementUxSnapshot: canvasUiRuntime.getElementUxSnapshot,
     getInputCapabilities: canvasUiRuntime.getInputCapabilities,
     getSnapshotData() {

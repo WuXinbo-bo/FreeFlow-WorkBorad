@@ -298,17 +298,11 @@ export function createCanvas2DReactBridge(engine) {
     getCanvasUiRuntimeSnapshot(context) {
       return engine?.getCanvasUiRuntimeSnapshot?.(context) || null;
     },
-    getSelectionInspectorSnapshot() {
-      return engine?.getSelectionInspectorSnapshot?.() || { visible: false, count: 0, ids: [], types: [] };
-    },
     getCanvasFocusSnapshot() {
       return engine?.getCanvasFocusSnapshot?.() || null;
     },
     focusCanvasSurface() {
       return engine?.focusCanvasSurface?.() || false;
-    },
-    focusSelectionInspector() {
-      return engine?.focusSelectionInspector?.() || false;
     },
     registerCommand(definition, handler) {
       return engine?.registerCommand?.(definition, handler) || (() => {});

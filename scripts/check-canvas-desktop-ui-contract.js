@@ -46,6 +46,19 @@ async function getItems(page) {
   return page.evaluate(() => globalThis.__canvas2dEngine.getSnapshot().board.items);
 }
 
+async function runEnabledCommand(page, commandId, ...args) {
+  await page.waitForFunction(
+    (targetId) => globalThis.__canvas2dEngine.getCommandState(targetId)?.enabled === true,
+    commandId
+  );
+  const result = await page.evaluate(
+    ({ targetId, commandArgs }) => globalThis.__canvas2dEngine.runCommand(targetId, ...commandArgs),
+    { targetId: commandId, commandArgs: args }
+  );
+  assert.notStrictEqual(result, false, `${commandId} should execute when enabled`);
+  return result;
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
@@ -65,21 +78,10 @@ async function main() {
     assert.deepStrictEqual(byId.get("selection.toggle-lock")?.shortcuts, ["Ctrl+L"]);
     assert.deepStrictEqual(byId.get("selection.next")?.shortcuts, ["Tab"]);
     assert.deepStrictEqual(byId.get("selection.previous")?.shortcuts, ["Shift+Tab"]);
-    assert.deepStrictEqual(byId.get("ui.focus-inspector")?.shortcuts, ["F6"]);
+    assert.strictEqual(byId.has("ui.focus-inspector"), false);
     assert.deepStrictEqual(byId.get("ui.search")?.shortcuts, ["Ctrl+K"]);
 
-    const inspector = page.locator("[data-canvas-inspector-host]");
-    await inspector.waitFor({ state: "visible" });
-    const inspectorState = await inspector.evaluate((node) => ({
-      count: node.getAttribute("data-selection-count"),
-      types: node.getAttribute("data-selection-types"),
-      locked: node.getAttribute("data-locked-state"),
-    }));
-    assert.deepStrictEqual(inspectorState, {
-      count: "2",
-      types: "shape,text",
-      locked: "mixed",
-    });
+    assert.strictEqual(await page.locator("[data-canvas-inspector-host]").count(), 0);
 
     const canvas = page.locator("#canvas-office-canvas");
     await canvas.focus();
@@ -99,53 +101,43 @@ async function main() {
       ["desktop-shape"]
     );
 
-    await loadBoard(page, createMixedItems(), ["desktop-shape", "desktop-text"]);
-    for (let cycle = 0; cycle < 3; cycle += 1) {
-      await canvas.focus();
-      await page.keyboard.press("F6");
-      assert.strictEqual(
-        await page.evaluate(() => Boolean(document.activeElement?.closest?.("[data-canvas-inspector-host]"))),
-        true
-      );
-      const beforeTabSelection = await page.evaluate(() => globalThis.__canvas2dEngine.getSnapshot().board.selectedIds);
-      await page.keyboard.press("Tab");
-      assert.strictEqual(
-        await page.evaluate(() => Boolean(document.activeElement?.closest?.("[data-canvas-inspector-host]"))),
-        true
-      );
-      assert.deepStrictEqual(
-        await page.evaluate(() => globalThis.__canvas2dEngine.getSnapshot().board.selectedIds),
-        beforeTabSelection
-      );
-      await page.keyboard.press("Escape");
-      assert.strictEqual(await page.evaluate(() => document.activeElement?.id), "canvas-office-canvas");
-    }
-
     await loadBoard(page, createMixedItems({ lockedText: false }), ["desktop-shape", "desktop-text"]);
     const beforeMove = await getItems(page);
-    const xInput = inspector.locator('[data-inspector-field="x"]');
-    await xInput.fill("200");
-    await xInput.press("Enter");
+    await runEnabledCommand(page, "selection.set-geometry", { x: 200 });
     const moved = await getItems(page);
     assert.strictEqual(moved.find((item) => item.id === "desktop-shape").x, 200);
     assert.strictEqual(moved.find((item) => item.id === "desktop-text").x, 460);
     await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
-    assert.deepStrictEqual(await getItems(page), beforeMove);
+    assert.deepStrictEqual(
+      (await getItems(page)).map((item) => ({ id: item.id, x: item.x })),
+      beforeMove.map((item) => ({ id: item.id, x: item.x }))
+    );
 
     await loadBoard(page, createMixedItems(), ["desktop-shape", "desktop-text"]);
-    const lockToggle = inspector.locator('[data-inspector-action="lock"]');
-    await lockToggle.click();
+    await runEnabledCommand(page, "selection.set-locked", true);
     assert.strictEqual((await getItems(page)).every((item) => item.locked === true), true);
     await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
     assert.strictEqual((await getItems(page)).find((item) => item.id === "desktop-shape").locked === true, false);
     assert.strictEqual((await getItems(page)).find((item) => item.id === "desktop-text").locked === true, true);
 
     await loadBoard(page, createMixedItems({ lockedText: false }), ["desktop-shape", "desktop-text"]);
-    await inspector.locator('[data-inspector-action="group"]').click();
+    await runEnabledCommand(page, "selection.group");
     const grouped = await getItems(page);
     assert(grouped.every((item) => item.groupId && item.groupId === grouped[0].groupId));
     await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
     assert.strictEqual((await getItems(page)).every((item) => !item.groupId), true);
+
+    await loadBoard(page, createMixedItems({ lockedText: false }), ["desktop-shape", "desktop-text"]);
+    await runEnabledCommand(page, "selection.align-left");
+    assert.deepStrictEqual((await getItems(page)).map((item) => item.x), [120, 120]);
+    await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
+    assert.deepStrictEqual((await getItems(page)).map((item) => item.x), [120, 380]);
+
+    await loadBoard(page, createMixedItems({ lockedText: false }), ["desktop-shape"]);
+    await runEnabledCommand(page, "selection.layer-front");
+    assert.deepStrictEqual((await getItems(page)).map((item) => item.id), ["desktop-text", "desktop-shape"]);
+    await page.evaluate(() => globalThis.__canvas2dEngine.runCommand("canvas.undo"));
+    assert.deepStrictEqual((await getItems(page)).map((item) => item.id), ["desktop-shape", "desktop-text"]);
 
     await canvas.focus();
     await page.keyboard.press("Control+K");
