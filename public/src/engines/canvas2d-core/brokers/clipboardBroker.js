@@ -14,6 +14,10 @@ function buildSummaryText(items = []) {
   return items.map((item) => getItemLabel(item)).join("\n");
 }
 
+function createClipboardId() {
+  return globalThis.crypto?.randomUUID?.() || `clipboard_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function buildPlainText(items = []) {
   return items
     .map((item) => {
@@ -140,6 +144,7 @@ export function createClipboardBroker({
     return {
       type: "canvas2d",
       source: "canvas",
+      clipboardId: createClipboardId(),
       copiedAt: Date.now(),
       items: clone(cleanItems),
       text: buildPlainText(cleanItems) || buildSummaryText(cleanItems),

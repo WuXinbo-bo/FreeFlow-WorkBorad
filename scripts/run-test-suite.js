@@ -21,6 +21,7 @@ const CHECKS = [
   "scripts/check-canvas-resource-prewarm-runtime.js",
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
+  "scripts/check-canvas-copy-integrity.js",
   "scripts/check-canvas-large-scene-runtime.js",
   "scripts/check-presentation-snapshot-controller.js",
   "scripts/check-compact-presentation-runtime.js",

@@ -9,6 +9,11 @@ import {
 } from "./camera.js";
 import { createClipboardBroker } from "./brokers/clipboardBroker.js";
 import { createDragBroker } from "./brokers/dragBroker.js";
+import { prepareElementDuplicateBatch } from "./brokers/duplicateElementBatch.js";
+import {
+  matchesInternalClipboardMarker,
+  resolveInternalClipboardFreshness,
+} from "./brokers/internalClipboardFreshness.js";
 import {
   collectSnapCandidates,
   createAlignmentSnapConfig,
@@ -1064,9 +1069,10 @@ function shouldDeferSemanticUpgradeForText(text = "") {
   return /```|^\s*[-*+]\s+|^\s*\d+\.\s+|^\s*#{1,6}\s+|^\s*>\s+|\|.+\||\$\$|\\\[|\\\(/m.test(source);
 }
 
-function buildInternalClipboardMarker({ copiedAt = Date.now(), itemCount = 0, source = "", kind = "" } = {}) {
+function buildInternalClipboardMarker({ clipboardId = "", copiedAt = Date.now(), itemCount = 0, source = "", kind = "" } = {}) {
   return JSON.stringify({
     type: CANVAS_CLIPBOARD_MARKER_TYPE,
+    clipboardId: String(clipboardId || ""),
     copiedAt: Number(copiedAt) || Date.now(),
     itemCount: Math.max(0, Number(itemCount) || 0),
     source: String(source || ""),
@@ -3271,6 +3277,7 @@ export function createCanvas2DEngine(options = {}) {
       const text = String(payload?.text || "");
       const html = String(payload?.html || "");
       const marker = buildInternalClipboardMarker({
+        clipboardId: String(payload?.clipboardId || ""),
         copiedAt: Number(payload?.copiedAt) || Date.now(),
         itemCount: Array.isArray(payload?.items) ? payload.items.length : 0,
         source: CLIPBOARD_SOURCE_CANVAS,
@@ -18734,12 +18741,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  function duplicateElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
+  function finalizeDuplicatedElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
     const forceWrapText = options?.forceWrapText === true;
     const duplicatedItems = (Array.isArray(items) ? items : []).map((item) => {
-      const duplicated = clone(item);
-      duplicated.id = createId(duplicated?.type || "item");
-      const moved = moveElement(duplicated, deltaX, deltaY);
+      const moved = moveElement(item, deltaX, deltaY);
       if (forceWrapText && moved?.type === "text") {
         const widthHint = Math.max(160, Number(moved.width || 0) || 0) || 320;
         const fontSize = Math.max(12, Number(moved.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE);
@@ -18770,6 +18775,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return buildExportReadyBoardItems(duplicatedItems);
   }
 
+  function duplicateElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
+    const prepared = prepareElementDuplicateBatch(items, { createId });
+    return finalizeDuplicatedElementsWithDelta(prepared.items, deltaX, deltaY, options);
+  }
+
   async function duplicateElementsWithDeltaAsync(items = [], deltaX = 0, deltaY = 0, options = {}) {
     const list = Array.isArray(items) ? items : [];
     if (!list.length) {
@@ -18778,11 +18788,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (list.length < PASTE_BATCH_YIELD_ITEM_THRESHOLD) {
       return duplicateElementsWithDelta(list, deltaX, deltaY, options);
     }
+    const prepared = prepareElementDuplicateBatch(list, { createId }).items;
     const duplicatedItems = [];
     const chunkSize = Math.max(1, Number(options?.chunkSize) || PASTE_BATCH_YIELD_CHUNK_SIZE);
-    for (let index = 0; index < list.length; index += chunkSize) {
-      duplicatedItems.push(...duplicateElementsWithDelta(list.slice(index, index + chunkSize), deltaX, deltaY, options));
-      if (index + chunkSize < list.length) {
+    for (let index = 0; index < prepared.length; index += chunkSize) {
+      duplicatedItems.push(...finalizeDuplicatedElementsWithDelta(prepared.slice(index, index + chunkSize), deltaX, deltaY, options));
+      if (index + chunkSize < prepared.length) {
         await yieldToNextFrame();
       }
     }
@@ -18868,13 +18879,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       .trim();
   }
 
-  function areClipboardPathListsEqual(left = [], right = []) {
-    if (left.length !== right.length) {
-      return false;
-    }
-    return left.every((entry, index) => entry === right[index]);
-  }
-
   function matchesInternalClipboardByMarker(dataTransfer) {
     if (!state.clipboard?.items?.length || !dataTransfer?.types) {
       return false;
@@ -18886,7 +18890,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (!parsed) {
         return false;
       }
-      return Number(parsed?.copiedAt) === Number(state.clipboard?.copiedAt);
+      return matchesInternalClipboardMarker(parsed, state.clipboard);
     } catch {
       return false;
     }
@@ -18922,23 +18926,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return null;
   }
 
-  function hasStructuredClipboardItems(payload = null) {
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-    return items.some((item) => {
-      if (!item || typeof item !== "object") {
-        return false;
-      }
-      return (
-        item.type === "codeBlock" ||
-        item.type === "table" ||
-        item.type === "mathBlock" ||
-        item.type === "mathInline" ||
-        item.type === "flowNode" ||
-        (item.structuredImport && typeof item.structuredImport === "object")
-      );
-    });
-  }
-
   async function shouldUseInternalClipboard() {
     const payload = state.clipboard;
     if (!payload?.items?.length) {
@@ -18946,10 +18933,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     const marker = await readSystemClipboardInternalMarker();
-    if (marker && Number(marker?.copiedAt) === Number(payload?.copiedAt)) {
-      return true;
-    }
-
     const payloadPaths = Array.isArray(payload.filePaths)
       ? payload.filePaths.map((entry) => normalizeClipboardPathValue(entry)).filter(Boolean)
       : [];
@@ -18957,33 +18940,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       .map((entry) => normalizeClipboardPathValue(entry))
       .filter(Boolean);
 
-    if (clipboardPaths.length || payloadPaths.length) {
-      const sameFiles = areClipboardPathListsEqual(payloadPaths, clipboardPaths);
-      if (!sameFiles) {
-        clearInternalClipboard();
-        return false;
-      }
-      return true;
-    }
-
     const payloadText = normalizeClipboardTextValue(payload.text || "");
     const clipboardText = normalizeClipboardTextValue(await clipboardBroker.readSystemClipboardText());
-
-    if (!payloadText) {
+    const fresh = resolveInternalClipboardFreshness({
+      payload,
+      marker,
+      payloadPaths,
+      clipboardPaths,
+      payloadText,
+      clipboardText,
+    });
+    if (!fresh) {
       clearInternalClipboard();
-      return false;
     }
-    if (hasStructuredClipboardItems(payload) && clipboardText && clipboardText === payloadText) {
-      return true;
-    }
-    if (hasStructuredClipboardItems(payload) && !clipboardText) {
-      return true;
-    }
-    if (clipboardText !== payloadText) {
-      clearInternalClipboard();
-      return false;
-    }
-    return true;
+    return fresh;
   }
 
   async function cutSelection() {
@@ -25046,6 +25016,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const dragPayload = clipboardBroker.buildPayloadFromItems(dragItems);
     const copiedAt = Number(dragPayload?.copiedAt) || Date.now();
     const marker = buildInternalClipboardMarker({
+      clipboardId: String(dragPayload?.clipboardId || ""),
       copiedAt,
       itemCount: Array.isArray(dragPayload?.items) ? dragPayload.items.length : 0,
       source: CLIPBOARD_SOURCE_CANVAS,
