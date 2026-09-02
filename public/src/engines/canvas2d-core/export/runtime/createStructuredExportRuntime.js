@@ -261,12 +261,16 @@ export function createStructuredExportRuntime({
   function buildSnapshot(board, options = {}) {
     return buildHostExportSnapshot(board, {
       ...options,
+      safeExport: false,
       getElementBounds,
       getFlowEdgeBounds,
     });
   }
 
-  async function renderSnapshotToCanvas(snapshot, options = {}) {
+  async function hydrateSnapshotAssets(snapshot) {
+    if (snapshot?.assetsHydrated === true) {
+      return snapshot;
+    }
     const sourceItems = Array.isArray(snapshot?.items) ? snapshot.items : [];
     const hydratedItems = typeof assetAdapter?.hydrateImageItems === "function"
       ? await assetAdapter.hydrateImageItems(sourceItems)
@@ -275,12 +279,22 @@ export function createStructuredExportRuntime({
     let imageFallbackCount = 0;
     if (typeof assetAdapter?.preloadImagesForItems === "function") {
       const preloadResult = await assetAdapter.preloadImagesForItems(hydratedItems);
-      if (preloadResult?.items && Array.isArray(preloadResult.items)) {
+      if (Array.isArray(preloadResult?.items)) {
         exportItems = preloadResult.items;
       }
       imageFallbackCount = Math.max(0, Number(preloadResult?.fallbackCount || 0) || 0);
     }
-    const renderResult = renderExportBoardToCanvas(exportItems, {
+    return {
+      ...snapshot,
+      items: buildExportReadyBoardItems(exportItems, { safeExport: true }),
+      assetsHydrated: true,
+      exportImageFallbackCount: imageFallbackCount,
+    };
+  }
+
+  async function renderSnapshotToCanvas(snapshot, options = {}) {
+    const hydratedSnapshot = await hydrateSnapshotAssets(snapshot);
+    const renderResult = renderExportBoardToCanvas(hydratedSnapshot.items, {
       renderer,
       getElementBounds,
       getFlowEdgeBounds,
@@ -291,11 +305,14 @@ export function createStructuredExportRuntime({
       renderTextInCanvas: options.renderTextInCanvas !== false,
       scale: options.scale ?? 1,
       devicePixelRatio: options.devicePixelRatio ?? 1,
-      exportBounds: snapshot?.bounds || null,
+      exportBounds: hydratedSnapshot?.bounds || null,
       allowUnsafeSize: Boolean(options.allowUnsafeSize),
     });
     if (renderResult && typeof renderResult === "object") {
-      renderResult.exportImageFallbackCount = imageFallbackCount;
+      renderResult.exportImageFallbackCount = Math.max(
+        0,
+        Number(hydratedSnapshot?.exportImageFallbackCount || 0) || 0
+      );
     }
     return renderResult;
   }
@@ -355,7 +372,8 @@ export function createStructuredExportRuntime({
     if (options?.signal?.aborted) {
       return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
     }
-    const snapshot = buildSnapshot(board, { scope: options.scope || "board" });
+    let snapshot = buildSnapshot(board, { scope: options.scope || "board" });
+    snapshot = await hydrateSnapshotAssets(snapshot);
     const tileRenderOptions = {
       renderer,
       getElementBounds,
@@ -492,10 +510,11 @@ export function createStructuredExportRuntime({
     if (options?.signal?.aborted) {
       return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
     }
-    const snapshot = buildSnapshot(board, {
+    let snapshot = buildSnapshot(board, {
       scope: options.scope || "board",
       items: Array.isArray(options.items) ? options.items : undefined,
     });
+    snapshot = await hydrateSnapshotAssets(snapshot);
     const tileRenderOptions = {
       renderer,
       getElementBounds,

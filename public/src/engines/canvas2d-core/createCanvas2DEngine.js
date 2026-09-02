@@ -286,9 +286,11 @@ import { createHostExportAssetAdapter } from "./export/host/hostExportAssetAdapt
 import { createHostExportFileAdapter } from "./export/host/hostExportFileAdapter.js";
 import {
   getCopyOperationMeta,
+  getElementTransferCapabilities,
   getExportOperationMeta,
   resolveCopyExportAction,
 } from "./export/copyExportProtocol.js";
+import { resolveSelectionDependencyClosure } from "./selection/selectionDependencyClosure.js";
 import { buildSelectionWordExportPlan } from "./export/word/buildWordExportAst.js";
 import { buildWordExportPreviewModel } from "./export/word/buildWordExportPreviewModel.js";
 import { createStructuredExportRuntime } from "./export/runtime/createStructuredExportRuntime.js";
@@ -17236,6 +17238,52 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
+  async function exportSelectionAsPdf(items = [], options = {}) {
+    const selectedItems = resolveSelectionDependencyClosure(items, state.board.items);
+    if (!selectedItems.length) {
+      setStatus("未选中可导出内容", "warning");
+      return false;
+    }
+    const exportController = beginExportTask("PDF");
+    try {
+      setStatus("正在生成选区 PDF...");
+      await waitForUiPaint();
+      const result = await structuredExportRuntime.exportBoardAsPdf(state.board, {
+        ...options,
+        signal: exportController.signal,
+        scope: "items",
+        items: selectedItems,
+        defaultName: options.defaultName || "freeflow-selection",
+        background: "white",
+        includeGrid: false,
+      });
+      if (result?.ok) {
+        recordExportHistory(
+          buildExportHistoryEntry({
+            result,
+            kind: "pdf",
+            scope: "selection",
+            title: "选区导出 PDF",
+            defaultFileName: "freeflow-selection.pdf",
+          })
+        );
+        setStatus(result.message || "PDF 已导出", "success");
+        return true;
+      }
+      if (result?.canceled) {
+        setStatus("PDF 导出已取消", "warning");
+        return false;
+      }
+      setStatus(result?.message || "PDF 导出失败", "warning");
+      return false;
+    } catch (error) {
+      setStatus(error?.message || "PDF 导出失败", "warning");
+      return false;
+    } finally {
+      clearActiveExportTask(exportController);
+    }
+  }
+
   function notifyExportToast(message, fallback = "") {
     const text = String(message || fallback || "").trim();
     if (!text) {
@@ -18847,7 +18895,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function copySelection() {
-    const items = sceneRegistry.getSelectedItems();
+    const items = resolveSelectionDependencyClosure(
+      collectCardLinkedItems(sceneRegistry.getSelectedItems()),
+      state.board.items
+    );
     if (!items.length) {
       return null;
     }
@@ -21775,6 +21826,49 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     trigger.setAttribute("aria-expanded", "true");
   }
 
+  function ensureElementVisualExportMenu(item = null) {
+    if (!(refs.contextMenu instanceof HTMLElement) || !item) {
+      return;
+    }
+    const capabilities = getElementTransferCapabilities(item.type);
+    const supportedFormats = Array.isArray(capabilities?.visualExport) ? capabilities.visualExport : [];
+    const actionAliases = {
+      png: ["export-rich-png", "image-export", "export-element-png"],
+      pdf: ["export-rich-pdf", "export-element-pdf"],
+    };
+    const pendingFormats = supportedFormats.filter((format) => {
+      const aliases = actionAliases[format] || [];
+      return aliases.length && !aliases.some((actionId) => refs.contextMenu.querySelector(`[data-action="${actionId}"]`));
+    });
+    if (!pendingFormats.length) {
+      return;
+    }
+    let panel = refs.contextMenu.querySelector('.canvas2d-context-submenu-panel[aria-label="导出"]');
+    if (!(panel instanceof HTMLElement)) {
+      const submenu = document.createElement("div");
+      submenu.className = "canvas2d-context-submenu";
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "canvas2d-context-menu-item canvas2d-context-submenu-trigger";
+      trigger.textContent = "导出";
+      trigger.setAttribute("aria-expanded", "false");
+      panel = document.createElement("div");
+      panel.className = "canvas2d-context-submenu-panel";
+      panel.setAttribute("role", "menu");
+      panel.setAttribute("aria-label", "导出");
+      submenu.append(trigger, panel);
+      refs.contextMenu.appendChild(submenu);
+    }
+    pendingFormats.forEach((format) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "canvas2d-context-menu-item";
+      button.dataset.action = `export-element-${format}`;
+      button.textContent = `导出为 ${format.toUpperCase()}`;
+      panel.appendChild(button);
+    });
+  }
+
   function onContextMenu(event) {
     if (!isInteractiveMode() || !refs.contextMenu || !refs.surface) {
       return;
@@ -21901,6 +21995,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="导出">
             <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-word">导出为 Word</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-image">导出为图片</button>
+            <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-pdf">导出为 PDF</button>
           </div>
         </div>
         <button type="button" class="canvas2d-context-menu-item" data-action="group-toggle">${groupLabel}</button>
@@ -22221,6 +22316,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           <button type="button" class="canvas2d-context-menu-item" data-action="clear-board">清空画布</button>
         `;
     }
+    if (state.board.selectedIds.length === 1) {
+      ensureElementVisualExportMenu(getSingleSelectedItemFast());
+    }
     placeMenuNearPoint({
       panelEl: refs.contextMenu,
       clientX: Number(event.clientX),
@@ -22490,12 +22588,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       hideContextMenu();
     }
     if (action === "export-selection-image") {
-      const selectedItems = getSelectedItemsFast();
+      const selectedItems = resolveSelectionDependencyClosure(getSelectedItemsFast(), state.board.items);
       void exportItemsAsImage(selectedItems, {
         forceWhiteBackground: true,
         defaultName: "freeflow-selection",
         anchorPoint: getExportAnchor(selectedItems),
       });
+      hideContextMenu();
+    }
+    if (action === "export-selection-pdf") {
+      void exportSelectionAsPdf(getSelectedItemsFast());
       hideContextMenu();
     }
     if (action === "export-selection-word") {
@@ -22533,6 +22635,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }[action];
     if (alignmentCommand) {
       runCommand(alignmentCommand);
+      hideContextMenu();
+    }
+    if (action === "export-element-png" || action === "export-element-pdf") {
+      const targetItem = alignSelectionWithContextMenuTarget();
+      const exportItems = targetItem
+        ? resolveSelectionDependencyClosure([targetItem], state.board.items)
+        : [];
+      if (action === "export-element-png") {
+        void exportItemsAsImage(exportItems, {
+          forceWhiteBackground: true,
+          defaultName: String(targetItem?.title || targetItem?.name || targetItem?.type || "freeflow-element"),
+          anchorPoint: getExportAnchor(exportItems),
+        });
+      } else {
+        void exportSelectionAsPdf(exportItems, {
+          defaultName: String(targetItem?.title || targetItem?.name || targetItem?.type || "freeflow-element"),
+        });
+      }
       hideContextMenu();
     }
     if (action === "distribute-horizontal") {

@@ -1,6 +1,7 @@
 import { buildExportReadyBoardItems } from "../buildExportReadyBoardItems.js";
 import { getExportBounds } from "../renderBoardToCanvas.js";
 import { clone, htmlToPlainText, sanitizeText } from "../../utils.js";
+import { resolveSelectionDependencyClosure } from "../../selection/selectionDependencyClosure.js";
 
 const DEFAULT_EXPORT_BLEED = 32;
 
@@ -63,6 +64,9 @@ function resolveSnapshotItems(board, options = {}) {
   if (options.includeLinkedItems !== false) {
     exportItems = collectCardLinkedItems(exportItems, items);
   }
+  if (scope !== "board" && options.includeDependencies !== false) {
+    exportItems = resolveSelectionDependencyClosure(exportItems, items);
+  }
   return {
     scope: scope === "items" || scope === "selection" ? scope : "board",
     items: exportItems,
@@ -117,7 +121,7 @@ function expandExportBounds(bounds, bleed = DEFAULT_EXPORT_BLEED) {
 export function buildHostExportSnapshot(board, options = {}) {
   const { scope, items } = resolveSnapshotItems(board, options);
   const preparedItems = buildExportReadyBoardItems(items, {
-    safeExport: true,
+    safeExport: options.safeExport !== false,
   });
   const rawBounds =
     typeof options.getElementBounds === "function"

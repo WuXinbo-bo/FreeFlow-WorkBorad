@@ -159,6 +159,11 @@ async function main() {
       "canvas2d-document-preview-layer",
       "document previews must render in the scene-synchronized preview layer"
     );
+    const previewLayering = await page.evaluate(() => ({
+      preview: Number(getComputedStyle(document.querySelector("#canvas2d-document-preview-layer")).zIndex),
+      scene: Number(getComputedStyle(document.querySelector("#canvas2d-scene-root")).zIndex),
+    }));
+    assert(previewLayering.preview < previewLayering.scene, "file card scene must remain above its attached preview");
 
     await page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");
@@ -185,17 +190,71 @@ async function main() {
         const card = document.querySelector('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]')?.getBoundingClientRect();
         const preview = document.querySelector(".canvas2d-file-preview-react")?.getBoundingClientRect();
         resolve(card && preview ? {
-          centerDelta: Math.abs((card.left + card.width / 2) - (preview.left + preview.width / 2)),
-          topDelta: Math.abs(preview.top - (card.bottom - 20 * (card.width / 336))),
+          leftDelta: Math.abs(card.left - preview.left),
+          widthDelta: Math.abs(preview.width - 360 * (card.width / 336)),
+          topDelta: Math.abs(preview.top - (card.bottom + 8 * (card.width / 336))),
         } : null);
       }))));
     }
     assert(dragSamples.every(Boolean), "live preview anchor is missing while dragging");
     assert(
-      dragSamples.every((sample) => sample.centerDelta < 2 && sample.topDelta < 3),
+      dragSamples.every((sample) => sample.leftDelta < 2 && sample.widthDelta < 2 && sample.topDelta < 3),
       `preview drawer must follow the file card in every sampled frame: ${JSON.stringify(dragSamples)}`
     );
     await page.mouse.up();
+
+    const assertAttachedPreviewGeometry = async (label) => {
+      const geometry = await page.evaluate(() => {
+        const card = document.querySelector('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]')?.getBoundingClientRect();
+        const preview = document.querySelector(".canvas2d-file-preview-react")?.getBoundingClientRect();
+        const scale = Number(globalThis.__canvas2dEngine?.getSnapshot?.()?.board?.view?.scale || 1) || 1;
+        return card && preview ? {
+          cardWidth: card.width,
+          previewWidth: preview.width,
+          leftDelta: Math.abs(card.left - preview.left),
+          widthDelta: Math.abs(preview.width - Math.max(card.width, 360 * scale)),
+          topDelta: Math.abs(preview.top - (card.bottom + 8 * scale)),
+          scale,
+        } : null;
+      });
+      assert(geometry, `${label}: attached preview geometry is missing`);
+      assert(
+        geometry.leftDelta < 2 && geometry.widthDelta < 2 && geometry.topDelta < 3,
+        `${label}: preview geometry diverged from the resized file card: ${JSON.stringify(geometry)}`
+      );
+      return geometry;
+    };
+    const resizedCardBox = await page.locator('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]').boundingBox();
+    assert(resizedCardBox, "file card is missing before attached preview resize test");
+    const resizeDelta = { x: 160, y: 36 };
+    await page.mouse.move(resizedCardBox.x + resizedCardBox.width, resizedCardBox.y + resizedCardBox.height);
+    await page.mouse.down();
+    for (let step = 1; step <= 5; step += 1) {
+      await page.mouse.move(
+        resizedCardBox.x + resizedCardBox.width + (resizeDelta.x * step) / 5,
+        resizedCardBox.y + resizedCardBox.height + (resizeDelta.y * step) / 5
+      );
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      const geometry = await assertAttachedPreviewGeometry(`active resize ${step}`);
+      assert(geometry.previewWidth > 360, `active resize ${step}: preview width did not grow with the file card`);
+    }
+    await page.mouse.up();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    await assertAttachedPreviewGeometry("committed resize");
+
+    const expandedCardBox = await page.locator('.canvas2d-scene-file-card-item[data-id="preview-pdf-card"]').boundingBox();
+    assert(expandedCardBox, "file card is missing before reverse attached preview resize test");
+    await page.mouse.move(expandedCardBox.x + expandedCardBox.width, expandedCardBox.y + expandedCardBox.height);
+    await page.mouse.down();
+    await page.mouse.move(
+      expandedCardBox.x + expandedCardBox.width - resizeDelta.x,
+      expandedCardBox.y + expandedCardBox.height - resizeDelta.y,
+      { steps: 5 }
+    );
+    await page.mouse.up();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    const recoveredGeometry = await assertAttachedPreviewGeometry("reverse resize");
+    assert(Math.abs(recoveredGeometry.previewWidth - 360 * recoveredGeometry.scale) < 2);
 
     await page.evaluate(() => {
       document.querySelector(".canvas2d-file-preview-react-pdf-canvas").dataset.previewRenderToken = "stable-render";

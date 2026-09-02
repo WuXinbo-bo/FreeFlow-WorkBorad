@@ -17,6 +17,21 @@ async function main() {
     )
   ).href;
   const { createHostExportAssetAdapter } = await import(moduleUrl);
+  const { createStructuredExportRuntime } = await import(
+    pathToFileURL(
+      path.join(
+        __dirname,
+        "..",
+        "public",
+        "src",
+        "engines",
+        "canvas2d-core",
+        "export",
+        "runtime",
+        "createStructuredExportRuntime.js"
+      )
+    ).href
+  );
 
   const originalFetch = globalThis.fetch;
   const fetchCalls = [];
@@ -125,6 +140,52 @@ async function main() {
       assert.equal(preloadResult.items[1].exportFallbackPlaceholder, true, "failed remote preload should fallback");
       assert.equal(preloadResult.items[1].exportFallbackReason, "preload-failed", "failed remote preload should mark reason");
       assert.equal(preloadResult.items[3].exportFallbackPlaceholder, true, "missing source should remain fallback");
+
+      let renderedItems = [];
+      const runtime = createStructuredExportRuntime({
+        renderer: {
+          render({ items: nextItems }) {
+            renderedItems = nextItems;
+          },
+        },
+        getElementBounds: (item) => ({
+          left: Number(item.x || 0),
+          top: Number(item.y || 0),
+          right: Number(item.x || 0) + Number(item.width || 1),
+          bottom: Number(item.y || 0) + Number(item.height || 1),
+          width: Number(item.width || 1),
+          height: Number(item.height || 1),
+        }),
+        assetAdapter: adapter,
+      });
+      const sourceItem = {
+        id: "runtime-local-image",
+        type: "image",
+        x: 0,
+        y: 0,
+        width: 160,
+        height: 90,
+        sourcePath: "C:\\temp\\local-image.png",
+        dataUrl: "",
+      };
+      const snapshot = runtime.buildSnapshot({ items: [sourceItem], selectedIds: [] });
+      assert.equal(snapshot.items[0].dataUrl, "", "runtime snapshot should not normalize local image before hydration");
+      const originalDocument = globalThis.document;
+      globalThis.document = {
+        createElement: () => ({
+          width: 0,
+          height: 0,
+          getContext: () => ({}),
+        }),
+      };
+      try {
+        await runtime.renderSnapshotToCanvas(snapshot);
+      } finally {
+        globalThis.document = originalDocument;
+      }
+      assert.equal(renderedItems.length, 1, "runtime renderer should receive the hydrated image item");
+      assert.match(renderedItems[0].dataUrl, /^data:image\/png;base64,/i, "runtime renderer should receive hydrated image bytes");
+      assert.notEqual(renderedItems[0].exportFallbackPlaceholder, true, "hydrated image must not become a text fallback");
     } finally {
       globalThis.Image = originalImage;
     }

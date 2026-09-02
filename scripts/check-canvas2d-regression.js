@@ -2886,6 +2886,15 @@ async function runUnifiedFrameLifecycleCheck(browser) {
           cache: "tile",
           marquee: true,
           visibility: "always",
+          objectCopy: true,
+          contentCopy: "none",
+          selectionCopy: "none",
+          copyExportProtocol: "none",
+          visualExport: ["png", "pdf"],
+          semanticExport: [],
+          dependencyClosure: "none",
+          measurement: "bounds",
+          persistence: "inline",
         },
       };
       const dispose = engine.registerElementDefinition(definition);

@@ -6269,7 +6269,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 .canvas2d-document-preview-layer {
   position: absolute;
   inset: 0;
-  z-index: 121;
+  z-index: 4;
   overflow: visible;
   pointer-events: none;
   transform-origin: 0 0;
@@ -11099,15 +11099,19 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-file-preview-react {
   position: absolute;
-  z-index: 121;
+  z-index: 4;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
-  border: 1px solid rgba(203, 213, 225, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.76);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+  background: rgba(248, 250, 252, 0.82);
+  box-shadow:
+    0 18px 44px rgba(15, 23, 42, 0.16),
+    0 2px 8px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(18px) saturate(1.18);
   overflow: hidden;
   pointer-events: auto;
   box-sizing: border-box;
@@ -11126,7 +11130,8 @@ body.is-office-embedded #right-pane-resizer {
   gap: 10px;
   min-height: 44px;
   padding: 7px 10px 7px 12px;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.96);
+  border-bottom: 1px solid rgba(203, 213, 225, 0.64);
+  background: rgba(255, 255, 255, 0.58);
   min-width: 0;
   box-sizing: border-box;
 }
@@ -11154,9 +11159,9 @@ body.is-office-embedded #right-pane-resizer {
 
 .canvas2d-file-preview-react-close,
 .canvas2d-file-preview-react-actions button {
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  border-radius: 4px;
-  background: #fff;
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
   color: #334155;
   font-size: 13px;
   font-weight: 800;
@@ -11172,8 +11177,8 @@ body.is-office-embedded #right-pane-resizer {
   gap: 6px;
   min-height: 42px;
   padding: 6px 10px;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.96);
-  background: #f8fafc;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.62);
+  background: rgba(241, 245, 249, 0.68);
   box-sizing: border-box;
 }
 
@@ -11183,13 +11188,26 @@ body.is-office-embedded #right-pane-resizer {
   padding: 0 9px;
 }
 
+.canvas2d-file-preview-react-close:hover,
+.canvas2d-file-preview-react-actions button:hover {
+  border-color: rgba(148, 163, 184, 0.92);
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+}
+
+.canvas2d-file-preview-react-close:focus-visible,
+.canvas2d-file-preview-react-actions button:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.42);
+  outline-offset: 2px;
+}
+
 .canvas2d-file-preview-react-shell {
   position: relative;
   min-height: 0;
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #e2e8f0;
+  background: #e5e7eb;
 }
 
 .canvas2d-file-preview-react-scroll {
@@ -11198,7 +11216,7 @@ body.is-office-embedded #right-pane-resizer {
   overflow: auto;
   overscroll-behavior: contain;
   padding: 18px 18px 26px;
-  background: #e2e8f0;
+  background: #e5e7eb;
   scrollbar-gutter: stable both-edges;
   box-sizing: border-box;
 }

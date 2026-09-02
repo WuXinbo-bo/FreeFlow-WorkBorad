@@ -1078,7 +1078,7 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
       ? getFileCardPreviewBounds(item, { expanded: Boolean(request.expanded) })
       : {
           left: Number(request?.anchor?.x || 0) || 0,
-          top: (Number(request?.anchor?.y || 0) || 0) + (Number(request?.anchor?.height || 128) || 128) - 20,
+          top: (Number(request?.anchor?.y || 0) || 0) + (Number(request?.anchor?.height || 128) || 128) + 8,
           width: 360,
           height: request?.expanded ? 920 : 468,
         };
