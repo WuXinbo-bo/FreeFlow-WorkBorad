@@ -47,6 +47,7 @@ async function main() {
       },
     },
     anchorPoint: { x: 120, y: 80 },
+    batchId: "batch-commit",
   });
 
   assert.equal(result.ok, true);
@@ -55,6 +56,9 @@ async function main() {
   assert.deepEqual(result.board.selectedIds, ["text-1", "code-1"]);
   assert.equal(result.items[0].x, 120);
   assert.ok(result.items[1].y > result.items[0].y);
+  assert.equal(result.batchId, "batch-commit");
+  assert.equal(result.stats.layoutIssueCount, 0);
+  assert.equal(result.items.every((item) => item.importBatch?.id === "batch-commit"), true);
 
   console.log("[render-plan-commit-layer] ok: 1 scenario validated");
 }

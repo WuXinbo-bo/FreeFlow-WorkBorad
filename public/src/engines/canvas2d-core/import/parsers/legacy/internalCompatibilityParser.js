@@ -3,6 +3,7 @@ import {
   INPUT_ENTRY_KINDS,
   INPUT_SOURCE_KINDS,
 } from "../../protocols/inputDescriptor.js";
+import { clone } from "../../../utils.js";
 
 export const INTERNAL_COMPATIBILITY_PARSER_ID = "internal-legacy-compatibility-parser";
 
@@ -118,15 +119,18 @@ function collectInternalPayloadEntries(descriptor) {
 function collectCompatibleItems(entry) {
   const payload = entry?.raw?.internalPayload;
   const items = Array.isArray(payload?.items) ? payload.items : [];
-  return items.filter((item) => {
-    const normalizedType = inferNormalizedLegacyType(item);
-    return SUPPORTED_LEGACY_TYPES.includes(normalizedType);
-  });
+  return items.filter((item) => item && typeof item === "object");
 }
 
 function inferNormalizedLegacyType(item) {
   const legacyKind = String(item?.kind || "").trim().toLowerCase();
   const type = String(item?.type || legacyKind || "").trim().toLowerCase();
+  if (!type && (item?.text != null || item?.plainText != null || item?.html != null)) {
+    return "text";
+  }
+  if (type === "text" || type === "richtext" || type === "rich") {
+    return "text";
+  }
   if (type === "shape") {
     return "shape";
   }
@@ -148,11 +152,33 @@ function inferNormalizedLegacyType(item) {
   if (type === "flowedge" || type === "flow-edge" || type === "edge") {
     return "flowEdge";
   }
-  return "text";
+  return "unknown";
 }
 
 function normalizeLegacySnapshot(item = {}) {
   const type = inferNormalizedLegacyType(item);
+  if (type === "unknown") {
+    const originalType = String(item?.type || item?.kind || "unknown").trim() || "unknown";
+    const label = `暂不支持的元素 (${originalType})`;
+    return {
+      ...item,
+      id: String(item.id || ""),
+      type: "text",
+      title: label,
+      text: label,
+      html: "",
+      plainText: label,
+      x: normalizeNumber(item.x),
+      y: normalizeNumber(item.y),
+      width: normalizePositiveNumber(item.width, 240),
+      height: normalizePositiveNumber(item.height, 56),
+      unknownElement: {
+        kind: "unknown-element-placeholder-v1",
+        originalType,
+        payload: clone(item),
+      },
+    };
+  }
   if (type === "image") {
     return {
       id: String(item.id || ""),

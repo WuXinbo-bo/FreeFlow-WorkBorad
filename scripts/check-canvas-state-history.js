@@ -174,6 +174,8 @@ async function checkPatchRecovery() {
     applyPatchEntryToHistorySnapshot,
     createHistoryState,
     pushPatchHistory,
+    replaceLatestPatchAfterItems,
+    replaceRecentPatchAfterItems,
     redoHistory,
     undoHistory,
   } = await import("../public/src/engines/canvas2d-core/history.js");
@@ -218,6 +220,43 @@ async function checkPatchRecovery() {
     afterOrderIds: ["a", "b", "d", "c"],
   });
   const insertEntry = insertHistory.undo[0];
+  const stabilizedInsert = { ...inserted, x: 220 };
+  assert.strictEqual(
+    replaceLatestPatchAfterItems(insertHistory, {
+      patchKind: "item-insert",
+      itemIds: ["d"],
+      afterItems: [stabilizedInsert],
+    }),
+    true,
+    "deferred insert stabilization did not merge into the latest history entry"
+  );
+  assert.strictEqual(insertHistory.undo.length, 1, "deferred insert stabilization created another undo step");
+  assert.strictEqual(insertEntry.afterItems[0].x, 220, "merged insert history kept stale geometry");
+
+  const rapidHistory = createHistoryState();
+  const firstBatch = createItem("first", 0);
+  const secondBatch = createItem("second", 120);
+  pushPatchHistory(rapidHistory, { patchKind: "structured-import-batch", itemIds: ["first"], afterItems: [firstBatch] });
+  pushPatchHistory(rapidHistory, { patchKind: "structured-import-batch", itemIds: ["second"], afterItems: [secondBatch] });
+  assert.strictEqual(
+    replaceRecentPatchAfterItems(rapidHistory, {
+      patchKind: "structured-import-batch",
+      itemIds: ["first"],
+      afterItems: [{ ...firstBatch, x: 40 }],
+    }),
+    true,
+    "rapid second import prevented the first batch from stabilizing"
+  );
+  pushPatchHistory(rapidHistory, { patchKind: "item-edit", itemIds: ["first"], beforeItems: [firstBatch], afterItems: [{ ...firstBatch, x: 80 }] });
+  assert.strictEqual(
+    replaceRecentPatchAfterItems(rapidHistory, {
+      patchKind: "structured-import-batch",
+      itemIds: ["first"],
+      afterItems: [{ ...firstBatch, x: 100 }],
+    }),
+    false,
+    "stabilization overwrote a later edit of the imported batch"
+  );
   let insertedSnapshot = applyPatchEntryToHistorySnapshot(
     insertEntry,
     createSnapshot(beforeItems),

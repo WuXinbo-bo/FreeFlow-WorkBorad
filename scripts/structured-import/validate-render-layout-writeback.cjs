@@ -1,7 +1,12 @@
 const assert = require("node:assert/strict");
 
 async function main() {
-  const { applyRenderLayoutWriteback } = await import(
+  const {
+    applyRenderLayoutWriteback,
+    applyRenderLayoutWritebackAsync,
+    getImportedBatchLayoutIssues,
+    stabilizeImportedBatchLayout,
+  } = await import(
     "../../public/src/engines/canvas2d-core/import/host/renderLayoutWriteback.js"
   );
 
@@ -25,7 +30,61 @@ async function main() {
   assert.equal(result.items[0].y, 50);
   assert.ok(result.items[1].x >= 40);
 
-  console.log("[render-layout-writeback] ok: 1 scenario validated");
+  const mixed = applyRenderLayoutWriteback({
+    operations: [
+      {
+        layout: { strategy: "flow-stack", stackIndex: 0, gap: 20 },
+        element: { id: "intro", type: "text", text: "Intro", width: 760, height: 40 },
+      },
+      {
+        type: "render-table-block",
+        layout: { strategy: "flow-stack", stackIndex: 1, gap: 20 },
+        structure: {
+          title: "Metrics",
+          columns: 2,
+          hasHeader: true,
+          rows: [
+            { cells: [{ plainText: "Name", header: true }, { plainText: "Value", header: true }] },
+            { cells: [{ plainText: "A" }, { plainText: "1" }] },
+            { cells: [{ plainText: "B" }, { plainText: "2" }] },
+          ],
+        },
+        element: { id: "table", type: "table", width: 760, height: 84 },
+      },
+      {
+        type: "render-code-block",
+        layout: { strategy: "flow-stack", stackIndex: 2, gap: 20 },
+        structure: { language: "javascript", code: Array.from({ length: 18 }, (_, index) => `line ${index}`).join("\n") },
+        element: { id: "code", type: "codeBlock", width: 760, height: 84, autoHeight: true },
+      },
+      {
+        layout: { strategy: "flow-stack", stackIndex: 3, gap: 20 },
+        element: { id: "outro", type: "text", text: "Outro", width: 760, height: 40 },
+      },
+    ],
+  }, { anchorPoint: { x: 10, y: 20 }, batchId: "batch-mixed" });
+  const stabilized = stabilizeImportedBatchLayout(mixed.items);
+  assert.equal(stabilized.length, 4);
+  assert.equal(stabilized.every((item) => item.importBatch?.id === "batch-mixed"), true);
+  assert.deepEqual(getImportedBatchLayoutIssues(stabilized), []);
+  for (let index = 1; index < stabilized.length; index += 1) {
+    const previous = stabilized[index - 1];
+    const current = stabilized[index];
+    assert.ok(current.y >= previous.y + previous.height + 20, `items ${previous.id}/${current.id} overlap`);
+  }
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    applyRenderLayoutWritebackAsync({ operations: mixed.commits.map((commit) => commit.operation) }, {
+      anchorPoint: { x: 0, y: 0 },
+      signal: controller.signal,
+      yieldControl: async () => {},
+    }),
+    (error) => error?.name === "AbortError"
+  );
+
+  console.log("[render-layout-writeback] ok: 3 scenarios validated");
 }
 
 main().catch((error) => {

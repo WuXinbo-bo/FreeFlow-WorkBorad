@@ -132,6 +132,10 @@ import {
   TEXT_BODY_LINE_HEIGHT_RATIO,
 } from "./textLayout/typographyTokens.js";
 import { resolveImportedTextBoxLayout } from "./import/renderers/text/sharedTextRenderUtils.js";
+import {
+  getImportedBatchLayoutIssues,
+  stabilizeImportedBatchLayout,
+} from "./import/host/renderLayoutWriteback.js";
 import { renderLatexToStaticHtml } from "./import/renderers/markdown/markdownStaticRenderer.js";
 import { measureCodeBlockLayout } from "./codeBlock/measureCodeBlockLayout.js";
 import { cleanupCodeBlockStaticNode, renderCodeBlockStatic } from "./codeBlock/renderCodeBlockStatic.js";
@@ -147,6 +151,7 @@ import {
   markHistoryStateBaseline,
   pushHistory,
   pushPatchHistory,
+  replaceRecentPatchAfterItems,
   redoHistory,
   takeHistoryMetadataSnapshot,
   takeHistorySnapshot,
@@ -3463,6 +3468,8 @@ export function createCanvas2DEngine(options = {}) {
   let pendingHydrationSyncReason = "";
   let cancelPendingHydrationSync = null;
   const deferredTextSemanticUpgradeTasks = new Map();
+  const structuredImportControllers = new Map();
+  const importedBatchStabilizationTokens = new Map();
   let clipboardProcessingStatusToken = 0;
   let deferredImportedAssetPersistPromise = Promise.resolve();
   let linkSemanticEnabled = true;
@@ -8527,6 +8534,151 @@ let tablePointerSelectionState = {
     return buildExportReadyBoardItems((Array.isArray(items) ? items : []).map((item) => normalizeImportedPasteFrameItem(item)));
   }
 
+  function scheduleImportedBatchFontStabilization(items = []) {
+    const targets = (Array.isArray(items) ? items : []).filter((item) => item?.importBatch?.id);
+    const batchId = String(targets[0]?.importBatch?.id || "");
+    if (!batchId || targets.some((item) => String(item?.importBatch?.id || "") !== batchId)) {
+      return false;
+    }
+    const fontsReady = globalThis.document?.fonts?.ready;
+    if (!fontsReady || typeof fontsReady.then !== "function") {
+      return false;
+    }
+    const token = {};
+    const itemIds = targets.map((item) => String(item.id || "")).filter(Boolean);
+    importedBatchStabilizationTokens.set(batchId, token);
+    Promise.resolve(fontsReady)
+      .then(async () => {
+        let geometryWasUpdated = false;
+        let stableFramesAfterUpdate = 0;
+        for (let frame = 0; frame < 8; frame += 1) {
+          await yieldToNextFrame();
+          const result = stabilizeImportedBatchFrame({ batchId, itemIds, token });
+          if (result === "cancelled") {
+            return;
+          }
+          if (result === "updated") {
+            geometryWasUpdated = true;
+            stableFramesAfterUpdate = 0;
+            continue;
+          }
+          if (geometryWasUpdated) {
+            stableFramesAfterUpdate += 1;
+            if (stableFramesAfterUpdate >= 2) {
+              return;
+            }
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (importedBatchStabilizationTokens.get(batchId) === token) {
+          importedBatchStabilizationTokens.delete(batchId);
+        }
+      });
+    return true;
+  }
+
+  function stabilizeImportedBatchFrame({ batchId = "", itemIds = [], token = null } = {}) {
+    if (!mounted || importedBatchStabilizationTokens.get(batchId) !== token) {
+      return "cancelled";
+    }
+    const result = stabilizeImportedBatchItems(batchId, itemIds);
+    if (result === "updated") {
+      syncBoard({
+        persist: true,
+        emit: true,
+        markDirty: true,
+        sceneChange: true,
+        fullOverlayRescan: true,
+        itemIds,
+        reason: "structured-import-font-stabilize",
+      });
+    }
+    return result;
+  }
+
+  function stabilizeImportedBatchById(batchId = "") {
+    const batchItems = state.board.items
+      .filter((item) => String(item?.importBatch?.id || "") === String(batchId || ""))
+      .sort((left, right) => (Number(left?.importBatch?.index) || 0) - (Number(right?.importBatch?.index) || 0));
+    const itemIds = batchItems.map((item) => String(item?.id || "")).filter(Boolean);
+    return itemIds.length ? stabilizeImportedBatchItems(batchId, itemIds) : "cancelled";
+  }
+
+  function stabilizeImportedBatchItems(batchId = "", itemIds = []) {
+    const historyEntry = findMatchingImportHistoryEntry(itemIds);
+    if (!historyEntry) {
+      return "cancelled";
+    }
+    const boardItemMap = new Map(
+      state.board.items.map((item) => [String(item?.id || ""), item])
+    );
+    const currentItems = itemIds.map((itemId) => boardItemMap.get(itemId)).filter(Boolean);
+    if (
+      currentItems.length !== itemIds.length ||
+      currentItems.some((item) => String(item?.importBatch?.id || "") !== String(batchId || "")) ||
+      hasImportedBatchPositionChanged(currentItems, historyEntry.afterItems)
+    ) {
+      return "cancelled";
+    }
+    const stabilizedItems = stabilizeImportedBatchLayout(currentItems, { remeasure: false });
+    if (!hasElementGeometryChanged(currentItems, stabilizedItems)) {
+      return "stable";
+    }
+    if (!replaceRecentPatchAfterItems(state.history, {
+      patchKind: "structured-import-batch",
+      itemIds,
+      afterItems: stabilizedItems,
+    })) {
+      return "cancelled";
+    }
+    const stabilizedMap = new Map(stabilizedItems.map((item) => [String(item.id || ""), item]));
+    state.board.items = state.board.items.map((item) => stabilizedMap.get(String(item?.id || "")) || item);
+    return "updated";
+  }
+
+  function findMatchingImportHistoryEntry(itemIds = []) {
+    const targetIds = new Set(itemIds);
+    for (let index = state.history.undo.length - 1; index >= 0; index -= 1) {
+      const entry = state.history.undo[index];
+      if (entry?.kind !== "patch") {
+        return null;
+      }
+      if (entry.patchKind === "structured-import-batch") {
+        const historyIds = Array.isArray(entry.itemIds) ? entry.itemIds.map(String) : [];
+        if (historyIds.length === itemIds.length && historyIds.every((itemId, itemIndex) => itemId === itemIds[itemIndex])) {
+          return entry;
+        }
+      }
+      if ((Array.isArray(entry?.itemIds) ? entry.itemIds : []).some((itemId) => targetIds.has(String(itemId)))) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function hasImportedBatchPositionChanged(items = [], historyItems = []) {
+    const historyMap = new Map((Array.isArray(historyItems) ? historyItems : []).map((item) => [String(item?.id || ""), item]));
+    return items.some((item) => {
+      const previous = historyMap.get(String(item?.id || ""));
+      return !previous || Math.abs(Number(item.x || 0) - Number(previous.x || 0)) > 0.01 || Math.abs(Number(item.y || 0) - Number(previous.y || 0)) > 0.01;
+    });
+  }
+
+  function hasElementGeometryChanged(beforeItems = [], afterItems = []) {
+    const beforeMap = new Map(beforeItems.map((item) => [String(item?.id || ""), item]));
+    return afterItems.some((item) => {
+      const previous = beforeMap.get(String(item?.id || ""));
+      if (!previous) {
+        return true;
+      }
+      return ["x", "y", "width", "height"].some(
+        (key) => Math.abs(Number(item?.[key] || 0) - Number(previous?.[key] || 0)) > 0.01
+      );
+    });
+  }
+
   function scheduleDeferredImportedAssetPersistence(items = [], { reason = "clipboard-import-asset-persist" } = {}) {
     const targets = (Array.isArray(items) ? items : []).filter((item) => item?.type === "image");
     if (!targets.length) {
@@ -11914,6 +12066,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
     const visibleItems = [];
     let textLayoutWritebackChanged = false;
+    const textLayoutWritebackBatchIds = new Set();
     const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["text", "flowNode", "mindNode", "mindSummary"], { marginPx: 120 });
     candidateRecords.forEach((record) => {
       const item = record.item;
@@ -12123,6 +12276,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           node.dataset.layoutWritebackSignature = writebackSignature;
           if (maybeWritebackTextOverlayFrame(item, node, 1)) {
             textLayoutWritebackChanged = true;
+            const batchId = String(item?.importBatch?.id || "");
+            if (batchId) {
+              textLayoutWritebackBatchIds.add(batchId);
+            }
           }
         }
       }
@@ -12142,10 +12299,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       reason: "rich-overlay-budget-deferred",
     });
     if (textLayoutWritebackChanged) {
+      let importedBatchLayoutChanged = false;
+      textLayoutWritebackBatchIds.forEach((batchId) => {
+        if (stabilizeImportedBatchById(batchId) === "updated") {
+          importedBatchLayoutChanged = true;
+        }
+      });
       syncBoard({
-        persist: false,
+        persist: importedBatchLayoutChanged,
         emit: true,
-        markDirty: false,
+        markDirty: importedBatchLayoutChanged,
         sceneChange: true,
         fullOverlayRescan: false,
         reason: "text-layout-writeback",
@@ -19236,7 +19399,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!commitResult?.ok || !Array.isArray(commitResult.items) || !commitResult.items.length) {
       return false;
     }
-    const committedItems = normalizeImportedPasteFrameItems(Array.isArray(commitResult.items) ? commitResult.items : []);
+    const committedItems = stabilizeImportedBatchLayout(
+      normalizeImportedPasteFrameItems(Array.isArray(commitResult.items) ? commitResult.items : []),
+      { remeasure: false }
+    );
+    if (getImportedBatchLayoutIssues(committedItems).length) {
+      return false;
+    }
     const before = takeHistoryMetadataSnapshot(state);
     state.board.items.push(...committedItems);
     state.board.selectedIds = committedItems.map((item) => item.id);
@@ -19247,6 +19416,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     scheduleDeferredImportedAssetPersistence(committedItems, {
       reason: "structured-import-asset-persist",
     });
+    scheduleImportedBatchFontStabilization(committedItems);
     if (statusText) {
       setStatus(statusText);
     }
@@ -19257,6 +19427,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!descriptor || descriptor.status === "error" || descriptor.status === "unsupported") {
       return false;
     }
+    const operationId = String(descriptor.descriptorId || createId("structured-import"));
+    structuredImportControllers.get(operationId)?.abort?.();
+    const controller = new AbortController();
+    structuredImportControllers.set(operationId, controller);
     try {
       const shouldYieldDuringCommit = shouldYieldDuringStructuredImportDescriptor(descriptor);
       const result = await structuredImportRuntime.runDescriptor({
@@ -19265,14 +19439,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         anchorPoint,
         context: buildStructuredImportContext(anchorPoint, {
           ...context,
+          importBatchId: createId("import-batch"),
+          signal: controller.signal,
           yieldControl: shouldYieldDuringCommit ? () => yieldToNextFrame() : null,
         }),
       });
       if (result?.pipeline === "structured" && result?.commitResult?.ok) {
         return applyStructuredCommitResult(result.commitResult, { reason, statusText });
       }
-    } catch {
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return true;
+      }
       // fall back to legacy pipeline
+    } finally {
+      if (structuredImportControllers.get(operationId) === controller) {
+        structuredImportControllers.delete(operationId);
+      }
     }
     return false;
   }
@@ -25145,6 +25328,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (immediatePayload && event.clipboardData) {
       writeClipboardDataWithProtocols(event.clipboardData, {
         marker: buildInternalClipboardMarker({
+          clipboardId: String(immediatePayload.clipboardId || ""),
           copiedAt: Number(immediatePayload.copiedAt) || Date.now(),
           itemCount: Array.isArray(immediatePayload.items) ? immediatePayload.items.length : 0,
           source: CLIPBOARD_SOURCE_CANVAS,
@@ -25727,6 +25911,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function unmount() {
     finishPendingWheelSession({ persist: true });
+    structuredImportControllers.forEach((controller) => controller.abort?.());
+    structuredImportControllers.clear();
+    importedBatchStabilizationTokens.clear();
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
       interactionRecoveryTimer = 0;

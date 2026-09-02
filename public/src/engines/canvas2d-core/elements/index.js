@@ -352,7 +352,31 @@ export function createEmptyBoard() {
 }
 
 export function normalizeElement(element = {}) {
+  const definition = canvasElementRegistry.resolveElement(element, { fallback: false });
+  if (!definition) {
+    return normalizeUnknownElementPlaceholder(element);
+  }
   return canvasElementRegistry.invoke(element, "normalize");
+}
+
+function normalizeUnknownElementPlaceholder(element = {}) {
+  const originalType = String(element?.type || element?.kind || "unknown").trim() || "unknown";
+  const label = `暂不支持的元素 (${originalType})`;
+  return normalizeTextElement({
+    ...element,
+    type: "text",
+    title: label,
+    text: label,
+    plainText: label,
+    html: "",
+    width: Math.max(240, Number(element?.width || 0) || 240),
+    height: Math.max(56, Number(element?.height || 0) || 56),
+    unknownElement: {
+      kind: "unknown-element-placeholder-v1",
+      originalType,
+      payload: clone(element),
+    },
+  });
 }
 
 export function normalizeBoard(input = {}) {

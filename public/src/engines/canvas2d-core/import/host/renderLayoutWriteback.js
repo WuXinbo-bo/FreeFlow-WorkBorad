@@ -1,4 +1,4 @@
-import { getElementBounds, normalizeElement } from "../../elements/index.js";
+import { getElementBounds, moveElement, normalizeElement } from "../../elements/index.js";
 import { createId } from "../../utils.js";
 import {
   getTextMinSize,
@@ -30,6 +30,8 @@ function createWritebackRuntime(options = {}) {
   const defaultGap = normalizePositiveNumber(options.defaultGap, 24);
   const laneGap = normalizePositiveNumber(options.laneGap, 28);
   return {
+    batchId: String(options.batchId || createId("import-batch")),
+    signal: options.signal || null,
     anchorPoint,
     defaultGap,
     laneGap,
@@ -59,10 +61,19 @@ function appendWritebackOperation(runtime, operation, index) {
   });
   runtime.laneOffsets.set(laneKey, placed.nextLaneState);
 
+  const item = attachImportBatchMetadata(placed.item, {
+    batchId: runtime.batchId,
+    index: runtime.committed.length,
+    sourceOrder: Number(operation?.sourceOrder),
+    strategy: laneKey,
+    gapAfter: normalizePositiveNumber(layout?.gap, runtime.defaultGap),
+    anchorPoint: runtime.anchorPoint,
+  });
+
   runtime.committed.push({
     operation,
-    item: placed.item,
-    bounds: getElementBounds(placed.item),
+    item,
+    bounds: getElementBounds(item),
     layout: {
       strategy: laneKey,
       stackIndex: Number(layout.stackIndex) || index,
@@ -76,6 +87,7 @@ function finalizeWritebackRuntime(runtime) {
   const anchorPoint = normalizePoint(runtime?.anchorPoint);
   return {
     kind: "layout-writeback-result",
+    batchId: String(runtime?.batchId || ""),
     items: committed.map((entry) => entry.item),
     commits: committed,
     stats: {
@@ -103,6 +115,7 @@ async function buildRenderLayoutWritebackResultAsync(operations = [], options = 
     typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 
   for (let index = 0; index < operations.length; index += 1) {
+    throwIfAborted(runtime.signal);
     appendWritebackOperation(runtime, operations[index], index);
     if (!yieldControl || index >= operations.length - 1) {
       continue;
@@ -118,6 +131,7 @@ async function buildRenderLayoutWritebackResultAsync(operations = [], options = 
       processedCount,
       totalCount: operations.length,
     });
+    throwIfAborted(runtime.signal);
     batchStartedAt =
       typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
   }
@@ -448,4 +462,119 @@ function normalizePoint(point) {
 function normalizePositiveNumber(value, fallback) {
   const normalized = Number(value);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : fallback;
+}
+
+function attachImportBatchMetadata(item, metadata) {
+  const bounds = getElementBounds(item);
+  return {
+    ...item,
+    importBatch: {
+      kind: "structured-import-batch-v1",
+      id: String(metadata?.batchId || ""),
+      index: Math.max(0, Number(metadata?.index) || 0),
+      sourceOrder: Number.isFinite(metadata?.sourceOrder) ? Number(metadata.sourceOrder) : null,
+      strategy: String(metadata?.strategy || "flow-stack"),
+      gapAfter: normalizePositiveNumber(metadata?.gapAfter, 24),
+      anchorPoint: normalizePoint(metadata?.anchorPoint),
+      insertedX: bounds.left,
+      insertedY: bounds.top,
+      measuredWidth: bounds.width,
+      measuredHeight: bounds.height,
+      revision: 1,
+    },
+  };
+}
+
+export function stabilizeImportedBatchLayout(items = [], options = {}) {
+  const remeasure = options.remeasure !== false;
+  const normalizedItems = (Array.isArray(items) ? items : []).map((item) =>
+    remeasure ? normalizeElement(item) : { ...item }
+  );
+  const groups = collectFlowStackGroups(normalizedItems);
+  groups.forEach((group) => {
+    let previousItem = null;
+    group.forEach((entry) => {
+      let item = entry.item;
+      if (previousItem) {
+        const previousBounds = getElementBounds(previousItem);
+        const currentBounds = getElementBounds(item);
+        const targetTop = previousBounds.bottom + normalizePositiveNumber(previousItem?.importBatch?.gapAfter, 24);
+        if (Math.abs(currentBounds.top - targetTop) > 0.01) {
+          item = moveElement(item, 0, targetTop - currentBounds.top);
+        }
+      }
+      const bounds = getElementBounds(item);
+      item = {
+        ...item,
+        importBatch: {
+          ...item.importBatch,
+          insertedX: bounds.left,
+          insertedY: bounds.top,
+          measuredWidth: bounds.width,
+          measuredHeight: bounds.height,
+          revision: Math.max(1, Number(item?.importBatch?.revision) || 1),
+        },
+      };
+      normalizedItems[entry.originalIndex] = item;
+      previousItem = item;
+    });
+  });
+  return normalizedItems;
+}
+
+export function getImportedBatchLayoutIssues(items = [], options = {}) {
+  const minimumGap = Math.max(0, Number(options.minimumGap) || 0);
+  const issues = [];
+  collectFlowStackGroups(Array.isArray(items) ? items : []).forEach((group) => {
+    for (let index = 1; index < group.length; index += 1) {
+      const previous = group[index - 1].item;
+      const current = group[index].item;
+      const previousBounds = getElementBounds(previous);
+      const currentBounds = getElementBounds(current);
+      const expectedGap = Math.max(
+        minimumGap,
+        normalizePositiveNumber(previous?.importBatch?.gapAfter, 24)
+      );
+      const actualGap = currentBounds.top - previousBounds.bottom;
+      if (actualGap + 0.01 < expectedGap) {
+        issues.push({
+          batchId: String(current?.importBatch?.id || ""),
+          previousId: String(previous?.id || ""),
+          currentId: String(current?.id || ""),
+          expectedGap,
+          actualGap,
+        });
+      }
+    }
+  });
+  return issues;
+}
+
+function collectFlowStackGroups(items = []) {
+  const groups = new Map();
+  items.forEach((item, originalIndex) => {
+    const batch = item?.importBatch;
+    if (!batch?.id || String(batch.strategy || "") !== "flow-stack") {
+      return;
+    }
+    const key = `${batch.id}:flow-stack`;
+    const group = groups.get(key) || [];
+    group.push({ item, originalIndex });
+    groups.set(key, group);
+  });
+  return Array.from(groups.values()).map((group) =>
+    group.sort((left, right) => {
+      const delta = (Number(left.item?.importBatch?.index) || 0) - (Number(right.item?.importBatch?.index) || 0);
+      return delta || left.originalIndex - right.originalIndex;
+    })
+  );
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  const error = new Error("Structured import was cancelled");
+  error.name = "AbortError";
+  throw error;
 }

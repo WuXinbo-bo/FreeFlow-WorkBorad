@@ -134,10 +134,14 @@ async function createPage(browser, { board } = {}) {
   };
 }
 
-async function dispatchCanvasPaste(page, text) {
-  await page.evaluate((textValue) => {
-    globalThis.__TEST_CLIPBOARD_TEXT = String(textValue || "");
-  }, text);
+async function dispatchCanvasPaste(page, input) {
+  const payload = input && typeof input === "object"
+    ? { text: String(input.text || ""), html: String(input.html || "") }
+    : { text: String(input || ""), html: "" };
+  await page.evaluate((value) => {
+    globalThis.__TEST_CLIPBOARD_TEXT = value.text;
+    globalThis.__TEST_CLIPBOARD_HTML = value.html;
+  }, payload);
   const canvasRect = await page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
   await page.mouse.move(canvasRect.x + canvasRect.width / 2, canvasRect.y + canvasRect.height / 2);
   return page.evaluate(async (selector) => {
@@ -148,9 +152,10 @@ async function dispatchCanvasPaste(page, text) {
     }
     canvas.focus();
     const dataTransfer = {
-      types: ["text/plain"],
+      types: globalThis.__TEST_CLIPBOARD_HTML ? ["text/html", "text/plain"] : ["text/plain"],
       files: [],
       getData(type) {
+        if (type === "text/html") return String(globalThis.__TEST_CLIPBOARD_HTML || "");
         return type === "text/plain" || type === "text" ? String(globalThis.__TEST_CLIPBOARD_TEXT || "") : "";
       },
     };
@@ -188,16 +193,58 @@ async function runSemanticPasteChecks(browser) {
         assert(String(item.text || "").includes("canvas"), "multiline paste lost content", item);
       },
     },
+    {
+      key: "mixedStructuredLayout",
+      recovery: true,
+      text: "Report\nName Value\nA 1\nconst total = 1;\nDone",
+      html: [
+        "<h2>Report</h2>",
+        "<table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>A</td><td>1</td></tr></tbody></table>",
+        `<pre><code class="language-javascript">${Array.from({ length: 18 }, (_, index) => `const value${index} = ${index};`).join("\n")}</code></pre>`,
+        "<p>Done</p>",
+      ].join(""),
+      verify: (items) => {
+        assert(items.some((item) => item.type === "table"), "mixed paste lost table semantics", items);
+        assert(items.some((item) => item.type === "codeBlock"), "mixed paste lost code semantics", items);
+        const batchItems = items
+          .filter((item) => item.importBatch?.id)
+          .sort((left, right) => Number(left.importBatch.index) - Number(right.importBatch.index));
+        assert(batchItems.length >= 3, "mixed paste did not retain import batch identity", items);
+        assert(new Set(batchItems.map((item) => item.importBatch.id)).size === 1, "mixed paste split one import into multiple batches", batchItems);
+        for (let index = 1; index < batchItems.length; index += 1) {
+          const previous = batchItems[index - 1];
+          const current = batchItems[index];
+          if (previous.importBatch.strategy !== "flow-stack" || current.importBatch.strategy !== "flow-stack") continue;
+          const actualGap = Number(current.y || 0) - (Number(previous.y || 0) + Number(previous.height || 0));
+          assert(actualGap >= Number(previous.importBatch.gapAfter || 0) - 0.1, "mixed paste elements overlap", { previous, current, actualGap });
+        }
+      },
+    },
   ];
 
   const results = {};
   for (const scenario of cases) {
     const session = await createPage(browser, { board: createBoard([]) });
     try {
-      const durationMs = await dispatchCanvasPaste(session.page, scenario.text);
+      const durationMs = await dispatchCanvasPaste(session.page, scenario.html ? scenario : scenario.text);
       await session.page.waitForTimeout(220);
       const snapshotItems = await session.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);
       scenario.verify(snapshotItems);
+      if (scenario.recovery) {
+        const recovery = await session.page.evaluate(async () => {
+          const beforeCount = window.__canvas2dEngine?.getSnapshot?.()?.board?.items?.length || 0;
+          const undone = window.__canvas2dEngine?.undo?.() === true;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const undoCount = window.__canvas2dEngine?.getSnapshot?.()?.board?.items?.length || 0;
+          const redone = window.__canvas2dEngine?.redo?.() === true;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const redoItems = window.__canvas2dEngine?.getSnapshot?.()?.board?.items || [];
+          return { beforeCount, undone, undoCount, redone, redoItems };
+        });
+        assert(recovery.undone && recovery.undoCount === 0, "mixed paste undo did not remove the complete import batch", recovery);
+        assert(recovery.redone && recovery.redoItems.length === recovery.beforeCount, "mixed paste redo did not restore the complete import batch", recovery);
+        scenario.verify(recovery.redoItems);
+      }
       assert(session.getErrors().length === 0, `paste scenario ${scenario.key} produced page errors`, session.getErrors());
       results[scenario.key] = {
         durationMs,

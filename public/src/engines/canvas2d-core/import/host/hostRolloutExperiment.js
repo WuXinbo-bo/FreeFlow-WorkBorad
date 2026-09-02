@@ -15,6 +15,7 @@ export async function runHostRolloutExperiment({
   commitLayer,
   context = {},
 } = {}) {
+  throwIfAborted(context?.signal);
   const switchDecision = switchboard.resolve(descriptor, context);
   const finalDecision = killSwitch.apply(switchDecision, descriptor, context);
 
@@ -36,6 +37,7 @@ export async function runHostRolloutExperiment({
     diagnosticsModel,
     context,
   });
+  throwIfAborted(context?.signal);
 
   const renderInput = normalizeRenderInput(pipelineOutput);
   const renderResult = renderInput.kind === "legacy-compatibility"
@@ -44,6 +46,7 @@ export async function runHostRolloutExperiment({
   const bridgeResult = renderInput.kind === "legacy-compatibility"
     ? await legacyAdapterRegistry.adapt(renderInput, context)
     : null;
+  throwIfAborted(context?.signal);
 
   const commitResult =
     typeof commitLayer?.commitAsync === "function"
@@ -52,13 +55,16 @@ export async function runHostRolloutExperiment({
           renderResult,
           bridgeResult,
           anchorPoint,
+          batchId: context?.importBatchId,
           yieldControl: context?.yieldControl,
+          signal: context?.signal,
         })
       : commitLayer.commit({
           board,
           renderResult,
           bridgeResult,
           anchorPoint,
+          batchId: context?.importBatchId,
         });
 
   return {
@@ -72,4 +78,13 @@ export async function runHostRolloutExperiment({
     bridgeResult,
     commitResult,
   };
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  const error = new Error("Structured import was cancelled");
+  error.name = "AbortError";
+  throw error;
 }

@@ -1,13 +1,18 @@
-import { normalizeBoard, normalizeElement } from "../../elements/index.js";
+import { getElementBounds, normalizeBoard, normalizeElement } from "../../elements/index.js";
 import { buildExportReadyBoardItems } from "../../export/buildExportReadyBoardItems.js";
-import { applyRenderLayoutWriteback, applyRenderLayoutWritebackAsync } from "./renderLayoutWriteback.js";
+import {
+  applyRenderLayoutWriteback,
+  applyRenderLayoutWritebackAsync,
+  getImportedBatchLayoutIssues,
+  stabilizeImportedBatchLayout,
+} from "./renderLayoutWriteback.js";
 
 export function createRenderPlanCommitLayer(options = {}) {
   const applyLayout = typeof options.applyLayout === "function" ? options.applyLayout : applyRenderLayoutWriteback;
   const applyLayoutAsync =
     typeof options.applyLayoutAsync === "function" ? options.applyLayoutAsync : applyRenderLayoutWritebackAsync;
 
-  function commit({ board, renderResult, bridgeResult, anchorPoint } = {}) {
+  function commit({ board, renderResult, bridgeResult, anchorPoint, batchId } = {}) {
     const plan = extractPlan(renderResult, bridgeResult);
     if (!plan) {
       return {
@@ -21,11 +26,11 @@ export function createRenderPlanCommitLayer(options = {}) {
     }
 
     const diagnostics = collectStructuredOperationDiagnostics(plan);
-    const layoutResult = applyLayout(plan, { anchorPoint });
+    const layoutResult = applyLayout(plan, { anchorPoint, batchId });
     return buildCommitResult(board, plan, diagnostics, layoutResult);
   }
 
-  async function commitAsync({ board, renderResult, bridgeResult, anchorPoint, yieldControl } = {}) {
+  async function commitAsync({ board, renderResult, bridgeResult, anchorPoint, batchId, yieldControl, signal } = {}) {
     const plan = extractPlan(renderResult, bridgeResult);
     if (!plan) {
       return {
@@ -41,7 +46,9 @@ export function createRenderPlanCommitLayer(options = {}) {
     const diagnostics = collectStructuredOperationDiagnostics(plan);
     const layoutResult = await applyLayoutAsync(plan, {
       anchorPoint,
+      batchId,
       yieldControl,
+      signal,
     });
     return buildCommitResult(board, plan, diagnostics, layoutResult);
   }
@@ -58,7 +65,11 @@ function buildCommitResult(board, plan, diagnostics, layoutResult) {
     items: [],
   });
   const existingItems = Array.isArray(board?.items) ? board.items : [];
-  const committedItems = normalizeCommittedItems(layoutResult?.items || []);
+  const committedItems = stabilizeImportedBatchLayout(
+    normalizeCommittedItems(layoutResult?.items || []),
+    { remeasure: false }
+  );
+  const layoutIssues = getImportedBatchLayoutIssues(committedItems);
   const nextBoard = {
     ...normalizedBoard,
     items: existingItems.concat(committedItems),
@@ -69,16 +80,31 @@ function buildCommitResult(board, plan, diagnostics, layoutResult) {
     ok: true,
     kind: "commit-result",
     planId: String(plan.planId || ""),
+    batchId: String(layoutResult?.batchId || ""),
     board: nextBoard,
     items: committedItems,
-    commits: layoutResult?.commits || [],
+    commits: rebuildCommits(layoutResult?.commits || [], committedItems),
     diagnostics,
+    layoutIssues,
     stats: {
       committedCount: committedItems.length,
       selectedCount: nextBoard.selectedIds.length,
       structuredWarningCount: diagnostics.warnings.length,
+      layoutIssueCount: layoutIssues.length,
     },
   };
+}
+
+function rebuildCommits(commits = [], items = []) {
+  const itemMap = new Map(items.map((item) => [String(item?.id || ""), item]));
+  return (Array.isArray(commits) ? commits : []).map((commit) => {
+    const item = itemMap.get(String(commit?.item?.id || "")) || commit.item;
+    return {
+      ...commit,
+      item,
+      bounds: item ? getElementBounds(item) : commit.bounds,
+    };
+  });
 }
 
 function normalizeCommittedItems(items = []) {

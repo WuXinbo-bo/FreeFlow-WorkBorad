@@ -33,7 +33,10 @@ async function main() {
   assert.strictEqual(normalizeElement({ type: "file", name: "a" }).type, "fileCard");
   assert.strictEqual(normalizeElement({ type: "code", code: "x" }).type, "codeBlock");
   assert.strictEqual(normalizeElement({ type: "richText", text: "x" }).type, "text");
-  assert.strictEqual(normalizeElement({ type: "unknown", text: "x" }).type, "text");
+  const unknown = normalizeElement({ type: "pluginWidget", text: "x", pluginState: { value: 42 } });
+  assert.strictEqual(unknown.type, "text");
+  assert.strictEqual(unknown.unknownElement.originalType, "pluginWidget");
+  assert.deepStrictEqual(unknown.unknownElement.payload.pluginState, { value: 42 });
 
   const rect = { id: "rect", type: "shape", shapeType: "rect", x: 10, y: 20, width: 100, height: 80 };
   assert.deepStrictEqual(getElementBounds(rect), {

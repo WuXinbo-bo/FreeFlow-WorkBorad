@@ -48,6 +48,7 @@ async function main() {
               { type: "node", text: "node text" },
               { type: "edge", startId: "a", endId: "b" },
               { type: "shape", shapeType: "rect", x: 10, y: 20, width: 80, height: 40 },
+              { type: "pluginWidget", pluginState: { value: 42 } },
             ],
           },
         },
@@ -72,13 +73,16 @@ async function main() {
     "adapter type mismatch"
   );
   const items = pipeline.parseResult.result.compatibility.items;
-  assert(items.length === 6, "compatibility item count mismatch");
+  assert(items.length === 7, "compatibility item count mismatch");
   assert(items.some((item) => item.legacyType === "text"), "text compatibility item missing");
   assert(items.some((item) => item.legacyType === "image"), "image compatibility item missing");
   assert(items.some((item) => item.legacyType === "fileCard"), "fileCard compatibility item missing");
   assert(items.some((item) => item.legacyType === "flowNode"), "flowNode compatibility item missing");
   assert(items.some((item) => item.legacyType === "flowEdge"), "flowEdge compatibility item missing");
   assert(items.some((item) => item.legacyType === "shape"), "shape compatibility item missing");
+  const unknown = items.find((item) => item.item?.unknownElement?.originalType === "pluginWidget");
+  assert(unknown?.legacyType === "text", "unknown compatibility item did not use a visible placeholder");
+  assert(unknown.item.unknownElement.payload.pluginState.value === 42, "unknown compatibility payload was lost");
   assert(pipeline.diagnostics.score >= 90, "internal diagnostics score should be high");
 
   const mixedAliasDescriptor = createInputDescriptor({

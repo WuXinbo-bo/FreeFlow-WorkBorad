@@ -25,6 +25,8 @@ const VALIDATORS = [
   "validate-image-element-bridge.cjs",
   "validate-file-card-element-bridge.cjs",
   "validate-native-compatibility-passthrough.cjs",
+  "validate-render-layout-writeback.cjs",
+  "validate-render-plan-commit-layer.cjs",
   "validate-host-search-adapter.cjs",
 ];
 

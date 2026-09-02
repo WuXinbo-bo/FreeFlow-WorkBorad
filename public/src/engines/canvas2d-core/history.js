@@ -349,6 +349,70 @@ export function pushPatchHistory(history, patch, reason = "") {
   return true;
 }
 
+export function replaceLatestPatchAfterItems(history, { patchKind = "", itemIds = [], afterItems = [] } = {}) {
+  return replacePatchAfterItems(history, { patchKind, itemIds, afterItems, latestOnly: true });
+}
+
+export function replaceRecentPatchAfterItems(history, { patchKind = "", itemIds = [], afterItems = [] } = {}) {
+  return replacePatchAfterItems(history, { patchKind, itemIds, afterItems, latestOnly: false });
+}
+
+function replacePatchAfterItems(history, { patchKind, itemIds, afterItems, latestOnly }) {
+  const normalizedIds = normalizeHistorySnapshotItemIds(itemIds);
+  const entries = Array.isArray(history?.undo) ? history.undo : [];
+  const targetIndex = findReplaceablePatchIndex(entries, patchKind, normalizedIds, latestOnly);
+  const entry = targetIndex >= 0 ? entries[targetIndex] : null;
+  if (
+    !entry ||
+    entry.kind !== "patch" ||
+    String(entry.patchKind || "") !== String(patchKind || "") ||
+    !areItemIdListsEqual(entry.itemIds, normalizedIds)
+  ) {
+    return false;
+  }
+  const itemMap = new Map(
+    (Array.isArray(afterItems) ? afterItems : [])
+      .map((item) => [String(item?.id || "").trim(), item])
+      .filter(([itemId]) => Boolean(itemId))
+  );
+  if (normalizedIds.some((itemId) => !itemMap.has(itemId))) {
+    return false;
+  }
+  entry.afterItems = normalizedIds.map((itemId) => clone(itemMap.get(itemId)));
+  entry.afterItem = entry.afterItems[0] || null;
+  if (targetIndex === entries.length - 1) {
+    history.lastSignature = getHistoryEntryTargetSignature(entry, "after");
+  }
+  return true;
+}
+
+function findReplaceablePatchIndex(entries, patchKind, itemIds, latestOnly) {
+  const targetIds = new Set(itemIds);
+  const startIndex = entries.length - 1;
+  for (let index = startIndex; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.kind !== "patch") {
+      return -1;
+    }
+    if (
+      String(entry.patchKind || "") === String(patchKind || "") &&
+      areItemIdListsEqual(entry.itemIds, itemIds)
+    ) {
+      return index;
+    }
+    if (latestOnly || normalizeHistorySnapshotItemIds(entry?.itemIds).some((itemId) => targetIds.has(itemId))) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+function areItemIdListsEqual(left = [], right = []) {
+  const leftIds = normalizeHistorySnapshotItemIds(left);
+  const rightIds = normalizeHistorySnapshotItemIds(right);
+  return leftIds.length === rightIds.length && leftIds.every((itemId, index) => itemId === rightIds[index]);
+}
+
 export function undoHistory(history, currentSnapshot) {
   const entry = history.undo.pop();
   if (!entry) {
