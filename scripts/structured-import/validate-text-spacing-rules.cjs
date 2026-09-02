@@ -13,6 +13,7 @@ const MEASURE_LAYOUT_FILE = path.join(
   "textLayout",
   "measureTextElementLayout.js"
 );
+const STYLES_FILE = path.join(ROOT, "public", "styles.css");
 
 function assert(condition, message) {
   if (!condition) {
@@ -58,6 +59,7 @@ async function main() {
   }
 
   const source = fs.readFileSync(MEASURE_LAYOUT_FILE, "utf8");
+  const styles = fs.readFileSync(STYLES_FILE, "utf8");
   assertRegex(
     source,
     /const\s+BODY_LINE_HEIGHT_RATIO\s*=\s*TEXT_BODY_LINE_HEIGHT_RATIO\s*;/,
@@ -116,8 +118,16 @@ async function main() {
     /node\.querySelectorAll\("td, th"\)[\s\S]*?element\.style\.padding\s*=\s*"0\.38em 0\.5em"/,
     "table cell spacing normalization should exist"
   );
+  expectedSizes.forEach((size, index) => {
+    const level = index + 1;
+    assertRegex(
+      styles,
+      new RegExp(`\\.canvas-rich-editor h${level},[\\s\\S]*?\\.canvas2d-rich-item h${level} \\{[\\s\\S]*?font-size:\\s*${size}px;[\\s\\S]*?line-height:\\s*${[1.25, 1.28, 1.3, 1.32, 1.35, 1.35][index]};`),
+      `live/editor heading token mismatch at h${level}`
+    );
+  });
 
-  console.log("[text-spacing-rules] ok: 17 spacing assertions validated");
+  console.log("[text-spacing-rules] ok: heading and spacing contracts validated");
 }
 
 main().catch((error) => {

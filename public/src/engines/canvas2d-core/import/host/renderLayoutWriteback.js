@@ -465,7 +465,8 @@ function normalizePositiveNumber(value, fallback) {
 }
 
 function attachImportBatchMetadata(item, metadata) {
-  const bounds = getElementBounds(item);
+  const measurement = measureImportedElement(item, { remeasure: false });
+  const bounds = measurement.outerBounds;
   return {
     ...item,
     importBatch: {
@@ -481,14 +482,36 @@ function attachImportBatchMetadata(item, metadata) {
       measuredWidth: bounds.width,
       measuredHeight: bounds.height,
       revision: 1,
+      measurement: createMeasurementSnapshot(measurement, 1),
     },
+  };
+}
+
+export function measureImportedElement(item = {}, options = {}) {
+  const measuredItem = options.remeasure === false ? { ...item } : normalizeElement(item);
+  const outerBounds = normalizeBounds(getElementBounds(measuredItem));
+  const contentBounds = resolveImportedContentBounds(measuredItem, outerBounds);
+  return {
+    item: measuredItem,
+    outerBounds,
+    contentBounds,
+    overflow: {
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      clipped: false,
+    },
+    stability: resolveImportedMeasurementStability(measuredItem),
+    measurementRevision: Math.max(1, Number(item?.importBatch?.measurement?.measurementRevision) || 0) + 1,
+    measuredWith: resolveImportedMeasurementSource(measuredItem),
   };
 }
 
 export function stabilizeImportedBatchLayout(items = [], options = {}) {
   const remeasure = options.remeasure !== false;
-  const normalizedItems = (Array.isArray(items) ? items : []).map((item) =>
-    remeasure ? normalizeElement(item) : { ...item }
+  const normalizedItems = (Array.isArray(items) ? items : []).map(
+    (item) => measureImportedElement(item, { remeasure }).item
   );
   const groups = collectFlowStackGroups(normalizedItems);
   groups.forEach((group) => {
@@ -496,14 +519,16 @@ export function stabilizeImportedBatchLayout(items = [], options = {}) {
     group.forEach((entry) => {
       let item = entry.item;
       if (previousItem) {
-        const previousBounds = getElementBounds(previousItem);
-        const currentBounds = getElementBounds(item);
+        const previousBounds = measureImportedElement(previousItem, { remeasure: false }).outerBounds;
+        const currentBounds = measureImportedElement(item, { remeasure: false }).outerBounds;
         const targetTop = previousBounds.bottom + normalizePositiveNumber(previousItem?.importBatch?.gapAfter, 24);
         if (Math.abs(currentBounds.top - targetTop) > 0.01) {
           item = moveElement(item, 0, targetTop - currentBounds.top);
         }
       }
-      const bounds = getElementBounds(item);
+      const measurement = measureImportedElement(item, { remeasure: false });
+      const bounds = measurement.outerBounds;
+      const revision = Math.max(1, Number(item?.importBatch?.revision) || 1) + 1;
       item = {
         ...item,
         importBatch: {
@@ -512,7 +537,8 @@ export function stabilizeImportedBatchLayout(items = [], options = {}) {
           insertedY: bounds.top,
           measuredWidth: bounds.width,
           measuredHeight: bounds.height,
-          revision: Math.max(1, Number(item?.importBatch?.revision) || 1),
+          revision,
+          measurement: createMeasurementSnapshot(measurement, revision),
         },
       };
       normalizedItems[entry.originalIndex] = item;
@@ -529,8 +555,8 @@ export function getImportedBatchLayoutIssues(items = [], options = {}) {
     for (let index = 1; index < group.length; index += 1) {
       const previous = group[index - 1].item;
       const current = group[index].item;
-      const previousBounds = getElementBounds(previous);
-      const currentBounds = getElementBounds(current);
+      const previousBounds = measureImportedElement(previous, { remeasure: false }).outerBounds;
+      const currentBounds = measureImportedElement(current, { remeasure: false }).outerBounds;
       const expectedGap = Math.max(
         minimumGap,
         normalizePositiveNumber(previous?.importBatch?.gapAfter, 24)
@@ -548,6 +574,69 @@ export function getImportedBatchLayoutIssues(items = [], options = {}) {
     }
   });
   return issues;
+}
+
+function createMeasurementSnapshot(measurement, revision) {
+  return {
+    outerBounds: measurement.outerBounds,
+    contentBounds: measurement.contentBounds,
+    overflow: measurement.overflow,
+    stability: measurement.stability,
+    measurementRevision: Math.max(1, Number(revision) || Number(measurement.measurementRevision) || 1),
+    measuredWith: measurement.measuredWith,
+  };
+}
+
+function normalizeBounds(bounds = {}) {
+  const left = Number(bounds.left) || 0;
+  const top = Number(bounds.top) || 0;
+  const width = Math.max(0, Number(bounds.width) || 0);
+  const height = Math.max(0, Number(bounds.height) || 0);
+  return {
+    left,
+    top,
+    right: Number.isFinite(Number(bounds.right)) ? Number(bounds.right) : left + width,
+    bottom: Number.isFinite(Number(bounds.bottom)) ? Number(bounds.bottom) : top + height,
+    width,
+    height,
+  };
+}
+
+function resolveImportedContentBounds(item, outerBounds) {
+  if (item?.type !== "codeBlock" || item.headerVisible === false) {
+    return { ...outerBounds };
+  }
+  const headerHeight = item.collapsed === true ? outerBounds.height : Math.min(38, outerBounds.height);
+  return {
+    left: outerBounds.left,
+    top: outerBounds.top + headerHeight,
+    right: outerBounds.right,
+    bottom: outerBounds.bottom,
+    width: outerBounds.width,
+    height: Math.max(0, outerBounds.height - headerHeight),
+  };
+}
+
+function resolveImportedMeasurementStability(item) {
+  if (item?.type === "codeBlock" && String(item.language || "").toLowerCase() === "mermaid") {
+    return item.previewMode === "preview" && item.mermaidRenderState !== "ready" ? "pending-resource" : "stable";
+  }
+  if ((item?.type === "mathBlock" || item?.type === "mathInline") && item.renderState !== "ready") {
+    return "pending-resource";
+  }
+  if (item?.type === "image" && !item.naturalWidth && !item.naturalHeight) {
+    return "pending-resource";
+  }
+  return "stable";
+}
+
+function resolveImportedMeasurementSource(item) {
+  if (item?.type === "codeBlock") return "code-block-layout";
+  if (item?.type === "table") return "table-layout";
+  if (item?.type === "text") return "text-layout";
+  if (item?.type === "mathBlock" || item?.type === "mathInline") return "math-layout";
+  if (item?.type === "image") return "intrinsic-resource";
+  return "model-bounds";
 }
 
 function collectFlowStackGroups(items = []) {

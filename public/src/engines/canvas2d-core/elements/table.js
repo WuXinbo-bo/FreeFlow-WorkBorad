@@ -100,8 +100,8 @@ export function normalizeTableElement(element = {}) {
     }
   );
   const normalizedTable = normalizeTableStructure(element.table || base.table || {});
-  const size = estimateTableElementSize(normalizedTable);
   const structuredImport = normalizeStructuredTableMeta(element.structuredImport);
+  const size = estimateTableElementSize(normalizedTable, Number(element.width) || 0);
   const sourceMeta = normalizeTableSourceMeta(element.sourceMeta);
   const mergedSourceMeta = {
     ...normalizeTableSourceMeta(structuredImport?.sourceMeta),
@@ -123,7 +123,9 @@ export function normalizeTableElement(element = {}) {
     rows: normalizedTable.rows.length,
     table: normalizedTable,
     width: Math.max(TABLE_MIN_WIDTH, Number(element.width ?? size.width) || size.width),
-    height: Math.max(TABLE_MIN_HEIGHT, Number(element.height ?? size.height) || size.height),
+    height: structuredImport
+      ? Math.max(TABLE_MIN_HEIGHT, Number(element.height) || 0, size.height)
+      : Math.max(TABLE_MIN_HEIGHT, Number(element.height ?? size.height) || size.height),
     x: Number(element.x ?? base.x) || 0,
     y: Number(element.y ?? base.y) || 0,
     locked: Boolean(element.locked ?? base.locked),
@@ -464,28 +466,39 @@ function normalizeTableCell(cell = {}, rowIndex = 0, cellIndex = 0) {
   };
 }
 
-function estimateTableElementSize(structure = {}) {
+function estimateTableElementSize(structure = {}, widthHint = 0) {
   const columns = Math.max(1, Number(structure?.columns) || 1);
-  const width = Math.max(
-    TABLE_MIN_WIDTH,
-    Math.min(
-      IMPORTED_TABLE_MAX_WIDTH,
-      Math.max(IMPORTED_TABLE_TARGET_WIDTH, columns * IMPORTED_TABLE_COLUMN_WIDTH)
-    )
+  const estimatedWidth = Math.min(
+    IMPORTED_TABLE_MAX_WIDTH,
+    Math.max(IMPORTED_TABLE_TARGET_WIDTH, columns * IMPORTED_TABLE_COLUMN_WIDTH)
   );
+  const width = Math.max(TABLE_MIN_WIDTH, Number(widthHint) || estimatedWidth);
   const rows = Array.isArray(structure?.rows) ? structure.rows : [];
+  const columnWidth = width / columns;
+  const rowHeights = rows.map(() => 42);
+  rows.forEach((row, rowIndex) => {
+    row.cells.forEach((cell) => {
+      const columnSpan = Math.max(1, Number(cell.colSpan) || 1);
+      const rowSpan = Math.min(rows.length - rowIndex, Math.max(1, Number(cell.rowSpan) || 1));
+      const contentWidth = Math.max(48, columnWidth * columnSpan - 24);
+      const charactersPerLine = Math.max(4, Math.floor(contentWidth / 8.4));
+      const visualLineCount = String(cell.plainText || "")
+        .split("\n")
+        .reduce((sum, line) => sum + Math.max(1, Math.ceil(Array.from(line).length / charactersPerLine)), 0);
+      const requiredHeight = Math.max(42, 22 + visualLineCount * 20);
+      const currentHeight = rowHeights.slice(rowIndex, rowIndex + rowSpan).reduce((sum, value) => sum + value, 0);
+      if (requiredHeight <= currentHeight) {
+        return;
+      }
+      const increase = Math.ceil((requiredHeight - currentHeight) / rowSpan);
+      for (let offset = 0; offset < rowSpan; offset += 1) {
+        rowHeights[rowIndex + offset] += increase;
+      }
+    });
+  });
   const height = Math.max(
     TABLE_MIN_HEIGHT,
-    Math.min(
-      1600,
-      rows.reduce((sum, row) => {
-        const rowHeight = Math.max(
-          42,
-          ...row.cells.map((cell) => Math.max(42, 22 + Math.max(1, cell.plainText.split("\n").length) * 20))
-        );
-        return sum + rowHeight;
-      }, 0) || TABLE_MIN_HEIGHT
-    )
+    Math.min(1600, rowHeights.reduce((sum, rowHeight) => sum + rowHeight, 0) || TABLE_MIN_HEIGHT)
   );
   return { width, height };
 }

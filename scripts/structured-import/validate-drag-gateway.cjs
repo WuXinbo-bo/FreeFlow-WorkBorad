@@ -33,6 +33,26 @@ async function main() {
   assert(fileDescriptor.channel === INPUT_CHANNELS.DRAG_DROP, "drag channel mismatch");
   assert(fileDescriptor.sourceKind === INPUT_SOURCE_KINDS.IMAGE_RESOURCE, "drag file sourceKind mismatch");
 
+  const fileAndTextDescriptor = gateway.fromDataTransfer(
+    createDataTransferMock({
+      files: [
+        {
+          name: "notes.md",
+          type: "text/markdown",
+          path: "D:\\tmp\\notes.md",
+          size: 128,
+        },
+      ],
+      textMap: {
+        "text/html": "<h2>Dragged heading</h2>",
+        "text/plain": "## Dragged heading",
+      },
+    }),
+    { origin: "canvas-drop" }
+  );
+  assert(fileAndTextDescriptor.entries.length === 3, "file drag discarded text representations");
+  assert(fileAndTextDescriptor.sourceKind === INPUT_SOURCE_KINDS.MIXED, "file and text drag should be mixed");
+
   const mixedDescriptor = gateway.fromDataTransfer(
     createDataTransferMock({
       files: [],
@@ -53,7 +73,7 @@ async function main() {
   const missingDescriptor = gateway.fromDataTransfer(null, {});
   assert(missingDescriptor.status === "error", "missing dataTransfer should be error");
 
-  console.log("[drag-gateway] ok: 3 scenarios validated");
+  console.log("[drag-gateway] ok: 4 scenarios validated");
 }
 
 function createDataTransferMock({ files, textMap }) {

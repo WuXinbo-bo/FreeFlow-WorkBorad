@@ -90,7 +90,7 @@ export function createEntryFromMimeType({
   if (safeMimeType === RICH_TEXT_CLIPBOARD_MIME) {
     const payload = parseRichTextClipboardPayload(safeValue);
     if (payload) {
-      return createTypedTextEntry(entryId, safeMimeType, INPUT_ENTRY_KINDS.TEXT, payload.plainText || payload.html || "", {
+      return createTypedTextEntry(entryId, safeMimeType, INPUT_ENTRY_KINDS.HTML, payload.html || payload.plainText || "", {
         text: payload.plainText || "",
         html: payload.html || "",
       });

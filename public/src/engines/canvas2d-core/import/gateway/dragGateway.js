@@ -83,13 +83,6 @@ function collectDragEntries(dataTransfer, { internalClipboardMime, preferHtmlTex
     entries.push(createFileEntry(file, `drag-file-${entryIndex++}`));
   }
 
-  if (files.length) {
-    return {
-      entries,
-      mimeTypes,
-    };
-  }
-
   const orderedMimeTypes = orderDragMimeTypes(mimeTypes, dataTransfer, { preferHtmlText });
   for (const mimeType of orderedMimeTypes) {
     const rawValue = safeGetData(dataTransfer, mimeType);

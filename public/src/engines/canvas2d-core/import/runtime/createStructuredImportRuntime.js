@@ -3,6 +3,10 @@ import { createDragGateway } from "../gateway/dragGateway.js";
 import { createContextMenuPasteAdapter } from "../gateway/contextMenuPasteAdapter.js";
 import { createParserRegistry } from "../parsers/parserRegistry.js";
 import { INPUT_ENTRY_KINDS } from "../protocols/inputDescriptor.js";
+import {
+  buildInputRepresentationPlan,
+  INPUT_REPRESENTATION_STATUS,
+} from "../protocols/inputRepresentationPlan.js";
 import { createFallbackStrategyManager } from "../fallbacks/fallbackStrategyManager.js";
 import { createDiagnosticsModel } from "../diagnostics/diagnosticsModel.js";
 import { createImportPipelineSwitchboard, IMPORT_PIPELINES } from "../rollout/pipelineSwitches.js";
@@ -11,7 +15,12 @@ import { createImportLogCollector } from "../diagnostics/importLogCollector.js";
 import { createRendererPipeline } from "../renderers/rendererPipeline.js";
 import { createLegacyElementAdapterRegistry } from "../renderers/legacyElementAdapterRegistry.js";
 import { createRenderPlanCommitLayer } from "../host/renderPlanCommitLayer.js";
+import {
+  getImportedBatchLayoutIssues,
+  stabilizeImportedBatchLayout,
+} from "../host/renderLayoutWriteback.js";
 import { runHostRolloutExperiment } from "../host/hostRolloutExperiment.js";
+import { getElementBounds, moveElement } from "../../elements/index.js";
 import { buildHostSearchResults } from "../host/hostSearchAdapter.js";
 import { buildHostExportSnapshot } from "../host/hostExportAdapter.js";
 import {
@@ -51,6 +60,7 @@ import {
   createInternalCompatibilityParser,
   INTERNAL_COMPATIBILITY_PARSER_ID,
 } from "../parsers/legacy/internalCompatibilityParser.js";
+import { createUriListParser, URI_LIST_PARSER_ID } from "../parsers/uriList/uriListParser.js";
 import { createGenericTextRenderer } from "../renderers/text/genericTextRenderer.js";
 import { createListRenderer } from "../renderers/list/listRenderer.js";
 import { createCodeBlockRenderer } from "../renderers/code/codeBlockRenderer.js";
@@ -64,6 +74,7 @@ const DEFAULT_PARSER_ENTRY_KIND_GATES = Object.freeze({
   [INTERNAL_COMPATIBILITY_PARSER_ID]: [INPUT_ENTRY_KINDS.INTERNAL_PAYLOAD],
   [FILE_RESOURCE_COMPATIBILITY_ADAPTER_ID]: [INPUT_ENTRY_KINDS.FILE],
   [IMAGE_RESOURCE_PARSER_ID]: [INPUT_ENTRY_KINDS.IMAGE],
+  [URI_LIST_PARSER_ID]: [INPUT_ENTRY_KINDS.URI],
   [LATEX_MATH_PARSER_ID]: [INPUT_ENTRY_KINDS.MATH, INPUT_ENTRY_KINDS.TEXT],
   [CODE_PARSER_ID]: [INPUT_ENTRY_KINDS.CODE, INPUT_ENTRY_KINDS.TEXT],
   [MARKDOWN_PARSER_ID]: [INPUT_ENTRY_KINDS.MARKDOWN],
@@ -81,6 +92,7 @@ const DEFAULT_PARSER_TIE_BREAK_RANKS = Object.freeze({
   [INTERNAL_COMPATIBILITY_PARSER_ID]: 100,
   [FILE_RESOURCE_COMPATIBILITY_ADAPTER_ID]: 95,
   [IMAGE_RESOURCE_PARSER_ID]: 90,
+  [URI_LIST_PARSER_ID]: 85,
   [LATEX_MATH_PARSER_ID]: 80,
   [CODE_PARSER_ID]: 70,
   [MARKDOWN_PARSER_ID]: 60,
@@ -142,20 +154,45 @@ export function createStructuredImportRuntime(options = {}) {
   });
 
   async function runDescriptor({ descriptor, board, anchorPoint, context = {} } = {}) {
-    const result = await runHostRolloutExperiment({
-      descriptor,
-      board,
-      anchorPoint,
-      registry: parserRegistry,
-      fallbackManager,
-      diagnosticsModel,
-      switchboard,
-      killSwitch,
-      rendererPipeline,
-      legacyAdapterRegistry,
-      commitLayer,
-      context,
-    });
+    const representationPlan = buildInputRepresentationPlan(descriptor);
+    const groupRuns = [];
+    for (const group of representationPlan.groups) {
+      throwIfAborted(context?.signal);
+      const result = await runHostRolloutExperiment({
+        descriptor: group.descriptor,
+        board,
+        anchorPoint,
+        registry: parserRegistry,
+        fallbackManager,
+        diagnosticsModel,
+        switchboard,
+        killSwitch,
+        rendererPipeline,
+        legacyAdapterRegistry,
+        commitLayer,
+        context,
+      });
+      groupRuns.push({ group, result });
+    }
+    const settledPlan = settleRepresentationPlan(representationPlan, groupRuns);
+    const successfulRuns = groupRuns.filter(({ result }) =>
+      result?.pipeline === "structured" && result?.commitResult?.ok && result.commitResult.items?.length
+    );
+    const result = successfulRuns.length > 1
+      ? combineRepresentationGroupRuns(successfulRuns, {
+          board,
+          batchId: context?.importBatchId,
+        })
+      : successfulRuns[0]?.result || groupRuns[0]?.result || createEmptyRepresentationResult();
+    result.representationPlan = settledPlan;
+    result.representationGroupResults = groupRuns.map(({ group, result: groupResult }) => ({
+      groupId: group.groupId,
+      kind: group.kind,
+      entryIds: group.entryIds.slice(),
+      ok: Boolean(groupResult?.commitResult?.ok && groupResult?.commitResult?.items?.length),
+      parserId: String(groupResult?.pipelineOutput?.parseResult?.parserId || ""),
+      errorCode: String(groupResult?.pipelineOutput?.parseResult?.error?.code || ""),
+    }));
     logCollector.pushTrace({
       descriptor,
       parseResult: result?.pipelineOutput?.parseResult || null,
@@ -216,6 +253,153 @@ export function createStructuredImportRuntime(options = {}) {
   };
 }
 
+function settleRepresentationPlan(plan, groupRuns) {
+  const outcomeByEntryId = new Map();
+  groupRuns.forEach(({ group, result }) => {
+    const consumed = Boolean(
+      result?.pipeline === "structured" && result?.commitResult?.ok && result.commitResult.items?.length
+    );
+    const status = consumed ? INPUT_REPRESENTATION_STATUS.CONSUMED : INPUT_REPRESENTATION_STATUS.FAILED;
+    const reason = consumed
+      ? `consumed-by-${String(result?.pipelineOutput?.parseResult?.parserId || "parser")}`
+      : String(result?.pipelineOutput?.parseResult?.error?.code || result?.reason || "representation-group-failed");
+    group.entryIds.forEach((entryId) => outcomeByEntryId.set(String(entryId || ""), { status, reason }));
+  });
+  return {
+    ...plan,
+    manifest: plan.manifest.map((entry) => {
+      if (entry.status !== INPUT_REPRESENTATION_STATUS.PLANNED) {
+        return { ...entry };
+      }
+      const outcome = outcomeByEntryId.get(String(entry.entryId || ""));
+      return outcome ? { ...entry, ...outcome } : { ...entry, status: INPUT_REPRESENTATION_STATUS.SKIPPED, reason: "group-not-run" };
+    }),
+  };
+}
+
+function combineRepresentationGroupRuns(groupRuns, { board, batchId } = {}) {
+  const resolvedBatchId = String(
+    batchId || groupRuns[0]?.result?.commitResult?.batchId || `import-batch-${Date.now()}`
+  );
+  const combinedItems = [];
+  const combinedCommits = [];
+  let nextTop = null;
+
+  groupRuns.forEach(({ group, result }) => {
+    const sourceItems = Array.isArray(result?.commitResult?.items) ? result.commitResult.items : [];
+    if (!sourceItems.length) {
+      return;
+    }
+    const sourceBounds = getGroupBounds(sourceItems);
+    const targetTop = nextTop == null ? sourceBounds.top : nextTop;
+    const deltaY = targetTop - sourceBounds.top;
+    const movedItems = sourceItems.map((item) => deltaY ? moveElement(item, 0, deltaY) : item);
+    movedItems.forEach((item) => {
+      const bounds = getElementBounds(item);
+      combinedItems.push({
+        ...item,
+        importBatch: {
+          ...(item?.importBatch && typeof item.importBatch === "object" ? item.importBatch : {}),
+          kind: "structured-import-batch-v1",
+          id: resolvedBatchId,
+          index: combinedItems.length,
+          representationGroupId: group.groupId,
+          representationGroupIndex: group.index,
+          sourceEntryIds: group.entryIds.slice(),
+          insertedX: bounds.left,
+          insertedY: bounds.top,
+          measuredWidth: bounds.width,
+          measuredHeight: bounds.height,
+        },
+      });
+    });
+    const movedBounds = getGroupBounds(movedItems);
+    nextTop = movedBounds.bottom + 24;
+    combinedCommits.push(...(Array.isArray(result?.commitResult?.commits) ? result.commitResult.commits : []));
+  });
+
+  const stabilizedItems = stabilizeImportedBatchLayout(combinedItems, { remeasure: true });
+  const itemById = new Map(stabilizedItems.map((item) => [String(item?.id || ""), item]));
+  const layoutIssues = getImportedBatchLayoutIssues(stabilizedItems);
+  const first = groupRuns[0]?.result || {};
+  const diagnostics = combineCommitDiagnostics(groupRuns);
+  const existingItems = Array.isArray(board?.items) ? board.items : [];
+  return {
+    ...first,
+    ok: stabilizedItems.length > 0 && layoutIssues.length === 0,
+    pipeline: "structured",
+    pipelineOutputs: groupRuns.map(({ result }) => result?.pipelineOutput || null),
+    commitResult: {
+      ok: stabilizedItems.length > 0 && layoutIssues.length === 0,
+      kind: "commit-result",
+      planId: groupRuns.map(({ result }) => String(result?.commitResult?.planId || "")).filter(Boolean).join("+"),
+      batchId: resolvedBatchId,
+      board: {
+        ...(board && typeof board === "object" ? board : {}),
+        items: existingItems.concat(stabilizedItems),
+        selectedIds: stabilizedItems.map((item) => item.id),
+      },
+      items: stabilizedItems,
+      commits: combinedCommits.map((commit) => {
+        const item = itemById.get(String(commit?.item?.id || "")) || commit?.item;
+        return { ...commit, item, bounds: item ? getElementBounds(item) : commit?.bounds };
+      }),
+      diagnostics,
+      layoutIssues,
+      stats: {
+        committedCount: stabilizedItems.length,
+        selectedCount: stabilizedItems.length,
+        structuredWarningCount: diagnostics.warnings.length,
+        layoutIssueCount: layoutIssues.length,
+        representationGroupCount: groupRuns.length,
+      },
+    },
+  };
+}
+
+function combineCommitDiagnostics(groupRuns) {
+  const warnings = [];
+  let operationCount = 0;
+  groupRuns.forEach(({ group, result }) => {
+    const diagnostics = result?.commitResult?.diagnostics || {};
+    operationCount += Number(diagnostics.operationCount) || 0;
+    (Array.isArray(diagnostics.warnings) ? diagnostics.warnings : []).forEach((warning) => {
+      warnings.push({ ...warning, representationGroupId: group.groupId });
+    });
+  });
+  return { operationCount, warnings };
+}
+
+function getGroupBounds(items) {
+  const bounds = (Array.isArray(items) ? items : []).map((item) => getElementBounds(item));
+  if (!bounds.length) {
+    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  }
+  const left = Math.min(...bounds.map((entry) => entry.left));
+  const top = Math.min(...bounds.map((entry) => entry.top));
+  const right = Math.max(...bounds.map((entry) => entry.right));
+  const bottom = Math.max(...bounds.map((entry) => entry.bottom));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function createEmptyRepresentationResult() {
+  return {
+    ok: false,
+    pipeline: "structured",
+    reason: "no-runnable-representation-group",
+    commitResult: null,
+  };
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  const error = new Error("Structured import was cancelled");
+  error.name = "AbortError";
+  throw error;
+}
+
 function mergeParserEntryKindGates(overrides) {
   const merged = { ...DEFAULT_PARSER_ENTRY_KIND_GATES };
   if (!overrides || typeof overrides !== "object") {
@@ -253,6 +437,7 @@ function registerBuiltinParsers(registry) {
     createInternalCompatibilityParser(),
     createFileResourceCompatibilityAdapter(),
     createImageResourceParser(),
+    createUriListParser(),
     createLatexMathParser(),
     createCodeParser(),
     createMarkdownParser(),

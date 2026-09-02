@@ -5,6 +5,7 @@ async function main() {
     applyRenderLayoutWriteback,
     applyRenderLayoutWritebackAsync,
     getImportedBatchLayoutIssues,
+    measureImportedElement,
     stabilizeImportedBatchLayout,
   } = await import(
     "../../public/src/engines/canvas2d-core/import/host/renderLayoutWriteback.js"
@@ -45,7 +46,7 @@ async function main() {
           hasHeader: true,
           rows: [
             { cells: [{ plainText: "Name", header: true }, { plainText: "Value", header: true }] },
-            { cells: [{ plainText: "A" }, { plainText: "1" }] },
+            { cells: [{ plainText: "A very long cell that must wrap across several visual lines when constrained", rowSpan: 2 }, { plainText: "1" }] },
             { cells: [{ plainText: "B" }, { plainText: "2" }] },
           ],
         },
@@ -70,7 +71,13 @@ async function main() {
   for (let index = 1; index < stabilized.length; index += 1) {
     const previous = stabilized[index - 1];
     const current = stabilized[index];
-    assert.ok(current.y >= previous.y + previous.height + 20, `items ${previous.id}/${current.id} overlap`);
+    const previousMeasurement = measureImportedElement(previous, { remeasure: false });
+    const currentMeasurement = measureImportedElement(current, { remeasure: false });
+    assert.ok(
+      currentMeasurement.outerBounds.top >= previousMeasurement.outerBounds.bottom + 20,
+      `items ${previous.id}/${current.id} overlap`
+    );
+    assert.equal(previous.importBatch?.measurement?.outerBounds?.height, previousMeasurement.outerBounds.height);
   }
 
   const controller = new AbortController();

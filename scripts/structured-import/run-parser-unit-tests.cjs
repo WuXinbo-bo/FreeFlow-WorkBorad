@@ -13,6 +13,8 @@ const VALIDATORS = [
   "validate-image-resource-parser.cjs",
   "validate-file-resource-compatibility-adapter.cjs",
   "validate-internal-compatibility-parser.cjs",
+  "validate-uri-list-parser.cjs",
+  "validate-representation-plan.cjs",
 ];
 
 function main() {

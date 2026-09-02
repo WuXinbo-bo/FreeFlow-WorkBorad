@@ -6621,43 +6621,45 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 
 .canvas-rich-editor h1,
 .canvas2d-rich-item h1 {
-  font-size: 2.2em;
+  font-size: 36px;
   font-weight: 800;
-  line-height: 1.15;
+  line-height: 1.25;
 }
 
 .canvas-rich-editor h2,
 .canvas2d-rich-item h2 {
-  font-size: 1.8em;
+  font-size: 30px;
   font-weight: 800;
-  line-height: 1.18;
+  line-height: 1.28;
 }
 
 .canvas-rich-editor h3,
 .canvas2d-rich-item h3 {
-  font-size: 1.55em;
+  font-size: 26px;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.3;
 }
 
 .canvas-rich-editor h4,
 .canvas2d-rich-item h4 {
-  font-size: 1.35em;
+  font-size: 22px;
   font-weight: 700;
-  line-height: 1.24;
+  line-height: 1.32;
 }
 
 .canvas-rich-editor h5,
 .canvas2d-rich-item h5 {
-  font-size: 1.18em;
+  font-size: 20px;
   font-weight: 700;
+  line-height: 1.35;
 }
 
 .canvas-rich-editor h6,
 .canvas2d-rich-item h6 {
-  font-size: 1.05em;
+  font-size: 18px;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
 
 .canvas-rich-editor blockquote,

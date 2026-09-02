@@ -2745,7 +2745,18 @@ function maybeWritebackMathOverlayFrame(item, node, scale = 1) {
   }
   item.width = nextWidth;
   item.height = nextHeight;
+  markImportedBatchLayoutWriteback(item);
   return true;
+}
+
+function markImportedBatchLayoutWriteback(item) {
+  if (!item?.importBatch?.id) {
+    return;
+  }
+  item.importBatch = {
+    ...item.importBatch,
+    layoutWritebackRevision: Math.max(0, Number(item.importBatch.layoutWritebackRevision) || 0) + 1,
+  };
 }
 
 function getAutoWidthOverlayMaxWidthPx(item, scale = 1) {
@@ -2848,6 +2859,7 @@ function maybeWritebackTextOverlayFrame(item, node, scale = 1) {
   if (item.type === "mindNode" || item.type === "mindSummary") {
     Object.assign(item, syncMindNodeTextMetrics(item));
   }
+  markImportedBatchLayoutWriteback(item);
   return true;
 }
 
@@ -8614,11 +8626,11 @@ let tablePointerSelectionState = {
     if (
       currentItems.length !== itemIds.length ||
       currentItems.some((item) => String(item?.importBatch?.id || "") !== String(batchId || "")) ||
-      hasImportedBatchPositionChanged(currentItems, historyEntry.afterItems)
+      hasImportedBatchUserMutation(currentItems, historyEntry.afterItems)
     ) {
       return "cancelled";
     }
-    const stabilizedItems = stabilizeImportedBatchLayout(currentItems, { remeasure: false });
+    const stabilizedItems = stabilizeImportedBatchLayout(currentItems, { remeasure: true });
     if (!hasElementGeometryChanged(currentItems, stabilizedItems)) {
       return "stable";
     }
@@ -8654,11 +8666,49 @@ let tablePointerSelectionState = {
     return null;
   }
 
-  function hasImportedBatchPositionChanged(items = [], historyItems = []) {
+  function hasImportedBatchUserMutation(items = [], historyItems = []) {
     const historyMap = new Map((Array.isArray(historyItems) ? historyItems : []).map((item) => [String(item?.id || ""), item]));
     return items.some((item) => {
       const previous = historyMap.get(String(item?.id || ""));
-      return !previous || Math.abs(Number(item.x || 0) - Number(previous.x || 0)) > 0.01 || Math.abs(Number(item.y || 0) - Number(previous.y || 0)) > 0.01;
+      if (!previous) {
+        return true;
+      }
+      if (
+        Math.abs(Number(item.x || 0) - Number(previous.x || 0)) > 0.01 ||
+        Math.abs(Number(item.y || 0) - Number(previous.y || 0)) > 0.01 ||
+        getImportedBatchContentSignature(item) !== getImportedBatchContentSignature(previous)
+      ) {
+        return true;
+      }
+      const geometryChanged =
+        Math.abs(Number(item.width || 0) - Number(previous.width || 0)) > 0.01 ||
+        Math.abs(Number(item.height || 0) - Number(previous.height || 0)) > 0.01;
+      const layoutWritebackAdvanced =
+        Number(item?.importBatch?.layoutWritebackRevision || 0) >
+        Number(previous?.importBatch?.layoutWritebackRevision || 0);
+      return geometryChanged && !layoutWritebackAdvanced;
+    });
+  }
+
+  function getImportedBatchContentSignature(item = {}) {
+    return JSON.stringify({
+      type: item.type || "",
+      title: item.title || "",
+      text: item.text || "",
+      html: item.html || "",
+      plainText: item.plainText || "",
+      richTextDocument: item.richTextDocument || null,
+      code: item.code || "",
+      language: item.language || "",
+      table: item.table || null,
+      formula: item.formula || "",
+      fontSize: Number(item.fontSize || 0) || 0,
+      textBoxLayoutMode: item.textBoxLayoutMode || "",
+      textResizeMode: item.textResizeMode || "",
+      wrapMode: item.wrapMode || "",
+      wrap: Boolean(item.wrap),
+      autoHeight: item.autoHeight !== false,
+      collapsed: Boolean(item.collapsed),
     });
   }
 
@@ -12389,6 +12439,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.canvas?.clientHeight || refs.canvas?.height || 0
     );
     let mathLayoutWritebackChanged = false;
+    const mathLayoutWritebackBatchIds = new Set();
 
     const candidateRecords = getVisibleSceneRecordsByTypes(visibleScene, ["mathBlock", "mathInline"], {
       marginPx: 120,
@@ -12568,6 +12619,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         maybeWritebackMathOverlayFrame(item, node, 1)
       ) {
         mathLayoutWritebackChanged = true;
+        const batchId = String(item?.importBatch?.id || "");
+        if (batchId) {
+          mathLayoutWritebackBatchIds.add(batchId);
+        }
       }
       presentationSnapshotController.commit(node, {
         ...presentation,
@@ -12588,10 +12643,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
 
     if (mathLayoutWritebackChanged) {
+      let importedBatchLayoutChanged = false;
+      mathLayoutWritebackBatchIds.forEach((batchId) => {
+        if (stabilizeImportedBatchById(batchId) === "updated") {
+          importedBatchLayoutChanged = true;
+        }
+      });
       syncBoard({
-        persist: false,
+        persist: importedBatchLayoutChanged,
         emit: true,
-        markDirty: false,
+        markDirty: importedBatchLayoutChanged,
         sceneChange: true,
         fullOverlayRescan: false,
         reason: "math-layout-writeback",
@@ -21650,6 +21711,51 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return result.changed;
   }
 
+  function buildUnifiedDropDescriptor(dataTransfer, anchorPoint) {
+    const gatewayDescriptor = structuredImportRuntime.dragGateway.fromDataTransfer(dataTransfer, {
+      origin: "engine-drop",
+      anchor: anchorPoint,
+    });
+    const droppedFiles = Array.from(dataTransfer?.files || []);
+    const fileDescriptor = droppedFiles.length ? buildDragFileDescriptor(droppedFiles, anchorPoint) : null;
+    const richDescriptor = String(dataTransfer?.getData?.("text/html") || "").trim()
+      ? buildDragHtmlDescriptor(dataTransfer, anchorPoint)
+      : null;
+    const bodyKinds = new Set([
+      INPUT_ENTRY_KINDS.TEXT,
+      INPUT_ENTRY_KINDS.HTML,
+      INPUT_ENTRY_KINDS.MARKDOWN,
+      INPUT_ENTRY_KINDS.CODE,
+      INPUT_ENTRY_KINDS.MATH,
+    ]);
+    const entries = [
+      ...(Array.isArray(fileDescriptor?.entries) ? fileDescriptor.entries : []),
+      ...(Array.isArray(richDescriptor?.entries) ? richDescriptor.entries : []),
+      ...(Array.isArray(gatewayDescriptor?.entries)
+        ? gatewayDescriptor.entries.filter((entry) => {
+            if (entry?.kind === INPUT_ENTRY_KINDS.FILE || entry?.kind === INPUT_ENTRY_KINDS.IMAGE) {
+              return !fileDescriptor;
+            }
+            return !richDescriptor || !bodyKinds.has(entry?.kind);
+          })
+        : []),
+    ];
+    if (!entries.length) {
+      return gatewayDescriptor;
+    }
+    const sourceKinds = new Set(entries.map((entry) => String(entry?.kind || "")).filter(Boolean));
+    return createInputDescriptor({
+      ...gatewayDescriptor,
+      sourceKind: sourceKinds.size > 1
+        ? INPUT_SOURCE_KINDS.MIXED
+        : fileDescriptor?.sourceKind || richDescriptor?.sourceKind || gatewayDescriptor?.sourceKind,
+      status: "ready",
+      errorCode: "none",
+      mimeTypes: Array.from(new Set(entries.map((entry) => String(entry?.mimeType || "")).filter(Boolean))),
+      entries,
+    });
+  }
+
   function finishPendingWheelSession({ persist = false } = {}) {
     if (interactionRecoveryTimer) {
       window.clearTimeout(interactionRecoveryTimer);
@@ -25350,46 +25456,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       return;
     }
-    const droppedFiles = Array.from(event.dataTransfer?.files || []);
-    if (droppedFiles.length) {
-      const structuredFileHandled = await tryStructuredImportDescriptor(
-        buildDragFileDescriptor(droppedFiles, scenePoint),
-        scenePoint,
-        {
-          reason: "拖拽导入",
-          statusText: `已导入 ${droppedFiles.length} 个文件`,
-          context: {
-            origin: "engine-drop-files",
-          },
-        }
-      );
-      if (structuredFileHandled) {
-        return;
-      }
-    }
-    const html = String(event.dataTransfer?.getData?.("text/html") || "");
-    const text = String(event.dataTransfer?.getData?.("text/plain") || event.dataTransfer?.getData?.("text") || "");
-    if (html.trim() && !(text && hasMarkdownMathSyntax(text) && !htmlContainsRenderableMath(html))) {
-      const structuredHtmlHandled = await tryStructuredImportDescriptor(
-        buildDragHtmlDescriptor(event.dataTransfer, scenePoint),
-        scenePoint,
-        {
-          reason: "拖拽导入",
-          statusText: "已导入网页富文本",
-          context: {
-            origin: "engine-drop-html",
-          },
-        }
-      );
-      if (structuredHtmlHandled) {
-        return;
-      }
-    }
     const structuredHandled = await tryStructuredImportDescriptor(
-      structuredImportRuntime.dragGateway.fromDropEvent(event, {
-        origin: "engine-drop",
-        anchor: scenePoint,
-      }),
+      buildUnifiedDropDescriptor(event.dataTransfer, scenePoint),
       scenePoint,
       {
         reason: "拖拽导入",
