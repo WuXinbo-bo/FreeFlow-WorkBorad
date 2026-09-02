@@ -164,6 +164,23 @@ async function main() {
       scene: Number(getComputedStyle(document.querySelector("#canvas2d-scene-root")).zIndex),
     }));
     assert(previewLayering.preview < previewLayering.scene, "file card scene must remain above its attached preview");
+    const previewChrome = await page.evaluate(() => {
+      const preview = document.querySelector(".canvas2d-file-preview-react");
+      const head = preview?.querySelector(".canvas2d-file-preview-react-head");
+      const actions = preview?.querySelector(".canvas2d-file-preview-react-actions");
+      const shell = preview?.querySelector(".canvas2d-file-preview-react-shell");
+      return {
+        actionParentIsHead: actions?.parentElement === head,
+        rowCount: getComputedStyle(preview).gridTemplateRows.split(" ").length,
+        headHeight: Math.round(head?.getBoundingClientRect?.().height || 0),
+        shellTopDelta: Math.abs((shell?.getBoundingClientRect?.().top || 0) - (head?.getBoundingClientRect?.().bottom || 0)),
+        toolbarLabel: actions?.getAttribute("aria-label") || "",
+      };
+    });
+    assert(previewChrome.actionParentIsHead, "preview controls must share the compact glass header", previewChrome);
+    assert.strictEqual(previewChrome.rowCount, 2, "preview shell should use one chrome row and one document row");
+    assert(previewChrome.headHeight <= 50 && previewChrome.shellTopDelta < 1, "preview header should remain compact and attached", previewChrome);
+    assert.strictEqual(previewChrome.toolbarLabel, "预览控制");
 
     await page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");

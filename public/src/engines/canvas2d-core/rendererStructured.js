@@ -8,9 +8,14 @@ import {
   scaleSceneValue,
 } from "./viewportMetrics.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
+import { flattenTableStructureToMatrix } from "./elements/table.js";
+import {
+  STRUCTURED_CODE_VISUAL_THEME,
+  STRUCTURED_TABLE_VISUAL_THEME,
+} from "./render/structuredVisualTheme.js";
 
-const STRUCTURED_CODE_BLOCK_RADIUS_PX = 12;
-const STRUCTURED_TABLE_RADIUS_PX = 12;
+const STRUCTURED_CODE_BLOCK_RADIUS_PX = STRUCTURED_CODE_VISUAL_THEME.radius;
+const STRUCTURED_TABLE_RADIUS_PX = STRUCTURED_TABLE_VISUAL_THEME.radius;
 
 function drawRoundedRectPath(ctx, x, y, width, height, radius = 12) {
   drawStableRoundedRectPath(ctx, x, y, width, height, radius, {
@@ -111,21 +116,27 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = fa
   const headerHeight = hasLanguage ? scaleSceneValue(view, 22, { min: compact ? 1 : 16 }) : 0;
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_CODE_BLOCK_RADIUS_PX);
-  // Use an opaque light theme in canvas fallback mode to avoid dark tinting over dark stage backgrounds.
-  ctx.fillStyle = "rgba(248, 250, 252, 0.99)";
+  ctx.fillStyle = STRUCTURED_CODE_VISUAL_THEME.surface;
   ctx.fill();
-  ctx.strokeStyle = "rgba(203, 213, 225, 0.95)";
+  ctx.strokeStyle = STRUCTURED_CODE_VISUAL_THEME.border;
   ctx.lineWidth = 1;
   ctx.stroke();
   if (hasLanguage) {
     ctx.save();
-    drawRoundedRectPath(ctx, x, y, width, Math.max(1, headerHeight), STRUCTURED_CODE_BLOCK_RADIUS_PX);
-    ctx.fillStyle = "rgba(241, 245, 249, 0.99)";
-    ctx.fill();
+    drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_CODE_BLOCK_RADIUS_PX);
+    ctx.clip();
+    ctx.fillStyle = STRUCTURED_CODE_VISUAL_THEME.headerSurface;
+    ctx.fillRect(x, y, width, Math.max(1, headerHeight));
     ctx.restore();
+    ctx.beginPath();
+    ctx.moveTo(x, y + headerHeight);
+    ctx.lineTo(x + width, y + headerHeight);
+    ctx.strokeStyle = STRUCTURED_CODE_VISUAL_THEME.divider;
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
   const fontPx = Math.max(1, scaleSceneValue(view, Number(item?.fontSize || 16), { min: compact ? 1 : 12 }));
-  ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+  ctx.fillStyle = STRUCTURED_CODE_VISUAL_THEME.text;
   ctx.font = `${fontPx}px Consolas, "Courier New", monospace`;
   ctx.textBaseline = "top";
   const labelFontPx = Math.max(1, scaleSceneValue(view, 11, { min: compact ? 1 : 9 }));
@@ -137,10 +148,10 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = fa
   const maxVisibleLines = Math.max(1, Math.floor((contentBottom - contentTop) / lineHeight));
   const wrappedLines = buildWrappedCodeLines(ctx, lines, contentWidth);
   if (hasLanguage) {
-    ctx.fillStyle = "rgba(51, 65, 85, 0.95)";
+    ctx.fillStyle = STRUCTURED_CODE_VISUAL_THEME.mutedText;
     ctx.font = `600 ${labelFontPx}px "Segoe UI", sans-serif`;
     ctx.fillText(language, contentLeft, y + scaleSceneValue(view, sceneMetrics.languageLabelOffsetY));
-    ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+    ctx.fillStyle = STRUCTURED_CODE_VISUAL_THEME.text;
     ctx.font = `${fontPx}px Consolas, "Courier New", monospace`;
   }
   ctx.save();
@@ -161,13 +172,14 @@ function drawCodeBlock(ctx, item, view, selected, hover, helpers, { compact = fa
 function drawTable(ctx, item, view, selected, hover, helpers, { compact = false } = {}) {
   const tableGrid = getStructuredTableSceneGrid(item);
   const { x, y, width, height } = toScreenRect(item, view);
-  const rows = tableGrid.rows;
+  const rows = flattenTableStructureToMatrix(item?.table || {});
   const rowHeight = scaleSceneValue(view, tableGrid.rowHeight, { min: 0.5 });
   const colWidth = scaleSceneValue(view, tableGrid.columnWidth, { min: 0.5 });
-  const headerFill = "rgba(241, 245, 249, 0.98)";
-  const cellFill = "rgba(255, 255, 255, 0.985)";
-  const stroke = "rgba(148, 163, 184, 0.38)";
-  const textColor = "#0f172a";
+  const headerFill = STRUCTURED_TABLE_VISUAL_THEME.headerSurface;
+  const cellFill = STRUCTURED_TABLE_VISUAL_THEME.surface;
+  const alternateFill = STRUCTURED_TABLE_VISUAL_THEME.alternateSurface;
+  const stroke = STRUCTURED_TABLE_VISUAL_THEME.divider;
+  const textColor = STRUCTURED_TABLE_VISUAL_THEME.text;
   const fontPx = Math.max(1, scaleSceneValue(view, 12, { min: compact ? 1 : 9 }));
   const lineHeight = Math.max(fontPx * 1.35, scaleSceneValue(view, 15, { min: compact ? 1 : 11 }));
   const padX = scaleSceneValue(view, 8, { min: compact ? 0.5 : 5 });
@@ -176,43 +188,63 @@ function drawTable(ctx, item, view, selected, hover, helpers, { compact = false 
   drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_TABLE_RADIUS_PX);
   ctx.fillStyle = cellFill;
   ctx.fill();
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  ctx.clip();
   ctx.font = `${fontPx}px "Segoe UI", "PingFang SC", sans-serif`;
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
   rows.forEach((row, rowIndex) => {
-    const cells = Array.isArray(row?.cells) ? row.cells : [];
+    const cells = Array.isArray(row) ? row : Array.isArray(row?.cells) ? row.cells : [];
     cells.forEach((cell, cellIndex) => {
+      if (cell?.covered) {
+        return;
+      }
       const cellLeft = x + cellIndex * colWidth;
       const cellTop = y + rowIndex * rowHeight;
+      const cellWidth = Math.max(colWidth, colWidth * Math.max(1, Number(cell?.colSpan || 1)));
+      const cellHeight = Math.max(rowHeight, rowHeight * Math.max(1, Number(cell?.rowSpan || 1)));
       ctx.save();
       ctx.beginPath();
-      ctx.rect(cellLeft, cellTop, colWidth, rowHeight);
+      ctx.rect(cellLeft, cellTop, cellWidth, cellHeight);
       ctx.clip();
-      ctx.fillStyle = cell.header ? headerFill : cellFill;
-      ctx.fillRect(cellLeft, cellTop, colWidth, rowHeight);
+      ctx.fillStyle = cell.header ? headerFill : rowIndex % 2 === 1 ? alternateFill : cellFill;
+      ctx.fillRect(cellLeft, cellTop, cellWidth, cellHeight);
       ctx.strokeStyle = stroke;
-      ctx.strokeRect(cellLeft, cellTop, colWidth, rowHeight);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cellLeft, cellTop, cellWidth, cellHeight);
       ctx.fillStyle = textColor;
-      ctx.font = `${cell.header ? "700" : "500"} ${fontPx}px "Segoe UI", "PingFang SC", sans-serif`;
+      ctx.font = `${cell.header ? STRUCTURED_TABLE_VISUAL_THEME.headerWeight : STRUCTURED_TABLE_VISUAL_THEME.bodyWeight} ${fontPx}px "Segoe UI", "PingFang SC", sans-serif`;
+      const align = ["center", "right"].includes(String(cell?.align || "").toLowerCase())
+        ? String(cell.align).toLowerCase()
+        : "left";
+      ctx.textAlign = align;
       const text = sanitizeText(cell?.plainText || "");
       const lines = buildWrappedTableCellLines(
         ctx,
         text,
-        Math.max(8, colWidth - padX * 2),
-        Math.max(1, Math.floor((rowHeight - padY * 2) / Math.max(1, lineHeight)))
+        Math.max(8, cellWidth - padX * 2),
+        Math.max(1, Math.floor((cellHeight - padY * 2) / Math.max(1, lineHeight)))
       );
+      const textX =
+        align === "center"
+          ? cellLeft + cellWidth / 2
+          : align === "right"
+            ? cellLeft + cellWidth - padX
+            : cellLeft + padX;
       lines.forEach((line, index) => {
         const lineY = cellTop + padY + index * lineHeight;
-        if (lineY + lineHeight <= cellTop + rowHeight - padY + 1) {
-          ctx.fillText(line, cellLeft + padX, lineY);
+        if (lineY + lineHeight <= cellTop + cellHeight - padY + 1) {
+          ctx.fillText(line, textX, lineY);
         }
       });
       ctx.restore();
     });
   });
+  ctx.restore();
+  ctx.save();
+  drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_TABLE_RADIUS_PX);
+  ctx.strokeStyle = STRUCTURED_TABLE_VISUAL_THEME.border;
+  ctx.lineWidth = 1;
+  ctx.stroke();
   helpers.drawSelectionFrame(ctx, x, y, width, height, selected, hover);
   if (selected) {
     helpers.drawHandles(ctx, item, view);

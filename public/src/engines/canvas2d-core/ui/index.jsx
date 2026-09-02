@@ -1564,19 +1564,19 @@ function FileCardAttachedPreview({ request = null, board = null, bridge = null }
           <strong title={fileName}>{fileName}</strong>
           <span>{previewLabel.noun} 打印预览</span>
         </div>
-        <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览">
-          ×
-        </button>
-      </div>
-      <div className="canvas2d-file-preview-react-actions">
-        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom - 0.1)}>-</button>
-        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, FILE_CARD_PREVIEW_DEFAULT_ZOOM)}>
-          {Math.round(previewZoom * 100)}%
-        </button>
-        <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom + 0.1)}>+</button>
-        <button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)}>
-          {request.expanded ? "收起" : "全部展开"}
-        </button>
+        <div className="canvas2d-file-preview-react-actions" role="toolbar" aria-label="预览控制">
+          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom - 0.1)} aria-label="缩小预览" title="缩小预览">-</button>
+          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, FILE_CARD_PREVIEW_DEFAULT_ZOOM)} aria-label="重置预览缩放" title="重置预览缩放">
+            {Math.round(previewZoom * 100)}%
+          </button>
+          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom + 0.1)} aria-label="放大预览" title="放大预览">+</button>
+          <button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)} aria-label={request.expanded ? "收起预览" : "展开预览"} title={request.expanded ? "收起预览" : "展开预览"}>
+            {request.expanded ? "收起" : "展开"}
+          </button>
+          <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览" title="关闭预览">
+            ×
+          </button>
+        </div>
       </div>
       <div className="canvas2d-file-preview-react-shell">
         <div ref={scrollRef} className="canvas2d-file-preview-react-scroll" tabIndex={0} aria-label={previewLabel.scrollAriaLabel}>

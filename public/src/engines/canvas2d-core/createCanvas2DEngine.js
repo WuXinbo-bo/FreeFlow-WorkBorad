@@ -164,6 +164,7 @@ import {
   normalizeMathRenderState,
   scaleSceneValue,
 } from "./viewportMetrics.js";
+import { applyStructuredVisualThemeVariables } from "./render/structuredVisualTheme.js";
 import {
   getSceneRecord,
   getSceneViewportBounds,
@@ -9570,6 +9571,7 @@ let tablePointerSelectionState = {
     } else if (refs.tableEditor.parentElement !== refs.surface) {
       refs.surface.appendChild(refs.tableEditor);
     }
+    applyStructuredVisualThemeVariables(refs.tableEditor);
     ensureTableCellRichEditorHost();
 
     refs.tableToolbar = refs.fixedOverlayHost.querySelector("#canvas-table-toolbar");
@@ -9610,6 +9612,7 @@ let tablePointerSelectionState = {
       refs.codeBlockEditor.setAttribute("aria-label", "编辑代码块");
       refs.surface.appendChild(refs.codeBlockEditor);
     }
+    applyStructuredVisualThemeVariables(refs.codeBlockEditor);
     codeBlockEditor.setHost(refs.codeBlockEditor);
 
     refs.contextMenu = refs.surface.querySelector("#canvas2d-context-menu");
@@ -13710,6 +13713,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                         const tag = cell.header ? "th" : "td";
                         const cellHtml = renderTableCellStaticHtml(cell);
                         const cellPlainText = sanitizeText(String(cell?.plainText || htmlToPlainText(cellHtml)));
+                        const cellAlign = ["center", "right"].includes(String(cell?.align || "").toLowerCase())
+                          ? String(cell.align).toLowerCase()
+                          : "left";
                         return `
                           <${tag}
                             spellcheck="false"
@@ -13718,6 +13724,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
                             data-column-index="${columnIndex}"
                             data-row-span="${Math.max(1, Number(cell.rowSpan || 1))}"
                             data-column-span="${Math.max(1, Number(cell.colSpan || 1))}"
+                            data-cell-align="${cellAlign}"
                             rowspan="${Math.max(1, Number(cell.rowSpan || 1))}"
                             colspan="${Math.max(1, Number(cell.colSpan || 1))}"
                             data-header="${cell.header ? "1" : "0"}"

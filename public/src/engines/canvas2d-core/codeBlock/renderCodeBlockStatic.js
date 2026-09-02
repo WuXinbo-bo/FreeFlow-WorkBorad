@@ -2,6 +2,7 @@ import { sanitizeText } from "../utils.js";
 import { getCodeBlockSceneMetrics } from "./measureCodeBlockLayout.js";
 import { isMermaidCodeBlock } from "../elements/codeBlock.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
+import { applyStructuredVisualThemeVariables } from "../render/structuredVisualTheme.js";
 import {
   getCodeBlockLanguageDisplayLabel,
   normalizeCodeBlockLanguageTag,
@@ -74,7 +75,6 @@ function buildCodeBlockHeaderMeta(item = {}, languageLabel = "") {
     <span
       class="canvas2d-code-block-mode"
       title="${escapeHtml(`Mermaid ${modeLabel}模式`)}"
-      style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:20px;padding:0 7px;border-radius:999px;border:1px solid rgba(148,163,184,0.35);background:rgba(255,255,255,0.85);font-size:11px;font-weight:600;color:#475569;"
     >${escapeHtml(modeLabel)}</span>
   `;
 }
@@ -134,42 +134,10 @@ function syncMermaidPreviewSizing(node, item = {}, scale = 1) {
   }
 }
 
-function applyLightCodeBlockTheme(node) {
-  if (!(node instanceof HTMLDivElement)) {
-    return;
-  }
-  node.style.setProperty("background", "#f8fafc", "important");
-  node.style.setProperty("border-color", "rgba(203, 213, 225, 0.95)", "important");
-  node.style.setProperty("color", "#0f172a", "important");
-  node.style.setProperty("box-shadow", "0 2px 8px rgba(15, 23, 42, 0.08)", "important");
-  const header = node.querySelector(".canvas2d-code-block-header");
-  if (header instanceof HTMLElement) {
-    header.style.setProperty("background", "#f1f5f9", "important");
-    header.style.setProperty("border-bottom-color", "rgba(226, 232, 240, 0.95)", "important");
-    header.style.setProperty("color", "#334155", "important");
-    header.style.setProperty("gap", "8px", "important");
-  }
-  const languageGroup = node.querySelector(".canvas2d-code-block-header-meta");
-  if (languageGroup instanceof HTMLElement) {
-    languageGroup.style.setProperty("display", "inline-flex", "important");
-    languageGroup.style.setProperty("align-items", "center", "important");
-    languageGroup.style.setProperty("gap", "6px", "important");
-    languageGroup.style.setProperty("min-width", "0", "important");
-  }
-  const copy = node.querySelector(".canvas2d-code-block-copy");
-  if (copy instanceof HTMLElement) {
-    copy.style.setProperty("background", "#ffffff", "important");
-    copy.style.setProperty("border-color", "rgba(203, 213, 225, 0.95)", "important");
-    copy.style.setProperty("color", "#334155", "important");
-  }
-  const gutter = node.querySelector(".canvas2d-code-block-gutter");
-  if (gutter instanceof HTMLElement) {
-    gutter.style.setProperty("border-right-color", "rgba(226, 232, 240, 0.95)", "important");
-    gutter.style.setProperty("color", "#94a3b8", "important");
-  }
+function applyCodeBlockTheme(node) {
+  applyStructuredVisualThemeVariables(node);
   const pre = node.querySelector(".canvas2d-code-block-pre");
   if (pre instanceof HTMLElement) {
-    pre.style.setProperty("color", "#0f172a", "important");
     pre.style.tabSize = node.style.getPropertyValue("--code-block-tab-size") || "2";
     pre.style.MozTabSize = node.style.getPropertyValue("--code-block-tab-size") || "2";
   }
@@ -493,9 +461,9 @@ function applyMermaidPreviewError(node, markupSignature, mermaidCacheKey, error)
   const message = String(error?.message || error || "Mermaid 渲染失败").trim() || "Mermaid 渲染失败";
   previewNode.dataset.renderState = "error";
   previewNode.innerHTML = `
-    <div class="canvas2d-code-block-mermaid-error" style="color:#b91c1c;font-weight:600;">Mermaid 渲染失败</div>
-    <div class="canvas2d-code-block-mermaid-error-detail" style="margin-top:6px;color:#7f1d1d;font-size:12px;line-height:1.45;">${escapeHtml(message)}</div>
-    <pre class="canvas2d-code-block-pre" style="margin-top:10px;"><code>${escapeHtml(node.dataset.mermaidSource || "")}</code></pre>
+    <div class="canvas2d-code-block-mermaid-error">Mermaid 渲染失败</div>
+    <div class="canvas2d-code-block-mermaid-error-detail">${escapeHtml(message)}</div>
+    <pre class="canvas2d-code-block-pre canvas2d-code-block-mermaid-source"><code>${escapeHtml(node.dataset.mermaidSource || "")}</code></pre>
   `;
   node.dataset.mermaidState = "error";
 }
@@ -541,8 +509,8 @@ function renderMermaidPreview(node, item = {}, options = {}) {
   const code = sanitizeText(item.code ?? item.text ?? item.plainText ?? "");
   const showHeader = options.showHeader !== false && item.headerVisible !== false;
   const emptyStateMarkup = `
-    <div class="canvas2d-code-block-mermaid-preview" data-render-state="empty" style="display:flex;align-items:center;justify-content:center;min-height:100%;padding:12px;">
-      <div class="canvas2d-code-block-mermaid-loading" style="display:flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:12px;background:rgba(241,245,249,0.9);border:1px solid rgba(203,213,225,0.8);color:#64748b;font-size:12px;font-weight:600;">
+    <div class="canvas2d-code-block-mermaid-preview" data-render-state="empty">
+      <div class="canvas2d-code-block-mermaid-loading">
         Mermaid 内容为空
       </div>
     </div>
@@ -555,8 +523,8 @@ function renderMermaidPreview(node, item = {}, options = {}) {
       </div>
     ` : ""}
     <div class="canvas2d-code-block-body is-mermaid-preview">
-      ${code ? `<div class="canvas2d-code-block-mermaid-preview" data-render-state="rendering" style="display:flex;align-items:center;justify-content:center;min-height:100%;padding:12px;">
-        <div class="canvas2d-code-block-mermaid-loading" style="display:flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:12px;background:rgba(241,245,249,0.9);border:1px solid rgba(203,213,225,0.8);color:#475569;font-size:12px;font-weight:600;">
+      ${code ? `<div class="canvas2d-code-block-mermaid-preview" data-render-state="rendering">
+        <div class="canvas2d-code-block-mermaid-loading">
           正在渲染 Mermaid
         </div>
       </div>` : emptyStateMarkup}
@@ -844,7 +812,7 @@ export function renderCodeBlockStatic(node, item = {}, options = {}) {
     node.dataset.mermaidState = "";
     node.dataset.mermaidCacheKey = "";
   }
-  applyLightCodeBlockTheme(node);
+  applyCodeBlockTheme(node);
 }
 
 export function getCodeBlockHighlightRuntimeStats() {

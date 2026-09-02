@@ -6960,16 +6960,12 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   .canvas-table-editor {
     position: absolute;
     z-index: 8;
-    border: 1px solid rgba(148, 163, 184, 0.32);
-    border-radius: 16px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.995), rgba(248, 250, 252, 0.985)),
-      rgba(255, 255, 255, 0.995);
+    border: 1px solid var(--canvas-table-border, rgba(148, 163, 184, 0.42));
+    border-radius: var(--canvas-table-radius, 8px);
+    background: var(--canvas-table-surface, rgba(255, 255, 255, 0.99));
     box-sizing: border-box;
     overflow: hidden;
-    box-shadow:
-      0 18px 40px rgba(15, 23, 42, 0.14),
-      0 0 0 1px rgba(255, 255, 255, 0.44) inset;
+    box-shadow: var(--canvas-table-shadow, 0 6px 18px rgba(15, 23, 42, 0.07));
     pointer-events: auto;
     overflow: visible;
     transition:
@@ -6989,12 +6985,10 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     height: 100%;
     overflow: auto;
     padding: 0 30px 30px 0;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(248, 250, 252, 0.68)),
-      rgba(255, 255, 255, 0.92);
+    background: var(--canvas-table-surface, rgba(255, 255, 255, 0.99));
     box-sizing: border-box;
     border-radius: inherit;
-    border: 1px solid rgba(148, 163, 184, 0.32);
+    border: 0;
     overflow: auto;
   }
 
@@ -7129,8 +7123,8 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
-    font: 500 var(--canvas-table-editor-font-size, 13px) "Segoe UI", "PingFang SC", sans-serif;
-    color: #0f172a;
+    font: var(--canvas-table-body-weight, 400) var(--canvas-table-editor-font-size, 13px) "Segoe UI", "PingFang SC", sans-serif;
+    color: var(--canvas-table-text, #172033);
   }
 
   .canvas-table-editor-grid tr {
@@ -7144,10 +7138,10 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     min-height: var(--canvas-table-editor-row-height, auto);
     max-height: var(--canvas-table-editor-row-height, none);
     padding: var(--canvas-table-editor-cell-pad-y, 7px) var(--canvas-table-editor-cell-pad-x, 10px);
-    border: 1px solid rgba(148, 163, 184, 0.38);
+    border: 1px solid var(--canvas-table-divider, rgba(148, 163, 184, 0.24));
     vertical-align: top;
     text-align: left;
-    background: rgba(255, 255, 255, 0.98);
+    background: var(--canvas-table-surface, rgba(255, 255, 255, 0.99));
     outline: none;
     white-space: pre-wrap;
     word-break: break-word;
@@ -7170,8 +7164,20 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   }
 
   .canvas-table-editor-grid th {
-    font-weight: 700;
-    background: rgba(241, 245, 249, 0.98);
+    font-weight: var(--canvas-table-header-weight, 650);
+    background: var(--canvas-table-header-surface, rgba(241, 245, 249, 0.94));
+  }
+
+  .canvas-table-editor-grid tr:nth-child(even) td {
+    background: var(--canvas-table-alternate-surface, rgba(248, 250, 252, 0.68));
+  }
+
+  .canvas-table-editor-grid [data-cell-align="center"] {
+    text-align: center;
+  }
+
+  .canvas-table-editor-grid [data-cell-align="right"] {
+    text-align: right;
   }
 
   .canvas-table-editor-grid th.is-selected,
@@ -9187,11 +9193,11 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid rgba(203, 213, 225, 0.95);
-  border-radius: 12px;
-  background: #f8fafc;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
-  color: #0f172a;
+  border: 1px solid var(--canvas-code-border, rgba(148, 163, 184, 0.42));
+  border-radius: var(--canvas-code-radius, 8px);
+  background: var(--canvas-code-surface, #fbfcfe);
+  box-shadow: var(--canvas-code-shadow, 0 6px 18px rgba(15, 23, 42, 0.08));
+  color: var(--canvas-code-text, #172033);
   pointer-events: auto;
 }
 
@@ -9211,26 +9217,33 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
   min-height: var(--code-block-header-height, 34px);
   padding: 0 10px;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.95);
-  background: #f1f5f9;
+  border-bottom: 1px solid var(--canvas-code-divider, rgba(203, 213, 225, 0.7));
+  background: var(--canvas-code-header-surface, rgba(248, 250, 252, 0.9));
+}
+
+.canvas2d-code-block-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .canvas2d-code-block-language {
-  color: #334155;
+  color: var(--canvas-code-muted-text, #64748b);
   font: 600 0.74em/1.1 "Segoe UI", "PingFang SC", sans-serif;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-transform: none;
 }
 
 .canvas2d-code-block-copy {
   margin-left: auto;
-  border: 1px solid rgba(203, 213, 225, 0.95);
+  border: 1px solid var(--canvas-code-divider, rgba(203, 213, 225, 0.7));
   border-radius: 8px;
-  background: #ffffff;
-  color: #334155;
+  background: var(--canvas-code-control-surface, rgba(255, 255, 255, 0.88));
+  color: var(--canvas-code-muted-text, #64748b);
   font: 600 0.72em/1 "Segoe UI", "PingFang SC", sans-serif;
   padding: 4px 8px;
   cursor: pointer;
@@ -9252,8 +9265,8 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   grid-auto-rows: minmax(1.55em, auto);
   align-content: start;
   padding: var(--code-block-padding-y, 10px) 8px var(--code-block-padding-y, 10px) 0;
-  border-right: 1px solid rgba(226, 232, 240, 0.95);
-  color: #94a3b8;
+  border-right: 1px solid var(--canvas-code-divider, rgba(203, 213, 225, 0.7));
+  color: var(--canvas-code-gutter-text, #94a3b8);
   text-align: right;
   user-select: none;
 }
@@ -9269,7 +9282,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
 .canvas2d-code-block-pre {
   margin: 0;
   white-space: pre;
-  color: #0f172a;
+  color: var(--canvas-code-text, #172033);
 }
 
 .canvas2d-code-block-item.is-wrap .canvas2d-code-block-pre {
@@ -9384,7 +9397,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   min-height: var(--code-block-mermaid-min-height, 160px);
   padding: var(--code-block-mermaid-padding, 16px);
   overflow: auto;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--canvas-code-surface, #fbfcfe);
 }
 
 .canvas2d-code-block-mermaid-preview svg {
@@ -9399,15 +9412,49 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   font: 600 13px/1.4 "Segoe UI", "PingFang SC", sans-serif;
 }
 
+.canvas2d-code-block-mermaid-error-detail {
+  margin-top: 6px;
+  color: #7f1d1d;
+  font: 400 12px/1.45 "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.canvas2d-code-block-mermaid-source {
+  margin-top: 10px;
+}
+
+.canvas2d-code-block-mermaid-loading,
+.canvas2d-code-block-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--canvas-code-divider, rgba(203, 213, 225, 0.7));
+  background: var(--canvas-code-control-surface, rgba(255, 255, 255, 0.88));
+  color: var(--canvas-code-muted-text, #64748b);
+  font: 600 var(--code-block-mermaid-chip-font-size, 12px)/1 "Segoe UI", "PingFang SC", sans-serif;
+}
+
+.canvas2d-code-block-mermaid-loading {
+  padding: var(--code-block-mermaid-chip-padding-y, 10px) var(--code-block-mermaid-chip-padding-x, 14px);
+  border-radius: var(--code-block-mermaid-chip-radius, 12px);
+}
+
+.canvas2d-code-block-mode {
+  min-width: 32px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
 .canvas-code-block-editor {
   position: absolute;
   z-index: 45;
   box-sizing: border-box;
   padding: 14px 0 14px 0;
-  border: 1px solid rgba(203, 213, 225, 0.95);
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--canvas-code-border, rgba(148, 163, 184, 0.42));
+  border-radius: var(--canvas-code-radius, 8px);
+  background: var(--canvas-code-surface, #fbfcfe);
+  box-shadow: var(--canvas-code-shadow, 0 6px 18px rgba(15, 23, 42, 0.08));
   overflow: hidden;
 }
 
@@ -9431,7 +9478,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   outline: none;
   resize: none;
   background: transparent;
-  color: #0f172a;
+  color: var(--canvas-code-text, #172033);
   font: 500 var(--code-editor-font-size, 16px)/1.55 "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   white-space: pre;
   overflow: auto;
@@ -11104,7 +11151,7 @@ body.is-office-embedded #right-pane-resizer {
   position: absolute;
   z-index: 4;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.76);
@@ -11131,10 +11178,10 @@ body.is-office-embedded #right-pane-resizer {
 .canvas2d-file-preview-react-head {
   justify-content: space-between;
   gap: 10px;
-  min-height: 44px;
-  padding: 7px 10px 7px 12px;
+  min-height: 46px;
+  padding: 7px 8px 7px 12px;
   border-bottom: 1px solid rgba(203, 213, 225, 0.64);
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.66);
   min-width: 0;
   box-sizing: border-box;
 }
@@ -11177,18 +11224,19 @@ body.is-office-embedded #right-pane-resizer {
 }
 
 .canvas2d-file-preview-react-actions {
-  gap: 6px;
-  min-height: 42px;
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(203, 213, 225, 0.62);
-  background: rgba(241, 245, 249, 0.68);
+  flex: 0 0 auto;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   box-sizing: border-box;
 }
 
 .canvas2d-file-preview-react-actions button {
-  min-width: 32px;
+  min-width: 28px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 7px;
 }
 
 .canvas2d-file-preview-react-close:hover,

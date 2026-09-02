@@ -797,6 +797,7 @@ async function runTableEditorCheck(browser) {
       }));
       const contextActions = Array.from(contextMenu?.querySelectorAll("[data-action]") || []).map((node) => node.getAttribute("data-action") || "");
       const style = editor ? getComputedStyle(editor) : null;
+      const firstCell = editor?.querySelector("[data-row-index][data-column-index]") || null;
       return {
         overlayHostExists: Boolean(overlayHost),
         editorVisible: Boolean(editor) && style?.display !== "none",
@@ -814,6 +815,12 @@ async function runTableEditorCheck(browser) {
         toolButtons,
         edgeButtons,
         contextActions,
+        visualTheme: {
+          radius: style?.borderRadius || "",
+          surfaceToken: editor?.style.getPropertyValue("--canvas-table-surface") || "",
+          dividerToken: editor?.style.getPropertyValue("--canvas-table-divider") || "",
+          firstCellBorder: firstCell ? getComputedStyle(firstCell).borderColor : "",
+        },
       };
     });
     result.selectedCellsBeforeContext = selectedCellsBeforeContext;
@@ -834,6 +841,8 @@ async function runTableEditorCheck(browser) {
     assert(result.contextActions.includes("table-add-row-above"), "table context menu is missing directional row insertion", result);
     assert(result.contextActions.includes("table-move-column-right"), "table context menu is missing column reorder action", result);
     assert(!result.contextActions.includes("table-sort-desc"), "table context menu should no longer expose sort action", result);
+    assert(result.visualTheme.radius === "8px", "table editor did not consume the shared radius", result);
+    assert(result.visualTheme.surfaceToken && result.visualTheme.dividerToken, "table editor is missing shared theme tokens", result);
     await session.page.evaluate(() => {
       document.querySelector('#canvas-table-toolbar [data-action="table-done"]')?.click?.();
     });
@@ -1026,6 +1035,12 @@ async function runViewportInteractionRecoveryCheck(browser) {
       const initialFlowLocalTop = Number.parseFloat(flowTextNode.style.top);
       const initialCodeLocalLeft = Number.parseFloat(codeNode.style.left);
       const initialCodeLocalTop = Number.parseFloat(codeNode.style.top);
+      const initialCodeTheme = {
+        radius: getComputedStyle(codeNode).borderRadius,
+        surface: getComputedStyle(codeNode).backgroundColor,
+        surfaceToken: codeNode.style.getPropertyValue("--canvas-code-surface"),
+        borderToken: codeNode.style.getPropertyValue("--canvas-code-border"),
+      };
       const initialOverlayHtml = [richNode.innerHTML, mathNode.innerHTML, codeNode.innerHTML];
       const initialOverlayRepresentations = [richNode, mathNode, codeNode].map((node) => ({
         planned: node.dataset.plannedRepresentation || "",
@@ -1153,6 +1168,7 @@ async function runViewportInteractionRecoveryCheck(browser) {
         initialFlowLocalTop,
         initialCodeLocalLeft,
         initialCodeLocalTop,
+        initialCodeTheme,
         initialOverlayHtml,
         initialOverlayRepresentations,
         initialImageBox,
@@ -1233,6 +1249,8 @@ async function runViewportInteractionRecoveryCheck(browser) {
     assert(result.initialMathLocalLeft === 460 && result.initialMathLocalTop === 160, "math text local geometry diverged from world geometry", result);
     assert(result.initialFlowLocalLeft === 1120 && result.initialFlowLocalTop === 380, "flow text local geometry diverged from world geometry", result);
     assert(result.initialCodeLocalLeft === 760 && result.initialCodeLocalTop === 160, "code local geometry diverged from world geometry", result);
+    assert(result.initialCodeTheme.radius === "8px", "code DOM surface did not consume the shared radius", result);
+    assert(result.initialCodeTheme.surfaceToken && result.initialCodeTheme.borderToken, "code DOM surface is missing shared theme tokens", result);
     assert(
       result.active.sceneContentOwnedCount === result.active.sceneOverlayOwnedCount + 3,
       "visible DOM subjects did not have singular scene ownership",

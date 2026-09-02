@@ -7,6 +7,9 @@ async function main() {
   const structuredRendererModule = await import(
     "../../public/src/engines/canvas2d-core/rendererStructured.js"
   );
+  const structuredVisualThemeModule = await import(
+    "../../public/src/engines/canvas2d-core/render/structuredVisualTheme.js"
+  );
 
   const {
     sceneRectToScreenRect,
@@ -15,6 +18,11 @@ async function main() {
     normalizeMathRenderState,
   } = viewportMetricsModule;
   const { createStructuredCanvasRenderer } = structuredRendererModule;
+  const {
+    STRUCTURED_CODE_VISUAL_THEME,
+    STRUCTURED_TABLE_VISUAL_THEME,
+    applyStructuredVisualThemeVariables,
+  } = structuredVisualThemeModule;
 
   const view100 = { scale: 1, offsetX: 10, offsetY: 20 };
   const view200 = { scale: 2, offsetX: 10, offsetY: 20 };
@@ -132,29 +140,141 @@ async function main() {
   assert(fallbackCtx.fillTexts.includes("FALLBACK"), "fallback math should render fallback label");
   assert(errorCtx.fillTexts.includes("RENDER ERROR"), "error math should render error label");
 
-  console.log("[structured-viewport-consistency] ok: zoom + math-state scenarios validated");
+  const codeCtx = createMockContext();
+  renderer({
+    ctx: codeCtx,
+    item: {
+      id: "theme-code",
+      type: "codeBlock",
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 120,
+      language: "javascript",
+      plainText: "const shared = true;",
+    },
+    view: { scale: 1, offsetX: 0, offsetY: 0 },
+    selected: false,
+    hover: false,
+    helpers,
+  });
+  assert(
+    codeCtx.fillCalls.includes(STRUCTURED_CODE_VISUAL_THEME.surface),
+    "code Canvas renderer must consume the shared surface token"
+  );
+  assert(
+    codeCtx.fillRects.some((rect) => rect.fillStyle === STRUCTURED_CODE_VISUAL_THEME.headerSurface),
+    "code Canvas header must consume the shared header token"
+  );
+
+  const tableCtx = createMockContext();
+  renderer({
+    ctx: tableCtx,
+    item: {
+      id: "merged-table",
+      type: "table",
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 120,
+      columns: 3,
+      table: {
+        columns: 3,
+        hasHeader: true,
+        rows: [
+          {
+            cells: [
+              { plainText: "Merged", header: true, colSpan: 2, align: "center" },
+              { plainText: "Amount", header: true, align: "right" },
+            ],
+          },
+          {
+            cells: [
+              { plainText: "One" },
+              { plainText: "Two", align: "center" },
+              { plainText: "Three", align: "right" },
+            ],
+          },
+        ],
+      },
+    },
+    view: { scale: 1, offsetX: 0, offsetY: 0 },
+    selected: false,
+    hover: false,
+    helpers,
+  });
+  assert(tableCtx.fillRects.length === 5, "covered merged-table cells must not render twice");
+  assert(
+    tableCtx.fillRects.some((rect) => rect.x === 0 && rect.y === 0 && rect.width === 200 && rect.height === 60),
+    "merged-table anchor must use its combined Canvas bounds"
+  );
+  const mergedText = tableCtx.textCalls.find((entry) => entry.text === "Merged");
+  const amountText = tableCtx.textCalls.find((entry) => entry.text === "Amount");
+  assert(mergedText?.align === "center" && mergedText.x === 100, "merged center alignment must use the spanned cell center");
+  assert(amountText?.align === "right" && amountText.x === 292, "right alignment must use the cell trailing inset");
+
+  const themeTarget = {
+    style: {
+      values: new Map(),
+      setProperty(name, value) {
+        this.values.set(name, value);
+      },
+    },
+  };
+  assert(applyStructuredVisualThemeVariables(themeTarget), "structured theme variables should apply to DOM-like targets");
+  assert(
+    themeTarget.style.values.get("--canvas-code-surface") === STRUCTURED_CODE_VISUAL_THEME.surface,
+    "code DOM theme must share the Canvas surface token"
+  );
+  assert(
+    themeTarget.style.values.get("--canvas-table-divider") === STRUCTURED_TABLE_VISUAL_THEME.divider,
+    "table DOM theme must share the Canvas divider token"
+  );
+
+  console.log("[structured-viewport-consistency] ok: zoom + math-state + merged-table theme scenarios validated");
 }
 
 function createMockContext() {
   return {
     fillTexts: [],
+    fillRects: [],
+    fillCalls: [],
+    textCalls: [],
+    currentFillStyle: "",
+    currentTextAlign: "left",
     beginPath() {},
     moveTo() {},
     arcTo() {},
     closePath() {},
-    fill() {},
+    fill() {
+      this.fillCalls.push(this.currentFillStyle);
+    },
     stroke() {},
     lineTo() {},
+    rect() {},
+    clip() {},
     save() {},
     restore() {},
-    set fillStyle(_) {},
+    fillRect(x, y, width, height) {
+      this.fillRects.push({ x, y, width, height, fillStyle: this.currentFillStyle });
+    },
+    strokeRect() {},
+    measureText(text) {
+      return { width: String(text || "").length * 6 };
+    },
+    set fillStyle(value) {
+      this.currentFillStyle = value;
+    },
     set strokeStyle(_) {},
     set lineWidth(_) {},
     set font(_) {},
     set textBaseline(_) {},
-    set textAlign(_) {},
-    fillText(text) {
+    set textAlign(value) {
+      this.currentTextAlign = value;
+    },
+    fillText(text, x, y) {
       this.fillTexts.push(String(text));
+      this.textCalls.push({ text: String(text), x, y, align: this.currentTextAlign });
     },
   };
 }
@@ -170,4 +290,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
