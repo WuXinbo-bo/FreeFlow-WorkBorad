@@ -229,6 +229,7 @@ function FloatingToolbarMenu({
   boundaryRef,
   panelRef,
   align = "start",
+  layoutKey = "",
   className = "",
   children,
 }) {
@@ -253,14 +254,17 @@ function FloatingToolbarMenu({
       const rootRect = boundaryRef.current?.getBoundingClientRect?.();
       const boundaryRect = rootRect?.width && rootRect?.height ? rootRect : viewportBoundary;
       panel.style.visibility = "hidden";
+      panel.style.width = "max-content";
       panel.style.maxWidth = `${Math.max(120, Math.round(boundaryRect.width - 24))}px`;
       panel.style.maxHeight = `${Math.max(120, Math.round(boundaryRect.height - 24))}px`;
+      const panelRect = panel.getBoundingClientRect();
       const placement = computeAnchoredMenuPlacement({
         anchorRect: anchor.getBoundingClientRect(),
-        panelRect: panel.getBoundingClientRect(),
+        panelRect,
         boundaryRect,
         align,
       });
+      panel.style.width = `${Math.min(Math.ceil(panelRect.width), placement.maxWidth)}px`;
       panel.style.left = `${placement.left}px`;
       panel.style.top = `${placement.top}px`;
       panel.style.maxWidth = `${placement.maxWidth}px`;
@@ -291,7 +295,7 @@ function FloatingToolbarMenu({
       window.removeEventListener("resize", schedulePosition);
       window.removeEventListener("scroll", schedulePosition, true);
     };
-  }, [align, anchorRef, boundaryRef, open, panelRef]);
+  }, [align, anchorRef, boundaryRef, layoutKey, open, panelRef]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -1886,6 +1890,7 @@ function Canvas2DControls({ engine }) {
       }
       const trigger = toolbarRef.current?.querySelector?.('[aria-expanded="true"]');
       event.preventDefault();
+      event.stopPropagation();
       setDrawMenuOpen(false);
       setImageMenuOpen(false);
       setInsertMenuOpen(false);
@@ -1897,7 +1902,7 @@ function Canvas2DControls({ engine }) {
       setAlignmentSnapMenuOpen(false);
       setBackgroundMenuOpen(false);
       setAboutMenuOpen(false);
-      requestAnimationFrame(() => trigger?.focus?.());
+      trigger?.focus?.({ preventScroll: true });
     }
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -2761,6 +2766,7 @@ function Canvas2DControls({ engine }) {
               boundaryRef={rootRef}
               panelRef={captureMenuPanelRef}
               align="end"
+              layoutKey={`${capturePdfMenuOpen}:${capturePngMenuOpen}`}
               className="canvas2d-engine-menu-share"
             >
                 <div className="canvas2d-engine-menu-section">
@@ -2906,6 +2912,7 @@ function Canvas2DControls({ engine }) {
               boundaryRef={rootRef}
               panelRef={mainMenuPanelRef}
               align="end"
+              layoutKey={`${exportMenuOpen}:${alignmentSnapMenuOpen}:${backgroundMenuOpen}:${aboutMenuOpen}`}
               className="canvas2d-engine-menu-wide"
             >
                 <div className="canvas2d-engine-menu-section">

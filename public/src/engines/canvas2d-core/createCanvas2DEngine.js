@@ -22181,7 +22181,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onPointerEnter() {
     pointerOverCanvas = true;
-    if (!state.editingId && !isEditableElement(document.activeElement)) {
+    if (
+      !state.editingId &&
+      !isEditableElement(document.activeElement) &&
+      !isCanvasUiControlTarget(document.activeElement)
+    ) {
       refs.canvas?.focus();
     }
   }
