@@ -1,5 +1,6 @@
 import { sanitizeText } from "../../utils.js";
 import { flattenTableStructureToMatrix } from "../../elements/table.js";
+import { getStructuredMathTextState, isStructuredMathTextElement } from "../../elements/mathText.js";
 import { serializeTableMatrixToMarkdown } from "../../elements/tableFormats.js";
 import { serializeRichTextDocumentToMarkdown } from "../../textModel/serializeRichTextDocumentToMarkdown.js";
 
@@ -26,6 +27,9 @@ export function buildDowngradedCopyPayloadFromItems(items = [], options = {}) {
 }
 
 export function downgradeItemForCopy(item = {}, index = 0) {
+  if (isStructuredMathTextElement(item)) {
+    return downgradeMathItem(item, index);
+  }
   const type = String(item?.type || "unknown");
   switch (type) {
     case "text":
@@ -120,13 +124,28 @@ function downgradeTableItem(item, index) {
 }
 
 function downgradeMathItem(item, index) {
-  const formula = sanitizeText(item?.formula || item?.text || "");
-  const displayMode = Boolean(item?.displayMode ?? item?.type === "mathBlock");
+  const mathState = getStructuredMathTextState(item);
+  const formula = sanitizeText(mathState?.formula ?? item?.formula ?? item?.text ?? "");
+  const displayMode = Boolean(mathState?.displayMode ?? item?.displayMode ?? item?.type === "mathBlock");
+  const sourceFormat = String(mathState?.sourceFormat || item?.sourceFormat || "latex").trim().toLowerCase();
   const fallbackText = String(item?.fallbackText || (displayMode ? `$$${formula}$$` : `$${formula}$`));
+  if (sourceFormat === "mathml") {
+    const mathml = /^\s*<math[\s>]/i.test(formula) ? formula : escapeHtml(formula);
+    return {
+      itemId: String(item?.id || `math-${index}`),
+      itemType: String(item?.type || "mathBlock"),
+      downgradedFrom: "math",
+      sourceFormat,
+      text: formula,
+      html: mathml,
+      markdown: formula,
+    };
+  }
   return {
     itemId: String(item?.id || `math-${index}`),
     itemType: String(item?.type || "mathBlock"),
     downgradedFrom: "math",
+    sourceFormat,
     text: fallbackText,
     html: `<span data-copy-role="${displayMode ? "math-block" : "math-inline"}">${escapeHtml(fallbackText)}</span>`,
     markdown: displayMode ? `$$\n${formula}\n$$` : `$${formula}$`,

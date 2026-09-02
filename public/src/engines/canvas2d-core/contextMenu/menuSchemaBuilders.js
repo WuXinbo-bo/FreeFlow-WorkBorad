@@ -50,17 +50,18 @@ function baseElementActionsSchema() {
   ];
 }
 
-export function createElementTransferActionsSchema(type = "") {
+export function createElementTransferActionsSchema(type = "", { item = null, runtime = {} } = {}) {
   const capabilities = getElementTransferCapabilities(type);
   if (!capabilities) {
     return [];
   }
-  const exportItems = getExportMenuItems(type);
+  const copyItems = getCopyMenuItems(type, { item, runtime });
+  const exportItems = getExportMenuItems(type, { item, runtime });
   return [
     action("剪切", "cut"),
     capabilities.objectCopy ? action("复制元素", "copy") : null,
-    capabilities.contentCopy !== "none"
-      ? copyExportSubmenu("复制内容", "复制内容", getCopyMenuItems(type))
+    capabilities.contentCopy !== "none" && copyItems.length
+      ? copyExportSubmenu("复制内容", "复制内容", copyItems)
       : null,
     action("粘贴", "paste"),
     exportItems.length
@@ -183,16 +184,59 @@ export function buildTableContextMenuHtml(options = {}) {
   return renderContextMenuSchema(createTableContextMenuSchema(options));
 }
 
-export function createMathContextMenuSchema() {
+export function createMathContextMenuSchema(item = null, runtime = {}) {
   return [
-    ...createElementTransferActionsSchema("mathBlock"),
+    ...createElementTransferActionsSchema("mathBlock", { item, runtime }),
     action("连接节点", "connect-node"),
     baseElementActionsSchema()[3],
   ];
 }
 
-export function buildMathContextMenuHtml() {
-  return renderContextMenuSchema(createMathContextMenuSchema());
+export function buildMathContextMenuHtml(item = null, runtime = {}) {
+  return renderContextMenuSchema(createMathContextMenuSchema(item, runtime));
+}
+
+export function createImageContextMenuSchema(item = {}, runtime = {}) {
+  const lockLabel = item?.locked ? "解锁" : "锁定";
+  return [
+    ...createElementTransferActionsSchema("image", { item, runtime }),
+    action("轻量编辑图片", "image-edit"),
+    action("恢复原图", "image-restore"),
+    action("打开所在位置", "image-reveal"),
+    action("标签与备忘录", "image-memo"),
+    action("连接节点", "connect-node"),
+    layerSubmenuSchema(),
+    ...createLockDeleteTailSchema(lockLabel),
+  ];
+}
+
+export function buildImageContextMenuHtml(item = {}, runtime = {}) {
+  return renderContextMenuSchema(createImageContextMenuSchema(item, runtime));
+}
+
+export function createFileCardContextMenuSchema(item = {}, runtime = {}) {
+  const lockLabel = item?.locked ? "解锁" : "锁定";
+  const ext = String(item?.ext || "").trim().toLowerCase();
+  const previewSupported = ext === "docx" || ext === "pdf";
+  return [
+    ...createElementTransferActionsSchema("fileCard", { item, runtime }),
+    action("预览", "file-preview", previewSupported
+      ? {}
+      : {
+          className: "canvas2d-context-menu-item is-disabled",
+          attributes: { disabled: true, title: "当前仅支持 DOCX / PDF 预览" },
+        }),
+    action("打开所在位置", "file-reveal"),
+    action("标签与备忘录", "file-memo"),
+    action("重点标记", "file-mark"),
+    action("连接节点", "connect-node"),
+    layerSubmenuSchema(),
+    ...createLockDeleteTailSchema(lockLabel),
+  ];
+}
+
+export function buildFileCardContextMenuHtml(item = {}, runtime = {}) {
+  return renderContextMenuSchema(createFileCardContextMenuSchema(item, runtime));
 }
 
 export function createLockDeleteTailSchema(lockLabel = "锁定") {

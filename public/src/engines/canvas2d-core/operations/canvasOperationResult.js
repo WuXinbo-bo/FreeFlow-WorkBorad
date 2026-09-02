@@ -104,6 +104,8 @@ export function attachCanvasOperationManifest(result = {}, options = {}) {
   const source = result && typeof result === "object" ? result : {};
   const entries = Array.isArray(options.entries)
     ? options.entries
+    : Array.isArray(source.operationEntries)
+      ? source.operationEntries
     : Array.isArray(source.skippedItems)
       ? source.skippedItems.map((item) => ({ ...item, status: "skipped" }))
       : [];

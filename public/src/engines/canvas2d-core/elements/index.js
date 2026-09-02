@@ -253,13 +253,13 @@ function createBuiltinElementRegistry() {
     }),
     createDefinition("image", {
       normalize: normalizeImageElement,
-      capabilities: { lod: "image", hitTest: "bounds-image-memo", editor: "image", overlay: "image-memo", resource: "image", cache: "live", semanticExport: ["png"], measurement: "resource-intrinsic", persistence: "asset-reference" },
+      capabilities: { lod: "image", hitTest: "bounds-image-memo", editor: "image", overlay: "image-memo", resource: "image", cache: "live", contentCopy: "image", copyExportProtocol: "image", semanticExport: ["png"], measurement: "resource-intrinsic", persistence: "asset-reference" },
     }),
     createDefinition("fileCard", {
       aliases: ["file"],
       normalize: normalizeFileCardElement,
       resize: withMinSize(resizeRectElement, 200, 96),
-      capabilities: { lod: "file-card", hitTest: "bounds-file-memo", editor: "file-memo", overlay: "file-preview", resource: "file", cache: "live", measurement: "resource-intrinsic", persistence: "asset-reference", minimumReadableTextPx: 3.5, nominalFontSizePx: 14 },
+      capabilities: { lod: "file-card", hitTest: "bounds-file-memo", editor: "file-memo", overlay: "file-preview", resource: "file", cache: "live", contentCopy: "file", copyExportProtocol: "fileCard", measurement: "resource-intrinsic", persistence: "asset-reference", minimumReadableTextPx: 3.5, nominalFontSizePx: 14 },
     }),
     createDefinition("codeBlock", {
       aliases: ["code"],
@@ -278,12 +278,12 @@ function createBuiltinElementRegistry() {
       aliases: ["math"],
       normalize: buildTextElementFromMathElement,
       resize: withMinSize(resizeRectElement, MATH_MIN_WIDTH, MATH_MIN_HEIGHT),
-      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile", presentation: "layout-snapshot", selectionCopy: "math-editor", measurement: "intrinsic-layout", minimumReadableTextPx: 4, nominalFontSizePx: 22 },
+      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile", presentation: "layout-snapshot", contentCopy: "math", selectionCopy: "math-editor", copyExportProtocol: "math", semanticExport: ["latex", "mathml"], measurement: "intrinsic-layout", minimumReadableTextPx: 4, nominalFontSizePx: 22 },
     }),
     createDefinition("mathInline", {
       normalize: buildTextElementFromMathElement,
       resize: withMinSize(resizeRectElement, MATH_MIN_WIDTH, MATH_MIN_HEIGHT),
-      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile", presentation: "layout-snapshot", selectionCopy: "math-editor", measurement: "intrinsic-layout", minimumReadableTextPx: 4, nominalFontSizePx: 22 },
+      capabilities: { render: "canvas-dom", lod: "math", editor: "math", overlay: "math", cache: "tile", presentation: "layout-snapshot", contentCopy: "math", selectionCopy: "math-editor", copyExportProtocol: "math", semanticExport: ["latex", "mathml"], measurement: "intrinsic-layout", minimumReadableTextPx: 4, nominalFontSizePx: 22 },
     }),
     createDefinition("mindNode", {
       aliases: ["mind"],

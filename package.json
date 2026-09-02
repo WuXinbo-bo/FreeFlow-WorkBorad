@@ -33,6 +33,7 @@
     "test:canvas-resource-budget": "node scripts/check-canvas-resource-budget-runtime.js",
     "test:canvas-state-history": "node scripts/check-canvas-state-history.js",
     "test:canvas-operation-results": "node scripts/check-canvas-operation-results.js",
+    "test:canvas-semantic-transfer": "node scripts/check-canvas-semantic-transfer.js",
     "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",
     "test:canvas-large-scene": "node scripts/check-canvas-large-scene-runtime.js",
     "test:presentation-snapshots": "node scripts/check-presentation-snapshot-controller.js",

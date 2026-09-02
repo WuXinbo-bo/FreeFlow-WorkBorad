@@ -9,11 +9,13 @@ import { FLOW_NODE_TEXT_LAYOUT, TEXT_FONT_FAMILY, TEXT_FONT_WEIGHT, TEXT_LINE_HE
 import { flattenTableStructureToMatrix } from "../../elements/table.js";
 import { getCodeBlockLanguageFileExtension, normalizeCodeBlockLanguageTag } from "../../codeBlock/languageRegistry.js";
 import {
-  mapTableMatrixToPlainTextRows,
+  buildTableDegradationSummary,
+  getTableFormatDegradations,
   serializeTableMatrixToCsv,
   serializeTableMatrixToMarkdown,
   serializeTableMatrixToPlainText,
 } from "../../elements/tableFormats.js";
+import { getStructuredMathTextState } from "../../elements/mathText.js";
 import { buildWordExportAstFromCanvasSelection, buildWordExportAstFromRichTextItem } from "../word/buildWordExportAst.js";
 import * as XLSX from "../../../../../vendor/xlsx/xlsx.mjs";
 import { attachCanvasOperationManifest } from "../../operations/canvasOperationResult.js";
@@ -231,6 +233,285 @@ function buildTableSheetColumnWidths(rows = []) {
       )
     ),
   }));
+}
+
+function resolveTableWorksheetValue(cell = {}) {
+  const valueType = String(cell?.valueType || "").trim().toLowerCase();
+  const value = cell?.value;
+  if (
+    valueType === "number" &&
+    value != null &&
+    typeof value !== "boolean" &&
+    (typeof value !== "string" || value.trim()) &&
+    Number.isFinite(Number(value))
+  ) {
+    return Number(value);
+  }
+  if (valueType === "boolean" && typeof value === "boolean") {
+    return value;
+  }
+  if (valueType === "date") {
+    if (value == null || (typeof value === "string" && !value.trim())) {
+      return String(cell?.plainText || "");
+    }
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isFinite(date.getTime())) {
+      return date;
+    }
+  }
+  if (valueType === "string" && value != null) {
+    return String(value);
+  }
+  return String(cell?.plainText || "");
+}
+
+export function buildTableWorksheet(matrix = [], { hasHeader = true } = {}) {
+  const safeMatrix = Array.isArray(matrix) ? matrix : [];
+  const rows = safeMatrix.map((row) =>
+    (Array.isArray(row) ? row : []).map((cell) => cell?.covered ? null : resolveTableWorksheetValue(cell))
+  );
+  const sheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  sheet["!cols"] = buildTableSheetColumnWidths(rows);
+  const merges = [];
+  safeMatrix.forEach((row, rowIndex) => {
+    (Array.isArray(row) ? row : []).forEach((cell, columnIndex) => {
+      if (!cell || cell.covered) {
+        return;
+      }
+      const rowSpan = Math.max(1, Number(cell.rowSpan || 1));
+      const colSpan = Math.max(1, Number(cell.colSpan || 1));
+      if (rowSpan > 1 || colSpan > 1) {
+        merges.push({
+          s: { r: rowIndex, c: columnIndex },
+          e: {
+            r: Math.min(safeMatrix.length - 1, rowIndex + rowSpan - 1),
+            c: columnIndex + colSpan - 1,
+          },
+        });
+      }
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      const worksheetCell = sheet[address];
+      if (!worksheetCell) {
+        return;
+      }
+      const align = String(cell.align || "").trim().toLowerCase();
+      if (["left", "center", "right"].includes(align)) {
+        worksheetCell.s = {
+          ...(worksheetCell.s || {}),
+          alignment: {
+            ...(worksheetCell.s?.alignment || {}),
+            horizontal: align,
+            vertical: "center",
+            wrapText: true,
+          },
+        };
+      }
+      if (cell.header) {
+        worksheetCell.s = {
+          ...(worksheetCell.s || {}),
+          font: { ...(worksheetCell.s?.font || {}), bold: true },
+        };
+      }
+      if (cell.numberFormat) {
+        worksheetCell.z = String(cell.numberFormat);
+      }
+    });
+  });
+  if (merges.length) {
+    sheet["!merges"] = merges;
+  }
+  if (hasHeader && rows.length >= 1 && rows[0]?.length) {
+    sheet["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: 0, c: 0 },
+        e: { r: Math.max(0, rows.length - 1), c: Math.max(0, rows[0].length - 1) },
+      }),
+    };
+  }
+  return sheet;
+}
+
+const BUILTIN_EXCEL_NUMBER_FORMATS = Object.freeze({
+  "0": 1,
+  "0.00": 2,
+  "#,##0": 3,
+  "#,##0.00": 4,
+  "0%": 9,
+  "0.00%": 10,
+  "m/d/yy": 14,
+  "h:mm": 20,
+  "h:mm:ss": 21,
+});
+
+function escapeSpreadsheetXml(value = "") {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function unescapeSpreadsheetXml(value = "") {
+  return String(value || "")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
+function replaceZipXmlEntry(container, path, content) {
+  XLSX.CFB.utils.cfb_del(container, path);
+  XLSX.CFB.utils.cfb_add(container, path.replace(/^\//, ""), new TextEncoder().encode(content));
+}
+
+export function applyTableWorkbookCellStyles(bytes, matrix = []) {
+  const safeBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const container = XLSX.CFB.read(safeBytes, { type: "buffer" });
+  const stylesEntry = XLSX.CFB.find(container, "/xl/styles.xml");
+  const sheetEntry = XLSX.CFB.find(container, "/xl/worksheets/sheet1.xml");
+  if (!stylesEntry?.content || !sheetEntry?.content) {
+    return safeBytes;
+  }
+  let stylesXml = new TextDecoder().decode(stylesEntry.content);
+  let sheetXml = new TextDecoder().decode(sheetEntry.content);
+  const fontMatch = stylesXml.match(/<fonts count="(\d+)">([\s\S]*?)<\/fonts>/);
+  const cellXfsMatch = stylesXml.match(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/);
+  if (!fontMatch || !cellXfsMatch) {
+    return safeBytes;
+  }
+
+  const baseFontCount = Math.max(1, Number(fontMatch[1]) || 1);
+  const baseCellXfCount = Math.max(1, Number(cellXfsMatch[1]) || 1);
+  const existingNumberFormatIds = new Map();
+  let highestNumberFormatId = 163;
+  for (const match of stylesXml.matchAll(/<numFmt\b[^>]*\bnumFmtId="(\d+)"[^>]*\bformatCode="([^"]*)"[^>]*\/>/g)) {
+    const numFmtId = Number(match[1]);
+    if (!Number.isInteger(numFmtId)) {
+      continue;
+    }
+    highestNumberFormatId = Math.max(highestNumberFormatId, numFmtId);
+    existingNumberFormatIds.set(unescapeSpreadsheetXml(match[2]), numFmtId);
+  }
+  const addedNumberFormats = new Map();
+  const styleDefinitions = [];
+  const styleIndexByKey = new Map();
+  const cellStyleIndexes = new Map();
+
+  (Array.isArray(matrix) ? matrix : []).forEach((row, rowIndex) => {
+    (Array.isArray(row) ? row : []).forEach((cell, columnIndex) => {
+      if (!cell || cell.covered) {
+        return;
+      }
+      const align = ["left", "center", "right"].includes(String(cell.align || "").trim().toLowerCase())
+        ? String(cell.align).trim().toLowerCase()
+        : "";
+      const numberFormat = String(cell.numberFormat || "").trim();
+      const header = Boolean(cell.header);
+      if (!align && !numberFormat && !header) {
+        return;
+      }
+      const key = JSON.stringify({ align, numberFormat, header });
+      if (!styleIndexByKey.has(key)) {
+        const styleIndex = baseCellXfCount + styleDefinitions.length;
+        styleIndexByKey.set(key, styleIndex);
+        styleDefinitions.push({ align, numberFormat, header });
+        if (
+          numberFormat &&
+          !Object.prototype.hasOwnProperty.call(BUILTIN_EXCEL_NUMBER_FORMATS, numberFormat) &&
+          !existingNumberFormatIds.has(numberFormat) &&
+          !addedNumberFormats.has(numberFormat)
+        ) {
+          highestNumberFormatId += 1;
+          addedNumberFormats.set(numberFormat, highestNumberFormatId);
+        }
+      }
+      cellStyleIndexes.set(XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex }), styleIndexByKey.get(key));
+    });
+  });
+  if (!styleDefinitions.length) {
+    return safeBytes;
+  }
+
+  const boldFont = '<font><b/><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>';
+  stylesXml = stylesXml.replace(
+    /<fonts count="\d+">[\s\S]*?<\/fonts>/,
+    `<fonts count="${baseFontCount + 1}">${fontMatch[2]}${boldFont}</fonts>`
+  );
+  if (addedNumberFormats.size) {
+    const customXml = Array.from(addedNumberFormats, ([formatCode, numFmtId]) =>
+      `<numFmt numFmtId="${numFmtId}" formatCode="${escapeSpreadsheetXml(formatCode)}"/>`
+    ).join("");
+    const numFmtMatch = stylesXml.match(/<numFmts count="(\d+)">([\s\S]*?)<\/numFmts>/);
+    if (numFmtMatch) {
+      stylesXml = stylesXml.replace(
+        /<numFmts count="\d+">[\s\S]*?<\/numFmts>/,
+        `<numFmts count="${(Number(numFmtMatch[1]) || 0) + addedNumberFormats.size}">${numFmtMatch[2]}${customXml}</numFmts>`
+      );
+    } else {
+      stylesXml = stylesXml.replace(/(<styleSheet\b[^>]*>)/, `$1<numFmts count="${addedNumberFormats.size}">${customXml}</numFmts>`);
+    }
+  }
+  const appendedCellXfs = styleDefinitions.map(({ align, numberFormat, header }) => {
+    const numFmtId = numberFormat
+      ? BUILTIN_EXCEL_NUMBER_FORMATS[numberFormat] ??
+        existingNumberFormatIds.get(numberFormat) ??
+        addedNumberFormats.get(numberFormat) ??
+        0
+      : 0;
+    const attributes = [
+      `numFmtId="${numFmtId}"`,
+      `fontId="${header ? baseFontCount : 0}"`,
+      'fillId="0"',
+      'borderId="0"',
+      'xfId="0"',
+      header ? 'applyFont="1"' : "",
+      numberFormat ? 'applyNumberFormat="1"' : "",
+      align ? 'applyAlignment="1"' : "",
+    ].filter(Boolean).join(" ");
+    return align
+      ? `<xf ${attributes}><alignment horizontal="${align}" vertical="center" wrapText="1"/></xf>`
+      : `<xf ${attributes}/>`;
+  }).join("");
+  stylesXml = stylesXml.replace(
+    /<cellXfs count="\d+">[\s\S]*?<\/cellXfs>/,
+    `<cellXfs count="${baseCellXfCount + styleDefinitions.length}">${cellXfsMatch[2]}${appendedCellXfs}</cellXfs>`
+  );
+
+  cellStyleIndexes.forEach((styleIndex, address) => {
+    const pattern = new RegExp(`<c\\b([^>]*\\br="${address}"[^>]*)>`);
+    sheetXml = sheetXml.replace(pattern, (_match, attributes) =>
+      `<c${String(attributes).replace(/\s+s="\d+"/g, "")} s="${styleIndex}">`
+    );
+  });
+  replaceZipXmlEntry(container, "/xl/styles.xml", stylesXml);
+  replaceZipXmlEntry(container, "/xl/worksheets/sheet1.xml", sheetXml);
+  const output = XLSX.CFB.write(container, { fileType: "zip", type: "array", compression: true });
+  return output instanceof Uint8Array ? output : new Uint8Array(output);
+}
+
+function withTableExportDegradations(result = {}, matrix = [], format = "") {
+  if (!result?.ok) {
+    return result;
+  }
+  const degradations = getTableFormatDegradations(matrix, format);
+  if (!degradations.length) {
+    return result;
+  }
+  return {
+    ...result,
+    downgraded: true,
+    degradation: degradations,
+    operationEntries: degradations.map((entry) => ({
+      id: `table-${entry.code}`,
+      type: "table",
+      status: "degraded",
+      reason: entry.code,
+      requestedFormat: String(format || ""),
+      providedFormat: String(format || ""),
+    })),
+    message: `${String(result.message || "表格已导出")}${buildTableDegradationSummary(degradations)}`,
+  };
 }
 
 function buildCodeBlockExportName(item) {
@@ -893,7 +1174,6 @@ export function createStructuredExportRuntime({
     if (!matrix.length) {
       return { ok: false, canceled: false, code: "TABLE_EXPORT_EMPTY", message: "表格为空" };
     }
-    const rows = mapTableMatrixToPlainTextRows(matrix);
     const defaultName = buildTableExportName(item);
 
     if (format === "md") {
@@ -919,7 +1199,11 @@ export function createStructuredExportRuntime({
           ? { ok: false, canceled: true, code: "TABLE_EXPORT_CANCELED", message: "" }
           : { ok: false, canceled: false, code: "TABLE_EXPORT_WRITE_FAILED", message: saveResult?.error || "导出失败" };
       }
-      return { ok: true, canceled: false, code: "TABLE_EXPORT_MD_OK", message: "已导出 Markdown 表格", filePath: String(saveResult.path || "").trim() };
+      return withTableExportDegradations(
+        { ok: true, canceled: false, code: "TABLE_EXPORT_MD_OK", message: "已导出 Markdown 表格", filePath: String(saveResult.path || "").trim() },
+        matrix,
+        format
+      );
     }
 
     if (format === "csv") {
@@ -942,7 +1226,11 @@ export function createStructuredExportRuntime({
           ? { ok: false, canceled: true, code: "TABLE_EXPORT_CANCELED", message: "" }
           : { ok: false, canceled: false, code: "TABLE_EXPORT_WRITE_FAILED", message: saveResult?.error || "导出失败" };
       }
-      return { ok: true, canceled: false, code: "TABLE_EXPORT_CSV_OK", message: "已导出 CSV 表格", filePath: String(saveResult.path || "").trim() };
+      return withTableExportDegradations(
+        { ok: true, canceled: false, code: "TABLE_EXPORT_CSV_OK", message: "已导出 CSV 表格", filePath: String(saveResult.path || "").trim() },
+        matrix,
+        format
+      );
     }
 
     if (format === "txt") {
@@ -955,28 +1243,24 @@ export function createStructuredExportRuntime({
           ? { ok: false, canceled: true, code: "TABLE_EXPORT_CANCELED", message: "" }
           : { ok: false, canceled: false, code: "TABLE_EXPORT_WRITE_FAILED", message: saveResult?.error || "导出失败" };
       }
-      return { ok: true, canceled: false, code: "TABLE_EXPORT_TXT_OK", message: "已导出 TXT 表格", filePath: String(saveResult.path || "").trim() };
+      return withTableExportDegradations(
+        { ok: true, canceled: false, code: "TABLE_EXPORT_TXT_OK", message: "已导出 TXT 表格", filePath: String(saveResult.path || "").trim() },
+        matrix,
+        format
+      );
     }
 
     const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet(rows);
-    sheet["!cols"] = buildTableSheetColumnWidths(rows);
-    if (item?.table?.hasHeader !== false && rows.length >= 1 && rows[0]?.length) {
-      sheet["!autofilter"] = {
-        ref: XLSX.utils.encode_range({
-          s: { r: 0, c: 0 },
-          e: { r: Math.max(0, rows.length - 1), c: Math.max(0, rows[0].length - 1) },
-        }),
-      };
-    }
+    const sheet = buildTableWorksheet(matrix, { hasHeader: item?.table?.hasHeader !== false });
     XLSX.utils.book_append_sheet(workbook, sheet, "Table");
-    const bytes = XLSX.write(workbook, {
+    const workbookBytes = XLSX.write(workbook, {
       bookType: "xlsx",
       type: "array",
       compression: true,
       cellStyles: true,
     });
-    const saveResult = await fileAdapter?.saveBytesAsFile?.(new Uint8Array(bytes), {
+    const bytes = applyTableWorkbookCellStyles(new Uint8Array(workbookBytes), matrix);
+    const saveResult = await fileAdapter?.saveBytesAsFile?.(bytes, {
       defaultName: options.defaultName || defaultName,
       extension: "xlsx",
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -992,13 +1276,13 @@ export function createStructuredExportRuntime({
         ? { ok: false, canceled: true, code: "TABLE_EXPORT_CANCELED", message: "" }
         : { ok: false, canceled: false, code: "TABLE_EXPORT_WRITE_FAILED", message: saveResult?.error || "导出失败" };
     }
-    return {
+    return withTableExportDegradations({
       ok: true,
       canceled: false,
       code: "TABLE_EXPORT_XLSX_OK",
       message: "已导出 Excel 表格",
       filePath: String(saveResult.path || "").trim(),
-    };
+    }, matrix, format);
   }
 
   async function exportCodeBlockItem(item, format = "source", options = {}) {
@@ -1067,6 +1351,47 @@ export function createStructuredExportRuntime({
     };
   }
 
+  async function exportMathItem(item, format = "latex", options = {}) {
+    const mathState = getStructuredMathTextState(item);
+    const isLegacyMath = item?.type === "mathBlock" || item?.type === "mathInline";
+    if (!mathState && !isLegacyMath) {
+      return { ok: false, canceled: false, code: "MATH_EXPORT_INVALID_ITEM", message: "仅公式元素支持此导出" };
+    }
+    const sourceFormat = String(mathState?.sourceFormat || item?.sourceFormat || "latex").trim().toLowerCase();
+    const normalizedFormat = String(format || "latex").trim().toLowerCase();
+    if (sourceFormat !== normalizedFormat || !["latex", "mathml"].includes(normalizedFormat)) {
+      return { ok: false, canceled: false, code: "MATH_EXPORT_FORMAT_UNAVAILABLE", message: "公式原文不支持该格式导出" };
+    }
+    const source = sanitizeText(mathState?.formula ?? item?.formula ?? item?.text ?? "").trim();
+    if (!source) {
+      return { ok: false, canceled: false, code: "MATH_EXPORT_EMPTY", message: "公式为空" };
+    }
+    const extension = normalizedFormat === "mathml" ? "mathml" : "tex";
+    const mimeType = normalizedFormat === "mathml" ? "application/mathml+xml;charset=utf-8" : "application/x-tex;charset=utf-8";
+    const saveResult = await fileAdapter?.saveBlobAsFile?.(new Blob([source], { type: mimeType }), {
+      defaultName: options.defaultName || String(item?.title || "公式").trim() || "公式",
+      extension,
+      title: normalizedFormat === "mathml" ? "导出 MathML 公式" : "导出 LaTeX 公式",
+      buttonLabel: "保存公式",
+      filters: [
+        { name: normalizedFormat === "mathml" ? "MathML 文件" : "LaTeX 文件", extensions: [extension] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (!saveResult?.ok) {
+      return saveResult?.canceled
+        ? { ok: false, canceled: true, code: "MATH_EXPORT_CANCELED", message: "" }
+        : { ok: false, canceled: false, code: "MATH_EXPORT_WRITE_FAILED", message: saveResult?.error || "公式导出失败" };
+    }
+    return {
+      ok: true,
+      canceled: false,
+      code: normalizedFormat === "mathml" ? "MATH_EXPORT_MATHML_OK" : "MATH_EXPORT_LATEX_OK",
+      message: normalizedFormat === "mathml" ? "已导出 MathML 公式" : "已导出 LaTeX 公式",
+      filePath: String(saveResult.path || "").trim(),
+    };
+  }
+
   const withExportResult = async (format, task) => attachCanvasOperationManifest(await task(), {
     operation: "export",
     requestedFormats: [format],
@@ -1088,5 +1413,6 @@ export function createStructuredExportRuntime({
     exportTextItem: (...args) => withExportResult("txt", () => exportTextItem(...args)),
     exportTableItem: (item, format, ...args) => withExportResult(format || "xlsx", () => exportTableItem(item, format, ...args)),
     exportCodeBlockItem: (item, format, ...args) => withExportResult(format || "source", () => exportCodeBlockItem(item, format, ...args)),
+    exportMathItem: (item, format, ...args) => withExportResult(format || "latex", () => exportMathItem(item, format, ...args)),
   };
 }

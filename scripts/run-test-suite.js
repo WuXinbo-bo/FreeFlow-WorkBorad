@@ -23,6 +23,7 @@ const CHECKS = [
   "scripts/check-canvas-state-history.js",
   "scripts/check-canvas-copy-integrity.js",
   "scripts/check-canvas-operation-results.js",
+  "scripts/check-canvas-semantic-transfer.js",
   "scripts/check-selection-dependency-closure.js",
   "scripts/check-export-image-hydration.js",
   "scripts/check-canvas-large-scene-runtime.js",

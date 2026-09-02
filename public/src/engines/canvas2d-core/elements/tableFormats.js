@@ -87,3 +87,40 @@ export function serializeTableMatrixToMarkdown(matrix = []) {
     ...body.map((row) => `| ${row.join(" | ")} |`),
   ].join("\n");
 }
+
+export function getTableFormatDegradations(matrix = [], format = "") {
+  const normalizedFormat = String(format || "").trim().toLowerCase();
+  const anchors = (Array.isArray(matrix) ? matrix : [])
+    .flatMap((row) => Array.isArray(row) ? row : [])
+    .filter((cell) => cell && !cell.covered);
+  const degradations = [];
+  const add = (code, label) => {
+    if (!degradations.some((entry) => entry.code === code)) {
+      degradations.push({ code, label });
+    }
+  };
+  const preservesStructure = normalizedFormat === "html" || normalizedFormat === "xlsx";
+  if (!preservesStructure && anchors.some((cell) => Number(cell.colSpan || 1) > 1 || Number(cell.rowSpan || 1) > 1)) {
+    add("merged-cells", "合并单元格");
+  }
+  if (!preservesStructure && anchors.some((cell) => String(cell.align || "").trim())) {
+    add("cell-alignment", "单元格对齐");
+  }
+  if (normalizedFormat !== "xlsx" && anchors.some((cell) => String(cell.valueType || "").trim())) {
+    add("typed-values", "单元格类型");
+  }
+  const hasRichCells = anchors.some((cell) =>
+    Boolean(cell.richTextDocument) || /<[^>]+>/.test(String(cell.html || ""))
+  );
+  if (hasRichCells && normalizedFormat !== "html") {
+    add("rich-cell-content", "单元格富格式");
+  }
+  return degradations;
+}
+
+export function buildTableDegradationSummary(degradations = []) {
+  const labels = (Array.isArray(degradations) ? degradations : [])
+    .map((entry) => String(entry?.label || "").trim())
+    .filter(Boolean);
+  return labels.length ? `（${labels.join("、")}已降级）` : "";
+}

@@ -59,6 +59,7 @@ import {
   isMindRelationshipItem,
 } from "./elements/mindRelationship.js";
 import {
+  applyTableCellContentEdit,
   createEditableTableElement,
   createTableStructureFromMatrix,
   flattenTableStructureToMatrix,
@@ -70,6 +71,8 @@ import {
   updateTableElementStructure,
 } from "./elements/table.js";
 import {
+  buildTableDegradationSummary,
+  getTableFormatDegradations,
   serializeTableMatrixToMarkdown,
   serializeTableMatrixToPlainText,
   serializeTableMatrixToTsv,
@@ -15123,6 +15126,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         if (!matrix[rowIndex]?.[columnIndex]) {
           return;
         }
+        const previousCell = matrix[rowIndex][columnIndex];
         const rawHtml = String(cellEl.getAttribute("data-cell-html") || "").trim();
         const plainText = sanitizeText(
           cellEl.getAttribute("data-cell-plain-text") || htmlToPlainText(rawHtml) || cellEl.textContent || ""
@@ -15137,11 +15141,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               Math.max(12, Number(getTableEditItem()?.fontSize || 16) || 16)
             )
           : null;
+        const nextPlainText = content?.plainText || plainText;
+        const nextHtml = content?.html || rawHtml;
         matrix[rowIndex][columnIndex] = {
-          ...matrix[rowIndex][columnIndex],
-          plainText: content?.plainText || plainText,
-          html: content?.html || rawHtml,
-          richTextDocument: content?.richTextDocument || null,
+          ...applyTableCellContentEdit(previousCell, {
+            plainText: nextPlainText,
+            html: nextHtml,
+            richTextDocument: content?.richTextDocument || null,
+          }),
           header: String(cellEl.getAttribute("data-header") || "") === "1",
           colSpan: Math.max(1, Number(cellEl.getAttribute("data-column-span")) || 1),
           rowSpan: Math.max(1, Number(cellEl.getAttribute("data-row-span")) || 1),
@@ -15425,16 +15432,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function copyCodeBlockTextContent(item, format = "plain") {
-    const meta = getCopyOperationMeta(item?.type, format);
+    const meta = getCopyOperationMeta(item, format);
     const content = (meta?.format || format) === "markdown" ? serializeCodeBlockToMarkdown(item) : getCodeBlockContent(item);
     if (!content.trim()) {
       setStatus("代码块为空");
       return false;
     }
-    const result = await writeClipboardTextAndHtml({
-      text: content,
-      markdown: meta?.format === "markdown" ? content : "",
-    });
+    const directPayload = meta?.format === "html" ? buildDirectClipboardPayloadForItems([item]) : null;
+    const result = await writeClipboardTextAndHtml(meta?.format === "html"
+      ? {
+          text: getCodeBlockContent(item),
+          html: String(directPayload?.html || "").trim(),
+        }
+      : {
+          text: content,
+          markdown: meta?.format === "markdown" ? content : "",
+        });
     if (!result.ok) {
       setStatus("复制失败", "warning");
       return false;
@@ -18166,7 +18179,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           defaultFileName: meta.defaultFileName,
         })
       );
-      setStatus(result.message || meta.successMessage);
+      setStatus(
+        result.message || meta.successMessage,
+        result.operationResult?.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+      );
       return true;
     }
     if (result?.canceled) {
@@ -18392,8 +18408,199 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return resultFor();
   }
 
+  function createDirectClipboardResult(format, ok, error = null) {
+    const normalizedFormat = String(format || "").trim();
+    return createCanvasOperationResult({
+      operation: "copy",
+      status: ok ? CANVAS_OPERATION_STATUS.SUCCESS : CANVAS_OPERATION_STATUS.FAILED,
+      code: ok ? "COPY_OK" : "COPY_FAILED",
+      message: ok ? "" : String(error?.message || error || "复制失败"),
+      systemWritten: Boolean(ok),
+      requestedFormats: normalizedFormat ? [normalizedFormat] : [],
+      providedFormats: ok && normalizedFormat ? [normalizedFormat] : [],
+      entries: [{
+        id: normalizedFormat || "clipboard",
+        type: "clipboard-write",
+        status: ok ? "written" : "failed",
+        reason: ok ? "" : "write-failed",
+        requestedFormat: normalizedFormat,
+        providedFormat: ok ? normalizedFormat : "",
+      }],
+      errors: ok ? [] : [{ code: "CLIPBOARD_WRITE_FAILED", message: String(error?.message || error || ""), stage: normalizedFormat }],
+    });
+  }
+
+  async function copyMathSemanticContent(item, format = "latex") {
+    const meta = getCopyOperationMeta(item, format);
+    const payload = buildMathClipboardContent(item);
+    if (!meta || !payload || payload.sourceFormat !== meta.format) {
+      setStatus("公式原文不支持该格式复制", "warning");
+      return false;
+    }
+    const result = meta.format === "mathml"
+      ? await writeClipboardTextAndHtml({ text: payload.source, html: payload.html })
+      : await writeClipboardTextAndHtml({ text: payload.source });
+    if (!result?.ok) {
+      setStatus("公式复制失败", "warning");
+      return false;
+    }
+    setStatus(
+      result.status === CANVAS_OPERATION_STATUS.DEGRADED
+        ? `已复制${meta.label}（系统剪贴板已降级）`
+        : `已复制${meta.label}`,
+      result.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+    );
+    return result;
+  }
+
+  async function resolveLocalFilePathForCopy(item) {
+    if (!item || (item.type !== "fileCard" && item.type !== "image")) {
+      return "";
+    }
+    const changed = await resolveFileCardSourcesForItems([item]);
+    if (changed) {
+      syncBoard({
+        persist: true,
+        emit: true,
+        sceneChange: true,
+        fullOverlayRescan: false,
+        reason: "copy-file-resolve-source",
+        itemIds: [String(item.id || "")].filter(Boolean),
+      });
+    }
+    return String(item.sourcePath || "").trim();
+  }
+
+  async function copyOriginalFileToClipboard(item, label = "原文件") {
+    const path = await resolveLocalFilePathForCopy(item);
+    if (!path || typeof globalThis?.desktopShell?.copyFilesToClipboard !== "function") {
+      setStatus("当前内容没有可复制的本地原文件", "warning");
+      return false;
+    }
+    try {
+      const response = await globalThis.desktopShell.copyFilesToClipboard([path]);
+      const result = createDirectClipboardResult("files", response?.ok === true, response?.error || "复制原文件失败");
+      setStatus(result.ok ? `已复制${label}` : result.message || "复制原文件失败", result.ok ? "success" : "warning");
+      return result.ok ? result : false;
+    } catch (error) {
+      const result = createDirectClipboardResult("files", false, error);
+      setStatus(result.message || "复制原文件失败", "warning");
+      return false;
+    }
+  }
+
+  function resolveImageSemanticSource(item = {}) {
+    return String(
+      item?.structuredImport?.canonicalFragment?.attrs?.src ||
+      item?.sourcePath ||
+      item?.dataUrl ||
+      ""
+    ).trim();
+  }
+
+  async function copyImageBitmapToClipboard(item) {
+    if (!item || item.type !== "image" || !navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+      setStatus("当前环境不支持复制图片位图", "warning");
+      return false;
+    }
+    try {
+      const hydrated = (await hydrateImageItems([item]))[0] || item;
+      const canonicalSource = resolveImageSemanticSource(hydrated);
+      const source =
+        resolveImageSource(hydrated.dataUrl, hydrated.sourcePath, {
+          allowLocalFileAccess: getAllowLocalFileAccess(),
+        }) || (/^https?:\/\//i.test(canonicalSource) ? canonicalSource : "");
+      if (!source) {
+        setStatus("图片来源为空，无法复制位图", "warning");
+        return false;
+      }
+      const image = await new Promise((resolve) => {
+        const node = new Image();
+        if (/^https?:\/\//i.test(source)) {
+          node.crossOrigin = "anonymous";
+        }
+        node.onload = () => resolve(node);
+        node.onerror = () => resolve(null);
+        node.src = source;
+      });
+      const canvas = image ? renderImageToCanvas(hydrated, image) : null;
+      const blob = canvas
+        ? await new Promise((resolve) => {
+            try {
+              canvas.toBlob(resolve, "image/png");
+            } catch {
+              resolve(null);
+            }
+          })
+        : null;
+      if (!blob) {
+        setStatus("图片位图生成失败", "warning");
+        return false;
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      const result = createDirectClipboardResult("image/png", true);
+      setStatus("已复制图片位图", "success");
+      return result;
+    } catch (error) {
+      const result = createDirectClipboardResult("image/png", false, error);
+      setStatus(result.message || "图片位图复制失败", "warning");
+      return false;
+    }
+  }
+
+  async function copyImageSemanticContent(item, format = "bitmap") {
+    const meta = getCopyOperationMeta(item, format);
+    if (!item || item.type !== "image" || !meta) {
+      setStatus("仅图片元素支持此操作", "warning");
+      return false;
+    }
+    if (meta.format === "bitmap") {
+      return copyImageBitmapToClipboard(item);
+    }
+    if (meta.format === "file") {
+      return copyOriginalFileToClipboard(item, "图片原文件");
+    }
+    const source = resolveImageSemanticSource(item);
+    if (!/^https?:\/\//i.test(source)) {
+      setStatus("该图片没有可复制的来源链接", "warning");
+      return false;
+    }
+    const result = await writeClipboardTextAndHtml({ text: source });
+    setStatus(result.ok ? "已复制图片来源链接" : "复制失败", result.ok ? "success" : "warning");
+    return result.ok ? result : false;
+  }
+
+  async function copyFileCardSemanticContent(item, format = "file") {
+    const meta = getCopyOperationMeta(item, format);
+    if (!item || item.type !== "fileCard" || !meta) {
+      setStatus("仅文件卡支持此操作", "warning");
+      return false;
+    }
+    if (meta.format === "file") {
+      return copyOriginalFileToClipboard(item, "原文件");
+    }
+    if (meta.format === "path") {
+      const path = await resolveLocalFilePathForCopy(item);
+      if (!path) {
+        setStatus("文件路径为空", "warning");
+        return false;
+      }
+      const result = await writeClipboardTextAndHtml({ text: path });
+      setStatus(result.ok ? "已复制文件路径" : "复制失败", result.ok ? "success" : "warning");
+      return result.ok ? result : false;
+    }
+    const fileName = String(item.fileName || item.name || "").trim();
+    if (!fileName) {
+      setStatus("文件名为空", "warning");
+      return false;
+    }
+    const result = await writeClipboardTextAndHtml({ text: fileName });
+    setStatus(result.ok ? "已复制文件名" : "复制失败", result.ok ? "success" : "warning");
+    return result.ok ? result : false;
+  }
+
   async function copyRichTextContent(item, format = "plain") {
-    const meta = getCopyOperationMeta(item?.type, format);
+    const meta = getCopyOperationMeta(item, format);
     const payload = buildRichTextClipboardContent(item);
     if (!payload || !meta) {
       setStatus("仅富文本元素支持此操作");
@@ -18435,6 +18642,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const directCopyPayload = buildDirectClipboardPayloadForItems([item]);
     return {
+      matrix,
       plain: serializeTableMatrixToPlainText(matrix, { hasHeader: item.table?.hasHeader !== false }),
       markdown: serializeTableMatrixToMarkdown(matrix),
       tsv: serializeTableMatrixToTsv(matrix),
@@ -18468,7 +18676,37 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
   }
 
-  function buildSelectionRichTextClipboardContent(items = []) {
+  function buildMathClipboardContent(item = {}) {
+    const mathState = getStructuredMathTextState(item);
+    const isLegacyMath = item?.type === "mathBlock" || item?.type === "mathInline";
+    if (!mathState && !isLegacyMath) {
+      return null;
+    }
+    const source = sanitizeText(mathState?.formula ?? item?.formula ?? item?.plainText ?? item?.text ?? "").trim();
+    const sourceFormat = String(mathState?.sourceFormat || item?.sourceFormat || "latex").trim().toLowerCase();
+    const displayMode = Boolean(mathState?.displayMode ?? item?.displayMode ?? item?.type === "mathBlock");
+    if (!source) {
+      return null;
+    }
+    if (sourceFormat === "mathml") {
+      return {
+        source,
+        sourceFormat,
+        plainText: source,
+        markdown: source,
+        html: /^\s*<math[\s>]/i.test(source) ? source : `<span data-copy-role="math-source">${escapeHtml(source)}</span>`,
+      };
+    }
+    return {
+      source,
+      sourceFormat,
+      plainText: source,
+      markdown: displayMode ? `$$\n${source}\n$$` : `$${source}$`,
+      html: `<span data-copy-role="${displayMode ? "math-block" : "math-inline"}" data-latex="${escapeHtml(source)}">${escapeHtml(source)}</span>`,
+    };
+  }
+
+  function buildSelectionRichTextClipboardContent(items = [], targetFormat = "html") {
     const plan = buildSelectionWordExportPlan(items);
     const orderedItems = plan.orderedEntries.map((entry) => entry.item).filter(Boolean);
     if (!orderedItems.length) {
@@ -18486,12 +18724,32 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const markCompleted = (item) => {
       entries.push({ id: String(item?.id || ""), type: String(item?.type || "unknown"), status: "completed" });
     };
+    const markDegraded = (item, degradations = []) => {
+      entries.push({
+        id: String(item?.id || ""),
+        type: String(item?.type || "unknown"),
+        status: "degraded",
+        reason: degradations.map((entry) => String(entry?.code || "")).filter(Boolean).join(","),
+      });
+    };
     const markEmpty = (item) => {
       entries.push({ id: String(item?.id || ""), type: String(item?.type || "unknown"), status: "skipped", reason: "empty-content" });
     };
 
     orderedItems.forEach((item) => {
       if (!item || typeof item !== "object") {
+        return;
+      }
+      if (isStructuredMathTextElement(item) || item.type === "mathBlock" || item.type === "mathInline") {
+        const payload = buildMathClipboardContent(item);
+        if (payload) {
+          htmlParts.push(payload.html);
+          markdownParts.push(payload.markdown);
+          plainParts.push(payload.plainText);
+          markCompleted(item);
+        } else {
+          markEmpty(item);
+        }
         return;
       }
       if (item.type === "text" || item.type === "flowNode") {
@@ -18520,7 +18778,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           htmlParts.push(payload.html || `<pre>${escapeHtml(plain)}</pre>`);
           markdownParts.push(markdown);
           plainParts.push(plain);
-          markCompleted(item);
+          const tableFormat = targetFormat === "html" ? "html" : targetFormat === "markdown" ? "markdown" : "txt";
+          const degradations = getTableFormatDegradations(payload.matrix, tableFormat);
+          if (degradations.length) {
+            markDegraded(item, degradations);
+          } else {
+            markCompleted(item);
+          }
         } else {
           markEmpty(item);
         }
@@ -18540,18 +18804,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         }
         return;
       }
-      if (item.type === "mathBlock" || item.type === "mathInline") {
-        const formula = sanitizeText(String(item.formula || item.plainText || item.text || "")).trim();
-        if (formula) {
-          const role = item.type === "mathInline" ? "math-inline" : "math-block";
-          htmlParts.push(`<span data-copy-role="${role}" data-latex="${escapeHtml(formula)}">${escapeHtml(formula)}</span>`);
-          markdownParts.push(item.type === "mathBlock" ? `$$\n${formula}\n$$` : `$${formula}$`);
-          plainParts.push(formula);
-          markCompleted(item);
-        } else {
-          markEmpty(item);
-        }
-      }
     });
 
     const html = htmlParts.join("<p></p>").trim();
@@ -18570,7 +18822,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   async function copySelectedItemsContent(format = "html") {
     const items = getSelectedItemsFast();
-    const payload = buildSelectionRichTextClipboardContent(items);
+    const payload = buildSelectionRichTextClipboardContent(items, format);
     if (!payload) {
       setStatus("未选中可复制内容", "warning");
       return false;
@@ -18608,6 +18860,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (payload.skippedItems.length) {
       notes.push(`跳过 ${payload.skippedItems.length} 个不支持或空元素`);
     }
+    if (selectionResult.degradedCount) {
+      notes.push(`${selectionResult.degradedCount} 个元素格式降级`);
+    }
     if (copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED) {
       notes.push("系统剪贴板已降级");
     }
@@ -18616,7 +18871,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function copyTableTextContent(item, format = "plain") {
-    const meta = getCopyOperationMeta(item?.type, format);
+    const meta = getCopyOperationMeta(item, format);
     const payload = buildTableClipboardContent(item);
     if (!payload || !meta) {
       setStatus("仅表格元素支持此操作");
@@ -18641,13 +18896,39 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("复制失败");
       return false;
     }
-    setStatus(
-      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED
-        ? `已复制${meta.label}（已降级为纯文本）`
-        : `已复制${meta.label}`,
-      copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+    const degradations = getTableFormatDegradations(
+      payload.matrix,
+      meta.format === "plain" ? "txt" : meta.format
     );
-    return copyResult;
+    const result = degradations.length
+      ? createCanvasOperationResult({
+          ...copyResult,
+          status: CANVAS_OPERATION_STATUS.DEGRADED,
+          entries: [
+            ...(Array.isArray(copyResult.entries) ? copyResult.entries : []),
+            ...degradations.map((entry) => ({
+              id: `${String(item?.id || "table")}-${entry.code}`,
+              type: "table",
+              status: "degraded",
+              reason: entry.code,
+              requestedFormat: meta.format,
+              providedFormat: meta.format,
+            })),
+          ],
+        })
+      : copyResult;
+    const notes = [];
+    if (degradations.length) {
+      notes.push(buildTableDegradationSummary(degradations).replace(/^（|）$/g, ""));
+    }
+    if (copyResult.status === CANVAS_OPERATION_STATUS.DEGRADED) {
+      notes.push("系统剪贴板已降级");
+    }
+    setStatus(
+      `已复制${meta.label}${notes.length ? `（${notes.join("，")}）` : ""}`,
+      result.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
+    );
+    return result;
   }
 
   async function startCanvasCapture() {
@@ -19798,6 +20079,36 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         structuredImportControllers.delete(operationId);
       }
     }
+    return false;
+  }
+
+  async function exportMathItem(item, format = "latex") {
+    const meta = getExportOperationMeta(item, format, item);
+    if (!item || !meta || (!isStructuredMathTextElement(item) && item.type !== "mathBlock" && item.type !== "mathInline")) {
+      setStatus("仅公式元素支持此导出", "warning");
+      return false;
+    }
+    const result = await structuredExportRuntime.exportMathItem(item, meta.format, {
+      defaultName: meta.defaultName,
+    });
+    if (result?.ok) {
+      recordExportHistory(
+        buildExportHistoryEntry({
+          result,
+          kind: meta.historyKind,
+          scope: meta.scope,
+          title: meta.historyTitle,
+          defaultFileName: meta.defaultFileName,
+        })
+      );
+      setStatus(result.message || meta.successMessage, "success");
+      return true;
+    }
+    if (result?.canceled) {
+      setStatus(meta.cancelMessage || "公式导出已取消", "warning");
+      return false;
+    }
+    setStatus(result?.message || meta.failureMessage, "warning");
     return false;
   }
 
@@ -22164,10 +22475,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!(refs.contextMenu instanceof HTMLElement) || !item) {
       return;
     }
-    const capabilities = getElementTransferCapabilities(item.type);
+    const capabilities = getElementTransferCapabilities(item);
     const supportedFormats = Array.isArray(capabilities?.visualExport) ? capabilities.visualExport : [];
     const actionAliases = {
-      png: ["export-rich-png", "image-export", "export-element-png"],
+      png: ["export-rich-png", "image-export", "image-export-png", "export-element-png"],
       pdf: ["export-rich-pdf", "export-element-pdf"],
     };
     const pendingFormats = supportedFormats.filter((format) => {
@@ -22386,10 +22697,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         const selectedItem = getSingleSelectedItemFast() || hitTarget;
         lastContextMenuTargetId = selectedItem?.id || lastContextMenuTargetId;
         const lockLabel = selectedItem?.locked ? "解锁" : "锁定";
+        const transferRuntime = {
+          bitmapClipboard: Boolean(navigator.clipboard?.write && typeof ClipboardItem !== "undefined"),
+          fileClipboard: typeof globalThis?.desktopShell?.copyFilesToClipboard === "function",
+        };
         if (selectedItem?.type === "fileCard") {
-          refs.contextMenu.innerHTML = buildFileCardContextMenuHtml(selectedItem);
+          refs.contextMenu.innerHTML = buildFileCardContextMenuHtml(selectedItem, transferRuntime);
         } else if (selectedItem?.type === "image") {
-          refs.contextMenu.innerHTML = imageModule.buildContextMenuHtml(selectedItem);
+          refs.contextMenu.innerHTML = imageModule.buildContextMenuHtml(selectedItem, transferRuntime);
         } else if (selectedItem?.type === "flowEdge") {
           refs.contextMenu.innerHTML = `
             <button type="button" class="canvas2d-context-menu-item" data-action="cut">剪切</button>
@@ -22580,7 +22895,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           isStructuredMathTextElement(selectedItem)
         ) {
           refs.contextMenu.innerHTML =
-            buildMathContextMenuHtml() +
+            buildMathContextMenuHtml(selectedItem, transferRuntime) +
             `<button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>` +
             buildLockDeleteTailHtml(lockLabel);
         } else if (selectedItem?.type === "text" || selectedItem?.type === "flowNode") {
@@ -22949,6 +23264,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           void copyTableTextContent(selectedItem, copyExportAction.format);
         } else if (copyExportAction.type === "codeBlock") {
           void copyCodeBlockTextContent(selectedItem, copyExportAction.format);
+        } else if (copyExportAction.type === "math") {
+          void copyMathSemanticContent(selectedItem, copyExportAction.format);
+        } else if (copyExportAction.type === "image") {
+          void copyImageSemanticContent(selectedItem, copyExportAction.format);
+        } else if (copyExportAction.type === "fileCard") {
+          void copyFileCardSemanticContent(selectedItem, copyExportAction.format);
         }
       } else if (copyExportAction.type === "text") {
         void exportRichTextItem(selectedItem, copyExportAction.format);
@@ -22956,6 +23277,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         void exportTableItem(selectedItem, copyExportAction.format);
       } else if (copyExportAction.type === "codeBlock") {
         void exportCodeBlockItem(selectedItem, copyExportAction.format);
+      } else if (copyExportAction.type === "math") {
+        void exportMathItem(selectedItem, copyExportAction.format);
+      } else if (copyExportAction.type === "image") {
+        void exportImageElement(selectedItem?.id || "");
       }
       hideContextMenu();
     }

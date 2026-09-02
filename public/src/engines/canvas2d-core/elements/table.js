@@ -211,6 +211,9 @@ export function flattenTableStructureToMatrix(structure = {}) {
                 : null,
             header: Boolean(cell?.header),
             align: String(cell?.align || ""),
+            value: y === rowIndex && x === startColumn ? cloneTableCellValue(cell?.value) : null,
+            valueType: y === rowIndex && x === startColumn ? String(cell?.valueType || "") : "",
+            numberFormat: y === rowIndex && x === startColumn ? String(cell?.numberFormat || "") : "",
             colSpan: span,
             rowSpan,
             covered: y !== rowIndex || x !== startColumn,
@@ -256,6 +259,9 @@ export function createTableStructureFromMatrix(matrix = [], options = {}) {
               : null,
           header: typeof value === "object" && value != null ? Boolean(value.header) : rowIndex === 0 && hasHeader,
           align: typeof value === "object" && value != null ? value.align : "",
+          value: typeof value === "object" && value != null ? value.value : null,
+          valueType: typeof value === "object" && value != null ? value.valueType : "",
+          numberFormat: typeof value === "object" && value != null ? value.numberFormat : "",
           colSpan: typeof value === "object" && value != null ? value.colSpan : 1,
           rowSpan: typeof value === "object" && value != null ? value.rowSpan : 1,
         },
@@ -328,6 +334,9 @@ export function mergeTableMatrixRange(matrix = [], range = {}) {
         plainText: covered ? "" : plainText,
         html: covered ? "" : html,
         richTextDocument: null,
+        value: null,
+        valueType: "",
+        numberFormat: "",
         colSpan: bounds.endColumn - bounds.startColumn + 1,
         rowSpan: bounds.endRow - bounds.startRow + 1,
         covered,
@@ -358,6 +367,9 @@ export function splitTableMatrixCell(matrix = [], rowIndex = 0, columnIndex = 0)
         plainText: isAnchor ? String(anchor.plainText || "") : "",
         html: isAnchor ? String(anchor.html || "") : "",
         richTextDocument: isAnchor && anchor.richTextDocument ? JSON.parse(JSON.stringify(anchor.richTextDocument)) : null,
+        value: isAnchor ? cloneTableCellValue(anchor.value) : null,
+        valueType: isAnchor ? String(anchor.valueType || "") : "",
+        numberFormat: isAnchor ? String(anchor.numberFormat || "") : "",
         colSpan: 1,
         rowSpan: 1,
         covered: false,
@@ -376,6 +388,9 @@ function cloneTableMatrixWithSpans(matrix = []) {
       richTextDocument: cell?.richTextDocument && typeof cell.richTextDocument === "object"
         ? JSON.parse(JSON.stringify(cell.richTextDocument))
         : null,
+      value: cloneTableCellValue(cell?.value),
+      valueType: String(cell?.valueType || ""),
+      numberFormat: String(cell?.numberFormat || ""),
       rowIndex,
       columnIndex,
       colSpan: Math.max(1, Number(cell?.colSpan || 1)),
@@ -428,6 +443,26 @@ export function updateTableElementStructure(element = {}, structure = {}) {
   });
 }
 
+export function applyTableCellContentEdit(previousCell = {}, content = {}) {
+  const plainText = sanitizeText(content?.plainText || "");
+  const html = String(content?.html || "").trim();
+  const contentChanged =
+    plainText !== String(previousCell?.plainText || "") ||
+    html !== String(previousCell?.html || "").trim();
+  return {
+    ...(previousCell && typeof previousCell === "object" ? previousCell : {}),
+    plainText,
+    html,
+    richTextDocument:
+      content?.richTextDocument && typeof content.richTextDocument === "object"
+        ? JSON.parse(JSON.stringify(content.richTextDocument))
+        : null,
+    value: contentChanged ? null : cloneTableCellValue(previousCell?.value),
+    valueType: contentChanged ? "" : String(previousCell?.valueType || ""),
+    numberFormat: contentChanged ? "" : String(previousCell?.numberFormat || ""),
+  };
+}
+
 function normalizeTableRow(row = {}, rowIndex = 0) {
   const hasExplicitCells = Array.isArray(row?.cells) || Array.isArray(row?.content);
   const cells = Array.isArray(row?.cells)
@@ -461,9 +496,55 @@ function normalizeTableCell(cell = {}, rowIndex = 0, cellIndex = 0) {
         : null,
     header: Boolean(cell.header ?? cell?.attrs?.header),
     align: normalizeAlign(cell.align ?? cell?.attrs?.align),
+    value: normalizeTableCellValue(cell.value ?? cell.typedValue ?? cell.rawValue, cell.valueType ?? cell.dataType),
+    valueType: normalizeTableCellValueType(cell.valueType ?? cell.dataType),
+    numberFormat: String(cell.numberFormat || cell.numFmt || "").trim(),
     colSpan: normalizePositiveInteger(cell.colSpan ?? cell?.attrs?.colSpan, 1),
     rowSpan: normalizePositiveInteger(cell.rowSpan ?? cell?.attrs?.rowSpan, 1),
   };
+}
+
+function normalizeTableCellValueType(value = "") {
+  const type = String(value || "").trim().toLowerCase();
+  if (["number", "boolean", "date", "string"].includes(type)) {
+    return type;
+  }
+  return "";
+}
+
+function normalizeTableCellValue(value, valueType = "") {
+  const type = normalizeTableCellValueType(valueType);
+  if (!type) {
+    return null;
+  }
+  if (type === "number") {
+    if (value == null || (typeof value === "string" && !value.trim()) || typeof value === "boolean") {
+      return null;
+    }
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  if (type === "boolean") {
+    if (typeof value === "boolean") return value;
+    if (/^(true|1)$/i.test(String(value ?? "").trim())) return true;
+    if (/^(false|0)$/i.test(String(value ?? "").trim())) return false;
+    return null;
+  }
+  if (type === "date") {
+    if (value == null || (typeof value === "string" && !value.trim())) {
+      return null;
+    }
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  }
+  return String(value ?? "");
+}
+
+function cloneTableCellValue(value) {
+  if (value == null || typeof value !== "object") {
+    return value ?? null;
+  }
+  return JSON.parse(JSON.stringify(value));
 }
 
 function estimateTableElementSize(structure = {}, widthHint = 0) {

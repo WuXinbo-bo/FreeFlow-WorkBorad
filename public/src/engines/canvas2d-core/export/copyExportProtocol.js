@@ -1,5 +1,43 @@
 import { getCodeBlockLanguageFileExtension } from "../codeBlock/languageRegistry.js";
 import { canvasElementRegistry } from "../elements/index.js";
+import { getStructuredMathTextState, isStructuredMathTextElement } from "../elements/mathText.js";
+
+function getMathSourceFormat(item = null) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const mathState = getStructuredMathTextState(item);
+  return String(
+    mathState?.sourceFormat ||
+    item?.sourceFormat ||
+    item?.structuredImport?.canonicalFragment?.attrs?.sourceFormat ||
+    "latex"
+  ).trim().toLowerCase();
+}
+
+function getImageSource(item = null) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  return String(
+    item?.structuredImport?.canonicalFragment?.attrs?.src ||
+    item?.sourcePath ||
+    item?.dataUrl ||
+    ""
+  ).trim();
+}
+
+function hasFileReference(item = null) {
+  return Boolean(String(item?.sourcePath || "").trim() || String(item?.fileId || "").trim());
+}
+
+function hasRemoteImageSource(item = null) {
+  return /^https?:\/\//i.test(getImageSource(item));
+}
+
+function runtimeSupports(runtime = {}, key = "") {
+  return !runtime || !Object.prototype.hasOwnProperty.call(runtime, key) || runtime[key] !== false;
+}
 
 const COPY_EXPORT_PROTOCOL = Object.freeze({
   text: Object.freeze({
@@ -141,6 +179,7 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
     copyFormats: Object.freeze([
       Object.freeze({ format: "plain", action: "code-copy-text-plain", menuLabel: "纯文本", statusLabel: "纯文本" }),
       Object.freeze({ format: "markdown", action: "code-copy-text-markdown", menuLabel: "Markdown", statusLabel: "Markdown" }),
+      Object.freeze({ format: "html", action: "code-copy-text-html", menuLabel: "语义化 HTML", statusLabel: "语义化 HTML" }),
     ]),
     exportFormats: Object.freeze([
       Object.freeze({
@@ -167,6 +206,125 @@ const COPY_EXPORT_PROTOCOL = Object.freeze({
       }),
     ]),
   }),
+  math: Object.freeze({
+    copyInvalidMessage: "仅公式元素支持此操作",
+    exportInvalidMessage: "仅公式元素支持此导出",
+    exportFailureMessage: "公式导出失败",
+    exportCancelMessage: "公式导出已取消",
+    exportScope: "math",
+    getDefaultName(item) {
+      return String(item?.title || "公式").trim() || "公式";
+    },
+    copyFormats: Object.freeze([
+      Object.freeze({
+        format: "latex",
+        action: "math-copy-latex",
+        menuLabel: "LaTeX",
+        statusLabel: "LaTeX",
+        isAvailable: (item) => !item || getMathSourceFormat(item) === "latex",
+      }),
+      Object.freeze({
+        format: "mathml",
+        action: "math-copy-mathml",
+        menuLabel: "MathML（保留原文）",
+        statusLabel: "MathML",
+        isAvailable: (item) => !item || getMathSourceFormat(item) === "mathml",
+      }),
+    ]),
+    exportFormats: Object.freeze([
+      Object.freeze({
+        format: "latex",
+        action: "math-export-latex",
+        menuLabel: "导出为 LaTeX",
+        historyKind: "tex",
+        historyTitle: "公式导出 LaTeX",
+        defaultExtension: "tex",
+        successMessage: "已导出 LaTeX 公式",
+        isAvailable: (item) => !item || getMathSourceFormat(item) === "latex",
+      }),
+      Object.freeze({
+        format: "mathml",
+        action: "math-export-mathml",
+        menuLabel: "导出为 MathML",
+        historyKind: "mathml",
+        historyTitle: "公式导出 MathML",
+        defaultExtension: "mathml",
+        successMessage: "已导出 MathML 公式",
+        isAvailable: (item) => !item || getMathSourceFormat(item) === "mathml",
+      }),
+    ]),
+  }),
+  image: Object.freeze({
+    copyInvalidMessage: "仅图片元素支持此操作",
+    exportInvalidMessage: "仅图片元素支持此导出",
+    exportFailureMessage: "图片导出失败",
+    exportCancelMessage: "图片导出已取消",
+    exportScope: "image",
+    getDefaultName(item) {
+      return String(item?.name || item?.title || "图片").trim() || "图片";
+    },
+    copyFormats: Object.freeze([
+      Object.freeze({
+        format: "bitmap",
+        action: "image-copy-bitmap",
+        menuLabel: "复制位图（PNG）",
+        statusLabel: "图片位图",
+        isAvailable: (item, runtime) => (!item || Boolean(getImageSource(item))) && runtimeSupports(runtime, "bitmapClipboard"),
+      }),
+      Object.freeze({
+        format: "file",
+        action: "image-copy-original-file",
+        menuLabel: "复制原文件",
+        statusLabel: "图片原文件",
+        isAvailable: (item, runtime) => (!item || hasFileReference(item)) && runtimeSupports(runtime, "fileClipboard"),
+      }),
+      Object.freeze({
+        format: "source-link",
+        action: "image-copy-source-link",
+        menuLabel: "复制来源链接",
+        statusLabel: "图片来源链接",
+        isAvailable: (item) => !item || hasRemoteImageSource(item),
+      }),
+    ]),
+    exportFormats: Object.freeze([
+      Object.freeze({
+        format: "png",
+        action: "image-export-png",
+        menuLabel: "导出当前图片（PNG）",
+        historyKind: "png",
+        historyTitle: "图片导出 PNG",
+        defaultExtension: "png",
+        successMessage: "已导出图片",
+      }),
+    ]),
+  }),
+  fileCard: Object.freeze({
+    copyInvalidMessage: "仅文件卡支持此操作",
+    exportInvalidMessage: "仅文件卡支持此导出",
+    exportFailureMessage: "文件卡导出失败",
+    exportScope: "file-card",
+    getDefaultName(item) {
+      return String(item?.fileName || item?.name || item?.title || "文件").trim() || "文件";
+    },
+    copyFormats: Object.freeze([
+      Object.freeze({
+        format: "file",
+        action: "file-copy-original",
+        menuLabel: "复制原文件",
+        statusLabel: "原文件",
+        isAvailable: (item, runtime) => (!item || hasFileReference(item)) && runtimeSupports(runtime, "fileClipboard"),
+      }),
+      Object.freeze({
+        format: "path",
+        action: "file-copy-path",
+        menuLabel: "复制文件路径",
+        statusLabel: "文件路径",
+        isAvailable: (item) => !item || hasFileReference(item),
+      }),
+      Object.freeze({ format: "filename", action: "file-copy-name", menuLabel: "复制文件名", statusLabel: "文件名" }),
+    ]),
+    exportFormats: Object.freeze([]),
+  }),
 });
 
 const VISUAL_EXPORT_FORMATS = Object.freeze({
@@ -175,7 +333,12 @@ const VISUAL_EXPORT_FORMATS = Object.freeze({
 });
 
 function normalizeType(type = "") {
-  const definition = canvasElementRegistry.resolve(type, { fallback: false });
+  if (type && typeof type === "object" && isStructuredMathTextElement(type)) {
+    return "math";
+  }
+  const definition = type && typeof type === "object"
+    ? canvasElementRegistry.resolveElement(type, { fallback: false })
+    : canvasElementRegistry.resolve(type, { fallback: false });
   const protocolType = String(definition?.capabilities?.copyExportProtocol || "").trim();
   return COPY_EXPORT_PROTOCOL[protocolType] ? protocolType : "";
 }
@@ -210,18 +373,26 @@ export function getExportFormatSpec(type = "", format = "") {
   return protocol ? resolveFormatSpec(protocol.exportFormats, format) : null;
 }
 
-export function getCopyMenuItems(type = "", { visibleOnly = true } = {}) {
+export function getCopyMenuItems(type = "", { visibleOnly = true, item = null, runtime = {} } = {}) {
   const protocol = resolveProtocol(type);
   if (!protocol) {
     return [];
   }
-  return protocol.copyFormats.filter((entry) => !visibleOnly || entry.visible !== false);
+  const targetItem = item || (type && typeof type === "object" ? type : null);
+  return protocol.copyFormats.filter((entry) =>
+    (!visibleOnly || entry.visible !== false) &&
+    (typeof entry.isAvailable !== "function" || entry.isAvailable(targetItem, runtime))
+  );
 }
 
-export function getExportMenuItems(type = "", { visibleOnly = true } = {}) {
+export function getExportMenuItems(type = "", { visibleOnly = true, item = null, runtime = {} } = {}) {
   const protocol = resolveProtocol(type);
+  const targetItem = item || (type && typeof type === "object" ? type : null);
   const semanticFormats = protocol
-    ? protocol.exportFormats.filter((entry) => !visibleOnly || entry.visible !== false)
+    ? protocol.exportFormats.filter((entry) =>
+        (!visibleOnly || entry.visible !== false) &&
+        (typeof entry.isAvailable !== "function" || entry.isAvailable(targetItem, runtime))
+      )
     : [];
   const semanticFormatIds = new Set(semanticFormats.map((entry) => String(entry.format || "").toLowerCase()));
   const capabilities = getElementTransferCapabilities(type);
@@ -262,26 +433,36 @@ export function resolveCopyExportAction(action = "") {
 }
 
 function getProtocolTargetTypes(protocolType = "") {
-  return canvasElementRegistry
+  const targetTypes = canvasElementRegistry
     .list()
     .filter((definition) => definition.capabilities?.copyExportProtocol === protocolType)
     .map((definition) => definition.type);
+  if (protocolType === "math" && !targetTypes.includes("text")) {
+    targetTypes.push("text");
+  }
+  return targetTypes;
 }
 
 export function getElementTransferCapabilities(type = "") {
-  const definition = canvasElementRegistry.resolve(type, { fallback: false });
+  const definition = type && typeof type === "object"
+    ? canvasElementRegistry.resolveElement(type, { fallback: false })
+    : canvasElementRegistry.resolve(type, { fallback: false });
   if (!definition) {
     return null;
   }
   const capabilities = definition.capabilities || {};
+  const protocolType = normalizeType(type);
+  const protocol = COPY_EXPORT_PROTOCOL[protocolType] || null;
   return {
     type: definition.type,
     objectCopy: capabilities.objectCopy === true,
-    contentCopy: String(capabilities.contentCopy || "none"),
+    contentCopy: String(protocolType === "math" ? "math" : capabilities.contentCopy || "none"),
     selectionCopy: String(capabilities.selectionCopy || "none"),
-    copyExportProtocol: String(capabilities.copyExportProtocol || "none"),
+    copyExportProtocol: String(protocolType || capabilities.copyExportProtocol || "none"),
     visualExport: Array.isArray(capabilities.visualExport) ? [...capabilities.visualExport] : [],
-    semanticExport: Array.isArray(capabilities.semanticExport) ? [...capabilities.semanticExport] : [],
+    semanticExport: protocol
+      ? protocol.exportFormats.map((entry) => String(entry.format || "")).filter(Boolean)
+      : Array.isArray(capabilities.semanticExport) ? [...capabilities.semanticExport] : [],
     dependencyClosure: String(capabilities.dependencyClosure || "none"),
     measurement: String(capabilities.measurement || "bounds"),
     persistence: String(capabilities.persistence || "inline"),
