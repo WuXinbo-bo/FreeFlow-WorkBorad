@@ -1041,11 +1041,41 @@ async function checkPanelLayoutControls(page, viewport) {
       ? Math.abs(collapse.left - panel.left) <= 1
       : Math.abs(collapse.right - panel.right) <= 1;
     assert(
-      sideAligned && Math.abs((collapse.top + collapse.bottom) / 2 - (panel.top + panel.bottom) / 2) <= 1 && collapse.height >= 60,
+      sideAligned &&
+        Math.abs((collapse.top + collapse.bottom) / 2 - (panel.top + panel.bottom) / 2) <= 1 &&
+        collapse.width <= 12.5 &&
+        collapse.height >= 70,
       `${name} panel collapse control is not docked to the side midpoint`,
       { viewport, panel, collapse }
     );
   }
+  const leftCollapseRestingRect = await leftCollapse.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  await leftCollapse.hover();
+  await page.waitForTimeout(180);
+  const leftCollapseHoverRect = await leftCollapse.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  await page.mouse.down();
+  const leftCollapsePressedRect = await leftCollapse.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  await page.mouse.move(viewport.width / 2, viewport.height / 2);
+  await page.mouse.up();
+  assert(
+    [leftCollapseHoverRect, leftCollapsePressedRect].every((rect) =>
+      Math.abs(rect.left - leftCollapseRestingRect.left) <= 0.5 &&
+      Math.abs(rect.top - leftCollapseRestingRect.top) <= 0.5 &&
+      Math.abs(rect.right - leftCollapseRestingRect.right) <= 0.5 &&
+      Math.abs(rect.bottom - leftCollapseRestingRect.bottom) <= 0.5
+    ),
+    "panel collapse handle shifts when hovered or pressed",
+    { viewport, leftCollapseRestingRect, leftCollapseHoverRect, leftCollapsePressedRect }
+  );
   assert(
     !rectanglesOverlap(defaultLayout.rightControls, defaultLayout.rightHeader, 6),
     "right panel edge controls overlap the header rail",
@@ -1072,7 +1102,8 @@ async function checkPanelLayoutControls(page, viewport) {
   assert(
     Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
       collapsedRestore.left <= 0.5 &&
-      collapsedRestore.right - collapsedRestore.left >= 29 &&
+      collapsedRestore.right - collapsedRestore.left >= 15 &&
+      collapsedRestore.right - collapsedRestore.left <= 16.5 &&
       collapsedRestore.bottom - collapsedRestore.top >= 80,
     "collapsed canvas restore control is not a centered left-edge drawer handle",
     { viewport, collapsedRestore }
@@ -1092,7 +1123,8 @@ async function checkPanelLayoutControls(page, viewport) {
   assert(
     Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
       Math.abs(viewport.width - rightRestore.right) <= 0.5 &&
-      rightRestore.right - rightRestore.left >= 29 &&
+      rightRestore.right - rightRestore.left >= 15 &&
+      rightRestore.right - rightRestore.left <= 16.5 &&
       rightRestore.bottom - rightRestore.top >= 80,
     "collapsed conversation restore control is not a centered right-edge drawer handle",
     { viewport, rightRestore }

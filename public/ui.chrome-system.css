@@ -194,31 +194,43 @@ body.desktop-mode .stage-panel-collapse-handle {
   position: absolute;
   top: 50%;
   z-index: 33;
-  width: 24px !important;
-  min-width: 24px !important;
-  height: 64px !important;
+  width: 12px !important;
+  min-width: 12px !important;
+  height: 72px !important;
   padding: 0 !important;
   border: 1px solid var(--chrome-glass-border) !important;
   color: var(--chrome-ink-muted) !important;
   background-color: var(--chrome-glass-idle) !important;
   background-image: var(--chrome-glass-sheen) !important;
-  box-shadow: var(--chrome-shadow) !important;
-  opacity: 0.7;
-  transform: translateY(-50%);
+  box-shadow: 0 2px 8px rgba(26, 32, 39, 0.12) !important;
+  opacity: 0.62;
+  transform: translateY(-50%) !important;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
   backdrop-filter: blur(16px) saturate(125%);
   -webkit-backdrop-filter: blur(16px) saturate(125%);
+}
+
+body.desktop-mode .stage-panel-collapse-handle .ui-control-icon,
+body.desktop-mode .stage-panel-collapse-handle .ui-control-icon svg {
+  width: 10px;
+  height: 18px;
+  flex-basis: 10px;
 }
 
 body.desktop-mode [data-workspace-dock="left"] > .stage-panel-collapse-handle {
   left: 0;
   right: auto;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 5px 5px 0;
 }
 
 body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle {
   right: 0;
   left: auto;
-  border-radius: 8px 0 0 8px;
+  border-radius: 5px 0 0 5px;
 }
 
 body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle .stage-panel-collapse-icon {
@@ -226,10 +238,13 @@ body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle .
 }
 
 body.desktop-mode .stage-panel-collapse-handle:hover,
-body.desktop-mode .stage-panel-collapse-handle:focus-visible {
+body.desktop-mode .stage-panel-collapse-handle:focus-visible,
+body.desktop-mode .stage-panel-collapse-handle:active {
   color: var(--chrome-ink) !important;
   background-color: var(--chrome-glass-active) !important;
+  box-shadow: 0 2px 7px rgba(26, 32, 39, 0.16) !important;
   opacity: 1;
+  transform: translateY(-50%) !important;
 }
 
 .ui-control-icon,
@@ -889,9 +904,9 @@ body.desktop-mode .composer.ui-chrome-composer {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  width: 30px !important;
-  min-width: 30px !important;
-  max-width: 30px;
+  width: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px;
   height: 88px !important;
   box-sizing: border-box;
   flex: 0 0 auto;
@@ -916,14 +931,14 @@ body.desktop-mode .composer.ui-chrome-composer {
 #restore-right-pane-btn:not(.pane-restore-btn-right) {
   left: 0 !important;
   right: auto !important;
-  border-radius: 0 10px 10px 0 !important;
+  border-radius: 0 6px 6px 0 !important;
 }
 
 #restore-left-pane-btn.pane-restore-btn-right,
 #restore-right-pane-btn.pane-restore-btn-right {
   left: auto !important;
   right: 0 !important;
-  border-radius: 10px 0 0 10px !important;
+  border-radius: 6px 0 0 6px !important;
 }
 
 .pane-restore-btn:hover,
@@ -961,10 +976,19 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn.ui-icon-only,
 #restore-right-pane-btn.ui-icon-only {
-  width: 30px !important;
-  min-width: 30px !important;
+  width: 16px !important;
+  min-width: 16px !important;
   height: 88px !important;
   min-height: 88px !important;
+}
+
+#restore-left-pane-btn .ui-control-icon,
+#restore-right-pane-btn .ui-control-icon,
+#restore-left-pane-btn .ui-control-icon svg,
+#restore-right-pane-btn .ui-control-icon svg {
+  width: 12px;
+  height: 18px;
+  flex-basis: 12px;
 }
 
 .ui-recovery-dock .ui-recovery-control,
