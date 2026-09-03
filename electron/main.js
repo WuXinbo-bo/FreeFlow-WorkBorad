@@ -30,6 +30,7 @@ const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbe
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
+const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
 const { readUiSettingsStore, writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
@@ -92,6 +93,9 @@ let pinnedEnabled = Boolean(WINDOW_CONFIG.alwaysOnTop);
 let desktopShellFullscreenEnabled = false;
 let desktopShellRestoreBounds = null;
 let desktopShellBoundsTransitionLock = false;
+let desktopShellBoundsTransitionTimer = null;
+let displayMetricsSyncTimer = null;
+let displayLifecycleHandlersRegistered = false;
 let desktopShortcutRegistered = false;
 let lastClickThroughToggleAt = 0;
 let mainWindowRendererReadyTimer = null;
@@ -1371,11 +1375,16 @@ async function reloadMainWindow(reason = "renderer-reload") {
 
 function getDefaultWindowBoundsForDisplay(display = screen.getPrimaryDisplay()) {
   const workArea = display?.workArea || { x: 0, y: 0, width: WINDOW_CONFIG.width, height: WINDOW_CONFIG.height };
-  const width = Math.max(WINDOW_CONFIG.minWidth, Math.min(WINDOW_CONFIG.width, workArea.width));
-  const height = Math.max(WINDOW_CONFIG.minHeight, Math.min(WINDOW_CONFIG.height, workArea.height));
-  const x = Math.round(workArea.x + Math.max(0, (workArea.width - width) / 2));
-  const y = Math.round(workArea.y + Math.max(0, (workArea.height - height) / 2));
-  return { x, y, width, height };
+  return constrainWindowBoundsToWorkArea(
+    {
+      x: workArea.x + (workArea.width - WINDOW_CONFIG.width) / 2,
+      y: workArea.y + (workArea.height - WINDOW_CONFIG.height) / 2,
+      width: WINDOW_CONFIG.width,
+      height: WINDOW_CONFIG.height,
+    },
+    workArea,
+    WINDOW_CONFIG
+  );
 }
 
 function getStartupWindowOptions() {
@@ -1666,22 +1675,10 @@ function expandMainWindowToDesktopWorkspace() {
     mainWindow.restore();
   }
 
-  if (mainWindow.isFullScreen?.()) {
-    mainWindow.setFullScreen(false);
-  }
-
-  if (mainWindow.isMaximized?.()) {
-    mainWindow.unmaximize();
-  }
-
   const display = screen.getDisplayMatching(mainWindow.getBounds());
   const nextBounds = display?.workArea ? { ...display.workArea } : getDefaultWindowBoundsForDisplay(display);
   desktopShellFullscreenEnabled = true;
-  desktopShellBoundsTransitionLock = true;
-  mainWindow.setBounds(nextBounds, true);
-  setTimeout(() => {
-    desktopShellBoundsTransitionLock = false;
-  }, 80);
+  runAfterNativeWindowRestore(mainWindow, () => setMainWindowBounds(mainWindow, nextBounds, true));
   reinforcePinnedState();
   broadcastDesktopShellState();
   return true;
@@ -1696,25 +1693,15 @@ function restoreMainWindowFromDesktopWorkspace() {
     mainWindow.restore();
   }
 
-  if (mainWindow.isFullScreen?.()) {
-    mainWindow.setFullScreen(false);
-  }
-
-  if (mainWindow.isMaximized?.()) {
-    mainWindow.unmaximize();
-  }
-
-  const display = screen.getDisplayMatching(mainWindow.getBounds());
-  const nextBounds =
-    normalizeWindowBounds(desktopShellRestoreBounds) ||
-    getDefaultWindowBoundsForDisplay(display);
+  const restoreCandidate = normalizeWindowBounds(desktopShellRestoreBounds);
+  const display = screen.getDisplayMatching(restoreCandidate || mainWindow.getBounds());
+  const nextBounds = restoreCandidate
+    ? constrainWindowBoundsToDisplay(restoreCandidate, display)
+    : getDefaultWindowBoundsForDisplay(display);
   desktopShellRestoreBounds = null;
   desktopShellFullscreenEnabled = false;
   desktopShellBoundsTransitionLock = true;
-  mainWindow.setBounds(nextBounds, true);
-  setTimeout(() => {
-    desktopShellBoundsTransitionLock = false;
-  }, 80);
+  runAfterNativeWindowRestore(mainWindow, () => setMainWindowBounds(mainWindow, nextBounds, true));
   reinforcePinnedState();
   broadcastDesktopShellState();
   return true;
@@ -2055,6 +2042,116 @@ function createMainWindow() {
   });
 
   return window;
+}
+
+function constrainWindowBoundsToDisplay(bounds, display = null) {
+  const normalizedBounds = normalizeWindowBounds(bounds);
+  const targetDisplay = display || screen.getDisplayMatching(normalizedBounds || mainWindow?.getBounds?.() || {});
+  if (!normalizedBounds || !targetDisplay?.workArea) {
+    return normalizedBounds;
+  }
+  return constrainWindowBoundsToWorkArea(normalizedBounds, targetDisplay.workArea, WINDOW_CONFIG);
+}
+
+function setMainWindowBounds(window, bounds, animate = true) {
+  if (!window || window.isDestroyed() || !bounds) {
+    desktopShellBoundsTransitionLock = false;
+    return;
+  }
+  if (desktopShellBoundsTransitionTimer) {
+    clearTimeout(desktopShellBoundsTransitionTimer);
+  }
+  desktopShellBoundsTransitionLock = true;
+  window.setBounds(bounds, animate);
+  desktopShellBoundsTransitionTimer = setTimeout(() => {
+    desktopShellBoundsTransitionTimer = null;
+    desktopShellBoundsTransitionLock = false;
+    captureDesktopShellRestoreBounds();
+  }, 120);
+}
+
+function runAfterNativeWindowRestore(window, callback) {
+  const eventName = window.isFullScreen?.() ? "leave-full-screen" : window.isMaximized?.() ? "unmaximize" : "";
+  if (!eventName) {
+    callback();
+    return;
+  }
+
+  let fallbackTimer = null;
+  let completed = false;
+  const complete = () => {
+    if (completed) {
+      return;
+    }
+    completed = true;
+    window.removeListener(eventName, complete);
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+    if (eventName === "leave-full-screen" && window.isMaximized?.()) {
+      runAfterNativeWindowRestore(window, callback);
+      return;
+    }
+    callback();
+  };
+  window.once(eventName, complete);
+  fallbackTimer = setTimeout(complete, 260);
+  if (eventName === "leave-full-screen") {
+    window.setFullScreen(false);
+  } else {
+    window.unmaximize();
+  }
+}
+
+function syncMainWindowToAvailableDisplay() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized?.()) {
+    return;
+  }
+
+  const currentBounds = normalizeWindowBounds(mainWindow.getBounds());
+  const restoreReference = normalizeWindowBounds(desktopShellRestoreBounds) || currentBounds;
+  const restoreDisplay = screen.getDisplayMatching(restoreReference);
+  if (desktopShellRestoreBounds) {
+    desktopShellRestoreBounds = constrainWindowBoundsToDisplay(restoreReference, restoreDisplay);
+  }
+
+  if (mainWindow.isFullScreen?.() || mainWindow.isMaximized?.()) {
+    return;
+  }
+  if (desktopShellFullscreenEnabled) {
+    const activeDisplay = screen.getDisplayMatching(currentBounds);
+    const workspaceBounds = activeDisplay?.workArea
+      ? { ...activeDisplay.workArea }
+      : getDefaultWindowBoundsForDisplay(activeDisplay);
+    setMainWindowBounds(mainWindow, workspaceBounds, false);
+    return;
+  }
+
+  const nextBounds = constrainWindowBoundsToDisplay(currentBounds);
+  if (nextBounds && Object.keys(nextBounds).some((key) => nextBounds[key] !== currentBounds[key])) {
+    setMainWindowBounds(mainWindow, nextBounds, false);
+  }
+}
+
+function scheduleDisplayMetricsSync() {
+  if (displayMetricsSyncTimer) {
+    clearTimeout(displayMetricsSyncTimer);
+  }
+  displayMetricsSyncTimer = setTimeout(() => {
+    displayMetricsSyncTimer = null;
+    syncMainWindowToAvailableDisplay();
+  }, 120);
+}
+
+function registerDisplayLifecycleHandlers() {
+  if (displayLifecycleHandlersRegistered) {
+    return;
+  }
+  displayLifecycleHandlersRegistered = true;
+  screen.on("display-added", scheduleDisplayMetricsSync);
+  screen.on("display-removed", scheduleDisplayMetricsSync);
+  screen.on("display-metrics-changed", scheduleDisplayMetricsSync);
 }
 
 function getBackgroundExportUrl() {
@@ -2433,6 +2530,7 @@ async function bootstrapDesktopApp() {
     cancelDoubaoChat,
   });
   registerDisplayMediaHandler();
+  registerDisplayLifecycleHandlers();
   await ensureDesktopStartupContext({ force: true }).catch((error) => {
     console.warn(`[desktop-shell] Failed to initialize startup context: ${error.message}`);
   });
@@ -3811,6 +3909,9 @@ ipcMain.handle("desktop-shell:toggle-fullscreen", () => {
   if (!mainWindow) {
     return { fullscreen: false };
   }
+  if (desktopShellBoundsTransitionLock) {
+    return getDesktopShellState();
+  }
 
   const shouldExitExpandedMode = Boolean(
     desktopShellFullscreenEnabled ||
@@ -3910,6 +4011,12 @@ app.on("window-all-closed", async () => {
 });
 
 app.on("before-quit", async () => {
+  if (desktopShellBoundsTransitionTimer) {
+    clearTimeout(desktopShellBoundsTransitionTimer);
+  }
+  if (displayMetricsSyncTimer) {
+    clearTimeout(displayMetricsSyncTimer);
+  }
   await cleanupDesktopEmbeddedSurfaces("before-quit");
   globalShortcut.unregisterAll();
   await stopServer().catch(() => {});

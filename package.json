@@ -55,6 +55,7 @@
     "test:air-canvas-interactions": "node scripts/check-air-canvas-interactions.js",
     "test:panel-resize-performance": "node scripts/check-panel-resize-performance.js",
     "test:startup-lifecycle": "node scripts/check-startup-lifecycle.js",
+    "test:window-bounds-lifecycle": "node scripts/check-window-bounds-lifecycle.js",
     "test": "node scripts/run-test-suite.js",
     "check:canvas2d-regression": "node scripts/check-canvas2d-regression.js",
     "check:canvas2d-paste-optimization": "node scripts/check-canvas2d-paste-optimization.js",
