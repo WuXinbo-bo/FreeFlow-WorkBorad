@@ -190,6 +190,48 @@ body.desktop-mode .stage-panel-orb::before {
   display: none !important;
 }
 
+body.desktop-mode .stage-panel-collapse-handle {
+  position: absolute;
+  top: 50%;
+  z-index: 33;
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 64px !important;
+  padding: 0 !important;
+  border: 1px solid var(--chrome-glass-border) !important;
+  color: var(--chrome-ink-muted) !important;
+  background-color: var(--chrome-glass-idle) !important;
+  background-image: var(--chrome-glass-sheen) !important;
+  box-shadow: var(--chrome-shadow) !important;
+  opacity: 0.7;
+  transform: translateY(-50%);
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+}
+
+body.desktop-mode [data-workspace-dock="left"] > .stage-panel-collapse-handle {
+  left: 0;
+  right: auto;
+  border-radius: 0 8px 8px 0;
+}
+
+body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle {
+  right: 0;
+  left: auto;
+  border-radius: 8px 0 0 8px;
+}
+
+body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle .stage-panel-collapse-icon {
+  transform: rotate(180deg);
+}
+
+body.desktop-mode .stage-panel-collapse-handle:hover,
+body.desktop-mode .stage-panel-collapse-handle:focus-visible {
+  color: var(--chrome-ink) !important;
+  background-color: var(--chrome-glass-active) !important;
+  opacity: 1;
+}
+
 .ui-control-icon,
 .ui-control-icon svg {
   display: block;
@@ -223,7 +265,7 @@ body.desktop-mode .stage-panel-orb::before {
 }
 
 .conversation-panel .conversation-header {
-  padding-left: 84px !important;
+  padding-left: 58px !important;
 }
 
 .right-panel-window-controls.is-tight {
@@ -690,24 +732,26 @@ body.desktop-mode .composer.ui-chrome-composer {
 #restore-left-pane-btn,
 #restore-right-pane-btn {
   position: absolute !important;
-  top: 4px !important;
+  top: 50% !important;
   bottom: auto !important;
   z-index: 28;
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
   width: 30px !important;
+  min-width: 30px !important;
   max-width: 30px;
+  height: 88px !important;
   box-sizing: border-box;
   flex: 0 0 auto;
-  min-height: 30px !important;
+  min-height: 88px !important;
   padding: 0 !important;
   color: var(--chrome-ink-muted) !important;
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
   letter-spacing: 0 !important;
   white-space: nowrap;
-  transform: none !important;
+  transform: translateY(-50%) !important;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
@@ -719,14 +763,16 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn:not(.pane-restore-btn-right),
 #restore-right-pane-btn:not(.pane-restore-btn-right) {
-  left: 4px !important;
+  left: 0 !important;
   right: auto !important;
+  border-radius: 0 10px 10px 0 !important;
 }
 
 #restore-left-pane-btn.pane-restore-btn-right,
 #restore-right-pane-btn.pane-restore-btn-right {
   left: auto !important;
-  right: 4px !important;
+  right: 0 !important;
+  border-radius: 10px 0 0 10px !important;
 }
 
 .pane-restore-btn:hover,
@@ -760,6 +806,14 @@ body.desktop-mode .composer.ui-chrome-composer {
   width: var(--chrome-control-size) !important;
   min-width: var(--chrome-control-size) !important;
   padding: 0 !important;
+}
+
+#restore-left-pane-btn.ui-icon-only,
+#restore-right-pane-btn.ui-icon-only {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 88px !important;
+  min-height: 88px !important;
 }
 
 .ui-recovery-dock .ui-recovery-control,

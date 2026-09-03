@@ -235,10 +235,17 @@
 }
 
 .canvas-chrome-info-dock {
+  position: relative;
   border-radius: var(--canvas-chrome-radius) !important;
 }
 
+.canvas-chrome-info-dock .canvas2d-brand-row {
+  padding-left: 42px;
+  box-sizing: border-box;
+}
+
 .canvas2d-floating-card-info.canvas-chrome-info-dock.is-compact .canvas2d-brand-logo {
+  margin-left: auto;
   height: 18px;
 }
 
@@ -258,9 +265,15 @@
 }
 
 .canvas-chrome-info-dock .canvas2d-info-collapse-toggle {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  z-index: 2;
+  margin: 0;
   border-color: transparent !important;
   color: var(--air-ink-muted) !important;
   background: transparent !important;
+  transform: translateY(-50%);
 }
 
 .canvas-chrome-info-dock .canvas2d-info-collapse-toggle:hover,
@@ -268,6 +281,22 @@
   border-color: transparent !important;
   color: var(--air-accent) !important;
   background: var(--air-active) !important;
+}
+
+@media (min-width: 721px) {
+  .canvas2d-navigator-head {
+    padding-left: 58px !important;
+  }
+}
+
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed .canvas2d-brand-row {
+  justify-content: flex-end;
+  padding-left: 18px;
+}
+
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed .canvas2d-info-collapse-toggle {
+  left: 2px;
+  margin: 0;
 }
 
 .canvas-chrome-edge-rail {

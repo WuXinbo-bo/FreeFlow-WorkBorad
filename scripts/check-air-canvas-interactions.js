@@ -820,17 +820,43 @@ async function checkMinimap(page, viewport) {
 }
 
 async function checkInfoDock(page, viewport) {
+  const navigatorHeaderLayout = await page.evaluate(() => {
+    const read = (selector) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null;
+    };
+    return {
+      brand: read(".canvas2d-navigator-brand"),
+      panelControls: read('[data-stage-panel-controls="left"]'),
+    };
+  });
+  assert(
+    navigatorHeaderLayout.brand && navigatorHeaderLayout.panelControls && !rectanglesOverlap(navigatorHeaderLayout.brand, navigatorHeaderLayout.panelControls, 4),
+    "canvas navigator brand is covered by the workspace controls",
+    { viewport, navigatorHeaderLayout }
+  );
   await page.locator(".canvas2d-navigator-dock-collapse").click();
   await page.waitForTimeout(260);
   const infoSelector = ".canvas-chrome-info-dock";
   const expanded = await readSurface(page, infoSelector);
   const expandedMetrics = await page.evaluate(() => {
     const logo = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-logo")?.getBoundingClientRect();
+    const label = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-label")?.getBoundingClientRect();
+    const toggle = document.querySelector(".canvas-chrome-info-dock .canvas2d-info-collapse-toggle")?.getBoundingClientRect();
+    const panelControls = document.querySelector('[data-stage-panel-controls="left"]')?.getBoundingClientRect();
     const utility = document.querySelector(".canvas-chrome-utility-dock")?.getBoundingClientRect();
     const info = document.querySelector(".canvas-chrome-info-dock")?.getBoundingClientRect();
     const canvasPanel = document.querySelector(".desktop-clear-stage")?.getBoundingClientRect();
     return {
       logoHeight: logo?.height || 0,
+      logoRightGap: logo && info ? info.right - logo.right : null,
+      brandOrder: Boolean(label && logo && label.right <= logo.left),
+      toggleSideAligned: Boolean(toggle && info && Math.abs((toggle.top + toggle.bottom) / 2 - (info.top + info.bottom) / 2) <= 1 && toggle.left >= info.left && toggle.left - info.left <= 4),
+      toggleAvoidsLogo: Boolean(toggle && logo && toggle.right <= logo.left),
+      logoAvoidsPanelControls: Boolean(
+        logo && panelControls &&
+          (logo.right <= panelControls.left || logo.left >= panelControls.right || logo.bottom <= panelControls.top || logo.top >= panelControls.bottom)
+      ),
       bottomDelta: info && utility ? info.bottom - utility.bottom : null,
       canvasWidth: canvasPanel?.width || 0,
       contained: Boolean(info && canvasPanel && info.left >= canvasPanel.left && info.right <= canvasPanel.right),
@@ -840,6 +866,11 @@ async function checkInfoDock(page, viewport) {
     viewport,
     expanded,
   });
+  assert(
+    expandedMetrics.logoRightGap >= 0 && expandedMetrics.logoRightGap <= 12 && expandedMetrics.brandOrder && expandedMetrics.toggleSideAligned && expandedMetrics.toggleAvoidsLogo && expandedMetrics.logoAvoidsPanelControls,
+    "canvas information dock did not keep the logo at the right and the collapse control at the side midpoint",
+    { viewport, expandedMetrics }
+  );
   if (expandedMetrics.canvasWidth >= 620) {
     assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.bottomDelta) <= 1, "expanded canvas information dock is not aligned with the stacked chrome", {
       viewport,
@@ -881,6 +912,7 @@ async function checkPanelLayoutControls(page, viewport) {
   const rightPanel = page.locator(".conversation-panel");
   const leftMode = page.locator('[data-stage-panel-action="presentation"][data-stage-panel-side="left"]');
   const leftCollapse = page.locator('[data-stage-panel-action="close"][data-stage-panel-side="left"]');
+  const rightCollapse = page.locator('[data-stage-panel-action="close"][data-stage-panel-side="right"]');
 
   const iconContract = await page.evaluate(() => {
     const selectors = [
@@ -937,6 +969,8 @@ async function checkPanelLayoutControls(page, viewport) {
       right: read(".conversation-panel"),
       leftControls: read('[data-stage-panel-controls="left"]'),
       rightControls: read('[data-stage-panel-controls="right"]'),
+      leftCollapse: read('[data-stage-panel-action="close"][data-stage-panel-side="left"]'),
+      rightCollapse: read('[data-stage-panel-action="close"][data-stage-panel-side="right"]'),
       rightHeader: read(".right-panel-window-controls"),
     };
   });
@@ -953,6 +987,19 @@ async function checkPanelLayoutControls(page, viewport) {
       controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 10 && controls.bottom <= panel.top + 38,
       `${name} panel controls are not docked to the top-left edge rail`,
       { viewport, panel, controls }
+    );
+  }
+  for (const [name, panel, collapse, expectedSide] of [
+    ["left", defaultLayout.left, defaultLayout.leftCollapse, "left"],
+    ["right", defaultLayout.right, defaultLayout.rightCollapse, "right"],
+  ]) {
+    const sideAligned = expectedSide === "left"
+      ? Math.abs(collapse.left - panel.left) <= 1
+      : Math.abs(collapse.right - panel.right) <= 1;
+    assert(
+      sideAligned && Math.abs((collapse.top + collapse.bottom) / 2 - (panel.top + panel.bottom) / 2) <= 1 && collapse.height >= 60,
+      `${name} panel collapse control is not docked to the side midpoint`,
+      { viewport, panel, collapse }
     );
   }
   assert(
@@ -979,14 +1026,37 @@ async function checkPanelLayoutControls(page, viewport) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   });
   assert(
-    collapsedRestore.top <= 36 && collapsedRestore.left <= 40,
-    "collapsed canvas restore control did not follow the left top edge",
+    Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
+      collapsedRestore.left <= 0.5 &&
+      collapsedRestore.right - collapsedRestore.left >= 29 &&
+      collapsedRestore.bottom - collapsedRestore.top >= 80,
+    "collapsed canvas restore control is not a centered left-edge drawer handle",
     { viewport, collapsedRestore }
   );
   await restoreLeft.click();
   await page.waitForFunction(() => !document.querySelector(".desktop-clear-stage")?.classList.contains("is-pane-collapsed"));
   assert((await leftPanel.getAttribute("data-workspace-mode")) === "normal", "collapsed panel did not recover its normal layout", viewport);
   assert(await rightPanel.isVisible(), "conversation panel was damaged by canvas panel recovery", viewport);
+
+  await rightCollapse.click();
+  await page.waitForFunction(() => document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
+  const restoreRight = page.locator("#restore-right-pane-btn");
+  const rightRestore = await restoreRight.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  assert(
+    Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
+      Math.abs(viewport.width - rightRestore.right) <= 0.5 &&
+      rightRestore.right - rightRestore.left >= 29 &&
+      rightRestore.bottom - rightRestore.top >= 80,
+    "collapsed conversation restore control is not a centered right-edge drawer handle",
+    { viewport, rightRestore }
+  );
+  await restoreRight.click();
+  await page.waitForFunction(() => !document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
+  assert((await rightPanel.getAttribute("data-workspace-mode")) === "normal", "conversation panel did not recover its normal layout", viewport);
+  assert(await leftPanel.isVisible(), "canvas panel was damaged by conversation panel recovery", viewport);
 }
 
 async function checkViewport(browser, viewport) {
