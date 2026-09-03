@@ -1855,7 +1855,7 @@ body.is-pane-resizing .pane-resize-viewport * {
 }
 
 .freeflow-logo-loader-shell {
-  --freeflow-logo-mask: url("/assets/brand/FreeFlow_logo.svg");
+  --freeflow-logo-mask: url("/assets/brand/FreeFlow_app_icon.png");
   --freeflow-logo-shine: rgba(255, 255, 255, 0.88);
   --freeflow-logo-angle: 120deg;
   position: relative;

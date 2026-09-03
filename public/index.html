@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FreeFlow</title>
+    <script>
+      (() => {
+        const marks = Object.create(null);
+        globalThis.__FREEFLOW_BOOT_METRICS = { timeOrigin: performance.timeOrigin, marks };
+        globalThis.__FREEFLOW_MARK_BOOT = (name) => {
+          const key = String(name || "").trim();
+          if (!key || Object.prototype.hasOwnProperty.call(marks, key)) return;
+          marks[key] = performance.now();
+          performance.mark(`freeflow:${key}`);
+        };
+        globalThis.__FREEFLOW_MARK_BOOT("navigation-start");
+      })();
+    </script>
     <style>
       html,
       body {
@@ -14,7 +27,7 @@
 
       body.app-booting {
         overflow: hidden;
-        background: #09111d;
+        background: #f4f6f8;
       }
 
       .boot-splash {
@@ -26,7 +39,9 @@
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        transition: opacity 220ms ease, visibility 220ms ease;
+        color: #17202a;
+        background: #f4f6f8;
+        transition: opacity 180ms ease, visibility 180ms ease;
       }
 
       body.app-booting .boot-splash {
@@ -38,51 +53,59 @@
         pointer-events: auto;
       }
 
-      .boot-splash::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background:
-          radial-gradient(circle at 18% 18%, rgba(69, 162, 255, 0.14), transparent 26%),
-          radial-gradient(circle at 82% 78%, rgba(126, 248, 201, 0.1), transparent 24%),
-          linear-gradient(180deg, rgba(10, 18, 30, 0.98), rgba(9, 17, 29, 0.99));
-      }
-
       .boot-splash-panel {
         position: relative;
         z-index: 1;
         display: grid;
         justify-items: center;
-        gap: 14px;
+        gap: 18px;
         width: min(100vw - 64px, 380px);
-        padding: 34px 28px;
+        padding: 32px 28px;
+        animation: boot-panel-reveal 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
-      .boot-splash-logo {
-        width: 88px;
-        height: 88px;
-        object-fit: contain;
-        filter: drop-shadow(0 10px 26px rgba(74, 145, 255, 0.22));
+      .boot-splash-signal {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 12px;
+      }
+
+      .boot-splash-signal span {
+        width: 20px;
+        height: 3px;
+        border-radius: 2px;
+        background: var(--signal-color);
+        transform-origin: center;
+        animation: boot-signal 1.2s ease-in-out infinite;
+        animation-delay: calc(var(--signal-index) * 90ms);
       }
 
       .boot-splash-copy {
         display: grid;
-        gap: 0;
+        gap: 6px;
         justify-items: center;
         text-align: center;
       }
 
       .boot-splash-title {
-        color: #f5f8ff;
-        font: 700 38px/1.04 "Segoe UI Variable Display", "Segoe UI", sans-serif;
-        letter-spacing: 0.02em;
+        display: flex;
+        color: #17202a;
+        font: 650 42px/1.04 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        letter-spacing: 0;
         white-space: nowrap;
+      }
+
+      .boot-splash-title span {
+        animation: boot-letter-reveal 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: calc(80ms + var(--letter-index) * 42ms);
       }
 
       .boot-splash-subtitle,
       .boot-splash-failure {
-        color: rgba(245, 248, 255, 0.68);
+        color: #66727f;
         font: 500 14px/1.5 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        letter-spacing: 0;
       }
 
       .boot-splash-failure[hidden] {
@@ -96,11 +119,64 @@
 
       .boot-splash-retry {
         margin-top: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.24);
+        border: 1px solid #cfd6dd;
         border-radius: 8px;
         padding: 8px 16px;
-        color: #f5f8ff;
-        background: rgba(255, 255, 255, 0.1);
+        color: #17202a;
+        background: #ffffff;
+        font: 600 14px/1.4 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      .boot-splash-retry:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 3px;
+      }
+
+      @keyframes boot-panel-reveal {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes boot-letter-reveal {
+        from {
+          opacity: 0;
+          filter: blur(5px);
+          transform: translateY(9px);
+        }
+        to {
+          opacity: 1;
+          filter: blur(0);
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes boot-signal {
+        0%,
+        100% {
+          opacity: 0.36;
+          transform: scaleX(0.72);
+        }
+        50% {
+          opacity: 1;
+          transform: scaleX(1);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash,
+        .boot-splash-panel,
+        .boot-splash-title span,
+        .boot-splash-signal span {
+          animation: none;
+          transition: none;
+        }
       }
 
       body.app-booting .page-shell {
@@ -119,9 +195,23 @@
   <body class="app-booting boot-shape-lock">
     <div class="boot-splash" role="status" aria-live="polite" aria-hidden="false">
       <div class="boot-splash-panel">
-        <img class="boot-splash-logo" src="./assets/brand/FreeFlow_logo.svg" alt="FreeFlow" />
+        <div class="boot-splash-signal" aria-hidden="true">
+          <span style="--signal-index: 0; --signal-color: #2563eb"></span>
+          <span style="--signal-index: 1; --signal-color: #16a36a"></span>
+          <span style="--signal-index: 2; --signal-color: #e6a700"></span>
+          <span style="--signal-index: 3; --signal-color: #e05b4f"></span>
+        </div>
         <div class="boot-splash-copy">
-          <strong class="boot-splash-title">FreeFlow</strong>
+          <strong class="boot-splash-title" aria-label="FreeFlow">
+            <span style="--letter-index: 0" aria-hidden="true">F</span>
+            <span style="--letter-index: 1" aria-hidden="true">r</span>
+            <span style="--letter-index: 2" aria-hidden="true">e</span>
+            <span style="--letter-index: 3" aria-hidden="true">e</span>
+            <span style="--letter-index: 4" aria-hidden="true">F</span>
+            <span style="--letter-index: 5" aria-hidden="true">l</span>
+            <span style="--letter-index: 6" aria-hidden="true">o</span>
+            <span style="--letter-index: 7" aria-hidden="true">w</span>
+          </strong>
           <span class="boot-splash-subtitle">Air Canvas</span>
         </div>
         <div id="boot-splash-failure" class="boot-splash-failure" hidden>
@@ -130,6 +220,9 @@
         </div>
       </div>
     </div>
+    <script>
+      requestAnimationFrame(() => globalThis.__FREEFLOW_MARK_BOOT?.("splash-frame"));
+    </script>
     <div class="page-shell">
       <div id="desktop-window-bar" class="desktop-window-bar"></div>
       <div id="desktop-status-banner" class="desktop-status-banner is-hidden" aria-live="polite">

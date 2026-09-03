@@ -1321,6 +1321,9 @@ function beginMainWindowNavigation(window, reason = "navigation") {
         reason,
         generation,
       });
+      if (window.__freeflowReadyToShow && !window.isVisible()) {
+        window.show();
+      }
     } catch {
       // A crashed renderer is recovered by the main-process navigation path.
     }
@@ -1359,7 +1362,7 @@ async function reloadMainWindow(reason = "renderer-reload") {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return { ok: false };
     }
-    mainWindow.webContents.reloadIgnoringCache();
+    mainWindow.webContents.reload();
     return { ok: true };
   } finally {
     mainWindowReloadInFlight = false;
@@ -1769,7 +1772,7 @@ function tryShowMainWindow(window) {
     return;
   }
 
-  if (!window.__freeflowReadyToShow) {
+  if (!window.__freeflowReadyToShow || !window.__freeflowRendererReady) {
     return;
   }
 
@@ -2434,7 +2437,6 @@ async function bootstrapDesktopApp() {
     console.warn(`[desktop-shell] Failed to initialize startup context: ${error.message}`);
   });
   await startServer(SERVER_PORT);
-  await session.defaultSession?.clearCache().catch(() => {});
   mainWindow = createMainWindow();
   await mainWindow.loadURL(APP_URL);
   if (EXPORT_SELF_TEST_INPUT && EXPORT_SELF_TEST_OUTPUT) {

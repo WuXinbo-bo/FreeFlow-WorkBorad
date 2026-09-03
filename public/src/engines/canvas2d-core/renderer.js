@@ -26,7 +26,7 @@ import {
   shouldShowMultiSelectionEdgeHandles,
 } from "./multiSelectionTransform.js";
 
-const HINT_LOGO_SRC = "/assets/brand/FreeFlow_logo.svg";
+const HINT_LOGO_SRC = "/assets/brand/FreeFlow_app_icon.png";
 let hintLogo = null;
 let hintLogoLoaded = false;
 const CANVAS_NATIVE_COMPACT_SCALE = 0.15;

@@ -932,7 +932,7 @@ function CanvasNavigatorPanel({
     >
       <header className="canvas2d-navigator-head">
         <div className="canvas2d-navigator-brand">
-          <img className="canvas2d-navigator-brand-mark" src="assets/brand/FreeFlow_logo.svg" alt="" aria-hidden="true" />
+          <img className="canvas2d-navigator-brand-mark" src="assets/brand/FreeFlow_app_icon.png" alt="" aria-hidden="true" />
           <strong>{navigator?.title || "画布目录"}</strong>
         </div>
         <div className="canvas2d-navigator-head-actions">
@@ -2412,7 +2412,7 @@ function Canvas2DControls({ engine }) {
             <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
             <img
               className="canvas2d-brand-logo"
-              src="/assets/brand/FreeFlow_logo.svg"
+              src="/assets/brand/FreeFlow_app_icon.png"
               alt="FreeFlow logo"
             />
             <button

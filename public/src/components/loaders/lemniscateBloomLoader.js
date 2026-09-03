@@ -1,4 +1,4 @@
-const FREEFLOW_LOGO_PATH = "/assets/brand/FreeFlow_logo.svg";
+const FREEFLOW_LOGO_PATH = "/assets/brand/FreeFlow_app_icon.png";
 
 export function mountLemniscateBloomLoader(root) {
   if (!root) {

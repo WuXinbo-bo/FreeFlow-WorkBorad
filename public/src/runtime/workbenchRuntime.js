@@ -1513,6 +1513,14 @@ let screenSourceHeaderMenuLayoutFrame = 0;
 let conversationShellMenuLayoutFrame = 0;
 let panelTransformDependentSyncFrame = 0;
 let paneResizeTransactionSequence = 0;
+
+function markBootMilestone(name) {
+  try {
+    globalThis.__FREEFLOW_MARK_BOOT?.(name);
+  } catch {
+    // Diagnostics must never delay application startup.
+  }
+}
 let activePaneResizeTransactionId = "";
 let paneResizeFinalFrame = 0;
 let screenSourceHeaderMenuOpen = false;
@@ -5306,40 +5314,13 @@ async function bootstrap() {
   syncOutputModeUi();
   updatePromptPlaceholder();
   scheduleDesktopWindowShapeSync();
-  bootSplashEl?.classList.remove("is-failed");
-  bootSplashEl?.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("app-booting");
-  if (bootShapeUnlockTimer) {
-    window.clearTimeout(bootShapeUnlockTimer);
-    bootShapeUnlockTimer = 0;
-  }
-  const handleBootSplashTransitionEnd = (event) => {
-    if (event.target !== bootSplashEl || event.propertyName !== "opacity") {
-      return;
-    }
-
-    bootSplashEl?.removeEventListener("transitionend", handleBootSplashTransitionEnd);
-    if (bootShapeUnlockTimer) {
-      window.clearTimeout(bootShapeUnlockTimer);
-      bootShapeUnlockTimer = 0;
-    }
-    releaseBootShapeLock();
-  };
-  if (bootSplashEl) {
-    bootSplashEl.addEventListener("transitionend", handleBootSplashTransitionEnd);
-    bootShapeUnlockTimer = window.setTimeout(() => {
-      bootShapeUnlockTimer = 0;
-      bootSplashEl.removeEventListener("transitionend", handleBootSplashTransitionEnd);
-      releaseBootShapeLock();
-    }, 800);
-  } else {
-    releaseBootShapeLock();
-  }
+  markBootMilestone("renderer-ready");
   try {
     DESKTOP_SHELL?.notifyRendererReady?.();
   } catch {
     // Ignore desktop boot readiness signal failures.
   }
+  finishBootSplash();
 
   if (shouldAutoShowStartupTutorialIntro()) {
     globalTutorialHost.openIntro();
@@ -7427,6 +7408,7 @@ function releaseBootShapeLock() {
   }
 
   document.body.classList.remove("boot-shape-lock");
+  markBootMilestone("shape-unlocked");
   scheduleDesktopWindowShapeSync();
   try {
     const releaseResult = DESKTOP_SHELL?.releaseBootShapeLock?.();
@@ -7436,9 +7418,53 @@ function releaseBootShapeLock() {
   }
 }
 
+function finishBootSplash() {
+  if (bootShapeUnlockTimer) {
+    window.clearTimeout(bootShapeUnlockTimer);
+    bootShapeUnlockTimer = 0;
+  }
+
+  const releaseAfterSplash = () => {
+    bootSplashEl?.removeEventListener("transitionend", handleBootSplashTransitionEnd);
+    if (bootShapeUnlockTimer) {
+      window.clearTimeout(bootShapeUnlockTimer);
+      bootShapeUnlockTimer = 0;
+    }
+    markBootMilestone("splash-exit-end");
+    releaseBootShapeLock();
+  };
+  const handleBootSplashTransitionEnd = (event) => {
+    if (event.target === bootSplashEl && event.propertyName === "opacity") {
+      releaseAfterSplash();
+    }
+  };
+  const beginSplashExit = () => {
+    document.body.classList.remove("boot-failed");
+    bootSplashEl?.classList.remove("is-failed");
+    if (bootSplashFailureEl) {
+      bootSplashFailureEl.hidden = true;
+    }
+    if (bootSplashRetryBtn) {
+      bootSplashRetryBtn.disabled = false;
+    }
+    markBootMilestone("splash-exit-start");
+    bootSplashEl?.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("app-booting");
+    if (!bootSplashEl || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      releaseAfterSplash();
+      return;
+    }
+    bootSplashEl.addEventListener("transitionend", handleBootSplashTransitionEnd);
+    bootShapeUnlockTimer = window.setTimeout(releaseAfterSplash, 500);
+  };
+
+  window.requestAnimationFrame(() => window.requestAnimationFrame(beginSplashExit));
+}
+
 function handleBootstrapFailure(error) {
   const message = String(error?.message || error || "未知错误").trim() || "未知错误";
   console.error("[FreeFlow] bootstrap failed:", error);
+  markBootMilestone("failure");
   document.body?.classList.add("app-booting", "boot-shape-lock", "boot-failed");
   bootSplashEl?.classList.add("is-failed");
   bootSplashEl?.setAttribute("aria-hidden", "false");
@@ -7452,6 +7478,7 @@ function handleBootstrapFailure(error) {
   if (statusTextEl) {
     statusTextEl.textContent = `启动失败：${message}`;
   }
+  window.requestAnimationFrame(() => bootSplashRetryBtn?.focus());
 }
 
 bootSplashRetryBtn?.addEventListener("click", async () => {
@@ -7469,7 +7496,10 @@ bootSplashRetryBtn?.addEventListener("click", async () => {
 });
 
 const removeBootstrapTimeoutListener = DESKTOP_SHELL?.onBootstrapTimeout?.((payload) => {
-  if (!document.body?.classList.contains("app-booting")) {
+  if (
+    !document.body?.classList.contains("app-booting") ||
+    document.body?.classList.contains("boot-failed")
+  ) {
     return;
   }
   handleBootstrapFailure(new Error(payload?.message || "启动时间过长，请重新载入"));

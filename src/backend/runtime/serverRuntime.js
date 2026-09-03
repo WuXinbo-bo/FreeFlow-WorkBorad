@@ -106,11 +106,8 @@ let desktopBridge = {
   cancelDoubaoChat: null,
 };
 
-function setNoStoreHeaders(res) {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("Surrogate-Control", "no-store");
+function setStaticValidationHeaders(res) {
+  res.setHeader("Cache-Control", "private, no-cache, must-revalidate");
 }
 
 app.use(requireLoopbackRequest);
@@ -118,16 +115,16 @@ app.use(express.json({ limit: "1mb" }));
 app.use(
   "/vendor",
   express.static(NODE_MODULES_DIR, {
-    etag: false,
-    lastModified: false,
-    setHeaders: setNoStoreHeaders,
+    etag: true,
+    lastModified: true,
+    setHeaders: setStaticValidationHeaders,
   })
 );
 app.use(
   express.static(PUBLIC_DIR, {
-    etag: false,
-    lastModified: false,
-    setHeaders: setNoStoreHeaders,
+    etag: true,
+    lastModified: true,
+    setHeaders: setStaticValidationHeaders,
   })
 );
 registerAppRoutes(app, {
