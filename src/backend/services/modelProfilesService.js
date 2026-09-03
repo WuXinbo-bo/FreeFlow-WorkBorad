@@ -7,6 +7,8 @@ const {
   normalizeModelProfilesStore,
 } = require("../models/modelProfilesModel");
 
+let writeQueue = Promise.resolve();
+
 async function readModelProfilesStore() {
   const result = await readVersionedJsonFile(MODEL_PROFILES_FILE, {
     defaultValue: getDefaultModelProfiles(),
@@ -16,11 +18,16 @@ async function readModelProfilesStore() {
   return result.data;
 }
 
-async function writeModelProfilesStore(payload = {}) {
-  const next = normalizeModelProfilesStore(payload);
-  next.updatedAt = Date.now();
-  await writeJsonFile(MODEL_PROFILES_FILE, next);
-  return next;
+function writeModelProfilesStore(payload = {}) {
+  const operation = writeQueue.catch(() => {}).then(async () => {
+    const current = await readModelProfilesStore().catch(() => getDefaultModelProfiles());
+    const next = normalizeModelProfilesStore(payload);
+    next.updatedAt = Math.max(Date.now(), Number(current.updatedAt || 0) + 1);
+    await writeJsonFile(MODEL_PROFILES_FILE, next);
+    return next;
+  });
+  writeQueue = operation;
+  return operation;
 }
 
 module.exports = {

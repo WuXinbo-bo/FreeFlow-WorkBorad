@@ -748,8 +748,7 @@ body.is-pane-y-resizing .pane-edge-y-resizer {
 }
 
 body.desktop-full-pass-through .desktop-clear-stage,
-body.desktop-full-pass-through .conversation-panel,
-body.desktop-full-pass-through .stage-restore-dock {
+body.desktop-full-pass-through .conversation-panel {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;

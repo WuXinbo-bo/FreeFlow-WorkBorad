@@ -7,6 +7,9 @@ async function main() {
   const { createVisiblePageWindow } = await import(
     "../public/src/engines/canvas2d-core/documentPreview/pdfVisiblePageRenderer.js"
   );
+  const { createHydrationScheduler } = await import(
+    "../public/src/engines/canvas2d-core/perf/hydrationScheduler.js"
+  );
 
   const runtime = createDocumentPreviewRuntime({ maxEntries: 2, maxBytes: 4096 });
   const first = runtime.createSession({ id: "preview-a", kind: "pdf", mime: "application/pdf" });
@@ -82,6 +85,20 @@ async function main() {
   assert.deepStrictEqual(createVisiblePageWindow(1, 5, 2), [1, 2, 3]);
   assert.deepStrictEqual(createVisiblePageWindow(3, 5, 2), [3, 2, 4, 1, 5]);
   assert.deepStrictEqual(createVisiblePageWindow(5, 5, 2), [5, 4, 3]);
+
+  const scheduler = createHydrationScheduler({ maxTasksPerFlush: 4 });
+  const completedTasks = [];
+  scheduler.enqueue("viewport-task", () => completedTasks.push("viewport"));
+  scheduler.enqueue(
+    "preview-session-task",
+    () => completedTasks.push("preview"),
+    { staleOnGenerationChange: false }
+  );
+  scheduler.bumpGeneration();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepStrictEqual(completedTasks, ["preview"], "explicit preview sessions must survive viewport generations");
+  assert.strictEqual(scheduler.getStats().queued, 0);
+
   runtime.dispose();
   console.log("[check-document-preview-runtime] ok");
 }

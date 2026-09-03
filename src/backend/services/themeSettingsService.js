@@ -13,10 +13,7 @@ async function writeThemeSettingsStore(payload = {}) {
     ...pickThemeSettings(payload),
   });
 
-  await uiSettingsService.writeUiSettingsStore({
-    ...currentUiSettings,
-    ...nextThemeSettings,
-  });
+  await uiSettingsService.writeUiSettingsStore(nextThemeSettings);
 
   return nextThemeSettings;
 }

@@ -68,6 +68,7 @@ export function createInitialState() {
     editingSessionId: null,
     uiSettings: {
       appName: "FreeFlow",
+      assistantName: "FreeFlow",
       appSubtitle: "自由画布与 AI 工作台",
       canvasTitle: "FreeFlow 工作白板",
       canvasBoardSavePath: "",
@@ -80,6 +81,10 @@ export function createInitialState() {
       lastTutorialIntroVersion: "",
       dismissedTutorialIntroVersion: "",
       canvasImageSavePath: "",
+      canvasAutosaveEnabled: true,
+      canvasLinkSemanticsEnabled: true,
+      defaultOutputMode: "nonstream",
+      defaultAgentMode: false,
       defaultCanvasPanelSide: "left",
       defaultChatPanelSide: "right",
       defaultCanvasPanelVisible: true,

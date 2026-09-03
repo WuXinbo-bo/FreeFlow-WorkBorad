@@ -751,21 +751,13 @@ body.desktop-mode .composer.ui-chrome-composer {
   background: transparent !important;
 }
 
-.conversation-panel.screen-view-active.ui-workspace-surface {
-  padding: 8px !important;
-}
-
 .conversation-panel > .pane-resize-viewport {
-  inset: 52px 14px 14px !important;
-}
-
-.conversation-panel.screen-view-active > .pane-resize-viewport {
-  inset: 8px !important;
+  inset: 14px !important;
 }
 
 .conversation-panel.screen-view-active .screen-source-panel.is-active {
-  height: calc(100% - 4px) !important;
-  margin-top: 4px !important;
+  height: 100% !important;
+  margin-top: 0 !important;
 }
 
 .screen-source-stage,
@@ -796,7 +788,7 @@ body.desktop-mode .composer.ui-chrome-composer {
 }
 
 .screen-source-preview-shell.ui-embedded-frame .screen-source-empty-shell {
-  gap: 12px;
+  gap: 10px;
 }
 
 .desktop-menu-item,
@@ -883,6 +875,13 @@ body.desktop-mode .composer.ui-chrome-composer {
   background: rgba(255, 255, 255, 0.68) !important;
 }
 
+.conversation-shell-menu-item:disabled {
+  color: var(--chrome-ink-soft) !important;
+  background: transparent !important;
+  cursor: default;
+  opacity: 0.48;
+}
+
 .conversation-shell-menu-item.is-active {
   border-color: transparent !important;
   color: var(--chrome-accent) !important;
@@ -954,26 +953,14 @@ body.desktop-mode .composer.ui-chrome-composer {
   color: var(--chrome-ink) !important;
 }
 
-.stage-restore-dock.ui-recovery-dock {
-  position: absolute !important;
-  top: auto !important;
-  bottom: 14px !important;
-  left: 50% !important;
-  z-index: 34;
-  transform: translateX(-50%) !important;
-  -webkit-app-region: no-drag;
-}
-
-.ui-recovery-control,
-.canvas-chrome-layout-dock #stage-restore-btn {
+.ui-recovery-control {
   min-height: var(--chrome-control-size) !important;
   padding: 0 9px !important;
   border-radius: 8px !important;
   color: var(--chrome-ink-muted) !important;
 }
 
-.ui-icon-only,
-.canvas-chrome-layout-dock #stage-restore-btn.ui-icon-only {
+.ui-icon-only {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -997,19 +984,6 @@ body.desktop-mode .composer.ui-chrome-composer {
   width: 12px;
   height: 18px;
   flex-basis: 12px;
-}
-
-.ui-recovery-dock .ui-recovery-control,
-.canvas-chrome-layout-dock #stage-restore-btn {
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.ui-recovery-dock .ui-recovery-control:hover,
-.ui-recovery-dock .ui-recovery-control:focus-visible {
-  color: var(--chrome-ink) !important;
-  background: var(--chrome-hover) !important;
 }
 
 body.desktop-full-pass-through .canvas-chrome-surface {

@@ -7,6 +7,9 @@ const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 const CHECKS = [
   "scripts/check-generated-bundles.js",
   "scripts/check-backend-security.js",
+  "scripts/check-settings-center.js",
+  "scripts/check-agent-runtime.js",
+  "scripts/check-agent-http.js",
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-electron-ipc-security.js",
   "scripts/check-window-bounds-lifecycle.js",
@@ -133,6 +136,12 @@ async function main() {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
     await runNodeScript("scripts/check-startup-lifecycle.js", {
+      AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
+    });
+    await runNodeScript("scripts/check-settings-center-browser.js", {
+      AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
+    });
+    await runNodeScript("scripts/check-agent-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
   } finally {

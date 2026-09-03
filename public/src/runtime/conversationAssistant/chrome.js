@@ -8,7 +8,7 @@ export function createConversationAssistantChrome({
   getModelSource,
   getModelDisplayName,
   getModelSourceLabel,
-  getAppDisplayName,
+  getAssistantDisplayName,
   saveUiSettings,
   saveModelProviderSettings,
   setStatus,
@@ -338,7 +338,7 @@ export function createConversationAssistantChrome({
   function beginAppRename() {
     if (!conversationAppNameInputEl || !conversationAppNameEl) return;
     if (!conversationAppRenameTriggerEl) {
-      conversationAppNameInputEl.value = getAppDisplayName();
+      conversationAppNameInputEl.value = getAssistantDisplayName();
       requestAnimationFrame(() => {
         conversationAppNameInputEl.focus();
         conversationAppNameInputEl.select?.();
@@ -347,7 +347,7 @@ export function createConversationAssistantChrome({
     }
     conversationAppNameEl.classList.add("is-hidden");
     conversationAppNameInputEl.classList.remove("is-hidden");
-    conversationAppNameInputEl.value = getAppDisplayName();
+    conversationAppNameInputEl.value = getAssistantDisplayName();
     requestAnimationFrame(() => {
       conversationAppNameInputEl.focus();
       conversationAppNameInputEl.select();
@@ -357,19 +357,19 @@ export function createConversationAssistantChrome({
   function cancelAppRename() {
     if (!conversationAppNameInputEl || !conversationAppNameEl) return;
     if (!conversationAppRenameTriggerEl) {
-      conversationAppNameInputEl.value = getAppDisplayName();
+      conversationAppNameInputEl.value = getAssistantDisplayName();
       return;
     }
     conversationAppNameInputEl.classList.add("is-hidden");
     conversationAppNameEl.classList.remove("is-hidden");
-    conversationAppNameInputEl.value = getAppDisplayName();
+    conversationAppNameInputEl.value = getAssistantDisplayName();
   }
 
   async function commitAppRename() {
     if (!conversationAppNameInputEl) return;
     const nextName = String(conversationAppNameInputEl.value || "").trim() || "FreeFlow";
     try {
-      await saveUiSettings({ appName: nextName });
+      await saveUiSettings({ assistantName: nextName });
       setStatus("AI 名称已更新", "success");
     } catch (error) {
       setStatus(`保存 AI 名称失败：${error.message}`, "warning");
@@ -377,7 +377,7 @@ export function createConversationAssistantChrome({
       if (conversationAppRenameTriggerEl) {
         cancelAppRename();
       } else {
-        conversationAppNameInputEl.value = getAppDisplayName();
+        conversationAppNameInputEl.value = getAssistantDisplayName();
       }
     }
   }
@@ -398,8 +398,9 @@ export function createConversationAssistantChrome({
         setDrawerOpen(true);
         return;
       }
-      setDrawerOpen(false);
-      await resumeScreenSourceAfterDrawerClose();
+      if (setDrawerOpen(false) !== false) {
+        await resumeScreenSourceAfterDrawerClose();
+      }
     });
 
     conversationAppRenameTriggerEl?.addEventListener("dblclick", (event) => {

@@ -11,6 +11,7 @@ const {
 } = require("../models/uiSettingsModel");
 
 let migrationPromise = null;
+let writeQueue = Promise.resolve();
 
 async function readUiSettingsFileIfExists(filePath) {
   try {
@@ -62,15 +63,19 @@ async function readUiSettingsStore() {
   return result.data;
 }
 
-async function writeUiSettingsStore(payload = {}) {
-  const current = await readUiSettingsStore().catch(() => getDefaultUiSettings());
-  const next = normalizeUiSettings({
-    ...current,
-    ...payload,
+function writeUiSettingsStore(payload = {}) {
+  const operation = writeQueue.catch(() => {}).then(async () => {
+    const current = await readUiSettingsStore().catch(() => getDefaultUiSettings());
+    const next = normalizeUiSettings({
+      ...current,
+      ...payload,
+    });
+    next.updatedAt = Math.max(Date.now(), Number(current.updatedAt || 0) + 1);
+    await writeJsonFile(UI_SETTINGS_FILE, next);
+    return next;
   });
-  next.updatedAt = Date.now();
-  await writeJsonFile(UI_SETTINGS_FILE, next);
-  return next;
+  writeQueue = operation;
+  return operation;
 }
 
 async function readWorkbenchPreferencesStore() {
@@ -79,14 +84,8 @@ async function readWorkbenchPreferencesStore() {
 }
 
 async function writeWorkbenchPreferencesStore(payload = {}) {
-  const current = await readUiSettingsStore().catch(() => getDefaultUiSettings());
   const nextPreferences = normalizeWorkbenchPreferences(payload);
-  const next = normalizeUiSettings({
-    ...current,
-    ...nextPreferences,
-  });
-  next.updatedAt = Date.now();
-  await writeJsonFile(UI_SETTINGS_FILE, next);
+  const next = await writeUiSettingsStore(nextPreferences);
   return {
     uiSettings: next,
     preferences: pickWorkbenchPreferences(next),

@@ -27,7 +27,7 @@
 
       body.app-booting {
         overflow: hidden;
-        background: #f4f6f8;
+        background: #09111d;
       }
 
       .boot-splash {
@@ -39,9 +39,9 @@
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        color: #17202a;
-        background: #f4f6f8;
-        transition: opacity 180ms ease, visibility 180ms ease;
+        color: #f5f8ff;
+        background: #09111d;
+        transition: opacity 320ms cubic-bezier(0.4, 0, 0.2, 1), visibility 320ms ease;
       }
 
       body.app-booting .boot-splash {
@@ -58,27 +58,19 @@
         z-index: 1;
         display: grid;
         justify-items: center;
-        gap: 18px;
+        gap: 14px;
         width: min(100vw - 64px, 380px);
         padding: 32px 28px;
-        animation: boot-panel-reveal 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation: boot-panel-reveal 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
-      .boot-splash-signal {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        height: 12px;
-      }
-
-      .boot-splash-signal span {
-        width: 20px;
-        height: 3px;
-        border-radius: 2px;
-        background: var(--signal-color);
-        transform-origin: center;
-        animation: boot-signal 1.2s ease-in-out infinite;
-        animation-delay: calc(var(--signal-index) * 90ms);
+      .boot-splash-logo {
+        display: block;
+        width: 58px;
+        height: 58px;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 24px rgba(0, 186, 206, 0.2));
+        animation: boot-logo-reveal 820ms 60ms cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
       .boot-splash-copy {
@@ -86,24 +78,20 @@
         gap: 6px;
         justify-items: center;
         text-align: center;
+        animation: boot-copy-reveal 680ms 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
       .boot-splash-title {
         display: flex;
-        color: #17202a;
+        color: #f5f8ff;
         font: 650 42px/1.04 "Segoe UI Variable Display", "Segoe UI", sans-serif;
         letter-spacing: 0;
         white-space: nowrap;
       }
 
-      .boot-splash-title span {
-        animation: boot-letter-reveal 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
-        animation-delay: calc(80ms + var(--letter-index) * 42ms);
-      }
-
       .boot-splash-subtitle,
       .boot-splash-failure {
-        color: #66727f;
+        color: rgba(245, 248, 255, 0.64);
         font: 500 14px/1.5 "Segoe UI Variable Display", "Segoe UI", sans-serif;
         letter-spacing: 0;
       }
@@ -119,11 +107,11 @@
 
       .boot-splash-retry {
         margin-top: 12px;
-        border: 1px solid #cfd6dd;
+        border: 1px solid rgba(255, 255, 255, 0.24);
         border-radius: 8px;
         padding: 8px 16px;
-        color: #17202a;
-        background: #ffffff;
+        color: #f5f8ff;
+        background: rgba(255, 255, 255, 0.1);
         font: 600 14px/1.4 "Segoe UI Variable Display", "Segoe UI", sans-serif;
         cursor: pointer;
       }
@@ -144,36 +132,33 @@
         }
       }
 
-      @keyframes boot-letter-reveal {
+      @keyframes boot-copy-reveal {
         from {
           opacity: 0;
-          filter: blur(5px);
-          transform: translateY(9px);
+          transform: translateY(7px);
         }
         to {
           opacity: 1;
-          filter: blur(0);
           transform: translateY(0);
         }
       }
 
-      @keyframes boot-signal {
-        0%,
-        100% {
-          opacity: 0.36;
-          transform: scaleX(0.72);
+      @keyframes boot-logo-reveal {
+        from {
+          opacity: 0;
+          transform: translateY(5px) scale(0.94);
         }
-        50% {
+        to {
           opacity: 1;
-          transform: scaleX(1);
+          transform: translateY(0) scale(1);
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
         .boot-splash,
         .boot-splash-panel,
-        .boot-splash-title span,
-        .boot-splash-signal span {
+        .boot-splash-copy,
+        .boot-splash-logo {
           animation: none;
           transition: none;
         }
@@ -191,16 +176,13 @@
     <link rel="stylesheet" href="./ui.air-canvas.css" />
     <link rel="stylesheet" href="./ui.chrome-system.css" />
     <link rel="stylesheet" href="./ui.canvas-chrome.css" />
+    <link rel="stylesheet" href="./ui.settings-center.css" />
+    <link rel="stylesheet" href="./ui.agent-assistant.css" />
   </head>
   <body class="app-booting boot-shape-lock">
     <div class="boot-splash" role="status" aria-live="polite" aria-hidden="false">
       <div class="boot-splash-panel">
-        <div class="boot-splash-signal" aria-hidden="true">
-          <span style="--signal-index: 0; --signal-color: #2563eb"></span>
-          <span style="--signal-index: 1; --signal-color: #16a36a"></span>
-          <span style="--signal-index: 2; --signal-color: #e6a700"></span>
-          <span style="--signal-index: 3; --signal-color: #e05b4f"></span>
-        </div>
+        <img class="boot-splash-logo" src="./assets/brand/FreeFlow_app_icon.png" alt="" />
         <div class="boot-splash-copy">
           <strong class="boot-splash-title" aria-label="FreeFlow">
             <span style="--letter-index: 0" aria-hidden="true">F</span>
@@ -296,6 +278,15 @@
               </span>
               <span class="conversation-shell-menu-label">左右换位</span>
             </button>
+            <button id="stage-restore-btn" class="conversation-shell-menu-item" type="button" disabled>
+              <span class="conversation-shell-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 4v6h6" />
+                  <path d="M5.6 15a8 8 0 1 0 .9-7.9L4 10" />
+                </svg>
+              </span>
+              <span class="conversation-shell-menu-label">恢复默认布局</span>
+            </button>
             <button id="conversation-shell-clickthrough-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" focusable="false">
@@ -357,11 +348,6 @@
                   </div>
                 </div>
 
-                <label class="mode-toggle mode-toggle-block">
-                  <input id="agent-mode-toggle" type="checkbox" />
-                  <span>管家模式</span>
-                </label>
-
                 <div class="overview-quick-grid">
                   <div class="overview-stat">
                     <span class="label">默认模型</span>
@@ -372,8 +358,8 @@
                     <strong id="connection-status">检测中</strong>
                   </div>
                   <div class="overview-stat overview-stat-wide">
-                    <span class="label">响应方式</span>
-                    <strong id="response-mode-label">同步 / 非流式</strong>
+                    <span class="label">Agent 状态</span>
+                    <strong id="response-mode-label">正在初始化</strong>
                   </div>
                 </div>
 
@@ -383,7 +369,7 @@
                 </div>
               </section>
 
-              <section class="panel-card sidebar-section" data-sidebar-section="customize">
+              <section class="panel-card sidebar-section is-hidden" data-sidebar-section="customize">
                 <div class="sidebar-section-header">
                   <div class="menu-summary-copy">
                     <div class="eyebrow">Customize</div>
@@ -465,7 +451,7 @@
                 </div>
               </section>
 
-              <section class="panel-card sidebar-section" data-sidebar-section="sessions">
+              <section class="panel-card sidebar-section is-hidden" data-sidebar-section="sessions" aria-hidden="true">
                 <div class="sidebar-section-header">
                   <div class="menu-summary-copy">
                     <div class="eyebrow">Sessions</div>
@@ -720,8 +706,15 @@
             </div>
             <div class="conversation-heading">
               <div class="conversation-title-stack">
-                <h2 id="conversation-title">新会话</h2>
-                <div id="conversation-mode-pill" class="conversation-mode-pill">同步 / 非流式</div>
+                <div class="agent-session-title-row">
+                  <button id="agent-history-toggle-btn" class="agent-icon-button" type="button" title="会话历史" aria-label="会话历史" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+                  </button>
+                  <div>
+                    <h2 id="conversation-title">新会话</h2>
+                    <div id="conversation-mode-pill" class="conversation-mode-pill">Codex · 正在连接</div>
+                  </div>
+                </div>
                 <input
                   id="conversation-title-input"
                   class="panel-input conversation-title-input is-hidden"
@@ -732,20 +725,29 @@
               </div>
             </div>
             <div class="conversation-actions">
-              <button id="clear-btn" class="ghost-btn compact-btn" type="button">新会话</button>
-              <button id="drawer-toggle-btn" class="ghost-btn compact-btn drawer-inline-btn" type="button">系统设置</button>
-              <button id="save-session-rename-btn" class="primary-btn compact-btn is-hidden" type="button">保存</button>
-              <button id="cancel-session-rename-btn" class="ghost-btn compact-btn is-hidden" type="button">取消</button>
-              <details class="chat-utility-menu">
-                <summary class="ghost-btn compact-btn">工具面板</summary>
-                <div class="chat-utility-panel ui-chrome-popover">
-                  <button id="clipboard-save-chat-btn" class="ghost-btn compact-btn" type="button">保存剪贴板</button>
-                  <button id="rename-session-btn" class="ghost-btn compact-btn" type="button">编辑名称</button>
-                  <button id="toggle-right-pane-btn" class="ghost-btn compact-btn pane-toggle-btn" type="button">收起对话</button>
-                </div>
-              </details>
+              <button id="agent-rename-session-btn" class="agent-icon-button" type="button" title="重命名会话" aria-label="重命名会话">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
+              </button>
+              <button id="agent-fork-session-btn" class="agent-icon-button" type="button" title="创建会话分支" aria-label="创建会话分支">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="19" r="2" /><path d="M6 7v3c0 2 2 3 6 3s6-1 6-3V7M12 13v4" /></svg>
+              </button>
+              <button id="clear-btn" class="agent-icon-button is-primary" type="button" title="新建会话" aria-label="新建会话">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+              </button>
             </div>
           </header>
+
+          <aside id="agent-history-panel" class="agent-history-panel is-hidden" aria-hidden="true">
+            <div class="agent-history-head">
+              <strong>会话</strong>
+              <button id="agent-history-close-btn" class="agent-icon-button" type="button" title="关闭会话历史" aria-label="关闭会话历史">×</button>
+            </div>
+            <label class="agent-history-search">
+              <span class="sr-only">搜索会话</span>
+              <input id="agent-history-search-input" type="search" placeholder="搜索会话" autocomplete="off" />
+            </label>
+            <div id="agent-history-list" class="agent-history-list"></div>
+          </aside>
 
           <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI 镜像窗口">
             <div class="screen-source-stage">
@@ -787,14 +789,24 @@
                 <textarea
                   id="prompt-input"
                   rows="1"
-                  maxlength="4000"
+                  maxlength="12000"
                   placeholder="给 FreeFlow 发送消息..."
                 ></textarea>
               </div>
             </div>
 
               <div class="composer-bar">
-                <div class="composer-hint">Enter 发送，Shift + Enter 换行，支持从画布中粘贴文字，图片，文件等元素。</div>
+                <div class="agent-composer-tools">
+                  <button id="agent-attach-btn" class="agent-icon-button" type="button" title="添加附件" aria-label="添加附件">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7L9.5 18a2 2 0 0 1-2.8-2.8L16 6" /></svg>
+                  </button>
+                  <input id="agent-file-input" type="file" multiple hidden />
+                  <select id="agent-submit-mode" class="agent-submit-mode is-hidden" aria-label="运行中消息处理方式">
+                    <option value="queue">排队发送</option>
+                    <option value="steer">即时引导</option>
+                  </select>
+                  <span id="agent-composer-status" class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+                </div>
                 <div class="composer-actions">
                   <button
                     id="composer-thinking-btn"
@@ -812,21 +824,18 @@
                       </svg>
                     </span>
                   </button>
-                  <button id="stop-btn" class="ghost-btn" type="button" disabled>停止</button>
-                  <button id="send-btn" class="primary-btn" type="submit">发送</button>
+                  <button id="stop-btn" class="agent-icon-button is-stop" type="button" disabled title="停止" aria-label="停止">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1" /></svg>
+                  </button>
+                  <button id="send-btn" class="agent-icon-button is-primary" type="submit" title="发送" aria-label="发送">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 17 8-17 8 4-8Z" /><path d="M8 12h13" /></svg>
+                  </button>
                 </div>
               </div>
             </form>
           </div>
           </div>
         </section>
-        <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock ui-recovery-dock is-hidden">
-          <button id="stage-restore-btn" class="ghost-btn compact-btn ui-recovery-control ui-icon-only" type="button" title="恢复默认布局" aria-label="恢复默认布局">
-            <span class="ui-control-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" focusable="false"><path d="M4 4v6h6" /><path d="M5.6 15a8 8 0 1 0 .9-7.9L4 10" /></svg>
-            </span>
-          </button>
-        </div>
       </main>
 
       <div id="desktop-pass-through-hint" class="desktop-pass-through-hint is-hidden" aria-live="polite">
@@ -839,13 +848,22 @@
       <div id="drawer-backdrop" class="drawer-backdrop ui-chrome-backdrop"></div>
 
       <aside id="insight-drawer" class="insight-drawer glass-panel ui-chrome-drawer" aria-hidden="true">
+        <header class="settings-center-frame-header">
+          <div>
+            <span>FreeFlow</span>
+            <h3>系统设置</h3>
+          </div>
+          <button id="drawer-close-btn" type="button" aria-label="关闭系统设置" title="关闭系统设置">×</button>
+        </header>
+        <div id="settings-center-host" class="settings-center-host"></div>
+        <div class="settings-center-legacy" aria-hidden="true">
         <header class="drawer-header">
           <div>
             <div class="eyebrow">系统设置</div>
             <h3>系统设置</h3>
             <p class="drawer-copy">集中管理布局与主题设置。</p>
           </div>
-          <button id="drawer-close-btn" class="ghost-btn compact-btn" type="button">关闭</button>
+          <button id="legacy-drawer-close-btn" class="ghost-btn compact-btn" type="button">关闭</button>
         </header>
 
         <div class="insight-panel">
@@ -1164,6 +1182,7 @@
               </section>
             </div>
           </details>
+        </div>
         </div>
       </aside>
 

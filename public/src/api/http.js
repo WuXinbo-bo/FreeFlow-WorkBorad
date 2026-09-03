@@ -1,4 +1,5 @@
 export const API_ROUTES = {
+  settingsCenter: "/api/settings-center",
   uiSettings: "/api/ui-settings",
   workbenchPreferences: "/api/ui-settings/workbench-preferences",
   themeSettings: "/api/theme-settings",

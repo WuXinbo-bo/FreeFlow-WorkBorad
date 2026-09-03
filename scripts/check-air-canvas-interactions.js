@@ -621,6 +621,32 @@ async function checkRightWorkspaceGlass(page, viewport) {
     "an older mapping refresh overwrote the latest response",
     { viewport, refreshResult }
   );
+  const refreshedTargetMenuLayout = await page.evaluate(() => {
+    const panel = document.querySelector("#screen-source-select-panel");
+    const trigger = document.querySelector("#screen-source-select-trigger");
+    const parent = document.querySelector("#screen-source-header-panel");
+    const panelRect = panel.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    return {
+      portalParentId: panel.parentElement?.id || "",
+      hidden: panel.classList.contains("is-hidden"),
+      panelRect: { left: panelRect.left, top: panelRect.top, right: panelRect.right, bottom: panelRect.bottom },
+      triggerRect: { left: triggerRect.left, top: triggerRect.top, right: triggerRect.right, bottom: triggerRect.bottom },
+      parentRect: { left: parentRect.left, top: parentRect.top, right: parentRect.right, bottom: parentRect.bottom },
+    };
+  });
+  assert(
+    refreshedTargetMenuLayout.portalParentId === "global-overlay-layer" &&
+      !refreshedTargetMenuLayout.hidden &&
+      refreshedTargetMenuLayout.panelRect.left >= 12 &&
+      refreshedTargetMenuLayout.panelRect.top >= 12 &&
+      refreshedTargetMenuLayout.panelRect.right <= viewport.width - 12 &&
+      refreshedTargetMenuLayout.panelRect.bottom <= viewport.height - 12 &&
+      !rectanglesOverlap(refreshedTargetMenuLayout.panelRect, refreshedTargetMenuLayout.parentRect),
+    "refreshed mapping target menu overlapped or remained clipped inside its parent popover",
+    { viewport, refreshedTargetMenuLayout }
+  );
   await page.keyboard.press("Escape");
 
   await page.mouse.click(2, Math.round(viewport.height / 2));
@@ -659,6 +685,10 @@ async function checkMirrorFrame(page, viewport) {
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".conversation-panel")).display !== "none");
   }
 
+  const assistantPanelFrame = await page.locator(".conversation-panel").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  });
   await page.locator("#right-panel-tab-screen").click();
   await page.waitForSelector("#screen-source-panel.is-active");
   await page.waitForTimeout(220);
@@ -679,6 +709,10 @@ async function checkMirrorFrame(page, viewport) {
       previewBorder: previewStyle.borderWidth,
       previewRadius: previewStyle.borderRadius,
       nativeBoxShadow,
+      panelFrame: { left: panelRect.left, top: panelRect.top, width: panelRect.width, height: panelRect.height },
+      switcherTop: document.querySelector("#right-panel-window-strip")?.getBoundingClientRect().top || 0,
+      canvasToolbarTop: document.querySelector(".canvas2d-engine-toolbar")?.getBoundingClientRect().top || 0,
+      loaderSize: document.querySelector("#screen-source-loader-host")?.getBoundingClientRect().width || 0,
       insets: {
         left: previewRect.left - panelRect.left,
         right: panelRect.right - previewRect.right,
@@ -686,10 +720,30 @@ async function checkMirrorFrame(page, viewport) {
       },
     };
   });
-  assert(frame.panelPadding === "8px" && frame.panelRadius === "12px", "AI mirror workspace does not use the compact shared frame", { viewport, frame });
+  const expectedPanelPadding = viewport.width <= 680 ? "10px" : "12px 14px 14px";
+  assert(
+    frame.panelPadding === expectedPanelPadding && frame.panelRadius === "12px",
+    "AI mirror workspace does not use the shared assistant frame",
+    { viewport, expectedPanelPadding, frame }
+  );
+  assert(
+    Math.abs(frame.panelFrame.left - assistantPanelFrame.left) <= 0.5 &&
+      Math.abs(frame.panelFrame.top - assistantPanelFrame.top) <= 0.5 &&
+      Math.abs(frame.panelFrame.width - assistantPanelFrame.width) <= 0.5 &&
+      Math.abs(frame.panelFrame.height - assistantPanelFrame.height) <= 0.5,
+    "AI assistant and AI mirror change the outer workspace dimensions when switched",
+    { viewport, assistantPanelFrame, mirrorPanelFrame: frame.panelFrame }
+  );
+  assert(frame.loaderSize > 0 && frame.loaderSize <= 84, "AI mirror empty-state product mark is oversized", { viewport, frame });
+  assert(
+    frame.switcherTop - frame.panelFrame.top <= (viewport.width <= 720 ? 56 : 24) &&
+      (viewport.width <= 720 || Math.abs(frame.switcherTop - frame.canvasToolbarTop) <= 4),
+    "AI assistant and AI mirror switcher remains lower than the canvas toolbar",
+    { viewport, frame }
+  );
   assert(frame.previewBorder === "1px" && frame.previewRadius === "10px", "AI mirror preview still has an oversized outer frame", { viewport, frame });
   assert(!frame.nativeBoxShadow.includes("14px"), "native AI mirror restored the legacy 14px inset frame", { viewport, frame });
-  assert(frame.insets.left <= 10 && frame.insets.right <= 10 && frame.insets.bottom <= 10, "AI mirror content padding is still oversized", { viewport, frame });
+  assert(frame.insets.left <= 16 && frame.insets.right <= 16 && frame.insets.bottom <= 16, "AI mirror content padding is not aligned with the assistant frame", { viewport, frame });
 
   await page.locator("#conversation-settings-btn").click();
   await page.waitForSelector("#insight-drawer.is-open");
@@ -960,7 +1014,6 @@ async function checkPanelLayoutControls(page, viewport) {
 
   const iconContract = await page.evaluate(() => {
     const selectors = [
-      "#stage-restore-btn",
       "#restore-left-pane-btn",
       "#restore-right-pane-btn",
       '[data-stage-panel-action="close"][data-stage-panel-side="left"]',
@@ -988,7 +1041,21 @@ async function checkPanelLayoutControls(page, viewport) {
     { viewport, iconContract }
   );
 
-  if (await restoreDefault.isVisible()) {
+  const restorePlacement = await restoreDefault.evaluate((element) => ({
+    parentId: element.parentElement?.id || "",
+    label: element.textContent?.trim() || "",
+    standaloneDockCount: document.querySelectorAll("#stage-restore-dock").length,
+  }));
+  assert(
+    restorePlacement.parentId === "conversation-shell-menu" &&
+      restorePlacement.label === "恢复默认布局" &&
+      restorePlacement.standaloneDockCount === 0,
+    "default layout recovery is not contained in the global more menu",
+    { viewport, restorePlacement }
+  );
+
+  if (!(await restoreDefault.isDisabled())) {
+    await page.locator("#conversation-shell-more").click();
     await restoreDefault.click();
   }
   for (const selector of ["#restore-left-pane-btn", "#restore-right-pane-btn"]) {
@@ -1091,6 +1158,26 @@ async function checkPanelLayoutControls(page, viewport) {
   assert((await leftMode.getAttribute("title"))?.includes("常规"), "fullscreen panel mode did not advertise the restore action", viewport);
   await leftMode.click();
   assert((await leftPanel.getAttribute("data-workspace-mode")) === "normal", "panel mode did not recover to normal", viewport);
+
+  await leftMode.click();
+  assert(!(await restoreDefault.isDisabled()), "layout recovery did not enable after a panel mode change", viewport);
+  await page.locator("#conversation-shell-more").click();
+  await restoreDefault.click();
+  await page.waitForTimeout(80);
+  const restoredDefaultState = await page.evaluate(() => ({
+    leftMode: document.querySelector(".desktop-clear-stage")?.dataset.workspaceMode || "",
+    rightMode: document.querySelector(".conversation-panel")?.dataset.workspaceMode || "",
+    restoreDisabled: document.querySelector("#stage-restore-btn")?.disabled,
+    menuHidden: document.querySelector("#conversation-shell-menu")?.classList.contains("is-hidden"),
+  }));
+  assert(
+    restoredDefaultState.leftMode === "normal" &&
+      restoredDefaultState.rightMode === "normal" &&
+      restoredDefaultState.restoreDisabled === true &&
+      restoredDefaultState.menuHidden,
+    "default layout did not recover and close its parent menu",
+    { viewport, restoredDefaultState }
+  );
 
   await leftCollapse.click();
   await page.waitForFunction(() => document.querySelector(".desktop-clear-stage")?.classList.contains("is-pane-collapsed"));

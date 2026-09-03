@@ -13,12 +13,14 @@ import { createInitialState } from "../state/createInitialState.js";
 import { mountLemniscateBloomLoader } from "../components/loaders/lemniscateBloomLoader.js";
 import { createCanvasFeature } from "../features/canvas/index.js";
 import { createCanvasItemInteractionController } from "../features/canvas/interactions/canvasItemInteractions.js";
-import { mountThemeSettingsPanel } from "../components/theme/themeSettingsPanel.js";
-import { DEFAULT_THEME_SETTINGS, normalizeThemeSettings } from "../theme/themeSettings.js";
+import { mountSettingsCenter } from "../components/settings/settingsCenter.js";
+import { normalizeThemeSettings } from "../theme/themeSettings.js";
 import { applyThemeCssVariables } from "../theme/themeCssVariables.js";
 import { API_ROUTES, readJsonResponse } from "../api/http.js";
+import { createAgentClient } from "../api/agentClient.js";
 import { listAiMirrorTargets, prepareAiMirrorTarget, stopAiMirrorTarget } from "./aiMirrorClient.js";
 import { createConversationAssistantChrome } from "./conversationAssistant/chrome.js";
+import { createAgentController } from "./conversationAssistant/agentController.js";
 import { getConversationAssistantElements } from "./conversationAssistant/dom.js";
 import { dispatchTutorialUiEvent } from "../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../tutorial-core/tutorialTypes.js";
@@ -47,6 +49,7 @@ import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js
 import { createLatestAsyncCommitter } from "../utils/latestAsyncCommitter.js";
 
 const state = createInitialState();
+const agentClient = createAgentClient();
 const APP_CLIPBOARD_TTL_MS = 120000;
 const CANVAS_MODE_LEGACY = "legacy";
 const SCREEN_SOURCE_EMBED_FIT_MODES = Object.freeze(["contain", "cover", "fill"]);
@@ -60,6 +63,7 @@ state.screenSource.embedPolicies = loadScreenSourceEmbedPolicies();
 state.screenSource.renderMode = loadScreenSourceRenderMode();
 state.canvasMode = loadCanvasMode();
 let conversationAssistantChrome = null;
+let agentController = null;
 let lastPanelLayoutViewportSize = null;
 let workspaceResizeRefreshFrame = 0;
 
@@ -159,6 +163,7 @@ function loadCanvasMode() {
 function persistCanvasMode() {}
 
 const DEFAULT_APP_NAME = "FreeFlow";
+const DEFAULT_ASSISTANT_NAME = "FreeFlow";
 const DEFAULT_APP_SUBTITLE = "自由画布与 AI 工作台";
 const DEFAULT_CANVAS_TITLE = "FreeFlow 工作白板";
 const DEFAULT_CLICK_THROUGH_ACCELERATOR = "CommandOrControl+Shift+X";
@@ -330,7 +335,13 @@ function normalizeUiSettings(payload = {}) {
     typeof payload.canvasTitle === "string" && payload.canvasTitle.trim()
       ? payload.canvasTitle.trim()
       : DEFAULT_CANVAS_TITLE;
+  const rawAssistantName =
+    typeof payload.assistantName === "string" && payload.assistantName.trim()
+      ? payload.assistantName.trim()
+      : rawAppName;
   const appName = rawAppName === "AI_Worker" || rawAppName === "Bo AI" ? DEFAULT_APP_NAME : rawAppName;
+  const assistantName =
+    rawAssistantName === "AI_Worker" || rawAssistantName === "Bo AI" ? DEFAULT_ASSISTANT_NAME : rawAssistantName;
   const appSubtitle =
     rawAppSubtitle === "本地模型工作台" ||
     rawAppSubtitle === "Infinite Board Assistant" ||
@@ -379,6 +390,7 @@ function normalizeUiSettings(payload = {}) {
 
   return {
     appName: appName.slice(0, 40),
+    assistantName: assistantName.slice(0, 40),
     appSubtitle: appSubtitle.slice(0, 80),
     canvasTitle: canvasTitle.slice(0, 60),
     canvasBoardSavePath: normalizeCanvasBoardSavePathValue(canvasBoardSavePath).slice(0, 400),
@@ -391,6 +403,10 @@ function normalizeUiSettings(payload = {}) {
     lastTutorialIntroVersion: lastTutorialIntroVersion.slice(0, 80),
     dismissedTutorialIntroVersion: dismissedTutorialIntroVersion.slice(0, 80),
     canvasImageSavePath: normalizeCanvasImageSavePathValue(canvasImageSavePath).slice(0, 400),
+    canvasAutosaveEnabled: payload.canvasAutosaveEnabled !== false,
+    canvasLinkSemanticsEnabled: payload.canvasLinkSemanticsEnabled !== false,
+    defaultOutputMode: payload.defaultOutputMode === "stream" ? "stream" : "nonstream",
+    defaultAgentMode: payload.defaultAgentMode === true,
     ...workbenchPreferences,
     ...theme,
   };
@@ -1090,7 +1106,7 @@ function buildAgentPlannerMessages(task, session) {
     {
       role: "system",
       content: [
-        `你是 ${getAppDisplayName()} 的本地桌面管家。`,
+        `你是 ${getAssistantDisplayName()}，FreeFlow 的本地桌面管家。`,
         "你现在不是单纯的命令改写器，而是一个可对话的任务管家。",
         "你必须先理解用户意图，再决定是：直接回答、追问澄清，还是执行本地动作。",
         "如果用户只是像聊天一样提问、追问上一步结果、询问建议或让你解释当前情况，你应该直接回复，不要强行执行动作。",
@@ -1383,11 +1399,13 @@ const drawerCloseBtn = document.querySelector("#drawer-close-btn");
 const drawerBackdropEl = document.querySelector("#drawer-backdrop");
 const insightDrawerEl = document.querySelector("#insight-drawer");
 const insightDrawerHandleEl = document.querySelector("#insight-drawer-handle");
+const settingsCenterHostEl = document.querySelector("#settings-center-host");
+const aiRuntimeControlsEl = modelSelect?.closest(".ai-control-grid");
+const aiRuntimeContextEl = contextLimitSelect?.closest(".ai-control-context-card");
 const leftPaneResizerEl = document.querySelector("#left-pane-resizer");
 const rightPaneResizerEl = document.querySelector("#right-pane-resizer");
 const leftPaneYResizerEl = document.querySelector("#left-pane-y-resizer");
 const rightPaneYResizerEl = document.querySelector("#right-pane-y-resizer");
-const stageRestoreDockEl = document.querySelector("#stage-restore-dock");
 const stageRestoreBtn = document.querySelector("#stage-restore-btn");
 const stagePanelDragEls = Array.from(document.querySelectorAll("[data-stage-panel-drag]"));
 const stagePanelFrameEls = Array.from(document.querySelectorAll("[data-stage-panel-frame]"));
@@ -1453,7 +1471,6 @@ const workbenchHabitResetBtn = document.querySelector("#workbench-habit-reset-bt
 const workbenchHabitApplyBtn = document.querySelector("#workbench-habit-apply-btn");
 const workbenchHabitStatusEl = document.querySelector("#workbench-habit-status");
 const conversationShellClickThroughNoteEl = document.querySelector("#conversation-shell-clickthrough-note");
-const themeSettingsPanelHostEl = document.querySelector("#theme-settings-panel-host");
 const canvasModeLegacyBtn = document.querySelector("#canvas-mode-legacy-btn");
 const canvasModeSwitchEl = document.querySelector("#canvas-mode-switch");
 const canvasModeSliderEl = document.querySelector("#canvas-mode-slider");
@@ -1501,6 +1518,7 @@ let permissionAttentionTimer = null;
 let removeDesktopShellStateListener = null;
 let desktopSurfaceSyncPromise = Promise.resolve();
 const desktopClearStageEl = document.querySelector(".desktop-clear-stage");
+const BOOT_SPLASH_MIN_VISIBLE_MS = 2500;
 let bootShapeUnlockTimer = 0;
 let screenSourceEmbedSyncFrame = 0;
 let screenSourceEmbedSessionSequence = 0;
@@ -1683,8 +1701,14 @@ function mountScreenSourceHeaderPanelPortal() {
   if (screenSourceHeaderPanelEl.parentElement !== globalOverlayLayerEl) {
     globalOverlayLayerEl.appendChild(screenSourceHeaderPanelEl);
   }
+  if (screenSourceSelectPanelEl instanceof HTMLElement && screenSourceSelectPanelEl.parentElement !== globalOverlayLayerEl) {
+    globalOverlayLayerEl.appendChild(screenSourceSelectPanelEl);
+  }
   markElementForWindowShape(screenSourceHeaderPanelEl, { padding: 6 });
+  markElementForWindowShape(screenSourceSelectPanelEl, { padding: 6 });
   screenSourceHeaderPanelEl.classList.toggle("is-hidden", !screenSourceHeaderMenuOpen);
+  screenSourceSelectPanelEl?.classList.add("is-hidden");
+  screenSourceSelectPanelEl?.setAttribute("aria-hidden", "true");
 }
 
 function isScreenSourceHeaderAnchorAvailable() {
@@ -1772,11 +1796,27 @@ const globalTutorialHost = mountGlobalTutorialHost({
 bindDesktopWindowShapeAutoSync();
 
 const screenSourceEmptyLoader = mountLemniscateBloomLoader(screenSourceLoaderHostEl);
-const themeSettingsPanel = mountThemeSettingsPanel(themeSettingsPanelHostEl, {
-  onPreviewChange: handleThemeSettingsPreviewChange,
-  onSave: handleThemeSettingsSave,
-  onReset: handleThemeSettingsReset,
+const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
+  apiRoutes: API_ROUTES,
+  readJsonResponse,
+  desktopShell: DESKTOP_SHELL,
+  isDesktop: IS_DESKTOP_APP,
+  onThemePreview: previewSettingsCenterTheme,
+  onApplySnapshot: applySettingsCenterSnapshot,
+  onStatus: setStatus,
+  onRequestClose: requestSettingsDrawerClose,
+  agentClient,
 });
+agentController = createAgentController({
+  client: agentClient,
+  desktopShell: DESKTOP_SHELL,
+  setStatus,
+  setRichContent: setRichMessageContent,
+  onOpenSettings: openSettingsCenterSection,
+  onRuntime: syncAgentRuntimeOverview,
+});
+window.addEventListener("canvas2d-engine-ready", applyCanvasPreferencesToRuntime);
+window.addEventListener("canvas-preferences-changed", handleCanvasPreferencesChanged);
 const hasLegacyCanvasShell =
   canvasViewportEl instanceof HTMLElement &&
   canvasSurfaceEl instanceof HTMLElement &&
@@ -1994,14 +2034,15 @@ const canvasItemInteractionController = createCanvasItemInteractionController({
 
 function updatePromptPlaceholder() {
   if (!promptInput) return;
-
-  promptInput.placeholder = agentModeToggle?.checked
-    ? "像聊天一样描述你的目标，例如：帮我看看这个窗口在干嘛、点一下保存按钮、刚才识别到了什么、读取 D:\\FreeFlow-WorkBoard\\data\\sessions.json"
-    : `给 ${getAppDisplayName()} 发送任务，例如：整理这段代码逻辑，或者起草一封邮件。`;
+  promptInput.placeholder = `给 ${getAssistantDisplayName()} 发送任务，例如：分析当前工作区、修改代码或运行检查。`;
 }
 
 function getAppDisplayName() {
   return String(state.uiSettings?.appName || "").trim() || DEFAULT_APP_NAME;
+}
+
+function getAssistantDisplayName() {
+  return String(state.uiSettings?.assistantName || "").trim() || DEFAULT_ASSISTANT_NAME;
 }
 
 function getAppSubtitle() {
@@ -2480,6 +2521,7 @@ function syncScreenSourceHeaderMenuLayout() {
     screenSourceHeaderPanelEl.classList.add("is-hidden");
     screenSourceHeaderPanelEl.style.removeProperty("max-width");
     screenSourceHeaderPanelEl.style.removeProperty("max-height");
+    syncScreenSourceTargetMenuLayout();
     return;
   }
 
@@ -2518,6 +2560,68 @@ function syncScreenSourceHeaderMenuLayout() {
   const resolvedTop = Math.round(top);
   screenSourceHeaderPanelEl.style.setProperty("left", `${left}px`);
   screenSourceHeaderPanelEl.style.setProperty("top", `${resolvedTop}px`);
+  syncScreenSourceTargetMenuLayout();
+}
+
+function syncScreenSourceTargetMenuLayout() {
+  const isOpen = Boolean(
+    screenSourceHeaderMenuOpen &&
+      screenSourceSelectMenuEl?.hasAttribute("open") &&
+      screenSourceSelectTriggerEl instanceof HTMLElement &&
+      screenSourceSelectPanelEl instanceof HTMLElement
+  );
+  if (!isOpen) {
+    screenSourceSelectPanelEl?.classList.add("is-hidden");
+    screenSourceSelectPanelEl?.setAttribute("aria-hidden", "true");
+    return;
+  }
+
+  const viewportPadding = 12;
+  const gap = 8;
+  const triggerRect = screenSourceSelectTriggerEl.getBoundingClientRect();
+  const parentRect = screenSourceHeaderPanelEl?.getBoundingClientRect();
+  const viewportWidth = Math.max(1, window.innerWidth - viewportPadding * 2);
+  const width = Math.min(
+    280,
+    Math.max(240, Math.round(triggerRect.width)),
+    viewportWidth
+  );
+  screenSourceSelectPanelEl.classList.remove("is-hidden");
+  screenSourceSelectPanelEl.setAttribute("aria-hidden", "false");
+  screenSourceSelectPanelEl.style.setProperty("width", `${width}px`);
+  screenSourceSelectPanelEl.style.setProperty("left", "0px");
+  screenSourceSelectPanelEl.style.setProperty("top", "0px");
+
+  const spaceLeft = Math.max(0, (parentRect?.left ?? triggerRect.left) - gap - viewportPadding);
+  const spaceRight = Math.max(0, window.innerWidth - (parentRect?.right ?? triggerRect.right) - gap - viewportPadding);
+  const canOpenSideways = Math.max(spaceLeft, spaceRight) >= width;
+  const openRight = canOpenSideways && spaceRight >= width;
+  const spaceBelow = Math.max(0, window.innerHeight - (parentRect?.bottom ?? triggerRect.bottom) - gap - viewportPadding);
+  const spaceAbove = Math.max(0, (parentRect?.top ?? triggerRect.top) - gap - viewportPadding);
+  const openBelow = !canOpenSideways && spaceBelow >= spaceAbove;
+  const availableHeight = canOpenSideways
+    ? Math.max(1, window.innerHeight - viewportPadding * 2)
+    : Math.max(1, openBelow ? spaceBelow : spaceAbove);
+  screenSourceSelectPanelEl.style.setProperty("max-height", `${Math.min(420, availableHeight)}px`);
+  const panelRect = screenSourceSelectPanelEl.getBoundingClientRect();
+  const left = canOpenSideways
+    ? openRight
+      ? (parentRect?.right ?? triggerRect.right) + gap
+      : (parentRect?.left ?? triggerRect.left) - gap - panelRect.width
+    : Math.min(
+        Math.max(viewportPadding, triggerRect.left),
+        Math.max(viewportPadding, window.innerWidth - viewportPadding - panelRect.width)
+      );
+  const top = canOpenSideways
+    ? Math.min(
+        Math.max(viewportPadding, triggerRect.top),
+        Math.max(viewportPadding, window.innerHeight - viewportPadding - panelRect.height)
+      )
+    : openBelow
+      ? (parentRect?.bottom ?? triggerRect.bottom) + gap
+      : (parentRect?.top ?? triggerRect.top) - gap - panelRect.height;
+  screenSourceSelectPanelEl.style.setProperty("left", `${Math.round(left)}px`);
+  screenSourceSelectPanelEl.style.setProperty("top", `${Math.round(top)}px`);
 }
 
 function scheduleScreenSourceHeaderMenuLayoutSync() {
@@ -2602,6 +2706,8 @@ function setScreenSourceTargetMenuOpen(open, { restoreFocus = false } = {}) {
   const nextOpen = Boolean(open) && !screenSourceSelectMenuEl?.classList.contains("is-disabled");
   screenSourceSelectMenuEl?.toggleAttribute("open", nextOpen);
   screenSourceSelectTriggerEl?.setAttribute("aria-expanded", String(nextOpen));
+  screenSourceSelectPanelEl?.classList.toggle("is-hidden", !nextOpen);
+  screenSourceSelectPanelEl?.setAttribute("aria-hidden", String(!nextOpen));
   if (restoreFocus) {
     screenSourceSelectTriggerEl?.focus({ preventScroll: true });
   }
@@ -3437,7 +3543,7 @@ conversationAssistantChrome = createConversationAssistantChrome({
   getModelSource,
   getModelDisplayName,
   getModelSourceLabel,
-  getAppDisplayName,
+  getAssistantDisplayName,
   saveUiSettings,
   saveModelProviderSettings,
   setStatus,
@@ -3465,10 +3571,9 @@ syncGlobalDesktopRuntimeBridge();
 
 function applyThemeAppearance() {
   applyThemeCssVariables(document.documentElement, state.uiSettings);
-  themeSettingsPanel.update(state.uiSettings);
 }
 
-function handleThemeSettingsPreviewChange(overrides = {}) {
+function previewSettingsCenterTheme(overrides = {}) {
   state.uiSettings = normalizeUiSettings({
     ...state.uiSettings,
     ...overrides,
@@ -3476,29 +3581,10 @@ function handleThemeSettingsPreviewChange(overrides = {}) {
   applyThemeAppearance();
 }
 
-async function handleThemeSettingsSave() {
-  try {
-    await saveThemeSettings();
-    setStatus("主题设置已保存", "success");
-  } catch (error) {
-    setStatus(`保存主题设置失败：${error.message}`, "warning");
-  }
-}
-
-function handleThemeSettingsReset() {
-  state.uiSettings = normalizeUiSettings({
-    ...state.uiSettings,
-    ...DEFAULT_THEME_SETTINGS,
-    themePreset: DEFAULT_THEME_SETTINGS.themePreset,
-  });
-  writeUiSettingsCache(state.uiSettings);
-  applyThemeAppearance();
-  setStatus("已恢复默认主题", "success");
-}
-
 function applyUiSettings() {
   state.uiSettings = normalizeUiSettings(state.uiSettings);
   const appName = getAppDisplayName();
+  const assistantName = getAssistantDisplayName();
   const appSubtitle = getAppSubtitle();
   const canvasTitle = getCanvasTitle();
 
@@ -3510,10 +3596,10 @@ function applyUiSettings() {
     brandSubtitleEl.textContent = appSubtitle;
   }
   if (conversationAppNameEl) {
-    conversationAppNameEl.textContent = appName;
+    conversationAppNameEl.textContent = assistantName;
   }
   if (conversationAppNameInputEl) {
-    conversationAppNameInputEl.value = appName;
+    conversationAppNameInputEl.value = assistantName;
   }
   if (appNameInput) {
     appNameInput.value = appName;
@@ -3562,6 +3648,154 @@ function applyUiSettings() {
   renderCurrentSessionHeader();
   if (state.sessions.length || state.currentSessionId) {
     renderCurrentSession();
+  }
+}
+
+function applyCanvasPreferencesToRuntime() {
+  const engine = getModernCanvas2DEngine();
+  if (!engine) return;
+  engine.setAutosaveEnabled?.(state.uiSettings.canvasAutosaveEnabled !== false, {
+    emit: true,
+    persist: true,
+    syncSettings: false,
+  });
+  engine.setLinkSemanticEnabled?.(state.uiSettings.canvasLinkSemanticsEnabled !== false, {
+    announce: false,
+    persist: true,
+    syncSettings: false,
+  });
+}
+
+function handleCanvasPreferencesChanged(event) {
+  const patch = event?.detail && typeof event.detail === "object" ? event.detail : {};
+  const next = {};
+  if (typeof patch.canvasAutosaveEnabled === "boolean") {
+    next.canvasAutosaveEnabled = patch.canvasAutosaveEnabled;
+  }
+  if (typeof patch.canvasLinkSemanticsEnabled === "boolean") {
+    next.canvasLinkSemanticsEnabled = patch.canvasLinkSemanticsEnabled;
+  }
+  if (!Object.keys(next).length) return;
+  state.uiSettings = normalizeUiSettings({ ...state.uiSettings, ...next });
+  writeUiSettingsCache(state.uiSettings);
+  writeStartupContextUiSettings(next);
+}
+
+async function applySettingsCenterSnapshot(snapshot = {}, shortcutSettings = {}) {
+  const sections = snapshot.sections || {};
+  const general = sections.general || {};
+  const ai = sections.ai || {};
+  const canvas = sections.canvas || {};
+  const previousWorkbench = pickWorkbenchPreferences(state.workbenchPreferences || state.uiSettings);
+  const nextWorkbench = pickWorkbenchPreferences(sections.workbench || previousWorkbench);
+  const workbenchChanged = JSON.stringify(previousWorkbench) !== JSON.stringify(nextWorkbench);
+  const previousProvider = JSON.stringify(state.modelProviderSettings?.cloud || {});
+
+  state.uiSettings = normalizeUiSettings({
+    ...state.uiSettings,
+    appName: general.workspaceName,
+    appSubtitle: general.workspaceSubtitle,
+    assistantName: general.assistantName,
+    updateCheckEnabled: general.updateCheckEnabled,
+    defaultOutputMode: ai.defaultOutputMode,
+    defaultAgentMode: ai.defaultAgentMode,
+    ...(sections.appearance || {}),
+    ...nextWorkbench,
+    canvasBoardSavePath: canvas.defaultBoardDirectory,
+    canvasWorkspaceFolderPath: canvas.workspaceDirectory,
+    canvasImageSavePath: canvas.exportImageDirectory,
+    canvasAutosaveEnabled: canvas.autosaveEnabled,
+    canvasLinkSemanticsEnabled: canvas.linkSemanticsEnabled,
+  });
+  state.workbenchPreferences = nextWorkbench;
+
+  if (ai.provider) {
+    state.modelProviderSettings = normalizeModelProviderSettings({
+      ...state.modelProviderSettings,
+      cloud: {
+        ...(state.modelProviderSettings?.cloud || {}),
+        ...ai.provider,
+        apiKey: "",
+      },
+    });
+  }
+  if (ai.profiles && typeof ai.profiles === "object") {
+    state.modelProfiles = sanitizeModelProfilesMap(ai.profiles).profiles;
+  }
+  if (sections.permissions) {
+    state.permissionStore = {
+      ...state.permissionStore,
+      permissions: { ...(sections.permissions.permissions || {}) },
+      allowedRoots: Array.isArray(sections.permissions.allowedRoots)
+        ? [...sections.permissions.allowedRoots]
+        : [],
+    };
+  }
+  state.shortcutSettings = normalizeShortcutSettings(shortcutSettings);
+
+  writeUiSettingsCache(state.uiSettings);
+  writeStartupContextUiSettings(state.uiSettings);
+  applyUiSettings();
+  renderPermissions();
+  renderAllowedRoots();
+  renderShortcutSettings();
+  applyCanvasPreferencesToRuntime();
+
+  if (state.model) {
+    applyModelSelection(state.model, { announce: false, persistSession: false });
+  }
+  if (workbenchChanged) {
+    applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: false });
+    await applyWorkbenchFullscreenPreference(nextWorkbench);
+  }
+
+  if (previousProvider !== JSON.stringify(state.modelProviderSettings?.cloud || {})) {
+    void refreshAvailableModels({ announceSuccess: false }).catch((error) => {
+      setStatus(`设置已保存，模型列表刷新失败：${error.message}`, "warning");
+    });
+  }
+  await agentController?.refreshRuntime();
+}
+
+function requestSettingsDrawerClose() {
+  if (setDrawerOpen(false) !== false) {
+    void resumeScreenSourceAfterDrawerClose();
+  }
+}
+
+async function openSettingsCenterSection(section = "general") {
+  settingsCenter.openSection(section);
+  if (!state.drawerOpen) {
+    await suspendScreenSourceForDrawer();
+    setDrawerOpen(true);
+  }
+  settingsCenter.openSection(section);
+}
+
+function syncAgentRuntimeOverview(runtime, session) {
+  const model = String(session?.model || runtime?.settings?.defaultModel || "").trim();
+  if (defaultModelEl) {
+    defaultModelEl.textContent = model || "自动选择";
+  }
+  if (connectionStatusEl) {
+    connectionStatusEl.textContent = runtime?.workspaceValid === false
+      ? "等待配置工作区"
+      : !runtime?.available
+      ? "CLI 不可用"
+      : !runtime?.authenticated
+        ? "等待登录"
+        : runtime.state === "ready"
+          ? "已连接"
+          : "正在启动";
+  }
+  if (responseModeLabelEl) {
+    responseModeLabelEl.textContent = session?.status === "waitingApproval"
+      ? "等待确认"
+      : agentController?.isActive()
+        ? "正在处理"
+        : runtime?.available && runtime?.authenticated
+          ? "可接收任务"
+          : "需要配置";
   }
 }
 
@@ -4224,7 +4458,8 @@ function getClipboardZoneFromTarget(target) {
     target.closest("#screen-source-panel") ||
     target.closest("#screen-source-header-slot") ||
     target.closest("#screen-source-header-menu") ||
-    target.closest(".screen-source-header-panel")
+    target.closest(".screen-source-header-panel") ||
+    target.closest(".screen-source-select-panel")
   ) {
     return "screen";
   }
@@ -4886,6 +5121,7 @@ function buildUiSettingsPayload(overrides = {}) {
   const cached = readUiSettingsCache();
   return normalizeUiSettings({
     appName: overrides.appName ?? appNameInput?.value ?? state.uiSettings?.appName,
+    assistantName: overrides.assistantName ?? state.uiSettings?.assistantName,
     appSubtitle: overrides.appSubtitle ?? appSubtitleInput?.value ?? state.uiSettings?.appSubtitle,
     canvasTitle: overrides.canvasTitle ?? canvasTitleInputEl?.value ?? state.uiSettings?.canvasTitle,
     canvasBoardSavePath:
@@ -4931,6 +5167,16 @@ function buildUiSettingsPayload(overrides = {}) {
       canvasImagePathInputEl?.value ??
       state.uiSettings?.canvasImageSavePath ??
       cached.canvasImageSavePath,
+    canvasAutosaveEnabled:
+      overrides.canvasAutosaveEnabled ?? state.uiSettings?.canvasAutosaveEnabled ?? cached.canvasAutosaveEnabled,
+    canvasLinkSemanticsEnabled:
+      overrides.canvasLinkSemanticsEnabled ??
+      state.uiSettings?.canvasLinkSemanticsEnabled ??
+      cached.canvasLinkSemanticsEnabled,
+    defaultOutputMode:
+      overrides.defaultOutputMode ?? state.uiSettings?.defaultOutputMode ?? cached.defaultOutputMode,
+    defaultAgentMode:
+      overrides.defaultAgentMode ?? state.uiSettings?.defaultAgentMode ?? cached.defaultAgentMode,
     defaultCanvasPanelSide:
       overrides.defaultCanvasPanelSide ??
       state.uiSettings?.defaultCanvasPanelSide ??
@@ -4951,30 +5197,6 @@ function buildUiSettingsPayload(overrides = {}) {
       overrides.defaultLaunchFullscreen ??
       state.uiSettings?.defaultLaunchFullscreen ??
       cached.defaultLaunchFullscreen,
-    panelOpacity: overrides.panelOpacity ?? state.uiSettings?.panelOpacity,
-    canvasOpacity: overrides.canvasOpacity ?? state.uiSettings?.canvasOpacity,
-    backgroundColor: overrides.backgroundColor ?? state.uiSettings?.backgroundColor,
-    backgroundOpacity: overrides.backgroundOpacity ?? state.uiSettings?.backgroundOpacity,
-    textColor: overrides.textColor ?? state.uiSettings?.textColor,
-    patternColor: overrides.patternColor ?? state.uiSettings?.patternColor,
-    buttonColor: overrides.buttonColor ?? state.uiSettings?.buttonColor,
-    buttonTextColor: overrides.buttonTextColor ?? state.uiSettings?.buttonTextColor,
-    shellPanelColor: overrides.shellPanelColor ?? state.uiSettings?.shellPanelColor,
-    shellPanelTextColor: overrides.shellPanelTextColor ?? state.uiSettings?.shellPanelTextColor,
-    controlColor: overrides.controlColor ?? state.uiSettings?.controlColor,
-    controlActiveColor: overrides.controlActiveColor ?? state.uiSettings?.controlActiveColor,
-    floatingPanelColor: overrides.floatingPanelColor ?? state.uiSettings?.floatingPanelColor,
-    inputColor: overrides.inputColor ?? state.uiSettings?.inputColor,
-    inputTextColor: overrides.inputTextColor ?? state.uiSettings?.inputTextColor,
-    messageColor: overrides.messageColor ?? state.uiSettings?.messageColor,
-    userMessageColor: overrides.userMessageColor ?? state.uiSettings?.userMessageColor,
-    dialogColor: overrides.dialogColor ?? state.uiSettings?.dialogColor,
-    themePreset: overrides.themePreset ?? state.uiSettings?.themePreset,
-  });
-}
-
-function buildThemeSettingsPayload(overrides = {}) {
-  return normalizeThemeSettings({
     panelOpacity: overrides.panelOpacity ?? state.uiSettings?.panelOpacity,
     canvasOpacity: overrides.canvasOpacity ?? state.uiSettings?.canvasOpacity,
     backgroundColor: overrides.backgroundColor ?? state.uiSettings?.backgroundColor,
@@ -5063,33 +5285,6 @@ async function saveWorkbenchPreferences(preferences = {}) {
   await refreshStartupContext();
   applyUiSettings();
   return state.workbenchPreferences;
-}
-
-async function saveThemeSettings(overrides = {}) {
-  const themePayload = buildThemeSettingsPayload(overrides);
-  writeUiSettingsCache({
-    ...state.uiSettings,
-    ...themePayload,
-  });
-
-  const response = await fetch(API_ROUTES.themeSettings, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(themePayload),
-  });
-  const data = await readJsonResponse(response, "主题设置");
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.details || data.error || "保存主题设置失败");
-  }
-
-  state.uiSettings = normalizeUiSettings({
-    ...state.uiSettings,
-    ...themePayload,
-    ...data,
-  });
-  writeUiSettingsCache(state.uiSettings);
-  applyUiSettings();
 }
 
 function syncModelSelectOptions(models = []) {
@@ -5187,6 +5382,7 @@ async function saveModelProviderSettings(nextSettings = {}) {
 }
 
 function renderCurrentSessionHeader() {
+  if (agentController?.isInitialized()) return;
   const session = getCurrentSession();
   const isEditingCurrent = state.editingSessionId && session?.id === state.editingSessionId;
 
@@ -5274,7 +5470,6 @@ async function bootstrap() {
   await loadStartupContext();
   await loadUiSettings();
   await loadCanvasBoardFromStorage();
-  await loadSessions();
   await loadClipboardStore();
 
   try {
@@ -5284,15 +5479,6 @@ async function bootstrap() {
     setStatus(`权限配置读取失败：${error.message}`, "warning");
   }
 
-  if (!state.sessions.length) {
-    createSession({ switchTo: true, persist: false });
-  } else if (!getCurrentSession()) {
-    state.currentSessionId = state.sessions[0].id;
-  }
-
-  renderSessions();
-  renderCurrentSession();
-  renderContextStats();
   renderPermissions();
   renderAllowedRoots();
   renderSystemStats();
@@ -5309,10 +5495,8 @@ async function bootstrap() {
   observeComposerSize();
   observeScreenSourcePreviewSize();
   observeScreenSourceToolbarSize();
-  agentModeToggle.checked = localStorage.getItem(CONFIG.agentModeKey) === "true";
-  state.outputMode = localStorage.getItem(CONFIG.outputModeKey) === "stream" ? "stream" : "nonstream";
-  syncOutputModeUi();
   updatePromptPlaceholder();
+  await agentController.initialize();
   scheduleDesktopWindowShapeSync();
   markBootMilestone("renderer-ready");
   try {
@@ -5326,26 +5510,6 @@ async function bootstrap() {
     globalTutorialHost.openIntro();
   }
 
-  try {
-    await loadModelProfiles();
-  } catch (error) {
-    setStatus(`模型档案读取失败：${error.message}`, "warning");
-  }
-
-  try {
-    await refreshAvailableModels();
-  } catch (error) {
-    const providerFallbackModel = state.provider === "bigmodel" ? `${CLOUD_MODEL_PREFIX}glm-4.7-flash` : `${LOCAL_MODEL_PREFIX}qwen3.5:4b`;
-    const fallbackModels = normalizeModelList([], state.model || providerFallbackModel);
-    state.availableModels = fallbackModels;
-    syncModelSelectOptions(fallbackModels);
-    mergeModelProfiles(fallbackModels.map((item) => item.name));
-    applyModelSelection(fallbackModels[0]?.name || providerFallbackModel, { announce: false, persistSession: false });
-    defaultModelEl.textContent = "不可用";
-    connectionStatusEl.textContent = "连接失败";
-    setStatus(error.message, "error");
-  }
-
   if (IS_DESKTOP_APP && state.uiSettings?.updateCheckEnabled !== false) {
     window.setTimeout(() => {
       void runAppUpdateCheck({
@@ -5356,10 +5520,16 @@ async function bootstrap() {
 }
 
 function setDrawerOpen(open) {
-  state.drawerOpen = Boolean(open);
+  const wasOpen = state.drawerOpen;
+  const nextOpen = Boolean(open);
+  if (!nextOpen && wasOpen && settingsCenter.close() === false) {
+    return false;
+  }
+  state.drawerOpen = nextOpen;
   if (state.drawerOpen) {
     void setDesktopClickThrough(false);
     markElementForWindowShape(drawerBackdropEl, { padding: 0 });
+    if (!wasOpen) void settingsCenter.open();
   } else {
     unmarkElementForWindowShape(drawerBackdropEl);
   }
@@ -5377,6 +5547,7 @@ function setDrawerOpen(open) {
   syncEmbeddedWindowOverlayVisibility();
   scheduleDesktopWindowShapeSync();
   requestDrawerWindowShapeFinalSync();
+  return true;
 }
 
 function initializePaneLayout() {
@@ -5642,6 +5813,7 @@ function panelLayoutSideDiffersFromDefault(side) {
   return (
     Boolean(panel.hidden) ||
     Boolean(panel.collapsed) ||
+    String(panel.mode || "normal") !== "normal" ||
     Math.abs((Number(panel.x) || 0) - defaultFrame.x) > 2 ||
     Math.abs((Number(panel.y) || 0) - defaultFrame.y) > 2 ||
     Math.abs((Number(panel.width) || 0) - defaultFrame.width) > 2 ||
@@ -6078,10 +6250,12 @@ function isStagePanelDetached(side) {
   return Boolean(panel.hidden || panel.collapsed || panelLayoutSideDiffersFromDefault(side));
 }
 
-function renderStageRestoreDock() {
+function renderStageRestoreControl() {
   const needsRestore = panelLayoutSideDiffersFromDefault("left") || panelLayoutSideDiffersFromDefault("right");
-
-  stageRestoreDockEl?.classList.toggle("is-hidden", !needsRestore);
+  if (stageRestoreBtn) {
+    stageRestoreBtn.disabled = !needsRestore;
+    stageRestoreBtn.setAttribute("aria-disabled", String(!needsRestore));
+  }
 }
 
 function renderPanelLayoutSide(side) {
@@ -6175,7 +6349,7 @@ function refreshPanelLayoutVisualState() {
   }
   syncStagePanelOrbLabels();
 
-  renderStageRestoreDock();
+  renderStageRestoreControl();
   syncPaneVisibility({ syncShape: false });
   syncEmbeddedWindowOverlayVisibility();
   scheduleConversationShellMenuLayoutSync();
@@ -6227,7 +6401,7 @@ function resetStagePanelsToDefault({ persist = true, announce = false } = {}) {
 }
 
 function restoreDefaultStagePanels() {
-  applyWorkbenchPreferencesToPanelLayout({ persist: true, announce: true });
+  resetStagePanelsToDefault({ persist: true, announce: true });
 }
 
 function setStagePanelHidden(side, hidden) {
@@ -7259,7 +7433,6 @@ function getBaseDesktopWindowShapeElements() {
     { element: leftPaneResizerEl, padding: 2 },
     { element: rightPaneResizerEl, padding: 2 },
     { element: conversationPanel, padding: 2 },
-    { element: stageRestoreDockEl, padding: 6 },
     { element: desktopShellControlsEl, padding: 6 },
     { element: desktopStatusBannerEl, padding: 4 },
     { element: appGlobalShellActionsEl, padding: 6 },
@@ -7458,12 +7631,29 @@ function finishBootSplash() {
     bootShapeUnlockTimer = window.setTimeout(releaseAfterSplash, 500);
   };
 
-  window.requestAnimationFrame(() => window.requestAnimationFrame(beginSplashExit));
+  const requestSplashExit = () => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(beginSplashExit));
+  };
+  const navigationStartedAt = Number(globalThis.__FREEFLOW_BOOT_METRICS?.marks?.["navigation-start"] || 0) || 0;
+  const elapsedMs = Math.max(0, performance.now() - navigationStartedAt);
+  const remainingMs = Math.max(0, BOOT_SPLASH_MIN_VISIBLE_MS - elapsedMs);
+  if (remainingMs > 0) {
+    bootShapeUnlockTimer = window.setTimeout(() => {
+      bootShapeUnlockTimer = 0;
+      requestSplashExit();
+    }, Math.ceil(remainingMs));
+  } else {
+    requestSplashExit();
+  }
 }
 
 function handleBootstrapFailure(error) {
   const message = String(error?.message || error || "未知错误").trim() || "未知错误";
   console.error("[FreeFlow] bootstrap failed:", error);
+  if (bootShapeUnlockTimer) {
+    window.clearTimeout(bootShapeUnlockTimer);
+    bootShapeUnlockTimer = 0;
+  }
   markBootMilestone("failure");
   document.body?.classList.add("app-booting", "boot-shape-lock", "boot-failed");
   bootSplashEl?.classList.add("is-failed");
@@ -7508,143 +7698,12 @@ window.addEventListener("beforeunload", () => removeBootstrapTimeoutListener?.()
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-
-  const prompt = promptInput.value.trim();
-  const attachmentSnapshot = normalizeComposerAttachments(state.composerAttachments);
-  const attachmentPromptPrefix = buildAttachmentPromptPrefix(attachmentSnapshot);
-  const finalPromptBody =
-    prompt || (attachmentSnapshot.length ? "请先阅读我附加的文件，并根据这些文件回答我的问题。" : "");
-  const finalPrompt = [attachmentPromptPrefix, finalPromptBody].filter(Boolean).join("\n\n").trim();
-  if (!finalPrompt || state.abortController) return;
-
-  const model = modelSelect.value || state.model;
-
-  if (agentModeToggle.checked) {
-    await runAgentModeTask(finalPrompt);
-    return;
-  }
-
-  if (isDoubaoWebModel(model)) {
-    await runDoubaoWebTask(finalPrompt);
-    return;
-  }
-
-  const session = ensureCurrentSession();
-  session.activeModel = model;
-
-  addMessage({ role: "user", content: finalPrompt });
-  promptInput.value = "";
-  removeCanvasSelectionByIds(attachmentSnapshot.map((item) => item.id));
-  clearComposerAttachments();
+  await agentController.submit();
   autoresize();
-
-  await maybeCompressConversation(session, model);
-
-  const assistantMessage = addMessage({
-    role: "assistant",
-    content: "",
-    model,
-    thinkingEnabled: getModelProfile(model).thinkingEnabled,
-    deviceMode: isLocalModel(model) ? getModelDeviceMode(model) : "cloud",
-    pending: true,
-  });
-  state.currentAssistantId = assistantMessage.dataset.messageId;
-  state.abortController = new AbortController();
-  state.activeTaskRoute = "chat";
-  setComposerState(true);
-  setStatus("回复等待中");
-
-  try {
-    if (state.outputMode === "stream") {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages: applyThinkingDirective(
-            buildPayloadMessages(
-              session,
-              attachmentSnapshot.map((item) => item.id)
-            ),
-            model
-          ),
-          options: buildRequestOptions(model),
-        }),
-        signal: state.abortController.signal,
-      });
-
-      if (!response.ok || !response.body) {
-        const errorText = await safeErrorText(response);
-        throw new Error(errorText || "聊天请求失败");
-      }
-
-      await consumeNdjsonStream(response.body);
-      updateAssistantMessage(getCurrentSession()
-        ?.messages?.find((item) => item.id === state.currentAssistantId)?.content || "", {
-        thinkingContent:
-          getCurrentSession()?.messages?.find((item) => item.id === state.currentAssistantId)?.thinkingContent || "",
-        pending: false,
-      });
-    } else {
-  const response = await fetch(API_ROUTES.chatOnce, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages: applyThinkingDirective(
-            buildPayloadMessages(
-              session,
-              attachmentSnapshot.map((item) => item.id)
-            ),
-            model
-          ),
-          options: buildRequestOptions(model),
-        }),
-        signal: state.abortController.signal,
-      });
-
-      const data = await readJsonResponse(response, "聊天");
-      if (!response.ok || !data.ok) {
-        throw new Error(data.details || data.error || "聊天请求失败");
-      }
-
-      updateAssistantMessage(data.message || "模型没有返回内容。", {
-        thinkingContent: data.thinking || "",
-        pending: false,
-      });
-    }
-    setStatus("回复完成", "success");
-  } catch (error) {
-    if (error.name === "AbortError") {
-      updateAssistantMessage("已停止当前生成。", {
-        pending: false,
-      });
-      setStatus("已停止当前生成", "warning");
-    } else {
-      updateAssistantMessage(`发生错误：${error.message}`, {
-        pending: false,
-      });
-      setStatus(error.message, "error");
-    }
-  } finally {
-    state.abortController = null;
-    state.currentAssistantId = null;
-    state.activeTaskRoute = "";
-    setComposerState(false);
-    persistSessions();
-    renderSessions();
-    renderContextStats();
-  }
 });
 
 stopBtn.addEventListener("click", () => {
-  if (state.activeTaskRoute === "doubao-web") {
-    fetch("/api/doubao-web/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    }).catch(() => {});
-  }
-  state.abortController?.abort();
+  void agentController.stop();
 });
 
 composerThinkingBtn?.addEventListener("click", async () => {
@@ -7654,15 +7713,7 @@ composerThinkingBtn?.addEventListener("click", async () => {
 });
 
 clearBtn.addEventListener("click", async () => {
-  if (state.abortController) return;
-
-  const previousSessionId = state.currentSessionId;
-  createSession({ switchTo: true });
-  await resetDesktopAgentSession(previousSessionId);
-  renderSessions();
-  renderCurrentSession();
-  renderContextStats();
-  setStatus("已创建新会话");
+  await agentController.newSession();
 });
 
 clearHistoryBtn.addEventListener("click", async () => {
@@ -7795,6 +7846,7 @@ stagePanelActionEls.forEach((actionEl) => {
 });
 
 stageRestoreBtn?.addEventListener("click", () => {
+  setConversationShellMenuOpen(false);
   restoreDefaultStagePanels();
 });
 
@@ -8617,6 +8669,7 @@ document.addEventListener("click", (event) => {
   closeConversationModelMenu();
   if (target?.closest?.("#screen-source-header-menu")) return;
   if (target?.closest?.(".screen-source-header-panel")) return;
+  if (target?.closest?.(".screen-source-select-panel")) return;
   closeScreenSourceHeaderMenu();
 });
 
@@ -8721,18 +8774,21 @@ drawerToggleBtn?.addEventListener("click", async () => {
     setDrawerOpen(true);
     return;
   }
-  setDrawerOpen(false);
-  await resumeScreenSourceAfterDrawerClose();
+  if (setDrawerOpen(false) !== false) {
+    await resumeScreenSourceAfterDrawerClose();
+  }
 });
 
 drawerCloseBtn?.addEventListener("click", () => {
-  setDrawerOpen(false);
-  resumeScreenSourceAfterDrawerClose();
+  if (setDrawerOpen(false) !== false) {
+    resumeScreenSourceAfterDrawerClose();
+  }
 });
 
 drawerBackdropEl?.addEventListener("click", () => {
-  setDrawerOpen(false);
-  resumeScreenSourceAfterDrawerClose();
+  if (setDrawerOpen(false) !== false) {
+    resumeScreenSourceAfterDrawerClose();
+  }
 });
 
 insightDrawerHandleEl?.addEventListener("click", async () => {
@@ -8742,8 +8798,9 @@ insightDrawerHandleEl?.addEventListener("click", async () => {
     setDrawerOpen(true);
     return;
   }
-  setDrawerOpen(false);
-  await resumeScreenSourceAfterDrawerClose();
+  if (setDrawerOpen(false) !== false) {
+    await resumeScreenSourceAfterDrawerClose();
+  }
 });
 
 refreshStorageBtn?.addEventListener("click", async () => {
@@ -9070,8 +9127,9 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key === "Escape" && state.drawerOpen) {
-    setDrawerOpen(false);
-    resumeScreenSourceAfterDrawerClose();
+    if (setDrawerOpen(false) !== false) {
+      resumeScreenSourceAfterDrawerClose();
+    }
     return;
   }
 
@@ -9174,6 +9232,7 @@ document.addEventListener("keydown", async (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
+  agentController?.destroy();
   screenSourceEmptyLoader?.destroy?.();
   stopScreenSourceCapture({ announce: false, statusText: "画面映射已停止" });
   stopClipboardPolling();
@@ -10085,6 +10144,7 @@ function updateAssistantMessage(content, streamingOrOptions = false, legacyThink
 }
 
 function renderCurrentSession() {
+  if (agentController?.isInitialized()) return;
   const session = getCurrentSession();
   chatLog.innerHTML = "";
   renderCurrentSessionHeader();
@@ -10118,7 +10178,7 @@ function hydrateMessageElement(messageEl, message, { streaming = false } = {}) {
 
   messageEl.className = "message";
   messageEl.classList.add(message.role);
-  roleEl.textContent = message.role === "user" ? "你" : getAppDisplayName();
+  roleEl.textContent = message.role === "user" ? "你" : getAssistantDisplayName();
   timeEl.textContent = formatTime(message.createdAt);
   const badgeParts = [];
   if (message.role === "assistant" && message.model) {
@@ -11530,7 +11590,7 @@ function buildPayloadMessages(session, canvasItemIds = []) {
 
 function buildSummaryPrompt(existingSummary, messages) {
   const messageText = messages
-    .map((item) => `[${item.role === "user" ? "用户" : getAppDisplayName()}] ${item.content}`)
+    .map((item) => `[${item.role === "user" ? "用户" : getAssistantDisplayName()}] ${item.content}`)
     .join("\n\n");
 
   return `已有摘要：

@@ -5,6 +5,8 @@ function createPersistenceRouter(deps) {
   const router = express.Router();
   const controller = createPersistenceController(deps);
 
+  router.get("/settings-center", controller.getSettingsCenter);
+  router.post("/settings-center", controller.saveSettingsCenter);
   router.get("/permissions", controller.getPermissions);
   router.post("/permissions", controller.savePermissions);
   router.get("/model-profiles", controller.getModelProfiles);

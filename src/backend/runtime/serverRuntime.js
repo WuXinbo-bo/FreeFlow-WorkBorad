@@ -17,7 +17,13 @@ const themeSettingsService = require("../services/themeSettingsService");
 const clipboardStoreService = require("../services/clipboardStoreService");
 const sessionService = require("../services/sessionService");
 const canvasBoardService = require("../services/canvasBoardService");
+const { createSettingsCenterService } = require("../services/settingsCenterService");
+const { AgentRuntime } = require("../agent/agentRuntime");
+const agentSettingsService = require("../agent/agentSettingsService");
+const { createAgentApiSecurity } = require("../agent/agentApiSecurity");
+const { createAgentRouter } = require("../agent/agentRoutes");
 const { registerAppRoutes } = require("../routes");
+const packageInfo = require("../../../package.json");
 
 const {
   ROOT_DIR,
@@ -27,6 +33,8 @@ const {
   DESKTOP_DIR,
   WORKSPACE_DIR,
   AGENT_SCREENSHOT_FILE,
+  AGENT_DATABASE_FILE,
+  AGENT_ATTACHMENTS_DIR,
 } = paths;
 const {
   PORT,
@@ -100,6 +108,15 @@ function loadEnvFileSync(filePath) {
 loadEnvFileSync(path.join(ROOT_DIR, ".env"));
 
 const app = express();
+let modelProviderSettingsCache = null;
+const agentRuntime = new AgentRuntime({
+  databaseFile: AGENT_DATABASE_FILE,
+  attachmentsDir: AGENT_ATTACHMENTS_DIR,
+  appVersion: packageInfo.version,
+  settingsService: agentSettingsService,
+  permissionsService,
+  legacySessionService: sessionService,
+});
 
 let desktopBridge = {
   chatWithDoubao: null,
@@ -112,6 +129,7 @@ function setStaticValidationHeaders(res) {
 
 app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
+app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity() }));
 app.use(
   "/vendor",
   express.static(NODE_MODULES_DIR, {
@@ -127,6 +145,11 @@ app.use(
     setHeaders: setStaticValidationHeaders,
   })
 );
+const settingsCenterService = createSettingsCenterService({
+  uiSettingsService,
+  permissionsService,
+  agentSettingsService,
+});
 registerAppRoutes(app, {
   permissionsService,
   modelProfilesService,
@@ -140,9 +163,8 @@ registerAppRoutes(app, {
   sessionService,
   canvasBoardService,
   fileTextService: require("../services/fileTextService"),
+  settingsCenterService,
 });
-
-let modelProviderSettingsCache = null;
 
 function getDefaultCloudProviderSettings() {
   return {
@@ -2485,7 +2507,7 @@ function startServer(port = PORT) {
     return Promise.resolve(serverInstance);
   }
 
-  return ensureModelProviderSettingsLoaded().then(
+  return Promise.all([ensureModelProviderSettingsLoaded(), agentRuntime.initialize()]).then(
     () =>
       new Promise((resolve, reject) => {
         const nextServer = app.listen(port, "127.0.0.1", () => {
@@ -2504,12 +2526,8 @@ function startServer(port = PORT) {
   );
 }
 
-function stopServer() {
-  if (!serverInstance) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
+async function stopServer() {
+  const closePromise = serverInstance ? new Promise((resolve, reject) => {
     const activeServer = serverInstance;
     serverInstance = null;
     activeServer.close((error) => {
@@ -2519,7 +2537,9 @@ function stopServer() {
       }
       resolve();
     });
-  });
+  }) : Promise.resolve();
+  await agentRuntime.shutdown().catch(() => {});
+  await closePromise;
 }
 
 function registerDesktopBridge(bridge = {}) {
@@ -2534,6 +2554,7 @@ module.exports = {
   startServer,
   stopServer,
   registerDesktopBridge,
+  agentRuntime,
 };
 
 if (require.main === module) {

@@ -26,15 +26,20 @@ function normalizeRootPath(inputPath) {
 function normalizePermissionsStore(payload = {}, options = {}) {
   const defaults = getDefaultPermissions(options.workspaceDir, options.desktopDir);
   const normalizedRoots = Array.isArray(payload.allowedRoots)
-    ? payload.allowedRoots.map((item) => normalizeRootPath(item)).filter(Boolean)
+    ? payload.allowedRoots
+        .slice(0, 100)
+        .map((item) => String(item || "").trim().slice(0, 400))
+        .map((item) => normalizeRootPath(item))
+        .filter(Boolean)
     : defaults.allowedRoots;
+  const permissions = {};
+  for (const key of Object.keys(defaults.permissions)) {
+    permissions[key] = payload.permissions?.[key] === true;
+  }
 
   return {
     schemaVersion: PERMISSIONS_SCHEMA_VERSION,
-    permissions: {
-      ...defaults.permissions,
-      ...(payload.permissions && typeof payload.permissions === "object" ? payload.permissions : {}),
-    },
+    permissions,
     allowedRoots: [...new Set(normalizedRoots)],
     updatedAt: payload.updatedAt || Date.now(),
   };

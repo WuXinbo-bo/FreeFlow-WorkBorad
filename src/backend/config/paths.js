@@ -22,9 +22,14 @@ const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const LEGACY_PROJECT_UI_SETTINGS_FILE = path.join(LEGACY_PROJECT_DATA_DIR, "ui-settings.json");
 const MODEL_PROFILES_FILE = path.join(DATA_DIR, "model-profiles.json");
 const MODEL_PROVIDER_SETTINGS_FILE = path.join(DATA_DIR, "model-provider-settings.json");
+const CREDENTIALS_FILE = path.join(DATA_DIR, "credentials.json");
+const CREDENTIALS_KEY_FILE = path.join(DATA_DIR, ".credentials.key");
 const PERMISSIONS_FILE = path.join(DATA_DIR, "permissions.json");
 const CLIPBOARD_STORE_FILE = path.join(DATA_DIR, "clipboard-store.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const AGENT_DATABASE_FILE = path.join(DATA_DIR, "agent-sessions.sqlite");
+const AGENT_SETTINGS_FILE = path.join(DATA_DIR, "agent-settings.json");
+const AGENT_ATTACHMENTS_DIR = path.join(DATA_DIR, "AgentAttachments");
 const SHORTCUT_SETTINGS_FILE = path.join(DATA_DIR, "shortcut-settings.json");
 const CANVAS_BOARD_FILE = path.join(CANVAS_BOARD_DIR, "canvas-board.freeflow");
 const AGENT_SCREENSHOT_FILE = path.join(DATA_DIR, "agent-current-window.png");
@@ -55,9 +60,14 @@ module.exports = {
   LEGACY_PROJECT_UI_SETTINGS_FILE,
   MODEL_PROFILES_FILE,
   MODEL_PROVIDER_SETTINGS_FILE,
+  CREDENTIALS_FILE,
+  CREDENTIALS_KEY_FILE,
   PERMISSIONS_FILE,
   CLIPBOARD_STORE_FILE,
   SESSIONS_FILE,
+  AGENT_DATABASE_FILE,
+  AGENT_SETTINGS_FILE,
+  AGENT_ATTACHMENTS_DIR,
   SHORTCUT_SETTINGS_FILE,
   CANVAS_BOARD_FILE,
   AGENT_SCREENSHOT_FILE,

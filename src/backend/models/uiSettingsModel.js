@@ -7,7 +7,7 @@ const {
 } = require("./themeSettingsModel");
 const { CANVAS_BOARD_DIR } = require("../config/paths");
 
-const UI_SETTINGS_SCHEMA_VERSION = 2;
+const UI_SETTINGS_SCHEMA_VERSION = 3;
 const WORKBENCH_PANEL_SIDES = new Set(["left", "right"]);
 const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
   defaultCanvasPanelSide: "left",
@@ -46,6 +46,7 @@ function getDefaultUiSettings() {
   return {
     schemaVersion: UI_SETTINGS_SCHEMA_VERSION,
     appName: "FreeFlow",
+    assistantName: "FreeFlow",
     appSubtitle: "自由画布与 AI 工作台",
     canvasTitle: "FreeFlow 工作白板",
     canvasBoardSavePath: CANVAS_BOARD_DIR,
@@ -58,6 +59,10 @@ function getDefaultUiSettings() {
     lastTutorialIntroVersion: "",
     dismissedTutorialIntroVersion: "",
     canvasImageSavePath: "",
+    canvasAutosaveEnabled: true,
+    canvasLinkSemanticsEnabled: true,
+    defaultOutputMode: "nonstream",
+    defaultAgentMode: false,
     ...DEFAULT_WORKBENCH_PREFERENCES,
     ...DEFAULT_THEME_SETTINGS,
     updatedAt: Date.now(),
@@ -74,6 +79,12 @@ function normalizeUiSettings(payload = {}) {
       typeof payload.appName === "string" && payload.appName.trim()
         ? payload.appName.trim().slice(0, 40)
         : defaults.appName,
+    assistantName:
+      typeof payload.assistantName === "string" && payload.assistantName.trim()
+        ? payload.assistantName.trim().slice(0, 40)
+        : typeof payload.appName === "string" && payload.appName.trim()
+          ? payload.appName.trim().slice(0, 40)
+          : defaults.assistantName,
     appSubtitle:
       typeof payload.appSubtitle === "string" && payload.appSubtitle.trim()
         ? payload.appSubtitle.trim().slice(0, 80)
@@ -116,6 +127,10 @@ function normalizeUiSettings(payload = {}) {
       typeof payload.canvasImageSavePath === "string" && payload.canvasImageSavePath.trim()
         ? payload.canvasImageSavePath.trim().slice(0, 400)
         : defaults.canvasImageSavePath,
+    canvasAutosaveEnabled: payload.canvasAutosaveEnabled !== false,
+    canvasLinkSemanticsEnabled: payload.canvasLinkSemanticsEnabled !== false,
+    defaultOutputMode: payload.defaultOutputMode === "stream" ? "stream" : "nonstream",
+    defaultAgentMode: payload.defaultAgentMode === true,
     ...workbenchPreferences,
     ...theme,
     updatedAt: payload.updatedAt || Date.now(),

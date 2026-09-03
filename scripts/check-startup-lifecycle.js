@@ -58,7 +58,13 @@ async function readBootCoverage(page) {
       pageVisibility: getComputedStyle(pageShell).visibility,
       rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
       backgroundColor: getComputedStyle(splash).backgroundColor,
-      externalLogo: Boolean(document.querySelector(".boot-splash img")),
+      logoSrc: document.querySelector(".boot-splash-logo")?.getAttribute("src") || "",
+      logoAnimationDuration: getComputedStyle(document.querySelector(".boot-splash-logo")).animationDuration,
+      copyAnimationDuration: getComputedStyle(document.querySelector(".boot-splash-copy")).animationDuration,
+      titleAnimationName: getComputedStyle(document.querySelector(".boot-splash-title")).animationName,
+      subtitleAnimationName: getComputedStyle(document.querySelector(".boot-splash-subtitle")).animationName,
+      splashTransitionDuration: getComputedStyle(splash).transitionDuration,
+      signalCount: document.querySelectorAll(".boot-splash-signal").length,
     };
   });
 }
@@ -77,7 +83,13 @@ async function assertAtomicBoot(page, label) {
       coverage.rect.right === VIEWPORT.width &&
       coverage.rect.bottom === VIEWPORT.height &&
       coverage.backgroundColor !== "rgba(0, 0, 0, 0)" &&
-      !coverage.externalLogo,
+      coverage.logoSrc.includes("FreeFlow_app_icon.png") &&
+      coverage.logoAnimationDuration === "0.82s" &&
+      coverage.copyAnimationDuration === "0.68s" &&
+      coverage.titleAnimationName === "none" &&
+      coverage.subtitleAnimationName === "none" &&
+      coverage.splashTransitionDuration === "0.32s, 0.32s" &&
+      coverage.signalCount === 0,
     `${label} did not begin with one full-screen boot surface`,
     coverage
   );
@@ -99,6 +111,7 @@ async function assertAtomicBoot(page, label) {
       marks["navigation-start"] <= marks["splash-frame"] &&
       marks["splash-frame"] <= marks["renderer-ready"] &&
       marks["renderer-ready"] <= marks["splash-exit-start"] &&
+      marks["splash-exit-start"] - marks["navigation-start"] >= 2450 &&
       marks["splash-exit-start"] <= marks["splash-exit-end"] &&
       marks["splash-exit-end"] <= marks["shape-unlocked"],
     `${label} did not complete the ready and splash-exit handshake`,
@@ -109,11 +122,15 @@ async function assertAtomicBoot(page, label) {
 async function checkColdAndRefresh(browser) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
-  let bootLogoRequests = 0;
+  let legacyLogoRequests = 0;
+  let appIconRequests = 0;
   try {
     page.on("request", (request) => {
       if (request.url().includes("/assets/brand/FreeFlow_logo.svg")) {
-        bootLogoRequests += 1;
+        legacyLogoRequests += 1;
+      }
+      if (request.url().includes("/assets/brand/FreeFlow_app_icon.png")) {
+        appIconRequests += 1;
       }
     });
     await installDesktopStub(page);
@@ -125,7 +142,15 @@ async function checkColdAndRefresh(browser) {
     await assertAtomicBoot(page, "cold start");
     await page.reload({ waitUntil: "commit" });
     await assertAtomicBoot(page, "refresh");
-    assert(bootLogoRequests === 0, "startup requested the oversized legacy logo", { bootLogoRequests });
+    await page.reload({ waitUntil: "commit" });
+    await page.waitForSelector(".boot-splash");
+    await page.waitForTimeout(500);
+    await page.reload({ waitUntil: "commit" });
+    await assertAtomicBoot(page, "rapid refresh");
+    assert(legacyLogoRequests === 0 && appIconRequests > 0, "startup did not use the compact product mark", {
+      legacyLogoRequests,
+      appIconRequests,
+    });
   } finally {
     await context.close();
   }
@@ -176,12 +201,13 @@ async function checkReducedMotion(browser) {
   try {
     await installDesktopStub(page, { stallStartup: true });
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
-    const animation = await page.locator(".boot-splash-title span").first().evaluate((element) => ({
-      animationName: getComputedStyle(element).animationName,
+    const animation = await page.locator(".boot-splash-copy").evaluate((element) => ({
+      copyAnimationName: getComputedStyle(element).animationName,
+      logoAnimationName: getComputedStyle(document.querySelector(".boot-splash-logo")).animationName,
       transitionDuration: getComputedStyle(document.querySelector(".boot-splash")).transitionDuration,
     }));
     assert(
-      animation.animationName === "none" && animation.transitionDuration === "0s",
+      animation.copyAnimationName === "none" && animation.logoAnimationName === "none" && animation.transitionDuration === "0s",
       "reduced-motion preference did not disable startup motion",
       animation
     );

@@ -1703,9 +1703,13 @@ body.is-pane-resizing .pane-resize-viewport * {
   transform: rotate(180deg);
 }
 
-.screen-source-select-panel {
-  top: calc(100% + 8px);
-  width: 100%;
+#screen-source-select-panel.screen-source-select-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 147;
+  width: min(280px, calc(100vw - 24px));
   min-width: 0;
   max-height: min(420px, calc(100vh - 112px));
   padding-bottom: 8px;
@@ -1822,8 +1826,16 @@ body.is-pane-resizing .pane-resize-viewport * {
 }
 
 .screen-source-loader-host {
-  width: min(62vw, 260px);
+  width: 84px;
   aspect-ratio: 1;
+}
+
+.screen-source-select-panel.is-hidden {
+  display: none !important;
+}
+
+.screen-source-loader-host .freeflow-logo-loader-shell {
+  width: 84px;
 }
 
 .screen-source-empty-copy {
@@ -1926,7 +1938,11 @@ body.is-pane-resizing .pane-resize-viewport * {
   }
 
   .screen-source-loader-host {
-    width: min(70vw, 220px);
+    width: 72px;
+  }
+
+  .screen-source-loader-host .freeflow-logo-loader-shell {
+    width: 72px;
   }
 }
 

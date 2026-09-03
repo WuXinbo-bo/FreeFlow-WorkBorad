@@ -3476,6 +3476,7 @@ export function createCanvas2DEngine(options = {}) {
   let lastNavigatorDragAt = 0;
   let captureMode = null;
   let autosaveTimer = null;
+  let canvasPreferencePersistPromise = Promise.resolve();
   let suppressDirtyTracking = false;
   let boardLoadInFlight = null;
   let boardSaveInFlight = null;
@@ -7245,9 +7246,14 @@ let tablePointerSelectionState = {
     }
   }
 
-  function readAutosaveEnabled() {
+  function readCanvasBooleanPreference(settingKey, legacyStorageKey) {
+    for (const source of [readStartupUiSettings(), readUiSettingsCache()]) {
+      if (typeof source?.[settingKey] === "boolean") {
+        return source[settingKey];
+      }
+    }
     try {
-      const raw = localStorage.getItem(AUTOSAVE_ENABLED_KEY);
+      const raw = localStorage.getItem(legacyStorageKey);
       if (raw === "0" || raw === "false") {
         return false;
       }
@@ -7260,41 +7266,66 @@ let tablePointerSelectionState = {
     return true;
   }
 
-  function persistAutosaveEnabled(enabled) {
+  function persistCanvasPreferenceSetting(settingKey, enabled) {
+    const next = Boolean(enabled);
+    const cached = { ...readUiSettingsCache(), [settingKey]: next };
+    writeUiSettingsCache(cached);
+    updateStartupContextUiSettings({ [settingKey]: next });
+    window.dispatchEvent(new CustomEvent("canvas-preferences-changed", {
+      detail: { [settingKey]: next },
+    }));
+    canvasPreferencePersistPromise = canvasPreferencePersistPromise
+      .catch(() => {})
+      .then(async () => {
+        const remote = await fetchUiSettings();
+        const payload = { ...(remote || cached), [settingKey]: next };
+        const response = await fetch(API_ROUTES.uiSettings, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await readJsonResponse(response, "画布设置");
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.details || data?.error || "画布设置写入失败");
+        }
+        writeUiSettingsCache({ ...payload, ...data });
+        updateStartupContextUiSettings({ [settingKey]: next });
+      });
+    return canvasPreferencePersistPromise;
+  }
+
+  function readAutosaveEnabled() {
+    return readCanvasBooleanPreference("canvasAutosaveEnabled", AUTOSAVE_ENABLED_KEY);
+  }
+
+  function persistAutosaveEnabled(enabled, { syncSettings = true } = {}) {
     try {
       localStorage.setItem(AUTOSAVE_ENABLED_KEY, enabled ? "1" : "0");
     } catch {
       // Ignore storage failures.
     }
+    if (syncSettings) void persistCanvasPreferenceSetting("canvasAutosaveEnabled", enabled).catch(() => {});
   }
 
   function readLinkSemanticEnabled() {
-    try {
-      const raw = localStorage.getItem(LINK_SEMANTIC_ENABLED_KEY);
-      if (raw === "0" || raw === "false") {
-        return false;
-      }
-      if (raw === "1" || raw === "true") {
-        return true;
-      }
-    } catch {
-      // Ignore storage failures.
-    }
-    return true;
+    return readCanvasBooleanPreference("canvasLinkSemanticsEnabled", LINK_SEMANTIC_ENABLED_KEY);
   }
 
-  function persistLinkSemanticEnabled(enabled) {
+  function persistLinkSemanticEnabled(enabled, { syncSettings = true } = {}) {
     try {
       localStorage.setItem(LINK_SEMANTIC_ENABLED_KEY, enabled ? "1" : "0");
     } catch {
       // Ignore storage failures.
     }
+    if (syncSettings) void persistCanvasPreferenceSetting("canvasLinkSemanticsEnabled", enabled).catch(() => {});
   }
 
-  function setLinkSemanticEnabled(enabled) {
+  function setLinkSemanticEnabled(enabled, { announce = true, persist = true, syncSettings = true } = {}) {
     linkSemanticEnabled = Boolean(enabled);
-    persistLinkSemanticEnabled(linkSemanticEnabled);
-    setStatus(linkSemanticEnabled ? "已启用链接语义化" : "已关闭链接语义化（纯文本模式）");
+    if (persist) persistLinkSemanticEnabled(linkSemanticEnabled, { syncSettings });
+    if (announce) {
+      setStatus(linkSemanticEnabled ? "已启用链接语义化" : "已关闭链接语义化（纯文本模式）");
+    }
   }
 
   function stopAutosaveTimer() {
@@ -7315,11 +7346,11 @@ let tablePointerSelectionState = {
     }, AUTOSAVE_INTERVAL_MS);
   }
 
-  function setAutosaveEnabled(enabled, { emit = true, persist = true } = {}) {
+  function setAutosaveEnabled(enabled, { emit = true, persist = true, syncSettings = true } = {}) {
     const next = Boolean(enabled);
     state.boardAutosaveEnabled = next;
     if (persist) {
-      persistAutosaveEnabled(next);
+      persistAutosaveEnabled(next, { syncSettings });
     }
     if (next) {
       startAutosaveTimer();
@@ -17828,6 +17859,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       {
         priority: "selected",
         type: "file-preview-read",
+        staleOnGenerationChange: false,
         onError: (error) => {
           setStatus(String(error?.message || "文件预览加载失败").trim() || "文件预览加载失败", "warning");
         },
@@ -17914,7 +17946,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     hydrationScheduler.enqueue(
       `file-preview-read:${expectedRequestId}`,
       () => hydrateFileCardPreviewFile(expectedRequestId, request.sourcePath),
-      { priority: "selected", type: "file-preview-read" }
+      { priority: "selected", type: "file-preview-read", staleOnGenerationChange: false }
     );
     return true;
   }
@@ -27798,6 +27830,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     toggleAutosave() {
       setAutosaveEnabled(!state.boardAutosaveEnabled);
     },
+    setLinkSemanticEnabled,
     setAlignmentSnapConfig,
     setAlignmentSnapEnabled,
     clearAlignmentSnap,

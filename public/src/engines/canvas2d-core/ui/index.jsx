@@ -2079,6 +2079,16 @@ function Canvas2DControls({ engine }) {
     }
 
     let frameId = 0;
+    let autoCollapseRecheckTimer = 0;
+    const scheduleAutoCollapseRecheck = (delayMs) => {
+      if (autoCollapseRecheckTimer) {
+        clearTimeout(autoCollapseRecheckTimer);
+      }
+      autoCollapseRecheckTimer = window.setTimeout(() => {
+        autoCollapseRecheckTimer = 0;
+        scheduleUpdate();
+      }, Math.max(1, Math.ceil(delayMs)));
+    };
     const scheduleUpdate = () => {
       if (isWorkspacePanelResizeActive()) {
         return;
@@ -2091,7 +2101,7 @@ function Canvas2DControls({ engine }) {
           const infoRect = infoElement.getBoundingClientRect();
           const stackRect =
             topbarStackRef.current instanceof HTMLElement ? topbarStackRef.current.getBoundingClientRect() : null;
-          const expandedInfoWidth = infoPanelCollapsed || infoPanelAutoCollapsed ? 186 : infoRect.width;
+          const expandedInfoWidth = Math.max(186, infoRect.width);
           const collapseGap = 8;
           const releaseGap = 16;
           const occupiedLeft = stackRect ? stackRect.left : Number.POSITIVE_INFINITY;
@@ -2102,6 +2112,7 @@ function Canvas2DControls({ engine }) {
               return false;
             }
             if (current && now < infoPanelAutoCollapseLockUntilRef.current) {
+              scheduleAutoCollapseRecheck(infoPanelAutoCollapseLockUntilRef.current - now + 1);
               return true;
             }
             if (current) {
@@ -2110,6 +2121,7 @@ function Canvas2DControls({ engine }) {
             const shouldCollapse = occupiedLeft <= expandedInfoRight + collapseGap;
             if (shouldCollapse) {
               infoPanelAutoCollapseLockUntilRef.current = now + 220;
+              scheduleAutoCollapseRecheck(221);
             }
             return shouldCollapse;
           });
@@ -2144,6 +2156,9 @@ function Canvas2DControls({ engine }) {
     return () => {
       if (frameId) {
         cancelAnimationFrame(frameId);
+      }
+      if (autoCollapseRecheckTimer) {
+        clearTimeout(autoCollapseRecheckTimer);
       }
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleUpdate);

@@ -1000,11 +1000,9 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
 
 body:has(.canvas2d-board-workspace-overlay) .app-global-shell-actions,
 body:has(.canvas2d-board-workspace-overlay) .pane-restore-btn,
-body:has(.canvas2d-board-workspace-overlay) .stage-restore-dock,
 body:has(.canvas2d-board-workspace-overlay) .stage-panel-controls,
 body:has(.canvas2d-word-export-overlay) .app-global-shell-actions,
 body:has(.canvas2d-word-export-overlay) .pane-restore-btn,
-body:has(.canvas2d-word-export-overlay) .stage-restore-dock,
 body:has(.canvas2d-word-export-overlay) .stage-panel-controls {
   opacity: 0 !important;
   pointer-events: none !important;

@@ -106,7 +106,7 @@ export function createHydrationScheduler({
       if (!task) {
         break;
       }
-      if (task.generation !== generation) {
+      if (task.staleOnGenerationChange && task.generation !== generation) {
         recordHydrationTask(task.type, 0, "stale");
         processed += 1;
         continue;
@@ -117,11 +117,11 @@ export function createHydrationScheduler({
       try {
         await task.run({
           generation,
-          isStale: () => task.generation !== generation,
+          isStale: () => task.staleOnGenerationChange && task.generation !== generation,
         });
         recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "completed");
       } catch (error) {
-        if (task.generation !== generation) {
+        if (task.staleOnGenerationChange && task.generation !== generation) {
           recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "stale");
         } else {
           recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "failed");
@@ -152,6 +152,7 @@ export function createHydrationScheduler({
       priorityWeight: PRIORITY_WEIGHT[priority] ?? PRIORITY_WEIGHT.visible,
       sequence: sequence += 1,
       generation,
+      staleOnGenerationChange: options.staleOnGenerationChange !== false,
     });
     publish();
     ensureFlush();

@@ -37,6 +37,11 @@ async function main() {
   const docxBase64 = await createDocxBase64();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error?.message || error)));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(message.text());
+  });
   await page.addInitScript(({ fixture }) => {
     const decodeFixture = (base64) => {
       const binary = atob(base64);
@@ -125,7 +130,23 @@ async function main() {
       globalThis.__canvas2dEngine.openFileCardPreview(globalThis.__canvas2dEngine.getSnapshotData().items[0]);
     });
 
-    await page.waitForFunction(() => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0]?.previewStatus === "ready");
+    try {
+      await page.waitForFunction(
+        () => globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0]?.previewStatus === "ready"
+      );
+    } catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        request: globalThis.__canvas2dEngine.getSnapshot().fileCardPreviewRequests[0] || null,
+        runtime: globalThis.__canvas2dEngine.getDocumentPreviewRuntimeSnapshot(),
+        load: globalThis.__ffLoadStats || null,
+        lifecycle: globalThis.__canvas2dEngine.getCanvasPerformanceLifecycleSnapshot(),
+        fixture: {
+          binaryReads: globalThis.__FREEFLOW_PREVIEW_TEST.binaryReads,
+          base64Reads: globalThis.__FREEFLOW_PREVIEW_TEST.base64Reads,
+        },
+      }));
+      throw new Error(`${error.message}\n${JSON.stringify({ ...diagnostics, pageErrors }, null, 2)}`);
+    }
     try {
       await page.waitForFunction(() => document.querySelectorAll(".canvas2d-file-preview-react-pdf-canvas").length > 0, null, { timeout: 15000 });
     } catch (error) {

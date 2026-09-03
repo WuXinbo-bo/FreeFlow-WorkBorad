@@ -2,7 +2,7 @@ function normalizeString(value, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
-const MODEL_PROVIDER_SETTINGS_SCHEMA_VERSION = 1;
+const MODEL_PROVIDER_SETTINGS_SCHEMA_VERSION = 2;
 
 function normalizeCloudProviderKind(value, fallback = "bigmodel") {
   const provider = normalizeString(value, fallback).toLowerCase();
@@ -41,6 +41,7 @@ function getDefaultModelProviderSettings(runtime = {}) {
       provider: "bigmodel",
       baseUrl: normalizeString(runtime.BIGMODEL_BASE_URL || "https://open.bigmodel.cn/api/paas/v4"),
       apiKey: normalizeString(runtime.BIGMODEL_API_KEY || ""),
+      apiKeyConfigured: Boolean(normalizeString(runtime.BIGMODEL_API_KEY || "")),
       models: envModels,
       defaultModel: envDefaultModel,
     },
@@ -69,6 +70,9 @@ function normalizeModelProviderSettings(payload = {}, runtime = {}) {
       provider,
       baseUrl: normalizeString(incomingCloud.baseUrl, fallbackBaseUrl),
       apiKey: normalizeString(incomingCloud.apiKey, defaults.cloud.apiKey),
+      apiKeyConfigured: Boolean(
+        incomingCloud.apiKeyConfigured ?? normalizeString(incomingCloud.apiKey, defaults.cloud.apiKey)
+      ),
       models,
       defaultModel,
     },

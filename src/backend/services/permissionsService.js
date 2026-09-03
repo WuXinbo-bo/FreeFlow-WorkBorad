@@ -9,6 +9,8 @@ const {
 } = require("../models/permissionsModel");
 const { resolveAllowedExistingPath } = require("../utils/allowedPath");
 
+let writeQueue = Promise.resolve();
+
 async function readPermissionsStore() {
   const result = await readVersionedJsonFile(PERMISSIONS_FILE, {
     defaultValue: getDefaultPermissions(WORKSPACE_DIR, DESKTOP_DIR),
@@ -18,11 +20,16 @@ async function readPermissionsStore() {
   return result.data;
 }
 
-async function writePermissionsStore(payload = {}) {
-  const next = normalizePermissionsStore(payload, { workspaceDir: WORKSPACE_DIR, desktopDir: DESKTOP_DIR });
-  next.updatedAt = Date.now();
-  await writeJsonFile(PERMISSIONS_FILE, next);
-  return next;
+function writePermissionsStore(payload = {}) {
+  const operation = writeQueue.catch(() => {}).then(async () => {
+    const current = await readPermissionsStore().catch(() => getDefaultPermissions(WORKSPACE_DIR, DESKTOP_DIR));
+    const next = normalizePermissionsStore(payload, { workspaceDir: WORKSPACE_DIR, desktopDir: DESKTOP_DIR });
+    next.updatedAt = Math.max(Date.now(), Number(current.updatedAt || 0) + 1);
+    await writeJsonFile(PERMISSIONS_FILE, next);
+    return next;
+  });
+  writeQueue = operation;
+  return operation;
 }
 
 module.exports = {

@@ -391,12 +391,14 @@ async function main() {
     await installDesktopBridge(page);
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15_000 });
+    await page.waitForFunction(() => !document.body.classList.contains("app-booting"));
     await page.locator("#left-pane-resizer").dblclick();
     await page.waitForTimeout(80);
     const canvasOutward = await measureGesture(page, { side: "left", deltaX: 140, label: "canvas-outward" });
     const canvasInward = await measureGesture(page, { side: "left", deltaX: -100, label: "canvas-inward" });
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15_000 });
+    await page.waitForFunction(() => !document.body.classList.contains("app-booting"));
     if (await page.locator("#right-pane-resizer").getAttribute("class").then((value) => value?.includes("is-hidden"))) {
       await page.locator("#restore-right-pane-btn").click();
       await page.waitForTimeout(320);

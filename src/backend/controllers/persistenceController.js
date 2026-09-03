@@ -12,9 +12,35 @@ function createPersistenceController(deps) {
     sessionService,
     canvasBoardService,
     fileTextService,
+    settingsCenterService,
   } = deps;
 
   return {
+    async getSettingsCenter(_req, res) {
+      try {
+        res.json(await settingsCenterService.readSettingsSnapshot());
+      } catch (error) {
+        res.status(error.statusCode || 500).json({
+          ok: false,
+          error: error.message || "Failed to read settings",
+          code: error.code || "SETTINGS_READ_FAILED",
+        });
+      }
+    },
+
+    async saveSettingsCenter(req, res) {
+      try {
+        res.json(await settingsCenterService.saveSettingsSnapshot(req.body || {}));
+      } catch (error) {
+        res.status(error.statusCode || 500).json({
+          ok: false,
+          error: error.message || "Failed to save settings",
+          code: error.code || "SETTINGS_SAVE_FAILED",
+          fieldErrors: error.fieldErrors || {},
+        });
+      }
+    },
+
     async getPermissions(_req, res) {
       try {
         const store = await permissionsService.readPermissionsStore();
