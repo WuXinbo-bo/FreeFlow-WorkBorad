@@ -1395,6 +1395,9 @@ const stagePanelActionEls = Array.from(document.querySelectorAll("[data-stage-pa
 const desktopShellControlsEl = document.querySelector("#desktop-shell-controls");
 const desktopWindowBarEl = document.querySelector("#desktop-window-bar");
 const bootSplashEl = document.querySelector(".boot-splash");
+const bootSplashFailureEl = document.querySelector("#boot-splash-failure");
+const bootSplashFailureMessageEl = document.querySelector("#boot-splash-failure-message");
+const bootSplashRetryBtn = document.querySelector("#boot-splash-retry");
 const desktopStatusBannerEl = document.querySelector("#desktop-status-banner");
 const desktopStatusBannerTextEl = document.querySelector("#desktop-status-banner-text");
 const desktopPassThroughHintEl = document.querySelector("#desktop-pass-through-hint");
@@ -5303,6 +5306,8 @@ async function bootstrap() {
   syncOutputModeUi();
   updatePromptPlaceholder();
   scheduleDesktopWindowShapeSync();
+  bootSplashEl?.classList.remove("is-failed");
+  bootSplashEl?.setAttribute("aria-hidden", "true");
   document.body.classList.remove("app-booting");
   if (bootShapeUnlockTimer) {
     window.clearTimeout(bootShapeUnlockTimer);
@@ -7375,19 +7380,53 @@ function releaseBootShapeLock() {
 
   document.body.classList.remove("boot-shape-lock");
   scheduleDesktopWindowShapeSync();
-  void DESKTOP_SHELL?.releaseBootShapeLock?.();
+  try {
+    const releaseResult = DESKTOP_SHELL?.releaseBootShapeLock?.();
+    releaseResult?.catch?.(() => {});
+  } catch {
+    // The renderer remains usable when the native shell has already gone away.
+  }
 }
 
 function handleBootstrapFailure(error) {
   const message = String(error?.message || error || "未知错误").trim() || "未知错误";
   console.error("[FreeFlow] bootstrap failed:", error);
-  document.body?.classList.remove("app-booting");
-  releaseBootShapeLock();
+  document.body?.classList.add("app-booting", "boot-shape-lock", "boot-failed");
+  bootSplashEl?.classList.add("is-failed");
+  bootSplashEl?.setAttribute("aria-hidden", "false");
+  if (bootSplashFailureEl) {
+    bootSplashFailureEl.hidden = false;
+  }
+  if (bootSplashFailureMessageEl) {
+    bootSplashFailureMessageEl.textContent = `工作区未能完成启动：${message}`;
+  }
   setStatus(`启动失败：${message}`, "error");
   if (statusTextEl) {
     statusTextEl.textContent = `启动失败：${message}`;
   }
 }
+
+bootSplashRetryBtn?.addEventListener("click", async () => {
+  bootSplashRetryBtn.disabled = true;
+  if (IS_DESKTOP_APP && DESKTOP_SHELL?.reload) {
+    try {
+      await DESKTOP_SHELL.reload();
+      return;
+    } catch {
+      bootSplashRetryBtn.disabled = false;
+      return;
+    }
+  }
+  window.location.reload();
+});
+
+const removeBootstrapTimeoutListener = DESKTOP_SHELL?.onBootstrapTimeout?.((payload) => {
+  if (!document.body?.classList.contains("app-booting")) {
+    return;
+  }
+  handleBootstrapFailure(new Error(payload?.message || "启动时间过长，请重新载入"));
+});
+window.addEventListener("beforeunload", () => removeBootstrapTimeoutListener?.(), { once: true });
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();

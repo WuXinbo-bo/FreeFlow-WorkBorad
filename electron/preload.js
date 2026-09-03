@@ -1,4 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
+const rendererDocumentId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const bootstrapTimeoutListeners = new Set();
+let pendingBootstrapTimeout = null;
+
+ipcRenderer.on("desktop-shell:bootstrap-timeout", (_event, payload) => {
+  pendingBootstrapTimeout = payload || {};
+  bootstrapTimeoutListeners.forEach((listener) => listener(pendingBootstrapTimeout));
+});
 
 contextBridge.exposeInMainWorld("desktopShell", {
   isDesktop: true,
@@ -59,12 +67,13 @@ contextBridge.exposeInMainWorld("desktopShell", {
   getState: () => ipcRenderer.invoke("desktop-shell:get-state"),
   setKeyboardFocusOwner: (payload) => ipcRenderer.invoke("desktop-shell:set-keyboard-focus-owner", payload),
   focusRendererSurface: (payload) => ipcRenderer.invoke("desktop-shell:focus-renderer-surface", payload),
-  notifyRendererReady: () => ipcRenderer.send("desktop-shell:renderer-ready"),
-  releaseBootShapeLock: () => ipcRenderer.invoke("desktop-shell:release-boot-shape-lock"),
+  notifyRendererReady: () => ipcRenderer.send("desktop-shell:renderer-ready", { documentId: rendererDocumentId }),
+  releaseBootShapeLock: () =>
+    ipcRenderer.invoke("desktop-shell:release-boot-shape-lock", { documentId: rendererDocumentId }),
   beginInteractiveWindowShape: (payload) =>
-    ipcRenderer.invoke("desktop-shell:begin-interactive-window-shape", payload),
+    ipcRenderer.invoke("desktop-shell:begin-interactive-window-shape", { ...payload, documentId: rendererDocumentId }),
   endInteractiveWindowShape: (payload) =>
-    ipcRenderer.invoke("desktop-shell:end-interactive-window-shape", payload),
+    ipcRenderer.invoke("desktop-shell:end-interactive-window-shape", { ...payload, documentId: rendererDocumentId }),
   minimize: () => ipcRenderer.invoke("desktop-shell:minimize"),
   close: () => ipcRenderer.invoke("desktop-shell:close"),
   setPinned: (enabled) => ipcRenderer.invoke("desktop-shell:set-pinned", enabled),
@@ -105,6 +114,20 @@ contextBridge.exposeInMainWorld("desktopShell", {
 
     ipcRenderer.on("desktop-shell:state-changed", handleStateChange);
     return () => ipcRenderer.removeListener("desktop-shell:state-changed", handleStateChange);
+  },
+  onBootstrapTimeout: (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    bootstrapTimeoutListeners.add(listener);
+    if (pendingBootstrapTimeout) {
+      queueMicrotask(() => {
+        if (bootstrapTimeoutListeners.has(listener)) {
+          listener(pendingBootstrapTimeout);
+        }
+      });
+    }
+    return () => bootstrapTimeoutListeners.delete(listener);
   },
   onBackgroundExportTask: (listener) => {
     if (typeof listener !== "function") {

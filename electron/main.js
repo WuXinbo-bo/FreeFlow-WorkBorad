@@ -97,6 +97,10 @@ let lastClickThroughToggleAt = 0;
 let mainWindowRendererReadyTimer = null;
 let mainWindowBootShapeLocked = true;
 let mainWindowInteractionShapeLockId = "";
+let mainWindowRendererDocumentId = "";
+let mainWindowNavigationGeneration = 0;
+let mainWindowReloadInFlight = false;
+let mainWindowCrashReloadAttempts = 0;
 let desktopKeyboardFocusOwner = "";
 let desktopKeyboardFocusSourceId = "";
 let desktopKeyboardFocusTargetId = "";
@@ -1273,6 +1277,95 @@ function applyWindowShape(rects = windowShapeRects) {
   mainWindow.setShape(windowShapeRects);
 }
 
+function clearMainWindowRendererReadyTimer() {
+  if (!mainWindowRendererReadyTimer) {
+    return;
+  }
+  clearTimeout(mainWindowRendererReadyTimer);
+  mainWindowRendererReadyTimer = null;
+}
+
+function applyFullMainWindowShape(window) {
+  if (!window || window.isDestroyed() || typeof window.setShape !== "function") {
+    return;
+  }
+  const [width, height] = window.getContentSize();
+  window.setShape([{ x: 0, y: 0, width, height }]);
+}
+
+function beginMainWindowNavigation(window, reason = "navigation") {
+  if (!window || window.isDestroyed()) {
+    return 0;
+  }
+
+  mainWindowNavigationGeneration += 1;
+  const generation = mainWindowNavigationGeneration;
+  mainWindowBootShapeLocked = true;
+  mainWindowInteractionShapeLockId = "";
+  mainWindowRendererDocumentId = "";
+  pendingWindowShapeRects = windowShapeRects.slice();
+  window.__freeflowRendererReady = false;
+  applyFullMainWindowShape(window);
+  clearMainWindowRendererReadyTimer();
+  mainWindowRendererReadyTimer = setTimeout(() => {
+    mainWindowRendererReadyTimer = null;
+    if (
+      window.isDestroyed() ||
+      generation !== mainWindowNavigationGeneration ||
+      window.__freeflowRendererReady
+    ) {
+      return;
+    }
+    try {
+      window.webContents.send("desktop-shell:bootstrap-timeout", {
+        reason,
+        generation,
+      });
+    } catch {
+      // A crashed renderer is recovered by the main-process navigation path.
+    }
+  }, 12_000);
+  return generation;
+}
+
+function getMainWindowLoadFailureUrl(message) {
+  const failureMessage = String(message || "工作区页面加载失败").replace(/[<>&"]/g, (value) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "\"": "&quot;",
+  })[value]);
+  const markup = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${PRODUCT_NAME} 启动失败</title><style>html,body{width:100%;height:100%;margin:0}body{display:grid;place-items:center;background:#09111d;color:#f5f8ff;font-family:"Segoe UI Variable Display","Segoe UI",sans-serif}.recovery{max-width:520px;padding:32px;text-align:center}.recovery h1{margin:0 0 12px;font-size:28px;letter-spacing:0}.recovery p{margin:0;color:rgba(245,248,255,.68);line-height:1.6}.recovery a{display:inline-flex;margin-top:22px;padding:9px 18px;border:1px solid rgba(255,255,255,.24);border-radius:8px;color:#f5f8ff;background:rgba(255,255,255,.1);text-decoration:none}</style></head><body><main class="recovery"><h1>FreeFlow Air Canvas</h1><p>${failureMessage}</p><a href="${APP_URL}">重新载入</a></main></body></html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(markup)}`;
+}
+
+async function reloadMainWindow(reason = "renderer-reload") {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false };
+  }
+
+  beginMainWindowNavigation(mainWindow, reason);
+  if (mainWindowReloadInFlight) {
+    return { ok: true, pending: true };
+  }
+
+  mainWindowReloadInFlight = true;
+  try {
+    await cleanupDesktopEmbeddedSurfaces(reason);
+  } catch {
+    // Continue the reload even when an embedded surface cannot be closed cleanly.
+  }
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false };
+    }
+    mainWindow.webContents.reloadIgnoringCache();
+    return { ok: true };
+  } finally {
+    mainWindowReloadInFlight = false;
+  }
+}
+
 function getDefaultWindowBoundsForDisplay(display = screen.getPrimaryDisplay()) {
   const workArea = display?.workArea || { x: 0, y: 0, width: WINDOW_CONFIG.width, height: WINDOW_CONFIG.height };
   const width = Math.max(WINDOW_CONFIG.minWidth, Math.min(WINDOW_CONFIG.width, workArea.width));
@@ -1654,10 +1747,17 @@ function registerWindowShortcutFallback(window) {
   }
 
   window.webContents.on("before-input-event", (event, input) => {
-    if (desktopShortcutRegistered || input?.type !== "keyDown") {
+    if (input?.type !== "keyDown") {
       return;
     }
-    if (matchesAcceleratorInput(input, desktopShortcutSettings.clickThroughAccelerator)) {
+    const key = String(input?.key || "").toLowerCase();
+    const reloadRequested = key === "f5" || ((input?.control || input?.meta) && key === "r");
+    if (reloadRequested) {
+      event.preventDefault();
+      void reloadMainWindow("keyboard-reload");
+      return;
+    }
+    if (!desktopShortcutRegistered && matchesAcceleratorInput(input, desktopShortcutSettings.clickThroughAccelerator)) {
       event.preventDefault();
       toggleClickThrough();
     }
@@ -1669,7 +1769,7 @@ function tryShowMainWindow(window) {
     return;
   }
 
-  if (!window.__freeflowReadyToShow || !window.__freeflowRendererReady) {
+  if (!window.__freeflowReadyToShow) {
     return;
   }
 
@@ -1773,9 +1873,7 @@ function createMainWindow() {
   registerWindowShortcutFallback(window);
   window.__freeflowReadyToShow = false;
   window.__freeflowRendererReady = false;
-  mainWindowBootShapeLocked = true;
-  mainWindowInteractionShapeLockId = "";
-  pendingWindowShapeRects = [];
+  beginMainWindowNavigation(window, "cold-start");
 
   window.setAlwaysOnTop(WINDOW_CONFIG.alwaysOnTop, PIN_LEVEL, PIN_RELATIVE_LEVEL);
   window.setSkipTaskbar(WINDOW_CONFIG.skipTaskbar);
@@ -1785,13 +1883,6 @@ function createMainWindow() {
     window.__freeflowReadyToShow = true;
     tryShowMainWindow(window);
   });
-
-  mainWindowRendererReadyTimer = setTimeout(() => {
-    if (!window.isDestroyed()) {
-      window.__freeflowRendererReady = true;
-      tryShowMainWindow(window);
-    }
-  }, 4000);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url).catch(() => {});
@@ -1803,14 +1894,48 @@ function createMainWindow() {
     console.log(`[renderer:${level}] ${source}:${line} ${message}`);
   });
 
+  window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      beginMainWindowNavigation(window, "main-frame-navigation");
+    }
+  });
+
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     console.error(
       `[renderer:did-fail-load] code=${errorCode} mainFrame=${Boolean(isMainFrame)} url=${validatedURL || ""} error=${errorDescription || ""}`
     );
+    if (!isMainFrame || errorCode === -3 || String(validatedURL || "").startsWith("data:")) {
+      return;
+    }
+    beginMainWindowNavigation(window, "main-frame-load-failure");
+    void window.loadURL(getMainWindowLoadFailureUrl(errorDescription))
+      .then(() => {
+        if (!window.isDestroyed()) {
+          window.show();
+        }
+      })
+      .catch(() => {});
   });
 
   window.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer:gone] reason=${details?.reason || "unknown"} exitCode=${details?.exitCode ?? ""}`);
+    beginMainWindowNavigation(window, "renderer-recovery");
+    if (mainWindowCrashReloadAttempts >= 2) {
+      void window.loadURL(getMainWindowLoadFailureUrl("工作区连续恢复失败，请手动重新载入"))
+        .then(() => {
+          if (!window.isDestroyed()) {
+            window.show();
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    mainWindowCrashReloadAttempts += 1;
+    setTimeout(() => {
+      if (!window.isDestroyed()) {
+        window.webContents.reloadIgnoringCache();
+      }
+    }, 120);
   });
 
   window.on("close", (event) => {
@@ -1923,10 +2048,7 @@ function createMainWindow() {
   });
 
   window.on("closed", () => {
-    if (mainWindowRendererReadyTimer) {
-      clearTimeout(mainWindowRendererReadyTimer);
-      mainWindowRendererReadyTimer = null;
-    }
+    clearMainWindowRendererReadyTimer();
   });
 
   return window;
@@ -2350,17 +2472,20 @@ ipcMain.handle("desktop-shell:focus-renderer-surface", (_event, payload) => {
   }
 });
 
-ipcMain.on("desktop-shell:renderer-ready", (event) => {
+ipcMain.on("desktop-shell:renderer-ready", (event, payload) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     return;
   }
 
-  if (mainWindowRendererReadyTimer) {
-    clearTimeout(mainWindowRendererReadyTimer);
-    mainWindowRendererReadyTimer = null;
+  const documentId = String(payload?.documentId || "").trim();
+  if (!documentId) {
+    return;
   }
 
+  clearMainWindowRendererReadyTimer();
+  mainWindowRendererDocumentId = documentId;
   mainWindow.__freeflowRendererReady = true;
+  mainWindowCrashReloadAttempts = 0;
   tryShowMainWindow(mainWindow);
 });
 
@@ -2419,8 +2544,13 @@ ipcMain.handle("desktop-shell:cancel-background-export", async (_event, taskId) 
   }
 });
 
-ipcMain.handle("desktop-shell:release-boot-shape-lock", (event) => {
+ipcMain.handle("desktop-shell:release-boot-shape-lock", (event, payload) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    return getDesktopShellState();
+  }
+
+  const documentId = String(payload?.documentId || "").trim();
+  if (!mainWindow.__freeflowRendererReady || !documentId || documentId !== mainWindowRendererDocumentId) {
     return getDesktopShellState();
   }
 
@@ -2436,7 +2566,8 @@ ipcMain.handle("desktop-shell:begin-interactive-window-shape", (_event, payload)
   }
 
   const transactionId = String(payload?.transactionId || "").trim();
-  if (!transactionId) {
+  const documentId = String(payload?.documentId || "").trim();
+  if (!transactionId || !documentId || documentId !== mainWindowRendererDocumentId) {
     return { ok: false };
   }
 
@@ -2451,7 +2582,13 @@ ipcMain.handle("desktop-shell:end-interactive-window-shape", (_event, payload) =
   }
 
   const transactionId = String(payload?.transactionId || "").trim();
-  if (!transactionId || transactionId !== mainWindowInteractionShapeLockId) {
+  const documentId = String(payload?.documentId || "").trim();
+  if (
+    !transactionId ||
+    !documentId ||
+    documentId !== mainWindowRendererDocumentId ||
+    transactionId !== mainWindowInteractionShapeLockId
+  ) {
     return { ok: false, stale: true };
   }
 
@@ -3689,13 +3826,7 @@ ipcMain.handle("desktop-shell:toggle-fullscreen", () => {
 });
 
 ipcMain.handle("desktop-shell:reload", async () => {
-  try {
-    await cleanupDesktopEmbeddedSurfaces("renderer-reload");
-  } catch {
-    // Ignore cleanup failures and continue reload to avoid trapping the UI.
-  }
-  mainWindow?.webContents.reloadIgnoringCache();
-  return { ok: true };
+  return reloadMainWindow("renderer-reload");
 });
 
 ipcMain.handle("desktop-shell:open-doubao-window", async () => {

@@ -34,6 +34,10 @@
         visibility: visible;
       }
 
+      body.boot-failed .boot-splash {
+        pointer-events: auto;
+      }
+
       .boot-splash::before {
         content: "";
         position: absolute;
@@ -75,6 +79,30 @@
         white-space: nowrap;
       }
 
+      .boot-splash-subtitle,
+      .boot-splash-failure {
+        color: rgba(245, 248, 255, 0.68);
+        font: 500 14px/1.5 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+      }
+
+      .boot-splash-failure[hidden] {
+        display: none;
+      }
+
+      .boot-splash-failure {
+        max-width: 360px;
+        text-align: center;
+      }
+
+      .boot-splash-retry {
+        margin-top: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 8px;
+        padding: 8px 16px;
+        color: #f5f8ff;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
       body.app-booting .page-shell {
         opacity: 0 !important;
         visibility: hidden !important;
@@ -89,11 +117,16 @@
     <link rel="stylesheet" href="./ui.canvas-chrome.css" />
   </head>
   <body class="app-booting boot-shape-lock">
-    <div class="boot-splash" aria-hidden="true">
+    <div class="boot-splash" role="status" aria-live="polite" aria-hidden="false">
       <div class="boot-splash-panel">
         <img class="boot-splash-logo" src="./assets/brand/FreeFlow_logo.svg" alt="FreeFlow" />
         <div class="boot-splash-copy">
           <strong class="boot-splash-title">FreeFlow</strong>
+          <span class="boot-splash-subtitle">Air Canvas</span>
+        </div>
+        <div id="boot-splash-failure" class="boot-splash-failure" hidden>
+          <div id="boot-splash-failure-message">工作区未能完成启动</div>
+          <button id="boot-splash-retry" class="boot-splash-retry" type="button">重新载入</button>
         </div>
       </div>
     </div>
