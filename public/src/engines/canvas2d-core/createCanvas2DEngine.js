@@ -26624,8 +26624,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       imageMemo: refs.imageMemoEditor,
     })));
     cleanupFns.push(canvasUiRuntime.registerHost("shortcut", window));
-    const handleWorkspacePanelResizeEnd = () => {
+    const handleWorkspacePanelResizeEnd = (event) => {
       if (!mounted) {
+        return;
+      }
+      if (event?.detail?.side && event.detail.side !== "left") {
         return;
       }
       paneResizeDeferred = false;

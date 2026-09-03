@@ -755,6 +755,14 @@ body.desktop-mode .composer.ui-chrome-composer {
   padding: 8px !important;
 }
 
+.conversation-panel > .pane-resize-viewport {
+  inset: 52px 14px 14px !important;
+}
+
+.conversation-panel.screen-view-active > .pane-resize-viewport {
+  inset: 8px !important;
+}
+
 .conversation-panel.screen-view-active .screen-source-panel.is-active {
   height: calc(100% - 4px) !important;
   margin-top: 4px !important;

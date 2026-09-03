@@ -423,6 +423,7 @@
             </button>
           </div>
           <button id="left-pane-y-resizer" class="pane-edge-y-resizer is-left-pane" type="button" aria-label="上下移动左侧界面"></button>
+          <div class="pane-resize-viewport" data-pane-resize-viewport="left">
             <div class="canvas-shell canvas-shell-static">
               <header class="canvas-engine-bar" aria-label="左侧画布引擎切换">
               </header>
@@ -430,6 +431,7 @@
             <div id="canvas-engine-stage" class="canvas-engine-stage" aria-label="左侧画布工作区">
               <div id="canvas-canvas2d-host" class="canvas-engine-surface" aria-label="Canvas2D 画布宿主"></div>
             </div>
+          </div>
           </div>
         </section>
 
@@ -464,6 +466,8 @@
             </button>
           </div>
           <button id="right-pane-y-resizer" class="pane-edge-y-resizer is-right-pane" type="button" aria-label="上下移动右侧界面"></button>
+          <div class="pane-resize-viewport" data-pane-resize-viewport="right">
+          <div class="conversation-resize-content">
           <header class="conversation-header">
             <div class="conversation-header-topline">
               <div class="right-panel-window-controls">
@@ -720,6 +724,8 @@
                 </div>
               </div>
             </form>
+          </div>
+          </div>
         </section>
         <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock ui-recovery-dock is-hidden">
           <button id="stage-restore-btn" class="ghost-btn compact-btn ui-recovery-control ui-icon-only" type="button" title="恢复默认布局" aria-label="恢复默认布局">

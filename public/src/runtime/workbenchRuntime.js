@@ -6593,6 +6593,7 @@ function syncStagePanelOrbLabels() {
 }
 
 function beginPaneResize(side, startX, startY, pointerId) {
+  if (activePaneResizeTransactionId) return;
   const panel = state.panelLayout?.[side];
   if (!panel) return;
   const panelElement = getStagePanelElement(side);
@@ -6610,6 +6611,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const initialWidth = Number(panel.width) || getDefaultPanelFrame(side, panel).width;
   const initialHeight = Number(panel.height) || getDefaultPanelFrame(side, panel).height;
   const initialX = Number(panel.x) || 0;
+  const initialY = Number(panel.y) || 0;
   const fixedRight = initialX + initialWidth;
   const resizeFromLeft = panel.dockSide === "right";
   const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
@@ -6635,8 +6637,65 @@ function beginPaneResize(side, startX, startY, pointerId) {
     window.cancelAnimationFrame(paneResizeFinalFrame);
     paneResizeFinalFrame = 0;
   }
+  const resizeFrameElement = document.createElement("div");
+  resizeFrameElement.className = `pane-resize-frame is-${side}`;
+  resizeFrameElement.dataset.resizeSide = side;
+  const initialResizeEdge = resizeFromLeft ? initialX : initialX + initialWidth;
+  resizeFrameElement.style.left = `${Math.round(initialResizeEdge)}px`;
+  resizeFrameElement.style.top = `${Math.round(initialY)}px`;
+  resizeFrameElement.style.height = `${Math.round(initialHeight)}px`;
+  resizeFrameElement.style.zIndex = String(Math.max(2, Number(panel.zIndex) || 2) + 1);
+  workspaceEl?.append(resizeFrameElement);
+
   document.body.classList.add("is-pane-resizing");
   panelElement?.classList.add("is-pane-resize-preview");
+  resizerEl?.classList.add("is-resize-source-active");
+
+  const frozenStyles = [];
+  const freezeStyle = (element, property, value) => {
+    if (!(element instanceof HTMLElement)) return;
+    frozenStyles.push({
+      element,
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property),
+    });
+    element.style.setProperty(property, value);
+  };
+  const resizeViewport = panelElement?.querySelector?.(`[data-pane-resize-viewport="${side}"]`);
+  const viewportRect = resizeViewport?.getBoundingClientRect?.();
+  if (resizeViewport instanceof HTMLElement) {
+    freezeStyle(resizeViewport, "clip", "auto");
+  }
+
+  const renderResizeFrame = () => {
+    const resizeEdge = resizeFromLeft ? panel.x : panel.x + panel.width;
+    const scaleY = Math.max(0.01, panel.height / initialHeight);
+    resizeFrameElement.style.transform = `translate3d(${Math.round(resizeEdge - initialResizeEdge)}px, ${Math.round(panel.y - initialY)}px, 0) scaleY(${scaleY})`;
+    // Expansion stays composited; the lighter right rail can contract with native layout.
+    const useLiveInwardLayout = side === "right" && panel.width < initialWidth;
+    if (useLiveInwardLayout && panelElement) {
+      panelElement.style.left = `${Math.round(panel.x)}px`;
+      panelElement.style.width = `${Math.round(panel.width)}px`;
+      resizeViewport?.style.setProperty("clip", "auto");
+      return;
+    }
+    if (side === "right" && panelElement) {
+      panelElement.style.left = `${Math.round(initialX)}px`;
+      panelElement.style.width = `${Math.round(initialWidth)}px`;
+    }
+    if (resizeViewport instanceof HTMLElement && viewportRect) {
+      const clipTop = Math.max(0, panel.y - initialY);
+      const clipRight = Math.max(0, initialX + initialWidth - (panel.x + panel.width));
+      const clipBottom = Math.max(0, initialY + initialHeight - (panel.y + panel.height));
+      const clipLeft = Math.max(0, panel.x - initialX);
+      resizeViewport.style.clip = `rect(${clipTop}px, ${Math.max(0, viewportRect.width - clipRight)}px, ${Math.max(0, viewportRect.height - clipBottom)}px, ${clipLeft}px)`;
+    }
+  };
+  renderResizeFrame();
+  if (!workspaceEl) {
+    resizeFrameElement.remove();
+  }
   void DESKTOP_SHELL?.beginInteractiveWindowShape?.({ transactionId: resizeTransactionId });
 
   const flushResize = () => {
@@ -6649,24 +6708,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
     panel.collapsed = false;
     panel.hidden = false;
     panel.mode = "normal";
-    clampPanelLayoutSideToWorkspace(side);
-    if (panelElement) {
-      panelElement.style.transformOrigin = `${resizeFromLeft ? "right" : "left"} top`;
-      const previewScaleX = panel.width >= initialWidth ? panel.width / initialWidth : 1;
-      const previewScaleY = panel.height >= initialHeight ? panel.height / initialHeight : 1;
-      const clipLeft = resizeFromLeft && panel.width < initialWidth ? initialWidth - panel.width : 0;
-      const clipRight = !resizeFromLeft && panel.width < initialWidth ? initialWidth - panel.width : 0;
-      const clipBottom = panel.height < initialHeight ? initialHeight - panel.height : 0;
-      panelElement.style.transform = `scale(${previewScaleX}, ${previewScaleY})`;
-      panelElement.style.clipPath = `inset(0 ${clipRight}px ${clipBottom}px ${clipLeft}px)`;
-    }
-    if (resizerEl) {
-      const resizerLeft = resizeFromLeft
-        ? Math.round(panel.x - (PANEL_RESIZER_SIZE - PANEL_RESIZER_CORNER_OFFSET))
-        : Math.round(panel.x + panel.width - PANEL_RESIZER_CORNER_OFFSET);
-      resizerEl.style.left = `${resizerLeft}px`;
-      resizerEl.style.top = `${Math.round(panel.y + panel.height - PANEL_RESIZER_CORNER_OFFSET)}px`;
-    }
+    renderResizeFrame();
   };
 
   const handleMove = (event) => {
@@ -6700,11 +6742,17 @@ function beginPaneResize(side, startX, startY, pointerId) {
       document.body.classList.remove("is-resizing");
       if (activePaneResizeTransactionId === resizeTransactionId) {
         activePaneResizeTransactionId = "";
-        panelElement?.classList.remove("is-pane-resize-preview");
-        panelElement?.style.removeProperty("transform");
-        panelElement?.style.removeProperty("transform-origin");
-        panelElement?.style.removeProperty("clip-path");
         renderPanelLayoutSide(side);
+        frozenStyles.forEach(({ element, property, value, priority }) => {
+          if (value) {
+            element.style.setProperty(property, value, priority);
+          } else {
+            element.style.removeProperty(property);
+          }
+        });
+        panelElement?.classList.remove("is-pane-resize-preview");
+        resizerEl?.classList.remove("is-resize-source-active");
+        resizeFrameElement.remove();
         document.body.classList.remove("is-pane-resizing");
         window.dispatchEvent(new CustomEvent("freeflow:workspace-panel-resize-end", {
           detail: {

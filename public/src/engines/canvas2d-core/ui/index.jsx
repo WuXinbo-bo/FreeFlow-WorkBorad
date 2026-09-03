@@ -1831,7 +1831,11 @@ function Canvas2DControls({ engine }) {
       });
     };
     updateViewport();
-    const handleWorkspacePanelResizeEnd = () => updateViewport();
+    const handleWorkspacePanelResizeEnd = (event) => {
+      if (!event?.detail?.side || event.detail.side === "left") {
+        updateViewport();
+      }
+    };
     window.addEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
     if (typeof ResizeObserver === "function") {
       const observer = new ResizeObserver(() => updateViewport());
@@ -2113,7 +2117,11 @@ function Canvas2DControls({ engine }) {
     };
 
     scheduleUpdate();
-    const handleWorkspacePanelResizeEnd = () => scheduleUpdate();
+    const handleWorkspacePanelResizeEnd = (event) => {
+      if (!event?.detail?.side || event.detail.side === "left") {
+        scheduleUpdate();
+      }
+    };
     const resizeObserver =
       typeof ResizeObserver === "function"
         ? new ResizeObserver(() => {
