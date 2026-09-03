@@ -367,9 +367,27 @@
           <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="left" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-left" data-stage-panel-frame="left" aria-hidden="true"></div>
           <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="left" aria-label="左侧面板控制">
-            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="left" title="关闭左侧面板" aria-label="关闭左侧面板"></button>
-            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="left" title="拖动左侧面板" aria-label="拖动左侧面板"></button>
-            <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="left" title="恢复左侧默认位置" aria-label="恢复左侧默认位置"></button>
+            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="left" title="收起画布工作区" aria-label="收起画布工作区">
+              <span class="ui-control-icon stage-panel-collapse-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M15 18l-6-6 6-6" /><path d="M5 5v14" /></svg>
+              </span>
+            </button>
+            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="left" title="拖拽画布工作区" aria-label="拖拽画布工作区">
+              <span class="ui-control-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></svg>
+              </span>
+            </button>
+            <button class="stage-panel-orb stage-panel-mode" type="button" data-stage-panel-action="presentation" data-stage-panel-side="left" title="画布工作区切换为半屏" aria-label="画布工作区切换为半屏">
+              <span class="ui-control-icon stage-panel-mode-icon is-normal" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></svg>
+              </span>
+              <span class="ui-control-icon stage-panel-mode-icon is-half" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /></svg>
+              </span>
+              <span class="ui-control-icon stage-panel-mode-icon is-maximized" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M9 3H3v6" /><path d="M15 21h6v-6" /><path d="M3 9l6-6" /><path d="M21 15l-6 6" /></svg>
+              </span>
+            </button>
           </div>
           <button id="left-pane-y-resizer" class="pane-edge-y-resizer is-left-pane" type="button" aria-label="上下移动左侧界面"></button>
             <div class="canvas-shell canvas-shell-static">
@@ -390,9 +408,27 @@
           <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-left" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="right" aria-label="右侧面板控制">
-            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="right" title="关闭右侧面板" aria-label="关闭右侧面板"></button>
-            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="right" title="拖动右侧面板" aria-label="拖动右侧面板"></button>
-            <button class="stage-panel-orb stage-panel-reset" type="button" data-stage-panel-action="reset" data-stage-panel-side="right" title="恢复右侧默认位置" aria-label="恢复右侧默认位置"></button>
+            <button class="stage-panel-orb stage-panel-close" type="button" data-stage-panel-action="close" data-stage-panel-side="right" title="收起对话工作区" aria-label="收起对话工作区">
+              <span class="ui-control-icon stage-panel-collapse-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M15 18l-6-6 6-6" /><path d="M5 5v14" /></svg>
+              </span>
+            </button>
+            <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="right" title="拖拽对话工作区" aria-label="拖拽对话工作区">
+              <span class="ui-control-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></svg>
+              </span>
+            </button>
+            <button class="stage-panel-orb stage-panel-mode" type="button" data-stage-panel-action="presentation" data-stage-panel-side="right" title="对话工作区切换为半屏" aria-label="对话工作区切换为半屏">
+              <span class="ui-control-icon stage-panel-mode-icon is-normal" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></svg>
+              </span>
+              <span class="ui-control-icon stage-panel-mode-icon is-half" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /></svg>
+              </span>
+              <span class="ui-control-icon stage-panel-mode-icon is-maximized" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M9 3H3v6" /><path d="M15 21h6v-6" /><path d="M3 9l6-6" /><path d="M21 15l-6 6" /></svg>
+              </span>
+            </button>
           </div>
           <button id="right-pane-y-resizer" class="pane-edge-y-resizer is-right-pane" type="button" aria-label="上下移动右侧界面"></button>
           <header class="conversation-header">
@@ -408,7 +444,7 @@
                     aria-selected="true"
                     data-right-panel-view="assistant"
                   >
-                    调用AI助手
+                    AI 助手
                   </button>
                   <button
                     id="right-panel-tab-screen"
@@ -418,7 +454,7 @@
                     aria-selected="false"
                     data-right-panel-view="screen"
                   >
-                    AI镜像
+                    AI 镜像
                   </button>
                 </div>
                 <button
@@ -447,9 +483,14 @@
                     <summary
                       class="conversation-pill ui-chrome-trigger"
                       title="映射控制"
+                      aria-label="映射控制"
                       aria-expanded="false"
                       aria-controls="screen-source-header-panel"
-                    >映射控制</summary>
+                    >
+                      <span class="ui-control-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="14" height="12" rx="2" /><path d="M7 20h12a2 2 0 0 0 2-2V9" /><path d="M8 8h4" /><path d="M8 12h4" /></svg>
+                      </span>
+                    </summary>
                     <div id="screen-source-header-panel" class="screen-source-header-panel ui-chrome-popover">
                       <div id="screen-source-toolbar" class="screen-source-toolbar">
                         <label class="screen-source-picker ui-chrome-content">
@@ -628,7 +669,11 @@
             </form>
         </section>
         <div id="stage-restore-dock" class="stage-restore-dock canvas-chrome-surface canvas-chrome-layout-dock ui-recovery-dock is-hidden">
-          <button id="stage-restore-btn" class="ghost-btn compact-btn ui-recovery-control" type="button">恢复默认布局</button>
+          <button id="stage-restore-btn" class="ghost-btn compact-btn ui-recovery-control ui-icon-only" type="button" title="恢复默认布局" aria-label="恢复默认布局">
+            <span class="ui-control-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="M4 4v6h6" /><path d="M5.6 15a8 8 0 1 0 .9-7.9L4 10" /></svg>
+            </span>
+          </button>
         </div>
       </main>
 
@@ -972,8 +1017,16 @@
 
       <button id="insight-drawer-handle" class="drawer-handle" type="button" aria-expanded="false">系统设置</button>
 
-      <button id="restore-left-pane-btn" class="pane-restore-btn canvas-chrome-surface ui-recovery-control is-hidden" type="button">展开菜单</button>
-      <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right canvas-chrome-surface ui-recovery-control is-hidden" type="button">展开对话</button>
+      <button id="restore-left-pane-btn" class="pane-restore-btn canvas-chrome-surface ui-recovery-control ui-icon-only is-hidden" type="button" title="恢复画布工作区" aria-label="恢复画布工作区">
+        <span class="ui-control-icon pane-restore-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="M13 9l3 3-3 3" /></svg>
+        </span>
+      </button>
+      <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right canvas-chrome-surface ui-recovery-control ui-icon-only is-hidden" type="button" title="恢复对话工作区" aria-label="恢复对话工作区">
+        <span class="ui-control-icon pane-restore-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /><path d="M11 9l-3 3 3 3" /></svg>
+        </span>
+      </button>
     </div>
 
     <template id="message-template">

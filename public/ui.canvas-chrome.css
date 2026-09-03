@@ -330,6 +330,16 @@
   cursor: grabbing !important;
 }
 
+@media (max-width: 1024px) {
+  .canvas2d-engine-topbar-stack {
+    max-width: calc(100% - 88px) !important;
+  }
+
+  .canvas-chrome-minimap {
+    transform: translateY(calc(var(--canvas-chrome-height) + 6px)) !important;
+  }
+}
+
 .desktop-clear-stage.is-stage-moving,
 .conversation-panel.is-stage-moving {
   border-color: rgba(78, 116, 153, 0.34) !important;
@@ -337,6 +347,11 @@
 }
 
 @media (max-width: 720px) {
+  .canvas2d-navigator-panel {
+    top: 252px !important;
+    bottom: 56px !important;
+  }
+
   .canvas2d-engine-topbar,
   .canvas2d-engine-corner-bottom-right {
     right: calc(var(--canvas-chrome-inline-end-inset) + var(--canvas-chrome-status-dock-width) + 8px) !important;
@@ -351,6 +366,7 @@
     max-width: 22px;
     height: 22px;
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

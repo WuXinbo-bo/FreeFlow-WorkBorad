@@ -1,12 +1,37 @@
 import { CONFIG } from "../../config/app.config.js";
 
-function createDefaultPanelLayoutSide(side, { viewportHeight = 0 } = {}) {
+const DEFAULT_CANVAS_MIN_WIDTH = 280;
+const DEFAULT_CHAT_MIN_WIDTH = 360;
+
+function resolveDefaultPanelWidths(viewportWidth = 0) {
+  const preferredLeft = CONFIG.leftPanelDefaultWidth;
+  const preferredRight = CONFIG.rightPanelDefaultWidth;
+  const preferredTotal = preferredLeft + preferredRight;
+  const availableWidth = Math.max(0, Number(viewportWidth) || 0);
+  if (!availableWidth || availableWidth >= preferredTotal) {
+    return { left: preferredLeft, right: preferredRight };
+  }
+
+  if (availableWidth < DEFAULT_CANVAS_MIN_WIDTH + DEFAULT_CHAT_MIN_WIDTH) {
+    const left = Math.max(0, Math.round(availableWidth * 0.42));
+    return { left, right: Math.max(0, availableWidth - left) };
+  }
+
+  const flexibleWidth = availableWidth - DEFAULT_CANVAS_MIN_WIDTH - DEFAULT_CHAT_MIN_WIDTH;
+  const preferredLeftGrowth = preferredLeft - DEFAULT_CANVAS_MIN_WIDTH;
+  const preferredRightGrowth = preferredRight - DEFAULT_CHAT_MIN_WIDTH;
+  const leftGrowthRatio = preferredLeftGrowth / (preferredLeftGrowth + preferredRightGrowth);
+  const left = DEFAULT_CANVAS_MIN_WIDTH + Math.round(flexibleWidth * leftGrowthRatio);
+  return { left, right: availableWidth - left };
+}
+
+function createDefaultPanelLayoutSide(side, { viewportHeight = 0, width = 0 } = {}) {
   const isLeft = side === "left";
   return {
     dockSide: isLeft ? "left" : "right",
     x: 0,
     y: 0,
-    width: isLeft ? CONFIG.leftPanelDefaultWidth : CONFIG.rightPanelDefaultWidth,
+    width: Number(width) || (isLeft ? CONFIG.leftPanelDefaultWidth : CONFIG.rightPanelDefaultWidth),
     height: Math.max(0, Number(viewportHeight) ? Number(viewportHeight) - 120 : 0),
     collapsed: false,
     hidden: false,
@@ -17,10 +42,11 @@ function createDefaultPanelLayoutSide(side, { viewportHeight = 0 } = {}) {
 }
 
 export function createDefaultPanelLayout(options = {}) {
+  const widths = resolveDefaultPanelWidths(options.viewportWidth);
   return {
     version: CONFIG.panelLayoutVersion,
-    left: createDefaultPanelLayoutSide("left", options),
-    right: createDefaultPanelLayoutSide("right", options),
+    left: createDefaultPanelLayoutSide("left", { ...options, width: widths.left }),
+    right: createDefaultPanelLayoutSide("right", { ...options, width: widths.right }),
   };
 }
 

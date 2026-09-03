@@ -2524,7 +2524,13 @@ function syncRightPanelWindowControlsLayout() {
     return;
   }
 
-  const isOverflowing = () => rightPanelWindowControlsEl.scrollWidth > rightPanelWindowControlsEl.clientWidth + overflowThreshold;
+  const isOverflowing = () => {
+    const availableWidth = Math.min(
+      rightPanelWindowControlsEl.clientWidth,
+      conversationHeaderToplineEl?.clientWidth || rightPanelWindowControlsEl.clientWidth
+    );
+    return rightPanelWindowControlsEl.scrollWidth > availableWidth + overflowThreshold;
+  };
   if (hasScreenSourceSlot && isOverflowing()) {
     conversationHeaderToplineEl?.classList.add("is-compact");
     rightPanelWindowControlsEl.classList.add("is-compact");
@@ -5397,8 +5403,8 @@ function readPaneWidth(storageKey, fallback) {
 
 function getPanelLayoutViewportOptions() {
   return {
-    viewportWidth: Number(window.innerWidth) || 0,
-    viewportHeight: Number(window.innerHeight) || 0,
+    viewportWidth: Number(workspaceEl?.clientWidth) || Number(window.innerWidth) || 0,
+    viewportHeight: Number(workspaceEl?.clientHeight) || Number(window.innerHeight) || 0,
   };
 }
 
@@ -6156,6 +6162,7 @@ function refreshPanelLayoutVisualState() {
   for (const side of sides) {
     renderPanelLayoutSide(side);
   }
+  syncStagePanelOrbLabels();
 
   renderStageRestoreDock();
   syncPaneVisibility({ syncShape: false });
@@ -6380,11 +6387,13 @@ function syncPaneVisibility({ syncShape = true } = {}) {
   restoreLeftPaneBtn?.classList.toggle("is-hidden", !state.leftPanelCollapsed);
   restoreRightPaneBtn?.classList.toggle("is-hidden", !state.rightPanelCollapsed);
   if (restoreLeftPaneBtn) {
-    restoreLeftPaneBtn.textContent = "恢复画布工作区";
+    restoreLeftPaneBtn.title = "恢复画布工作区";
+    restoreLeftPaneBtn.setAttribute("aria-label", "恢复画布工作区");
     restoreLeftPaneBtn.classList.toggle("pane-restore-btn-right", state.panelLayout.left.dockSide === "right");
   }
   if (restoreRightPaneBtn) {
-    restoreRightPaneBtn.textContent = "恢复对话工作区";
+    restoreRightPaneBtn.title = "恢复对话工作区";
+    restoreRightPaneBtn.setAttribute("aria-label", "恢复对话工作区");
     restoreRightPaneBtn.classList.toggle("pane-restore-btn-right", state.panelLayout.right.dockSide === "right");
   }
 
@@ -6535,9 +6544,12 @@ function syncStagePanelOrbLabels() {
       actionEl.setAttribute("aria-label", `收起${sideLabel}`);
       return;
     }
-    if (action === "reset") {
-      actionEl.title = `${sideLabel}切换显示模式`;
-      actionEl.setAttribute("aria-label", `${sideLabel}切换显示模式`);
+    if (action === "presentation") {
+      const mode = state.panelLayout?.[side]?.mode || "normal";
+      const nextModeLabel = mode === "normal" ? "半屏" : mode === "maximized" ? "常规布局" : "全屏";
+      const label = `${sideLabel}切换为${nextModeLabel}`;
+      actionEl.title = label;
+      actionEl.setAttribute("aria-label", label);
     }
   });
 
@@ -7550,7 +7562,7 @@ stagePanelActionEls.forEach((actionEl) => {
       setStatus(`${getWorkspaceModeLabel(side)}已收起`, "success");
       return;
     }
-    if (action === "reset") {
+    if (action === "presentation") {
       cycleWorkspacePresentationMode(side);
     }
   });
@@ -11345,7 +11357,8 @@ function autoresize() {
   const panelHeight = Math.max(1, Number(conversationPanel?.clientHeight || window.innerHeight || 1));
   const maxInputHeight = Math.max(72, Math.min(220, Math.floor(panelHeight * 0.32)));
   promptInput.style.height = "auto";
-  const nextHeight = Math.min(promptInput.scrollHeight, maxInputHeight);
+  const minInputHeight = Math.max(1, Number.parseFloat(getComputedStyle(promptInput).minHeight) || 40);
+  const nextHeight = promptInput.value ? Math.min(promptInput.scrollHeight, maxInputHeight) : minInputHeight;
   promptInput.style.height = `${nextHeight}px`;
   promptInput.style.overflowY = promptInput.scrollHeight > maxInputHeight ? "auto" : "hidden";
   syncComposerOffset();

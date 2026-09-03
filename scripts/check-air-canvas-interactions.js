@@ -528,7 +528,9 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, mappingGlass }
   );
   assert(
-    !rectanglesOverlap(mappingGlass.trigger.rect, mappingGlass.globalActions.rect, 8) && mappingGlass.trigger.rect.width >= 60,
+    !rectanglesOverlap(mappingGlass.trigger.rect, mappingGlass.globalActions.rect, 8) &&
+      mappingGlass.trigger.rect.width >= 32 &&
+      mappingGlass.trigger.rect.width <= 48,
     "AI mirror mapping control overlaps the global settings controls or is clipped",
     { viewport, mappingGlass }
   );
@@ -756,7 +758,10 @@ async function checkMinimap(page, viewport) {
     const canvas = element.querySelector("canvas");
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     return {
-      rect: { left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      navigatorRect: navigatorRect
+        ? { left: navigatorRect.left, top: navigatorRect.top, right: navigatorRect.right, bottom: navigatorRect.bottom }
+        : null,
       navigatorRight: navigatorRect?.right || 0,
       titleHeight: titleRect?.height || 0,
       canvasHit: Boolean(canvas && hit === canvas),
@@ -764,7 +769,10 @@ async function checkMinimap(page, viewport) {
       background: getComputedStyle(element).backgroundColor,
     };
   });
-  assert(expanded.rect.left >= expanded.navigatorRight + 10, "current-location minimap is covered by the navigator", {
+  const avoidsNavigator = viewport.width <= 720
+    ? !expanded.navigatorRect || !rectanglesOverlap(expanded.rect, expanded.navigatorRect, 8)
+    : expanded.rect.left >= expanded.navigatorRight + 10;
+  assert(avoidsNavigator, "current-location minimap is covered by the navigator", {
     viewport,
     expanded,
   });
@@ -820,17 +828,25 @@ async function checkInfoDock(page, viewport) {
     const logo = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-logo")?.getBoundingClientRect();
     const utility = document.querySelector(".canvas-chrome-utility-dock")?.getBoundingClientRect();
     const info = document.querySelector(".canvas-chrome-info-dock")?.getBoundingClientRect();
+    const canvasPanel = document.querySelector(".desktop-clear-stage")?.getBoundingClientRect();
     return {
       logoHeight: logo?.height || 0,
       bottomDelta: info && utility ? info.bottom - utility.bottom : null,
+      canvasWidth: canvasPanel?.width || 0,
+      contained: Boolean(info && canvasPanel && info.left >= canvasPanel.left && info.right <= canvasPanel.right),
     };
   });
   assert(expanded.background === "rgba(255, 255, 255, 0.58)" && expanded.hitInside, "canvas information dock has no usable glass backing", {
     viewport,
     expanded,
   });
-  if (viewport.width > 720) {
+  if (expandedMetrics.canvasWidth >= 620) {
     assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.bottomDelta) <= 1, "expanded canvas information dock is not aligned with the stacked chrome", {
+      viewport,
+      expandedMetrics,
+    });
+  } else {
+    assert(expandedMetrics.logoHeight >= 18 && expandedMetrics.contained, "expanded canvas information dock escaped the narrow canvas workspace", {
       viewport,
       expandedMetrics,
     });
@@ -851,11 +867,126 @@ async function checkInfoDock(page, viewport) {
   await toggle.click();
   await moveAway(page, viewport);
   const restored = await readSurface(page, infoSelector);
-  assert(restored.rect.width >= 185 && restored.background === expanded.background, "canvas information dock did not restore", {
+  const restoredWidthIsValid = expanded.rect.width > 78.5 ? restored.rect.width >= 185 : restored.rect.width <= 78.5;
+  assert(restoredWidthIsValid && restored.hitInside && restored.background === expanded.background, "canvas information dock did not restore", {
     viewport,
     expanded,
     restored,
   });
+}
+
+async function checkPanelLayoutControls(page, viewport) {
+  const restoreDefault = page.locator("#stage-restore-btn");
+  const leftPanel = page.locator(".desktop-clear-stage");
+  const rightPanel = page.locator(".conversation-panel");
+  const leftMode = page.locator('[data-stage-panel-action="presentation"][data-stage-panel-side="left"]');
+  const leftCollapse = page.locator('[data-stage-panel-action="close"][data-stage-panel-side="left"]');
+
+  const iconContract = await page.evaluate(() => {
+    const selectors = [
+      "#stage-restore-btn",
+      "#restore-left-pane-btn",
+      "#restore-right-pane-btn",
+      '[data-stage-panel-action="close"][data-stage-panel-side="left"]',
+      '[data-stage-panel-drag="left"]',
+      '[data-stage-panel-action="presentation"][data-stage-panel-side="left"]',
+      '[data-stage-panel-action="close"][data-stage-panel-side="right"]',
+      '[data-stage-panel-drag="right"]',
+      '[data-stage-panel-action="presentation"][data-stage-panel-side="right"]',
+    ];
+    return selectors.map((selector) => {
+      const element = document.querySelector(selector);
+      return {
+        selector,
+        exists: Boolean(element),
+        text: element?.textContent?.trim() || "",
+        svgCount: element?.querySelectorAll("svg").length || 0,
+        label: element?.getAttribute("aria-label") || "",
+        title: element?.getAttribute("title") || "",
+      };
+    });
+  });
+  assert(
+    iconContract.every((entry) => entry.exists && entry.text === "" && entry.svgCount >= 1 && entry.label && entry.title),
+    "panel layout controls are not complete accessible icon controls",
+    { viewport, iconContract }
+  );
+
+  if (await restoreDefault.isVisible()) {
+    await restoreDefault.click();
+  }
+  for (const selector of ["#restore-left-pane-btn", "#restore-right-pane-btn"]) {
+    const restorePanel = page.locator(selector);
+    if (await restorePanel.isVisible()) {
+      await restorePanel.click();
+    }
+  }
+  await page.waitForFunction(() =>
+    getComputedStyle(document.querySelector(".desktop-clear-stage")).display !== "none" &&
+    getComputedStyle(document.querySelector(".conversation-panel")).display !== "none" &&
+    document.querySelector(".desktop-clear-stage")?.dataset.workspaceMode === "normal" &&
+    document.querySelector(".conversation-panel")?.dataset.workspaceMode === "normal"
+  );
+  const defaultLayout = await page.evaluate(() => {
+    const read = (selector) => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+    };
+    return {
+      left: read(".desktop-clear-stage"),
+      right: read(".conversation-panel"),
+      leftControls: read('[data-stage-panel-controls="left"]'),
+      rightControls: read('[data-stage-panel-controls="right"]'),
+      rightHeader: read(".right-panel-window-controls"),
+    };
+  });
+  assert(
+    defaultLayout.left.right <= defaultLayout.right.left + 1,
+    "viewport-aware default layout still overlaps the canvas and conversation workspaces",
+    { viewport, defaultLayout }
+  );
+  for (const [name, panel, controls] of [
+    ["left", defaultLayout.left, defaultLayout.leftControls],
+    ["right", defaultLayout.right, defaultLayout.rightControls],
+  ]) {
+    assert(
+      controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 10 && controls.bottom <= panel.top + 38,
+      `${name} panel controls are not docked to the top-left edge rail`,
+      { viewport, panel, controls }
+    );
+  }
+  assert(
+    !rectanglesOverlap(defaultLayout.rightControls, defaultLayout.rightHeader, 6),
+    "right panel edge controls overlap the header rail",
+    { viewport, defaultLayout }
+  );
+
+  assert((await leftMode.getAttribute("title"))?.includes("半屏"), "normal panel mode did not advertise the next half-screen action", viewport);
+  await leftMode.click();
+  assert((await leftPanel.getAttribute("data-workspace-mode")) === "half-left", "panel did not enter half-screen mode", viewport);
+  assert((await leftMode.getAttribute("title"))?.includes("全屏"), "half-screen panel mode did not advertise the next fullscreen action", viewport);
+  await leftMode.click();
+  assert((await leftPanel.getAttribute("data-workspace-mode")) === "maximized", "panel did not enter fullscreen mode", viewport);
+  assert((await leftMode.getAttribute("title"))?.includes("常规"), "fullscreen panel mode did not advertise the restore action", viewport);
+  await leftMode.click();
+  assert((await leftPanel.getAttribute("data-workspace-mode")) === "normal", "panel mode did not recover to normal", viewport);
+
+  await leftCollapse.click();
+  await page.waitForFunction(() => document.querySelector(".desktop-clear-stage")?.classList.contains("is-pane-collapsed"));
+  const restoreLeft = page.locator("#restore-left-pane-btn");
+  const collapsedRestore = await restoreLeft.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  assert(
+    collapsedRestore.top <= 36 && collapsedRestore.left <= 40,
+    "collapsed canvas restore control did not follow the left top edge",
+    { viewport, collapsedRestore }
+  );
+  await restoreLeft.click();
+  await page.waitForFunction(() => !document.querySelector(".desktop-clear-stage")?.classList.contains("is-pane-collapsed"));
+  assert((await leftPanel.getAttribute("data-workspace-mode")) === "normal", "collapsed panel did not recover its normal layout", viewport);
+  assert(await rightPanel.isVisible(), "conversation panel was damaged by canvas panel recovery", viewport);
 }
 
 async function checkViewport(browser, viewport) {
@@ -893,6 +1024,7 @@ async function checkViewport(browser, viewport) {
     await checkChromeStates(page, viewport);
     await checkMinimap(page, viewport);
     await checkInfoDock(page, viewport);
+    await checkPanelLayoutControls(page, viewport);
 
     const shareButton = page.locator('.canvas2d-engine-tool[title="分享"]');
     await shareButton.click();
