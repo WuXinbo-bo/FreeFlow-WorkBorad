@@ -6121,13 +6121,23 @@ function renderPanelLayoutSide(side) {
   element.dataset.workspaceDock = dockSide;
 
   if (resizer) {
-    const resizerLeft = Math.round((Number(panelState.x) || 0) + (Number(panelState.width) || 0) - PANEL_RESIZER_CORNER_OFFSET);
+    const resizeFromLeft = dockSide === "right";
+    const panelX = Number(panelState.x) || 0;
+    const panelWidth = Number(panelState.width) || 0;
+    const resizerLeft = resizeFromLeft
+      ? Math.round(panelX - (PANEL_RESIZER_SIZE - PANEL_RESIZER_CORNER_OFFSET))
+      : Math.round(panelX + panelWidth - PANEL_RESIZER_CORNER_OFFSET);
     resizer.style.left = `${resizerLeft}px`;
     resizer.style.top = `${Math.round((Number(panelState.y) || 0) + (Number(panelState.height) || 0) - PANEL_RESIZER_CORNER_OFFSET)}px`;
     resizer.style.width = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.height = `${PANEL_RESIZER_SIZE}px`;
     resizer.style.zIndex = String(Math.max(2, Number(panelState.zIndex) || 2) + 1);
+    resizer.classList.toggle("is-left-corner", resizeFromLeft);
     resizer.classList.toggle("is-hidden", isHidden);
+    resizer.dataset.resizeEdge = resizeFromLeft ? "left" : "right";
+    const resizeLabel = `从${resizeFromLeft ? "左" : "右"}下角调整${getWorkspaceModeLabel(side)}尺寸`;
+    resizer.title = resizeLabel;
+    resizer.setAttribute("aria-label", resizeLabel);
   }
 
   if (yResizer) {
@@ -6588,14 +6598,19 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const initialWidth = Number(panel.width) || getDefaultPanelFrame(side, panel).width;
   const initialHeight = Number(panel.height) || getDefaultPanelFrame(side, panel).height;
   const initialX = Number(panel.x) || 0;
+  const fixedRight = initialX + initialWidth;
+  const resizeFromLeft = panel.dockSide === "right";
   const { width: workspaceWidth, height: workspaceHeight } = getWorkspaceViewport();
   const minWidth = Math.max(320, side === "left" ? CONFIG.leftPanelMinWidth : CONFIG.rightPanelMinWidth);
   const sideMaxWidth = side === "left" ? CONFIG.leftPanelMaxWidth : CONFIG.rightPanelMaxWidth;
+  const availableWidth = resizeFromLeft
+    ? fixedRight - PANEL_LAYOUT_EDGE_OFFSET
+    : workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET;
   const maxWidth = Math.min(
     sideMaxWidth,
-    Math.max(minWidth, workspaceWidth - initialX - PANEL_LAYOUT_EDGE_OFFSET)
+    Math.max(minWidth, availableWidth)
   );
-  const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(PANEL_LAYOUT_MIN_HEIGHT, workspaceHeight));
+  const minHeight = Math.min(PANEL_LAYOUT_MIN_HEIGHT, Math.max(160, workspaceHeight));
   const maxHeight = Math.max(minHeight, workspaceHeight - panel.y);
 
   let latestClientX = startX;
@@ -6606,7 +6621,8 @@ function beginPaneResize(side, startX, startY, pointerId) {
     resizeFrame = 0;
     const deltaX = latestClientX - startX;
     const deltaY = latestClientY - startY;
-    panel.width = clampPaneWidth(initialWidth + deltaX, minWidth, maxWidth);
+    panel.width = clampPaneWidth(initialWidth + (resizeFromLeft ? -deltaX : deltaX), minWidth, maxWidth);
+    panel.x = resizeFromLeft ? fixedRight - panel.width : initialX;
     panel.height = clampPaneWidth(initialHeight + deltaY, minHeight, maxHeight);
     panel.collapsed = false;
     panel.hidden = false;
@@ -6617,6 +6633,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
   };
 
   const handleMove = (event) => {
+    if (event.pointerId !== pointerId) return;
     latestClientX = event.clientX;
     latestClientY = event.clientY;
     if (!resizeFrame) {
@@ -6624,24 +6641,43 @@ function beginPaneResize(side, startX, startY, pointerId) {
     }
   };
 
-  const handleUp = () => {
+  let resizeEnded = false;
+  const handleEnd = (event) => {
+    if (event?.pointerId != null && event.pointerId !== pointerId) return;
+    if (resizeEnded) return;
+    resizeEnded = true;
     document.removeEventListener("pointermove", handleMove);
-    document.removeEventListener("pointerup", handleUp);
-    if (resizeFrame) {
-      window.cancelAnimationFrame(resizeFrame);
-      flushResize();
+    document.removeEventListener("pointerup", handleEnd);
+    document.removeEventListener("pointercancel", handleEnd);
+    window.removeEventListener("blur", handleEnd);
+    resizerEl?.removeEventListener?.("lostpointercapture", handleEnd);
+    try {
+      if (resizeFrame) {
+        window.cancelAnimationFrame(resizeFrame);
+        flushResize();
+      }
+      if (resizerEl?.hasPointerCapture?.(pointerId)) {
+        resizerEl.releasePointerCapture(pointerId);
+      }
+    } finally {
+      document.body.classList.remove("is-resizing");
+      savePanelLayoutState();
+      requestPanelLayoutFinalShapeSync();
     }
-    resizerEl?.releasePointerCapture?.(pointerId);
-    document.body.classList.remove("is-resizing");
-    savePanelLayoutState();
-    requestPanelLayoutFinalShapeSync();
   };
 
-  resizerEl?.setPointerCapture?.(pointerId);
+  try {
+    resizerEl?.setPointerCapture?.(pointerId);
+  } catch {
+    // Document-level listeners still provide a complete resize fallback.
+  }
 
   document.body.classList.add("is-resizing");
   document.addEventListener("pointermove", handleMove);
-  document.addEventListener("pointerup", handleUp, { once: true });
+  document.addEventListener("pointerup", handleEnd);
+  document.addEventListener("pointercancel", handleEnd);
+  window.addEventListener("blur", handleEnd);
+  resizerEl?.addEventListener?.("lostpointercapture", handleEnd);
 }
 
 function beginPaneVerticalMove(side, startY, pointerId) {

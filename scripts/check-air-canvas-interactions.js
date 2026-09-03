@@ -1115,6 +1115,7 @@ async function checkPanelLayoutControls(page, viewport) {
 
   await rightCollapse.click();
   await page.waitForFunction(() => document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
+  await page.waitForTimeout(160);
   const restoreRight = page.locator("#restore-right-pane-btn");
   const rightRestore = await restoreRight.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -1133,6 +1134,98 @@ async function checkPanelLayoutControls(page, viewport) {
   await page.waitForFunction(() => !document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
   assert((await rightPanel.getAttribute("data-workspace-mode")) === "normal", "conversation panel did not recover its normal layout", viewport);
   assert(await leftPanel.isVisible(), "canvas panel was damaged by conversation panel recovery", viewport);
+}
+
+async function checkPanelResizeContract(page, viewport) {
+  if (viewport.width < 1200) return;
+
+  const readFrame = (selector) =>
+    page.locator(selector).evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    });
+  const dragBy = async (selector, deltaX, deltaY = 0) => {
+    const box = await page.locator(selector).boundingBox();
+    assert(Boolean(box), "panel resize handle is not visible", { viewport, selector });
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(80);
+  };
+
+  const leftResizer = page.locator("#left-pane-resizer");
+  const rightResizer = page.locator("#right-pane-resizer");
+  assert((await leftResizer.getAttribute("data-resize-edge")) === "right", "left-docked canvas uses the wrong resize edge", viewport);
+  assert((await rightResizer.getAttribute("data-resize-edge")) === "left", "right-docked conversation uses the wrong resize edge", viewport);
+
+  const leftBefore = await readFrame(".desktop-clear-stage");
+  await dragBy("#left-pane-resizer", 80);
+  const leftAfter = await readFrame(".desktop-clear-stage");
+  assert(
+    Math.abs(leftAfter.left - leftBefore.left) <= 1 && Math.abs(leftAfter.width - leftBefore.width - 80) <= 2,
+    "left-docked canvas did not resize from its right edge",
+    { viewport, leftBefore, leftAfter }
+  );
+  await leftResizer.dblclick();
+  await page.waitForTimeout(80);
+
+  const rightBefore = await readFrame(".conversation-panel");
+  await dragBy("#right-pane-resizer", -80);
+  const rightExpanded = await readFrame(".conversation-panel");
+  assert(
+    Math.abs(rightExpanded.right - rightBefore.right) <= 1 &&
+      Math.abs(rightExpanded.width - rightBefore.width - 80) <= 2 &&
+      Math.abs(rightExpanded.left - rightBefore.left + 80) <= 2,
+    "right-docked conversation did not resize from its left edge",
+    { viewport, rightBefore, rightExpanded }
+  );
+  await dragBy("#right-pane-resizer", 60);
+  const rightShrunk = await readFrame(".conversation-panel");
+  assert(
+    Math.abs(rightShrunk.right - rightExpanded.right) <= 1 && Math.abs(rightShrunk.width - rightExpanded.width + 60) <= 2,
+    "right-docked conversation lost its fixed right edge while shrinking",
+    { viewport, rightExpanded, rightShrunk }
+  );
+  await rightResizer.dblclick();
+  await page.waitForTimeout(80);
+
+  const cancelBox = await leftResizer.boundingBox();
+  await page.mouse.move(cancelBox.x + cancelBox.width / 2, cancelBox.y + cancelBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cancelBox.x + cancelBox.width / 2 + 12, cancelBox.y + cancelBox.height / 2, { steps: 2 });
+  await page.evaluate(() => document.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 })));
+  assert(!await page.evaluate(() => document.body.classList.contains("is-resizing")), "panel resize state survived pointer cancellation", viewport);
+  await page.mouse.up();
+
+  const rightCollapse = page.locator('[data-stage-panel-action="close"][data-stage-panel-side="right"]');
+  await rightCollapse.click();
+  await page.waitForFunction(() => document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
+  const hiddenHit = await rightResizer.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return {
+      opacity: getComputedStyle(element).opacity,
+      pointerEvents: getComputedStyle(element).pointerEvents,
+      interceptsPointer: hit === element,
+    };
+  });
+  assert(
+    hiddenHit.pointerEvents === "none" && !hiddenHit.interceptsPointer,
+    "hidden conversation resize handle still intercepts pointer input",
+    { viewport, hiddenHit }
+  );
+  await page.locator("#restore-right-pane-btn").click();
+  await page.waitForFunction(() => !document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
 }
 
 async function checkViewport(browser, viewport) {
@@ -1171,6 +1264,7 @@ async function checkViewport(browser, viewport) {
     await checkMinimap(page, viewport);
     await checkInfoDock(page, viewport);
     await checkPanelLayoutControls(page, viewport);
+    await checkPanelResizeContract(page, viewport);
 
     const shareButton = page.locator('.canvas2d-engine-tool[title="分享"]');
     await shareButton.click();

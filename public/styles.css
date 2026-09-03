@@ -9926,6 +9926,11 @@ body.is-office-embedded #right-pane-resizer {
   pointer-events: auto !important;
 }
 
+body.is-office-embedded #right-pane-resizer.is-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 /* Final static left whiteboard shell */
 .canvas-shell-static {
   position: relative;
