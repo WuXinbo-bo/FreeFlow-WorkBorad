@@ -2,7 +2,7 @@ import { createStep } from "./tutorialShared.js";
 
 export const AI_MIRROR_TUTORIAL_DEFINITION = Object.freeze({
   id: "ai-mirror",
-  title: "AI镜像教程",
+  title: "AI 镜像教程",
   description: "单独介绍 AI 镜像工作区与嵌入显示。",
   chapterIds: ["ai-mirror"],
 });
@@ -10,7 +10,7 @@ export const AI_MIRROR_TUTORIAL_DEFINITION = Object.freeze({
 export const AI_MIRROR_TUTORIAL_CHAPTERS = Object.freeze([
   {
     id: "ai-mirror",
-    title: "AI镜像",
+    title: "AI 镜像",
     description: "重点介绍如何建立映射、开启嵌入，以及嵌入后的工作方式。",
     steps: [
       createStep(
@@ -22,7 +22,7 @@ export const AI_MIRROR_TUTORIAL_CHAPTERS = Object.freeze([
       createStep(
         "ai-mirror-tab",
         "先切换到右侧的 AI 镜像工作区",
-        "点击右侧顶部的“AI镜像”切换键，就会进入 AI 镜像对应的工作区。后续所有映射与嵌入操作，都从这个入口开始。",
+        "点击右侧顶部的“AI 镜像”切换键，就会进入 AI 镜像对应的工作区。后续所有映射与嵌入操作，都从这个入口开始。",
         { targetId: "rightPanelScreenTab", placement: "bottom" }
       ),
       createStep(
@@ -45,16 +45,10 @@ export const AI_MIRROR_TUTORIAL_CHAPTERS = Object.freeze([
         { targetId: "screenSourceTargetSelect", placement: "bottom" }
       ),
       createStep(
-        "ai-mirror-render-mode",
-        "渲染方式决定嵌入的承载模式",
-        "“渲染方式”用于决定当前 AI 镜像采用哪种嵌入链路。一般可以把它理解为底层承载模式：不同模式会影响兼容性、显示方式和后续交互稳定性。",
-        { targetId: "screenSourceRenderMode", placement: "left" }
-      ),
-      createStep(
-        "ai-mirror-fit-mode",
-        "适配模式决定嵌入画面的铺放方式",
-        "“适配模式”用于控制嵌入画面如何放进当前预览区域。强制拉满会优先填满区域，铺满裁边会保持覆盖感，完整显示则尽量保留完整内容。",
-        { targetId: "screenSourceFitMode", placement: "left" }
+        "ai-mirror-display-settings",
+        "显示设置集中管理渲染与画面适配",
+        "需要调整兼容性或画面铺放方式时，展开“显示设置”即可选择渲染方式和适配模式；通常保持默认设置即可。",
+        { targetId: "screenSourceDisplaySettings", placement: "left" }
       ),
       createStep(
         "ai-mirror-embed-toggle",

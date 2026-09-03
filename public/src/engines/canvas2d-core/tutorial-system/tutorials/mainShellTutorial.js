@@ -64,15 +64,15 @@ export const MAIN_SHELL_TUTORIAL_CHAPTERS = Object.freeze([
         { targetId: "panelCornerResizer", placement: "right" }
       ),
       createStep(
-        "main-shell-panel-vertical-resizer",
-        "界面左右中部的长条控件可上下拖拽",
-        "界面左右中部的长条控件只有在你先拉伸过对应界面后才会出现。出现后可以通过上下拖拽来调整界面的纵向显示范围，方便你继续微调界面大小和布局重心。",
-        { targetId: "panelVerticalResizer", placement: "bottom" }
+        "main-shell-panel-collapse-handle",
+        "侧边拉手用于收起和恢复工作区",
+        "左右工作区侧边中点的长条拉手用于收起当前工作区。收起后，同一侧会保留恢复拉条，避免遮挡顶部内容。",
+        { targetId: "panelCollapseHandle", placement: "right" }
       ),
       createStep(
         "main-shell-restore-default-layout",
         "恢复默认界面按钮可一键回到默认布局",
-        "顶部的“恢复默认界面”按钮可以把当前画布界面恢复到默认大小与默认位置。当你调整过界面布局后，可以用它快速回到初始状态。",
+        "底部中央的恢复布局图标可以把左右工作区恢复到默认大小与默认位置。只有布局发生变化时，这个入口才会显示。",
         { targetId: "restoreDefaultButton", placement: "top" }
       ),
       createStep(
@@ -83,8 +83,8 @@ export const MAIN_SHELL_TUTORIAL_CHAPTERS = Object.freeze([
       ),
       createStep(
         "main-shell-panel-orbs",
-        "红、黄、绿三个圆点控件用于快速控制界面",
-        "左右两个界面顶部的红、黄、绿三个圆点控件分别对应关闭界面、拖动/换位界面，以及恢复界面默认位置等快速操作，是主界面布局调整时最常用的一组交互键。",
+        "顶部图标用于移动和切换工作区布局",
+        "左右工作区顶部的拖拽图标用于移动界面，布局图标按常规、半屏和全屏顺序切换；收起操作已经独立到侧边拉手。",
         { targetId: "panelOrbControls", placement: "right" }
       ),
     ],

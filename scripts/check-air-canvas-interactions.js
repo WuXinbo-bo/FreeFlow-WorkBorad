@@ -475,6 +475,10 @@ async function checkRightWorkspaceGlass(page, viewport) {
   await mappingTrigger.click();
   await page.waitForFunction(() => !document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"));
   await page.waitForFunction(() => getComputedStyle(document.querySelector("#screen-source-header-menu > summary"), "::before").backgroundColor === "rgba(255, 255, 255, 0.8)");
+  const displaySettings = page.locator("#screen-source-display-settings");
+  assert(!(await displaySettings.evaluate((element) => element.hasAttribute("open"))), "AI mirror display settings should be collapsed by default", viewport);
+  await displaySettings.locator(":scope > summary").click();
+  await page.waitForFunction(() => document.querySelector("#screen-source-display-settings")?.hasAttribute("open"));
   const mappingGlass = await page.evaluate(() => {
     const read = (selector) => {
       const element = document.querySelector(selector);
@@ -495,7 +499,14 @@ async function checkRightWorkspaceGlass(page, viewport) {
       trigger: read("#screen-source-header-menu > summary"),
       popover: read(".screen-source-header-panel"),
       picker: read(".screen-source-picker"),
+      pickerHead: read(".screen-source-picker-head"),
+      targetRow: read(".screen-source-target-row"),
       target: read("#screen-source-select-trigger"),
+      refresh: read("#screen-source-refresh-btn"),
+      actions: read("#screen-source-inline-actions"),
+      primary: read("#screen-source-embed-toggle-btn"),
+      refreshEmbed: read("#screen-source-refresh-embed-btn"),
+      displaySettings: read("#screen-source-display-settings"),
       renderMode: read(".screen-source-render-mode"),
       fitMode: read(".screen-source-fit-mode"),
       status: read("#screen-source-status-pill"),
@@ -505,10 +516,16 @@ async function checkRightWorkspaceGlass(page, viewport) {
       text: {
         trigger: getComputedStyle(document.querySelector("#screen-source-header-menu > summary")).color,
         target: getComputedStyle(document.querySelector("#screen-source-select-current")).color,
-        note: getComputedStyle(document.querySelector(".screen-source-picker-note")).color,
         action: getComputedStyle(document.querySelector("#screen-source-refresh-btn")).color,
         emptyTitle: getComputedStyle(document.querySelector("#screen-source-empty-title")).color,
         emptyText: getComputedStyle(document.querySelector("#screen-source-empty-text")).color,
+      },
+      actionContract: {
+        refreshText: document.querySelector("#screen-source-refresh-btn")?.textContent?.trim() || "",
+        refreshSvgCount: document.querySelector("#screen-source-refresh-btn")?.querySelectorAll("svg").length || 0,
+        refreshEmbedText: document.querySelector("#screen-source-refresh-embed-btn")?.textContent?.trim() || "",
+        refreshEmbedSvgCount: document.querySelector("#screen-source-refresh-embed-btn")?.querySelectorAll("svg").length || 0,
+        primaryLabel: document.querySelector("#screen-source-embed-toggle-btn")?.textContent?.trim() || "",
       },
     };
   });
@@ -523,8 +540,27 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, mappingGlass }
   );
   assert(
-    Math.abs(mappingGlass.renderMode.rect.top - mappingGlass.fitMode.rect.top) <= 1 && mappingGlass.status.rect.top >= mappingGlass.renderMode.rect.bottom && mappingGlass.popover.rect.right <= viewport.width,
-    "mapping mode controls are not aligned in the shared compact grid",
+    Math.abs(mappingGlass.target.rect.top - mappingGlass.refresh.rect.top) <= 1 &&
+      Math.abs(mappingGlass.target.rect.bottom - mappingGlass.refresh.rect.bottom) <= 1 &&
+      mappingGlass.target.rect.width >= mappingGlass.picker.rect.width - 64 &&
+      mappingGlass.status.rect.top >= mappingGlass.pickerHead.rect.top &&
+      mappingGlass.status.rect.bottom <= mappingGlass.pickerHead.rect.bottom &&
+      Math.abs(mappingGlass.renderMode.rect.top - mappingGlass.fitMode.rect.top) <= 1 &&
+      mappingGlass.renderMode.rect.height > 0 &&
+      mappingGlass.displaySettings.rect.bottom <= mappingGlass.popover.rect.bottom &&
+      mappingGlass.popover.rect.right <= viewport.width &&
+      mappingGlass.popover.rect.bottom <= viewport.height,
+    "mapping controls do not follow the target, status, and collapsed display-settings layout",
+    { viewport, mappingGlass }
+  );
+  assert(
+    mappingGlass.primary.rect.width >= mappingGlass.actions.rect.width - 1 &&
+      mappingGlass.actionContract.refreshText === "" &&
+      mappingGlass.actionContract.refreshSvgCount === 1 &&
+      mappingGlass.actionContract.refreshEmbedText === "" &&
+      mappingGlass.actionContract.refreshEmbedSvgCount === 1 &&
+      mappingGlass.actionContract.primaryLabel === "开始嵌入",
+    "AI mirror actions do not expose one primary command with icon-only refresh controls",
     { viewport, mappingGlass }
   );
   assert(
@@ -535,10 +571,18 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, mappingGlass }
   );
   assert(
-    mappingGlass.text.trigger === "rgb(32, 37, 43)" && mappingGlass.text.target === "rgb(32, 37, 43)" && mappingGlass.text.action === "rgb(48, 57, 66)" && mappingGlass.text.note === "rgb(89, 101, 112)" && mappingGlass.text.emptyTitle === "rgb(32, 37, 43)" && mappingGlass.text.emptyText === "rgb(70, 81, 92)",
+    mappingGlass.text.trigger === "rgb(32, 37, 43)" && mappingGlass.text.target === "rgb(32, 37, 43)" && mappingGlass.text.action === "rgb(48, 57, 66)" && mappingGlass.text.emptyTitle === "rgb(32, 37, 43)" && mappingGlass.text.emptyText === "rgb(70, 81, 92)",
     "AI mirror text hierarchy is too light for the transparent workspace",
     { viewport, mappingGlass }
   );
+  assert(
+    (await page.locator("#screen-source-status-pill").getAttribute("title")) === (await page.locator("#screen-source-status-pill").textContent()),
+    "compact AI mirror status does not preserve its full text",
+    viewport
+  );
+  await displaySettings.locator(":scope > summary").click();
+  await page.waitForFunction(() => !document.querySelector("#screen-source-display-settings")?.hasAttribute("open"));
+  assert(!(await page.locator(".screen-source-render-mode").isVisible()), "AI mirror display settings did not restore the collapsed state", viewport);
 
   const refreshState = await page.evaluate(() => {
     window.__queueAiMirrorTargetResponses?.([

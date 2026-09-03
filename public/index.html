@@ -493,76 +493,96 @@
                     </summary>
                     <div id="screen-source-header-panel" class="screen-source-header-panel ui-chrome-popover">
                       <div id="screen-source-toolbar" class="screen-source-toolbar">
-                        <label class="screen-source-picker ui-chrome-content">
-                          <span class="label">映射目标</span>
-                          <details id="screen-source-select-menu" class="screen-source-select-menu">
-                            <summary
-                              id="screen-source-select-trigger"
-                              class="screen-source-select-trigger ui-chrome-inline-field"
-                              aria-label="选择映射目标"
-                              aria-expanded="false"
-                              aria-controls="screen-source-select-panel"
-                              aria-haspopup="listbox"
+                        <div class="screen-source-picker ui-chrome-content">
+                          <div class="screen-source-picker-head">
+                            <span class="label">AI 镜像目标</span>
+                            <div id="screen-source-status-pill" class="pill-note ui-chrome-status" role="status">未启动</div>
+                          </div>
+                          <div class="screen-source-target-row">
+                            <details id="screen-source-select-menu" class="screen-source-select-menu">
+                              <summary
+                                id="screen-source-select-trigger"
+                                class="screen-source-select-trigger ui-chrome-inline-field"
+                                aria-label="选择 AI 镜像目标"
+                                aria-expanded="false"
+                                aria-controls="screen-source-select-panel"
+                                aria-haspopup="listbox"
+                              >
+                                <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
+                                <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true">⌄</span>
+                              </summary>
+                              <div
+                                id="screen-source-select-panel"
+                                class="canvas2d-engine-menu canvas2d-engine-menu-wide screen-source-select-panel ui-chrome-popover"
+                                role="listbox"
+                                aria-label="AI 镜像目标列表"
+                              ></div>
+                            </details>
+                            <button
+                              id="screen-source-refresh-btn"
+                              class="ghost-btn compact-btn ui-chrome-action ui-icon-only screen-source-icon-action"
+                              type="button"
+                              data-screen-source-action="refresh"
+                              title="刷新 AI 镜像目标"
+                              aria-label="刷新 AI 镜像目标"
                             >
-                              <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
-                              <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true">⌄</span>
-                            </summary>
-                            <div
-                              id="screen-source-select-panel"
-                              class="canvas2d-engine-menu canvas2d-engine-menu-wide screen-source-select-panel ui-chrome-popover"
-                              role="listbox"
-                              aria-label="映射目标列表"
-                            ></div>
-                          </details>
+                              <span class="ui-control-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" focusable="false"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9" /><path d="M17.9 15a7 7 0 0 1-11.4 2.4L4 15" /></svg>
+                              </span>
+                            </button>
+                          </div>
                           <input id="screen-source-select" class="screen-source-select-input" type="hidden" />
-                          <span class="screen-source-picker-note">当前支持豆包、DeepSeek、千问、WPS AI、文心一言、秘塔写作猫、Kimi月之暗面，后续适配更多 AI 镜像</span>
-                        </label>
+                        </div>
                         <div id="screen-source-inline-actions" class="screen-source-actions">
                           <button
-                            id="screen-source-refresh-btn"
-                            class="ghost-btn compact-btn ui-chrome-action"
-                            type="button"
-                            data-screen-source-action="refresh"
-                          >
-                            刷新目标
-                          </button>
-                          <button
                             id="screen-source-refresh-embed-btn"
-                            class="ghost-btn compact-btn ui-chrome-action"
+                            class="ghost-btn compact-btn ui-chrome-action ui-icon-only screen-source-icon-action"
                             type="button"
                             data-screen-source-action="refresh-embed"
+                            title="刷新当前嵌入"
+                            aria-label="刷新当前嵌入"
                             hidden
                           >
-                            刷新嵌入
+                            <span class="ui-control-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" focusable="false"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9" /><path d="M17.9 15a7 7 0 0 1-11.4 2.4L4 15" /></svg>
+                            </span>
                           </button>
                           <button
                             id="screen-source-embed-toggle-btn"
-                            class="ghost-btn compact-btn ui-chrome-action"
+                            class="primary-btn compact-btn screen-source-primary-action"
                             type="button"
                             data-screen-source-action="embed-toggle"
                           >
-                            开始嵌入
+                            <span data-screen-source-action-label>开始嵌入</span>
                           </button>
                         </div>
                       </div>
-                      <div class="screen-source-header-meta">
-                        <label class="compact-select screen-source-render-mode ui-chrome-inline-field">
-                          <span>渲染方式</span>
-                          <select id="screen-source-render-mode-select" class="ui-chrome-select" aria-label="选择 AI 镜像渲染方式">
-                            <option value="win32">Win32 原生嵌入</option>
-                            <option value="webcontentsview">WebContentsView</option>
-                          </select>
-                        </label>
-                        <label class="compact-select screen-source-fit-mode ui-chrome-inline-field">
-                          <span>适配模式</span>
-                          <select id="screen-source-fit-mode-select" class="ui-chrome-select" aria-label="选择嵌入适配模式">
-                            <option value="fill">强制拉满</option>
-                            <option value="cover">铺满裁边</option>
-                            <option value="contain">完整显示</option>
-                          </select>
-                        </label>
-                        <div id="screen-source-status-pill" class="pill-note ui-chrome-status">未启动</div>
-                      </div>
+                      <details id="screen-source-display-settings" class="screen-source-display-settings">
+                        <summary class="screen-source-display-settings-trigger">
+                          <span class="ui-control-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" focusable="false"><path d="M4 7h10" /><path d="M18 7h2" /><circle cx="16" cy="7" r="2" /><path d="M4 17h2" /><path d="M10 17h10" /><circle cx="8" cy="17" r="2" /></svg>
+                          </span>
+                          <span>显示设置</span>
+                          <span class="canvas2d-engine-menu-chevron screen-source-display-settings-chevron" aria-hidden="true">⌄</span>
+                        </summary>
+                        <div class="screen-source-header-meta">
+                          <label class="compact-select screen-source-render-mode ui-chrome-inline-field">
+                            <span>渲染方式</span>
+                            <select id="screen-source-render-mode-select" class="ui-chrome-select" aria-label="选择 AI 镜像渲染方式">
+                              <option value="win32">Win32 原生嵌入</option>
+                              <option value="webcontentsview">WebContentsView</option>
+                            </select>
+                          </label>
+                          <label class="compact-select screen-source-fit-mode ui-chrome-inline-field">
+                            <span>适配模式</span>
+                            <select id="screen-source-fit-mode-select" class="ui-chrome-select" aria-label="选择 AI 镜像适配模式">
+                              <option value="fill">强制拉满</option>
+                              <option value="cover">铺满裁边</option>
+                              <option value="contain">完整显示</option>
+                            </select>
+                          </label>
+                        </div>
+                      </details>
                     </div>
                   </details>
                 </div>
@@ -597,7 +617,7 @@
             </div>
           </header>
 
-          <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI镜像窗口">
+          <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI 镜像窗口">
             <div class="screen-source-stage">
               <div id="screen-source-shell-wrap" class="screen-source-shell-wrap">
                 <div class="screen-source-preview-shell ui-embedded-frame ui-chrome-content">
@@ -607,7 +627,7 @@
                       <div id="screen-source-loader-host" class="screen-source-loader-host" aria-hidden="true"></div>
                       <div class="screen-source-empty-copy">
                         <strong id="screen-source-empty-title">等待映射</strong>
-                        <p id="screen-source-empty-text">打开映射控制，选择映射目标。</p>
+                        <p id="screen-source-empty-text">打开映射控制，选择 AI 镜像目标。</p>
                       </div>
                     </div>
                   </div>

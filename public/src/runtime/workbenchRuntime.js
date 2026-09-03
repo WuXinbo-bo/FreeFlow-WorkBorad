@@ -2221,7 +2221,7 @@ async function suspendScreenSourceForDrawer() {
 
   await stopScreenSourceCapture({
     announce: false,
-    statusText: "AI镜像已临时关闭",
+    statusText: "AI 镜像已临时关闭",
   });
 }
 
@@ -2261,7 +2261,7 @@ async function suspendScreenSourceForShellMenu() {
 
   await stopScreenSourceCapture({
     announce: false,
-    statusText: "AI镜像已临时关闭",
+    statusText: "AI 镜像已临时关闭",
   });
 }
 
@@ -2306,7 +2306,7 @@ async function suspendScreenSourceForClickThrough() {
 
   await stopScreenSourceCapture({
     announce: false,
-    statusText: "AI镜像已因完全穿透临时关闭",
+    statusText: "AI 镜像已因完全穿透临时关闭",
   });
 }
 
@@ -2335,7 +2335,15 @@ function setScreenSourceActionButtonsState(action, { text, disabled, busy } = {}
   const buttons = screenSourceActionButtonEls[action] || [];
   for (const button of buttons) {
     if (typeof text === "string") {
-      button.textContent = text;
+      const label = button.querySelector("[data-screen-source-action-label]");
+      if (label) {
+        label.textContent = text;
+      } else if (button.classList.contains("ui-icon-only")) {
+        button.title = text;
+        button.setAttribute("aria-label", text);
+      } else {
+        button.textContent = text;
+      }
     }
     if (typeof disabled === "boolean") {
       button.disabled = disabled;
@@ -2634,6 +2642,7 @@ function renderScreenSourceState() {
 
   if (screenSourceStatusPillEl) {
     screenSourceStatusPillEl.textContent = visibleStatus;
+    screenSourceStatusPillEl.title = visibleStatus;
     screenSourceStatusPillEl.dataset.state = visibleStatusState;
   }
   if (screenSourceEmptyEl) {
@@ -2644,7 +2653,7 @@ function renderScreenSourceState() {
     if (screenSourceEmptyTextEl) {
       screenSourceEmptyTextEl.textContent = selectedSource
         ? "选择目标后点击开始嵌入。"
-        : "打开映射控制，选择映射目标。";
+        : "打开映射控制，选择 AI 镜像目标。";
     }
   }
   if (screenSourcePreviewShellEl) {
@@ -2659,13 +2668,13 @@ function renderScreenSourceState() {
   }
   setScreenSourceActionButtonsState("refresh", {
     disabled: Boolean(state.screenSource.startPromise) || state.screenSource.refreshing,
-    text: "刷新目标",
+    text: state.screenSource.refreshing ? "正在刷新 AI 镜像目标" : "刷新 AI 镜像目标",
     busy: state.screenSource.refreshing,
   });
   const shouldShowRefreshEmbedButton = Boolean(selectedSource && hasActiveProjection);
   setScreenSourceActionButtonsState("refreshEmbed", {
     disabled: Boolean(state.screenSource.startPromise) || !shouldShowRefreshEmbedButton,
-    text: "刷新嵌入",
+    text: "刷新当前嵌入",
   });
   if (screenSourceRefreshEmbedBtn) {
     screenSourceRefreshEmbedBtn.hidden = !shouldShowRefreshEmbedButton;
@@ -3079,7 +3088,7 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
   }
 
   if (!navigator.mediaDevices?.getUserMedia && !navigator.mediaDevices?.getDisplayMedia) {
-    const message = "当前环境不支持屏幕映射";
+    const message = "当前环境不支持 AI 镜像";
     state.screenSource.statusText = message;
     renderScreenSourceState();
     throw new Error(message);
@@ -3205,7 +3214,7 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
     }
 
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      throw new Error("当前环境不支持屏幕映射");
+      throw new Error("当前环境不支持 AI 镜像");
     }
 
     const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -9063,7 +9072,7 @@ for (const button of screenSourceActionButtonEls.refreshEmbed) {
       await ensureScreenSourceCapture({ force: true });
       setStatus("AI 镜像嵌入已刷新", "success");
     } catch (error) {
-      setStatus(`刷新嵌入失败：${error.message}`, "warning");
+      setStatus(`刷新当前嵌入失败：${error.message}`, "warning");
     }
   });
 }

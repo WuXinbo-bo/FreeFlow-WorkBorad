@@ -33,8 +33,8 @@ export const GLOBAL_TUTORIAL_TARGETS = Object.freeze({
     selector: "#left-pane-resizer",
     padding: 14,
   },
-  panelVerticalResizer: {
-    selector: "#left-pane-y-resizer",
+  panelCollapseHandle: {
+    selector: '[data-stage-panel-action="close"][data-stage-panel-side="left"]',
     padding: 14,
   },
   restoreDefaultButton: {
@@ -62,15 +62,11 @@ export const GLOBAL_TUTORIAL_TARGETS = Object.freeze({
     padding: 16,
   },
   screenSourceTargetSelect: {
-    selector: "#screen-source-select",
+    selector: "#screen-source-select-trigger",
     padding: 12,
   },
-  screenSourceRenderMode: {
-    selector: "#screen-source-render-mode-select",
-    padding: 12,
-  },
-  screenSourceFitMode: {
-    selector: "#screen-source-fit-mode-select",
+  screenSourceDisplaySettings: {
+    selector: "#screen-source-display-settings > summary",
     padding: 12,
   },
   screenSourceEmbedToggle: {

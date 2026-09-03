@@ -19,7 +19,7 @@ export function createTutorialEntryItems(snapshot = null) {
       },
       {
         id: TUTORIAL_ENTRY_ACTIONS.START_AI_MIRROR,
-        label: "AI镜像教程",
+        label: "AI 镜像教程",
         description: "单独学习右侧 AI 镜像工作区。",
         disabled: false,
       },
