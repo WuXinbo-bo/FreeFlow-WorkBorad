@@ -1509,6 +1509,9 @@ let rightPanelWindowSliderFrame = 0;
 let screenSourceHeaderMenuLayoutFrame = 0;
 let conversationShellMenuLayoutFrame = 0;
 let panelTransformDependentSyncFrame = 0;
+let paneResizeTransactionSequence = 0;
+let activePaneResizeTransactionId = "";
+let paneResizeFinalFrame = 0;
 let screenSourceHeaderMenuOpen = false;
 let screenSourceTargetRefreshGeneration = 0;
 let activeClipboardZone = "";
@@ -1580,6 +1583,9 @@ let rightPanelSwitchLocked = false;
 const windowShapeAutoSyncDisposers = [];
 const desktopWindowShapeScheduler = createWindowShapeSyncScheduler({
   sync: () => {
+    if (document.body?.classList.contains("is-pane-resizing")) {
+      return;
+    }
     if (!IS_DESKTOP_APP || state.desktopShellState.fullClickThrough) {
       scheduleEmbeddedScreenSourceSync();
       return;
@@ -6584,6 +6590,7 @@ function syncStagePanelOrbLabels() {
 function beginPaneResize(side, startX, startY, pointerId) {
   const panel = state.panelLayout?.[side];
   if (!panel) return;
+  const panelElement = getStagePanelElement(side);
   const resizerEl = side === "left" ? leftPaneResizerEl : rightPaneResizerEl;
   if (panel.collapsed || panel.hidden) {
     setPaneCollapsed(side, false);
@@ -6616,6 +6623,16 @@ function beginPaneResize(side, startX, startY, pointerId) {
   let latestClientX = startX;
   let latestClientY = startY;
   let resizeFrame = 0;
+  paneResizeTransactionSequence += 1;
+  const resizeTransactionId = `${Date.now().toString(36)}-${paneResizeTransactionSequence.toString(36)}`;
+  activePaneResizeTransactionId = resizeTransactionId;
+  if (paneResizeFinalFrame) {
+    window.cancelAnimationFrame(paneResizeFinalFrame);
+    paneResizeFinalFrame = 0;
+  }
+  document.body.classList.add("is-pane-resizing");
+  panelElement?.classList.add("is-pane-resize-preview");
+  void DESKTOP_SHELL?.beginInteractiveWindowShape?.({ transactionId: resizeTransactionId });
 
   const flushResize = () => {
     resizeFrame = 0;
@@ -6628,8 +6645,23 @@ function beginPaneResize(side, startX, startY, pointerId) {
     panel.hidden = false;
     panel.mode = "normal";
     clampPanelLayoutSideToWorkspace(side);
-    renderPanelLayoutSide(side);
-    syncPanelDependentUi(side, { syncShape: true });
+    if (panelElement) {
+      panelElement.style.transformOrigin = `${resizeFromLeft ? "right" : "left"} top`;
+      const previewScaleX = panel.width >= initialWidth ? panel.width / initialWidth : 1;
+      const previewScaleY = panel.height >= initialHeight ? panel.height / initialHeight : 1;
+      const clipLeft = resizeFromLeft && panel.width < initialWidth ? initialWidth - panel.width : 0;
+      const clipRight = !resizeFromLeft && panel.width < initialWidth ? initialWidth - panel.width : 0;
+      const clipBottom = panel.height < initialHeight ? initialHeight - panel.height : 0;
+      panelElement.style.transform = `scale(${previewScaleX}, ${previewScaleY})`;
+      panelElement.style.clipPath = `inset(0 ${clipRight}px ${clipBottom}px ${clipLeft}px)`;
+    }
+    if (resizerEl) {
+      const resizerLeft = resizeFromLeft
+        ? Math.round(panel.x - (PANEL_RESIZER_SIZE - PANEL_RESIZER_CORNER_OFFSET))
+        : Math.round(panel.x + panel.width - PANEL_RESIZER_CORNER_OFFSET);
+      resizerEl.style.left = `${resizerLeft}px`;
+      resizerEl.style.top = `${Math.round(panel.y + panel.height - PANEL_RESIZER_CORNER_OFFSET)}px`;
+    }
   };
 
   const handleMove = (event) => {
@@ -6661,8 +6693,35 @@ function beginPaneResize(side, startX, startY, pointerId) {
       }
     } finally {
       document.body.classList.remove("is-resizing");
+      if (activePaneResizeTransactionId === resizeTransactionId) {
+        activePaneResizeTransactionId = "";
+        panelElement?.classList.remove("is-pane-resize-preview");
+        panelElement?.style.removeProperty("transform");
+        panelElement?.style.removeProperty("transform-origin");
+        panelElement?.style.removeProperty("clip-path");
+        renderPanelLayoutSide(side);
+        document.body.classList.remove("is-pane-resizing");
+        window.dispatchEvent(new CustomEvent("freeflow:workspace-panel-resize-end", {
+          detail: {
+            side,
+            transactionId: resizeTransactionId,
+            reason: event?.type || "end",
+          },
+        }));
+        syncPanelDependentUi(side, { syncShape: false });
+        paneResizeFinalFrame = window.requestAnimationFrame(() => {
+          paneResizeFinalFrame = 0;
+          if (activePaneResizeTransactionId || document.body.classList.contains("is-pane-resizing")) {
+            return;
+          }
+          void DESKTOP_SHELL?.endInteractiveWindowShape?.({
+            transactionId: resizeTransactionId,
+            rects: collectDesktopWindowShapeRects(),
+          });
+          requestPanelLayoutFinalShapeSync();
+        });
+      }
       savePanelLayoutState();
-      requestPanelLayoutFinalShapeSync();
     }
   };
 
@@ -7250,7 +7309,12 @@ function bindDesktopWindowShapeAutoSync() {
 }
 
 async function syncDesktopWindowShape() {
-  if (!IS_DESKTOP_APP || !DESKTOP_SHELL?.setWindowShape || state.desktopShellState.fullClickThrough) {
+  if (
+    document.body?.classList.contains("is-pane-resizing") ||
+    !IS_DESKTOP_APP ||
+    !DESKTOP_SHELL?.setWindowShape ||
+    state.desktopShellState.fullClickThrough
+  ) {
     return;
   }
 

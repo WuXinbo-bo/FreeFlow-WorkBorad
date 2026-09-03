@@ -51,6 +51,10 @@ const INSERT_TOOLS = [
   },
 ];
 
+function isWorkspacePanelResizeActive() {
+  return Boolean(document.body?.classList.contains("is-pane-resizing"));
+}
+
 function MouseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
@@ -1811,6 +1815,9 @@ function Canvas2DControls({ engine }) {
       return undefined;
     }
     const updateViewport = () => {
+      if (isWorkspacePanelResizeActive()) {
+        return;
+      }
       const nextWidth = Math.round(rootElement.clientWidth || rootElement.offsetWidth || 0);
       const nextHeight = Math.round(rootElement.clientHeight || rootElement.offsetHeight || 0);
       setUiViewport((current) => {
@@ -1824,13 +1831,21 @@ function Canvas2DControls({ engine }) {
       });
     };
     updateViewport();
+    const handleWorkspacePanelResizeEnd = () => updateViewport();
+    window.addEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
     if (typeof ResizeObserver === "function") {
       const observer = new ResizeObserver(() => updateViewport());
       observer.observe(rootElement);
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
+      };
     }
     window.addEventListener("resize", updateViewport);
-    return () => window.removeEventListener("resize", updateViewport);
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
+    };
   }, []);
 
   useEffect(() => {
@@ -2061,6 +2076,9 @@ function Canvas2DControls({ engine }) {
 
     let frameId = 0;
     const scheduleUpdate = () => {
+      if (isWorkspacePanelResizeActive()) {
+        return;
+      }
       if (frameId) {
         cancelAnimationFrame(frameId);
       }
@@ -2095,6 +2113,7 @@ function Canvas2DControls({ engine }) {
     };
 
     scheduleUpdate();
+    const handleWorkspacePanelResizeEnd = () => scheduleUpdate();
     const resizeObserver =
       typeof ResizeObserver === "function"
         ? new ResizeObserver(() => {
@@ -2113,12 +2132,14 @@ function Canvas2DControls({ engine }) {
       resizeObserver?.observe(topbarStackRef.current);
     }
     window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
     return () => {
       if (frameId) {
         cancelAnimationFrame(frameId);
       }
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
     };
   }, [searchOpen, exportHistoryOpen, uiViewport.width, uiViewport.height]);
 

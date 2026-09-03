@@ -1279,6 +1279,18 @@ body.is-resizing * {
   user-select: none;
 }
 
+body.is-pane-resizing .desktop-clear-stage,
+body.is-pane-resizing .conversation-panel {
+  contain: layout paint;
+}
+
+body.is-pane-resizing .is-pane-resize-preview {
+  will-change: transform;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
 .conversation-panel {
   --composer-offset: 164px;
   position: relative;

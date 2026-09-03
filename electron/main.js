@@ -96,6 +96,7 @@ let desktopShortcutRegistered = false;
 let lastClickThroughToggleAt = 0;
 let mainWindowRendererReadyTimer = null;
 let mainWindowBootShapeLocked = true;
+let mainWindowInteractionShapeLockId = "";
 let desktopKeyboardFocusOwner = "";
 let desktopKeyboardFocusSourceId = "";
 let desktopKeyboardFocusTargetId = "";
@@ -1255,13 +1256,14 @@ function applyWindowShape(rects = windowShapeRects) {
   const nextRects = normalizeShapeRects(rects);
   windowShapeRects = nextRects;
 
-  if (mainWindowBootShapeLocked) {
+  if (mainWindowBootShapeLocked || mainWindowInteractionShapeLockId) {
     pendingWindowShapeRects = nextRects;
     const [width, height] = mainWindow.getContentSize();
     mainWindow.setShape([{ x: 0, y: 0, width, height }]);
     return;
   }
 
+  pendingWindowShapeRects = [];
   if (!windowShapeRects.length) {
     const [width, height] = mainWindow.getContentSize();
     mainWindow.setShape([{ x: 0, y: 0, width, height }]);
@@ -1772,6 +1774,7 @@ function createMainWindow() {
   window.__freeflowReadyToShow = false;
   window.__freeflowRendererReady = false;
   mainWindowBootShapeLocked = true;
+  mainWindowInteractionShapeLockId = "";
   pendingWindowShapeRects = [];
 
   window.setAlwaysOnTop(WINDOW_CONFIG.alwaysOnTop, PIN_LEVEL, PIN_RELATIVE_LEVEL);
@@ -2425,6 +2428,37 @@ ipcMain.handle("desktop-shell:release-boot-shape-lock", (event) => {
   const nextRects = pendingWindowShapeRects.length ? pendingWindowShapeRects : windowShapeRects;
   applyWindowShape(nextRects);
   return getDesktopShellState();
+});
+
+ipcMain.handle("desktop-shell:begin-interactive-window-shape", (_event, payload) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false };
+  }
+
+  const transactionId = String(payload?.transactionId || "").trim();
+  if (!transactionId) {
+    return { ok: false };
+  }
+
+  mainWindowInteractionShapeLockId = transactionId;
+  applyWindowShape(windowShapeRects);
+  return { ok: true, transactionId };
+});
+
+ipcMain.handle("desktop-shell:end-interactive-window-shape", (_event, payload) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false };
+  }
+
+  const transactionId = String(payload?.transactionId || "").trim();
+  if (!transactionId || transactionId !== mainWindowInteractionShapeLockId) {
+    return { ok: false, stale: true };
+  }
+
+  const nextRects = normalizeShapeRects(payload?.rects);
+  mainWindowInteractionShapeLockId = "";
+  applyWindowShape(nextRects.length ? nextRects : pendingWindowShapeRects);
+  return { ok: true, transactionId };
 });
 
 ipcMain.handle("desktop-shell:read-clipboard-text", () => {

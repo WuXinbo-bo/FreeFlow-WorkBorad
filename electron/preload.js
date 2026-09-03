@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld("desktopShell", {
   focusRendererSurface: (payload) => ipcRenderer.invoke("desktop-shell:focus-renderer-surface", payload),
   notifyRendererReady: () => ipcRenderer.send("desktop-shell:renderer-ready"),
   releaseBootShapeLock: () => ipcRenderer.invoke("desktop-shell:release-boot-shape-lock"),
+  beginInteractiveWindowShape: (payload) =>
+    ipcRenderer.invoke("desktop-shell:begin-interactive-window-shape", payload),
+  endInteractiveWindowShape: (payload) =>
+    ipcRenderer.invoke("desktop-shell:end-interactive-window-shape", payload),
   minimize: () => ipcRenderer.invoke("desktop-shell:minimize"),
   close: () => ipcRenderer.invoke("desktop-shell:close"),
   setPinned: (enabled) => ipcRenderer.invoke("desktop-shell:set-pinned", enabled),

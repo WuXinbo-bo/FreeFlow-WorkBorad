@@ -128,6 +128,9 @@ async function main() {
     await runNodeScript("scripts/check-air-canvas-interactions.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
+    await runNodeScript("scripts/check-panel-resize-performance.js", {
+      AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
+    });
   } finally {
     await stopServer(server);
   }

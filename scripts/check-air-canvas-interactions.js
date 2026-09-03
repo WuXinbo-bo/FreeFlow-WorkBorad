@@ -1204,7 +1204,41 @@ async function checkPanelResizeContract(page, viewport) {
   await page.mouse.down();
   await page.mouse.move(cancelBox.x + cancelBox.width / 2 + 12, cancelBox.y + cancelBox.height / 2, { steps: 2 });
   await page.evaluate(() => document.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 })));
-  assert(!await page.evaluate(() => document.body.classList.contains("is-resizing")), "panel resize state survived pointer cancellation", viewport);
+  assert(
+    !await page.evaluate(() =>
+      document.body.classList.contains("is-resizing") || document.body.classList.contains("is-pane-resizing")
+    ),
+    "panel resize state survived pointer cancellation",
+    viewport
+  );
+  await page.mouse.up();
+
+  const lostCaptureBox = await leftResizer.boundingBox();
+  await page.mouse.move(lostCaptureBox.x + lostCaptureBox.width / 2, lostCaptureBox.y + lostCaptureBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(lostCaptureBox.x + lostCaptureBox.width / 2 + 12, lostCaptureBox.y + lostCaptureBox.height / 2, { steps: 2 });
+  await leftResizer.evaluate((element) => element.dispatchEvent(new Event("lostpointercapture")));
+  assert(
+    !await page.evaluate(() =>
+      document.body.classList.contains("is-resizing") || document.body.classList.contains("is-pane-resizing")
+    ),
+    "panel resize state survived lost pointer capture",
+    viewport
+  );
+  await page.mouse.up();
+
+  const blurBox = await leftResizer.boundingBox();
+  await page.mouse.move(blurBox.x + blurBox.width / 2, blurBox.y + blurBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(blurBox.x + blurBox.width / 2 + 12, blurBox.y + blurBox.height / 2, { steps: 2 });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  assert(
+    !await page.evaluate(() =>
+      document.body.classList.contains("is-resizing") || document.body.classList.contains("is-pane-resizing")
+    ),
+    "panel resize state survived window blur",
+    viewport
+  );
   await page.mouse.up();
 
   const rightCollapse = page.locator('[data-stage-panel-action="close"][data-stage-panel-side="right"]');

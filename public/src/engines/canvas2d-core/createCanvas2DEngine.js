@@ -3455,6 +3455,7 @@ export function createCanvas2DEngine(options = {}) {
   const cleanupFns = [];
   let resizeObserver = null;
   let pendingResizeFrame = 0;
+  let paneResizeDeferred = false;
   let lastViewportBudget = null;
   let largeViewportProgressivePending = false;
   let viewportPredictionSample = null;
@@ -9356,6 +9357,14 @@ let tablePointerSelectionState = {
   function resize(options = {}) {
     const immediate = Boolean(options?.immediate);
     const reason = String(options?.reason || "resize").trim() || "resize";
+    if (document.body?.classList.contains("is-pane-resizing")) {
+      paneResizeDeferred = true;
+      if (pendingResizeFrame) {
+        cancelAnimationFrame(pendingResizeFrame);
+        pendingResizeFrame = 0;
+      }
+      return;
+    }
     if (immediate) {
       if (pendingResizeFrame) {
         cancelAnimationFrame(pendingResizeFrame);
@@ -26615,7 +26624,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       imageMemo: refs.imageMemoEditor,
     })));
     cleanupFns.push(canvasUiRuntime.registerHost("shortcut", window));
-    resizeObserver = new ResizeObserver(() => resize());
+    const handleWorkspacePanelResizeEnd = () => {
+      if (!mounted) {
+        return;
+      }
+      paneResizeDeferred = false;
+      resize({ immediate: true, reason: "workspace-panel-resize-end" });
+    };
+    window.addEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
+    cleanupFns.push(() => {
+      window.removeEventListener("freeflow:workspace-panel-resize-end", handleWorkspacePanelResizeEnd);
+    });
+    resizeObserver = new ResizeObserver(() => resize({ reason: "surface-resize" }));
     resizeObserver.observe(refs.surface);
     cleanupFns.push(() => {
       resizeObserver?.disconnect();
@@ -26690,6 +26710,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelAnimationFrame(pendingResizeFrame);
       pendingResizeFrame = 0;
     }
+    paneResizeDeferred = false;
     cancelPendingRichEditorHide();
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
