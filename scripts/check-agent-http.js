@@ -21,6 +21,30 @@ class FakeRuntime extends EventEmitter {
   async getSession(sessionId) {
     return sessionId === "session-1" ? { id: sessionId, revision: 1 } : null;
   }
+
+  async getRuntimeStatus(options) {
+    return { ready: true, options };
+  }
+
+  async discoverProvider(provider) {
+    return { provider, candidates: [{ path: "test-cli" }] };
+  }
+
+  async bindRuntime(provider, selectedPath) {
+    return { ready: true, provider, selectedPath };
+  }
+
+  async listBackups() {
+    return [{ name: "agent-sessions-test.sqlite", createdAt: 1, sizeBytes: 1024 }];
+  }
+
+  async createBackup() {
+    return { name: "agent-sessions-test.sqlite", createdAt: 1, sizeBytes: 1024 };
+  }
+
+  async restoreBackup(name) {
+    return [{ name, createdAt: 1, sizeBytes: 1024 }];
+  }
 }
 
 async function readUntil(reader, expected) {
@@ -37,9 +61,28 @@ async function readUntil(reader, expected) {
 
 async function main() {
   const runtime = new FakeRuntime();
+  const connectionCalls = [];
+  const connections = {
+    async saveConnection(provider, input) {
+      connectionCalls.push({ operation: "connection", provider, input });
+      return { activeProvider: provider };
+    },
+    async refreshModels(provider) {
+      connectionCalls.push({ operation: "models", provider });
+      return { provider, models: [{ id: "test-model" }] };
+    },
+    async selectModel(provider, model) {
+      connectionCalls.push({ operation: "select", provider, model });
+      return { provider, model };
+    },
+    async testConnection(provider) {
+      connectionCalls.push({ operation: "test", provider });
+      return { provider, ready: true };
+    },
+  };
   const app = express();
   app.use(express.json());
-  app.use("/api/agent", createAgentRouter({ runtime, security: createAgentApiSecurity() }));
+  app.use("/api/agent", createAgentRouter({ runtime, connections, security: createAgentApiSecurity() }));
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
   });
@@ -61,6 +104,31 @@ async function main() {
     const authenticated = await fetch(`${baseUrl}/api/agent/sessions`, { headers: { cookie } });
     assert.equal(authenticated.status, 200, "Agent API rejected its capability cookie");
     assert.equal((await authenticated.json()).sessions.length, 1);
+
+    const requestHeaders = { cookie, origin: baseUrl, "content-type": "application/json" };
+    const runtimeResponse = await fetch(baseUrl + "/api/agent/runtime?start=1&refresh=1", { headers: requestHeaders });
+    assert.deepEqual((await runtimeResponse.json()).runtime.options, { start: true, refresh: true });
+    const discovery = await fetch(baseUrl + "/api/agent/providers/claude/runtime/refresh", { method: "POST", headers: requestHeaders });
+    assert.equal((await discovery.json()).provider.provider, "claude");
+    const binding = await fetch(baseUrl + "/api/agent/providers/claude/runtime", {
+      method: "PUT", headers: requestHeaders, body: JSON.stringify({ path: "test-claude" }),
+    });
+    assert.equal((await binding.json()).runtime.selectedPath, "test-claude");
+    await fetch(baseUrl + "/api/agent/providers/claude/connection", {
+      method: "PUT", headers: requestHeaders, body: JSON.stringify({ baseUrl: "https://gateway.test", apiKeyAction: "keep" }),
+    });
+    await fetch(baseUrl + "/api/agent/providers/claude/models/refresh", { method: "POST", headers: requestHeaders });
+    await fetch(baseUrl + "/api/agent/providers/claude/model", {
+      method: "PUT", headers: requestHeaders, body: JSON.stringify({ model: "test-model" }),
+    });
+    await fetch(baseUrl + "/api/agent/providers/claude/test", { method: "POST", headers: requestHeaders });
+    assert.deepEqual(connectionCalls.map((item) => item.operation), ["connection", "models", "select", "test"]);
+    const backup = await fetch(baseUrl + "/api/agent/backups", { method: "POST", headers: requestHeaders });
+    assert.equal(backup.status, 201);
+    const backupList = await fetch(baseUrl + "/api/agent/backups", { headers: requestHeaders });
+    assert.equal((await backupList.json()).backups.length, 1);
+    const restore = await fetch(baseUrl + "/api/agent/backups/agent-sessions-test.sqlite/restore", { method: "POST", headers: requestHeaders });
+    assert.equal((await restore.json()).sessions.length, 1);
 
     const rejectedMutation = await fetch(`${baseUrl}/api/agent/sessions`, {
       method: "POST",
@@ -90,7 +158,7 @@ async function main() {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
-  console.log("[check-agent-http] security, replay, live delivery, and shutdown recovery passed");
+  console.log("[check-agent-http] security, Provider routes, backups, replay, and shutdown recovery passed");
 }
 
 main().catch((error) => {

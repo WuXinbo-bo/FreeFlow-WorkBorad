@@ -41,6 +41,7 @@ function createSession(id, title = "新会话") {
 function summarize(session) {
   return {
     id: session.id,
+    provider: session.provider,
     title: session.title,
     preview: session.preview,
     model: session.model,
@@ -63,19 +64,31 @@ async function main() {
   };
   const runtime = {
     provider: "codex",
+    activeProvider: "codex",
     available: true,
-    authenticated: true,
+    ready: true,
+    workspaceValid: true,
     state: "ready",
     version: "codex-cli test",
-    account: { type: "chatgpt", email: "agent@example.com" },
     models: [{ id: "gpt-5.6-codex", displayName: "GPT-5.6 Codex" }],
+    providers: {
+      codex: {
+        provider: "codex", available: true, configured: true, modelSelected: true, modelValidated: true,
+        ready: true, selectedModel: "gpt-5.6-codex", candidates: [], version: "codex-cli test", error: "",
+      },
+      claude: {
+        provider: "claude", available: false, configured: false, modelSelected: false, modelValidated: false,
+        ready: false, selectedModel: "", candidates: [], version: "", error: "未找到 Claude Code",
+      },
+    },
     settings: {
-      provider: "codex",
-      defaultModel: "gpt-5.6-codex",
+      schemaVersion: 2,
+      activeProvider: "codex",
       workspaceRoot: "D:\\FreeFlow-WorkBoard",
-      reasoningEffort: "high",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      providers: {
+        codex: { provider: "codex", selectedModel: "gpt-5.6-codex", reasoningEffort: "high", approvalPolicy: "on-request", sandboxMode: "workspace-write" },
+        claude: { provider: "claude", selectedModel: "", reasoningEffort: "high", approvalPolicy: "on-request", sandboxMode: "workspace-write" },
+      },
       queueWhileRunning: true,
       showReasoning: true,
     },
@@ -140,7 +153,7 @@ async function main() {
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  page.on("dialog", (dialog) => dialog.accept());
+  page.on("dialog", (dialog) => dialog.accept(dialog.message().includes("编辑排队消息") ? "编辑后的排队消息" : undefined));
 
   await page.route("**/api/agent/**", async (route) => {
     const request = route.request();
@@ -196,7 +209,17 @@ async function main() {
           session.revision += 1;
           return send({ ok: true, steered: true }, 202);
         }
-        session.pendingInputs.push({ id: `pending-${state.nextPending++}`, input: input.text, createdAt: Date.now() });
+        const now = Date.now();
+        session.pendingInputs.push({
+          id: "pending-" + state.nextPending++,
+          input: input.text,
+          mode: input.mode === "steer" ? "steer" : "queue",
+          status: "queued",
+          revision: 0,
+          position: session.pendingInputs.length + 1,
+          createdAt: now,
+          updatedAt: now,
+        });
         session.revision += 1;
         return send({ ok: true, queued: true }, 202);
       }
@@ -223,11 +246,46 @@ async function main() {
       return send({ ok: true, interrupted: true });
     }
     const queueMatch = relative.match(/^\/sessions\/([^/]+)\/queue\/([^/]+)$/);
-    if (queueMatch && method === "DELETE") {
+    if (queueMatch && ["DELETE", "PATCH"].includes(method)) {
       const session = state.sessions.find((item) => item.id === queueMatch[1]);
-      session.pendingInputs = session.pendingInputs.filter((item) => item.id !== queueMatch[2]);
+      const pending = session.pendingInputs.find((item) => item.id === queueMatch[2]);
+      if (method === "DELETE") session.pendingInputs = session.pendingInputs.filter((item) => item.id !== queueMatch[2]);
+      else {
+        const input = request.postDataJSON();
+        if (Number(input.revision) !== Number(pending.revision)) return send({ ok: false, code: "QUEUE_REVISION_CONFLICT", error: "排队消息已更新" }, 409);
+        pending.input = input.text;
+        pending.status = "queued";
+        pending.error = null;
+        pending.revision += 1;
+        pending.updatedAt = Date.now();
+      }
       session.revision += 1;
-      return send({ ok: true, removed: true });
+      return send(method === "DELETE" ? { ok: true, removed: true } : { ok: true, pending: clone(pending) });
+    }
+    const queueActionMatch = relative.match(/^\/sessions\/([^/]+)\/queue\/([^/]+)\/(move|promote|retry)$/);
+    if (queueActionMatch && method === "POST") {
+      const session = state.sessions.find((item) => item.id === queueActionMatch[1]);
+      const pending = session.pendingInputs.find((item) => item.id === queueActionMatch[2]);
+      const operation = queueActionMatch[3];
+      if (operation === "move") {
+        const current = session.pendingInputs.indexOf(pending);
+        const target = request.postDataJSON().direction === "up" ? current - 1 : current + 1;
+        if (target >= 0 && target < session.pendingInputs.length) {
+          [session.pendingInputs[current], session.pendingInputs[target]] = [session.pendingInputs[target], session.pendingInputs[current]];
+          session.pendingInputs.forEach((item, index) => { item.position = index + 1; item.revision += 1; });
+        }
+      }
+      if (operation === "promote") {
+        session.pendingInputs.forEach((item) => { item.mode = item === pending ? "steer" : "queue"; item.revision += 1; });
+        session.pendingInputs = [pending, ...session.pendingInputs.filter((item) => item !== pending)];
+      }
+      if (operation === "retry") {
+        pending.status = "queued";
+        pending.error = null;
+        pending.revision += 1;
+      }
+      session.revision += 1;
+      return send({ ok: true, pending: clone(pending) });
     }
     const attachmentCreateMatch = relative.match(/^\/sessions\/([^/]+)\/attachments$/);
     if (attachmentCreateMatch && method === "POST") {
@@ -298,11 +356,30 @@ async function main() {
     await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector("#chat-log")?.textContent.includes("停止后立即重发"));
 
-    await page.locator("#prompt-input").fill("排队消息");
+    await page.locator("#prompt-input").fill("排队消息 A");
     await page.locator("#agent-submit-mode").selectOption("queue");
     await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-    await page.waitForFunction(() => document.querySelector(".agent-queue")?.textContent.includes("排队消息"));
-    await page.locator("[data-agent-remove-queue]").click();
+    await page.locator("#prompt-input").fill("排队消息 B");
+    await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
+    await page.waitForFunction(() => document.querySelectorAll(".agent-queue").length === 2);
+    await page.locator('[data-agent-queue-action="up"]').last().click();
+    await page.waitForFunction(() => document.querySelector(".agent-queue p")?.textContent.includes("排队消息 B"));
+    await page.locator('[data-agent-queue-action="edit"]').first().click();
+    await page.waitForFunction(() => document.querySelector(".agent-queue p")?.textContent.includes("编辑后的排队消息"));
+    await page.locator('[data-agent-queue-action="promote"]').first().click();
+    await page.waitForFunction(() => document.querySelector(".agent-queue strong")?.textContent.includes("即时引导"));
+    const failedPending = initial.pendingInputs[0];
+    failedPending.status = "failed";
+    failedPending.error = { message: "模拟派发失败", recoverable: true };
+    failedPending.revision += 1;
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "queue.failed", payload: {}, createdAt: Date.now() });
+    await page.waitForFunction(() => document.querySelector(".agent-queue.is-failed")?.textContent.includes("模拟派发失败"));
+    await page.locator('[data-agent-queue-action="retry"]').click();
+    await page.waitForFunction(() => !document.querySelector(".agent-queue.is-failed"));
+    await page.locator('[data-agent-queue-action="remove"]').first().click();
+    await page.waitForFunction(() => document.querySelectorAll(".agent-queue").length === 1);
+    await page.locator('[data-agent-queue-action="remove"]').click();
     await page.waitForFunction(() => !document.querySelector(".agent-queue"));
 
     const activeTurn = initial.turns.at(-1);
@@ -400,10 +477,11 @@ async function main() {
       const panel = document.querySelector(".conversation-panel").getBoundingClientRect();
       const thread = document.querySelector("#thread-viewport").getBoundingClientRect();
       const composer = document.querySelector("#chat-form").getBoundingClientRect();
+      const prompt = document.querySelector("#prompt-input");
       const activity = document.querySelector(".agent-activity pre")?.getBoundingClientRect();
-      return { panel, thread, composer, activity, horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      return { panel, thread, composer, activity, promptOverflow: prompt.scrollHeight - prompt.clientHeight, horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
     });
-    assert(layout.thread.bottom <= layout.composer.top + 1 && layout.composer.bottom <= layout.panel.bottom + 1 && (!layout.activity || layout.activity.right <= layout.panel.right + 1) && layout.horizontalOverflow <= 1, "compact Agent layout overlaps or overflows", layout);
+    assert(layout.thread.bottom <= layout.composer.top + 1 && layout.composer.bottom <= layout.panel.bottom + 1 && (!layout.activity || layout.activity.right <= layout.panel.right + 1) && layout.promptOverflow <= 1 && layout.horizontalOverflow <= 1, "compact Agent layout overlaps or overflows", layout);
     assert(pageErrors.length === 0, "Agent interactions caused page errors", pageErrors);
     assert(forked.id !== second.id, "fork did not create a distinct session");
   } finally {
@@ -411,7 +489,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("[check-agent-browser] lifecycle, recovery, queue, approval, attachment, and layout paths passed");
+  console.log("[check-agent-browser] Provider lifecycle, queue recovery, approval, attachment, and layout paths passed");
 }
 
 main().catch((error) => {

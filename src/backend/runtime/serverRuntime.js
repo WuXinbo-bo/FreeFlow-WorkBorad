@@ -22,6 +22,7 @@ const { AgentRuntime } = require("../agent/agentRuntime");
 const agentSettingsService = require("../agent/agentSettingsService");
 const { createAgentApiSecurity } = require("../agent/agentApiSecurity");
 const { createAgentRouter } = require("../agent/agentRoutes");
+const { createAgentConnectionService } = require("../agent/agentConnectionService");
 const { registerAppRoutes } = require("../routes");
 const packageInfo = require("../../../package.json");
 
@@ -35,6 +36,8 @@ const {
   AGENT_SCREENSHOT_FILE,
   AGENT_DATABASE_FILE,
   AGENT_ATTACHMENTS_DIR,
+  AGENT_PROFILES_DIR,
+  AGENT_BACKUPS_DIR,
 } = paths;
 const {
   PORT,
@@ -112,11 +115,14 @@ let modelProviderSettingsCache = null;
 const agentRuntime = new AgentRuntime({
   databaseFile: AGENT_DATABASE_FILE,
   attachmentsDir: AGENT_ATTACHMENTS_DIR,
+  profilesDir: AGENT_PROFILES_DIR,
+  backupsDir: AGENT_BACKUPS_DIR,
   appVersion: packageInfo.version,
   settingsService: agentSettingsService,
   permissionsService,
   legacySessionService: sessionService,
 });
+const agentConnectionService = createAgentConnectionService({ settingsService: agentSettingsService });
 
 let desktopBridge = {
   chatWithDoubao: null,
@@ -129,7 +135,7 @@ function setStaticValidationHeaders(res) {
 
 app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
-app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity() }));
+app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity(), connections: agentConnectionService }));
 app.use(
   "/vendor",
   express.static(NODE_MODULES_DIR, {

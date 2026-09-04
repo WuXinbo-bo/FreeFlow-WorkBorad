@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const fs = require("fs/promises");
+const { execFileSync } = require("child_process");
 const { CREDENTIALS_FILE, CREDENTIALS_KEY_FILE } = require("../config/paths");
 const { atomicWriteFile, atomicWriteJsonFile } = require("../utils/atomicWrite");
 
@@ -29,8 +30,31 @@ async function getFallbackKey() {
   return key;
 }
 
+function protectWithDpapi(value, operation) {
+  const method = operation === "protect" ? "Protect" : "Unprotect";
+  const script = `Add-Type -AssemblyName System.Security;$raw=[Console]::In.ReadToEnd();$bytes=[Convert]::FromBase64String($raw);$out=[Security.Cryptography.ProtectedData]::${method}($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Out.Write([Convert]::ToBase64String($out))`;
+  const result = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    input: Buffer.from(value).toString("base64"),
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 15000,
+    maxBuffer: 1024 * 1024,
+  });
+  return Buffer.from(String(result || "").trim(), "base64");
+}
+
 async function encryptSecret(value) {
   const text = String(value || "");
+  if (process.platform === "win32") {
+    try {
+      return {
+        scheme: "dpapi-current-user",
+        value: protectWithDpapi(Buffer.from(text, "utf8"), "protect").toString("base64"),
+      };
+    } catch {
+      // Portable and constrained Windows environments use the local fallback.
+    }
+  }
   const key = await getFallbackKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
@@ -44,7 +68,12 @@ async function encryptSecret(value) {
 }
 
 async function decryptSecret(entry) {
-  if (!entry || entry.scheme !== "aes-256-gcm") return "";
+  if (!entry) return "";
+  if (entry.scheme === "dpapi-current-user") {
+    if (process.platform !== "win32") return "";
+    return protectWithDpapi(Buffer.from(entry.value, "base64"), "unprotect").toString("utf8");
+  }
+  if (entry.scheme !== "aes-256-gcm") return "";
   const key = await getFallbackKey();
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(entry.iv, "base64"));
   decipher.setAuthTag(Buffer.from(entry.tag, "base64"));

@@ -8,7 +8,7 @@ function sendError(res, error) {
   });
 }
 
-function createAgentRouter({ runtime, security }) {
+function createAgentRouter({ runtime, security, connections }) {
   const router = express.Router();
 
   router.get("/bootstrap", security.bootstrap);
@@ -30,25 +30,73 @@ function createAgentRouter({ runtime, security }) {
     }
   });
 
-  router.post("/runtime/login", async (req, res) => {
+  router.post("/providers/:provider/runtime/refresh", async (req, res) => {
     try {
-      res.json({ ok: true, login: await runtime.startLogin(req.body || {}) });
+      res.json({ ok: true, provider: await runtime.discoverProvider(req.params.provider) });
     } catch (error) {
       sendError(res, error);
     }
   });
 
-  router.post("/runtime/login/cancel", async (req, res) => {
+  router.put("/providers/:provider/runtime", async (req, res) => {
     try {
-      res.json({ ok: true, ...(await runtime.cancelLogin(req.body?.loginId)) });
+      res.json({ ok: true, runtime: await runtime.bindRuntime(req.params.provider, req.body?.path) });
     } catch (error) {
       sendError(res, error);
     }
   });
 
-  router.post("/runtime/logout", async (_req, res) => {
+  router.put("/providers/:provider/connection", async (req, res) => {
     try {
-      res.json({ ok: true, runtime: await runtime.logout() });
+      res.json({ ok: true, settings: await connections.saveConnection(req.params.provider, req.body || {}) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/providers/:provider/models/refresh", async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await connections.refreshModels(req.params.provider)) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.put("/providers/:provider/model", async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await connections.selectModel(req.params.provider, req.body?.model)) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/providers/:provider/test", async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await connections.testConnection(req.params.provider)) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/backups", async (_req, res) => {
+    try {
+      res.json({ ok: true, backups: await runtime.listBackups() });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/backups", async (_req, res) => {
+    try {
+      res.status(201).json({ ok: true, backup: await runtime.createBackup() });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/backups/:name/restore", async (req, res) => {
+    try {
+      res.json({ ok: true, backups: await runtime.restoreBackup(req.params.name), sessions: await runtime.listSessions() });
     } catch (error) {
       sendError(res, error);
     }
@@ -123,6 +171,38 @@ function createAgentRouter({ runtime, security }) {
   router.delete("/sessions/:sessionId/queue/:pendingId", async (req, res) => {
     try {
       res.json({ ok: true, removed: await runtime.removePendingInput(req.params.sessionId, req.params.pendingId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.patch("/sessions/:sessionId/queue/:pendingId", async (req, res) => {
+    try {
+      res.json({ ok: true, pending: await runtime.updatePendingInput(req.params.sessionId, req.params.pendingId, req.body || {}) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/sessions/:sessionId/queue/:pendingId/move", async (req, res) => {
+    try {
+      res.json({ ok: true, pending: await runtime.movePendingInput(req.params.sessionId, req.params.pendingId, req.body?.direction) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/sessions/:sessionId/queue/:pendingId/promote", async (req, res) => {
+    try {
+      res.json({ ok: true, pending: await runtime.promotePendingInput(req.params.sessionId, req.params.pendingId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/sessions/:sessionId/queue/:pendingId/retry", async (req, res) => {
+    try {
+      res.json({ ok: true, pending: await runtime.retryPendingInput(req.params.sessionId, req.params.pendingId) });
     } catch (error) {
       sendError(res, error);
     }

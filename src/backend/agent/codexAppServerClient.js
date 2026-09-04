@@ -35,6 +35,8 @@ class CodexAppServerClient extends EventEmitter {
     this.command = options.command || "codex";
     this.cwd = options.cwd || process.cwd();
     this.clientVersion = options.clientVersion || "0.0.0";
+    this.args = Array.isArray(options.args) && options.args.length ? [...options.args] : ["app-server", "--stdio"];
+    this.env = options.env && typeof options.env === "object" ? { ...options.env } : undefined;
     this.requestTimeoutMs = Math.max(1000, Number(options.requestTimeoutMs) || 15000);
     this.process = null;
     this.pending = new Map();
@@ -50,8 +52,9 @@ class CodexAppServerClient extends EventEmitter {
     this.stopping = false;
     this.generation += 1;
     const generation = this.generation;
-    const child = spawn(this.command, ["app-server", "--stdio"], {
+    const child = spawn(this.command, this.args, {
       cwd: this.cwd,
+      env: this.env,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
+const AGENT_STORE_SCHEMA_VERSION = 2;
+
 function now() {
   return Date.now();
 }
@@ -28,8 +30,9 @@ function titleFromInput(value) {
 }
 
 class AgentStore {
-  constructor(databaseFile) {
+  constructor(databaseFile, options = {}) {
     this.databaseFile = path.resolve(databaseFile);
+    this.backupsDir = path.resolve(options.backupsDir || path.join(path.dirname(this.databaseFile), "AgentBackups"));
     this.db = null;
   }
 
@@ -38,6 +41,11 @@ class AgentStore {
     fs.mkdirSync(path.dirname(this.databaseFile), { recursive: true });
     this.db = new DatabaseSync(this.databaseFile);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;");
+    const integrity = String(this.db.prepare("PRAGMA quick_check").get()?.quick_check || "");
+    if (integrity !== "ok") throw new Error(`Agent 数据库完整性检查失败：${integrity || "unknown"}`);
+    const currentVersion = Number(this.db.prepare("PRAGMA user_version").get()?.user_version || 0);
+    const hasExistingSchema = Boolean(this.db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'agent_sessions'").get());
+    if (hasExistingSchema && currentVersion < AGENT_STORE_SCHEMA_VERSION) this.createBackup(`schema-v${currentVersion}-to-v${AGENT_STORE_SCHEMA_VERSION}`);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_sessions (
         id TEXT PRIMARY KEY,
@@ -51,6 +59,7 @@ class AgentStore {
         sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
         status TEXT NOT NULL DEFAULT 'idle',
         revision INTEGER NOT NULL DEFAULT 0,
+        runtime_binding_json TEXT NOT NULL DEFAULT '{}',
         legacy_source_id TEXT UNIQUE,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -88,9 +97,14 @@ class AgentStore {
         client_request_id TEXT NOT NULL UNIQUE,
         input_text TEXT NOT NULL,
         attachments_json TEXT NOT NULL DEFAULT '[]',
-        created_at INTEGER NOT NULL
+        mode TEXT NOT NULL DEFAULT 'queue',
+        status TEXT NOT NULL DEFAULT 'queued',
+        revision INTEGER NOT NULL DEFAULT 0,
+        position INTEGER NOT NULL DEFAULT 0,
+        error_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS agent_pending_session_idx ON agent_pending_inputs(session_id, created_at);
       CREATE TABLE IF NOT EXISTS agent_approvals (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -127,7 +141,76 @@ class AgentStore {
         value TEXT NOT NULL
       );
     `);
+    this._ensureColumn("agent_sessions", "runtime_binding_json", "TEXT NOT NULL DEFAULT '{}'");
+    this._ensureColumn("agent_pending_inputs", "mode", "TEXT NOT NULL DEFAULT 'queue'");
+    this._ensureColumn("agent_pending_inputs", "status", "TEXT NOT NULL DEFAULT 'queued'");
+    this._ensureColumn("agent_pending_inputs", "revision", "INTEGER NOT NULL DEFAULT 0");
+    this._ensureColumn("agent_pending_inputs", "position", "INTEGER NOT NULL DEFAULT 0");
+    this._ensureColumn("agent_pending_inputs", "error_json", "TEXT");
+    this._ensureColumn("agent_pending_inputs", "updated_at", "INTEGER NOT NULL DEFAULT 0");
+    this.db.exec(`
+      UPDATE agent_pending_inputs SET position = created_at WHERE position = 0;
+      UPDATE agent_pending_inputs SET updated_at = created_at WHERE updated_at = 0;
+      CREATE INDEX IF NOT EXISTS agent_pending_session_idx ON agent_pending_inputs(session_id, status, position, created_at);
+      PRAGMA user_version = ${AGENT_STORE_SCHEMA_VERSION};
+    `);
     return this;
+  }
+
+  _ensureColumn(table, column, definition) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+
+  createBackup(reason = "manual") {
+    if (!this.db || !fs.existsSync(this.databaseFile)) return null;
+    this.db.exec("PRAGMA wal_checkpoint(FULL)");
+    fs.mkdirSync(this.backupsDir, { recursive: true });
+    const safeReason = String(reason || "manual").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 48) || "manual";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const name = `agent-sessions-${stamp}-${safeReason}.sqlite`;
+    const target = path.join(this.backupsDir, name);
+    fs.copyFileSync(this.databaseFile, target, fs.constants.COPYFILE_EXCL);
+    return { name, path: target, createdAt: fs.statSync(target).mtimeMs, sizeBytes: fs.statSync(target).size };
+  }
+
+  listBackups() {
+    try {
+      return fs.readdirSync(this.backupsDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /^agent-sessions-.+\.sqlite$/i.test(entry.name))
+        .map((entry) => {
+          const stat = fs.statSync(path.join(this.backupsDir, entry.name));
+          return { name: entry.name, createdAt: stat.mtimeMs, sizeBytes: stat.size };
+        })
+        .sort((left, right) => right.createdAt - left.createdAt);
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  restoreBackup(name) {
+    const safeName = path.basename(String(name || ""));
+    if (!safeName || safeName !== String(name || "") || !/^agent-sessions-.+\.sqlite$/i.test(safeName)) throw new Error("备份文件名无效");
+    const source = path.join(this.backupsDir, safeName);
+    if (!fs.existsSync(source)) throw new Error("会话备份不存在");
+    const candidate = new DatabaseSync(source, { readOnly: true });
+    try {
+      const integrity = String(candidate.prepare("PRAGMA quick_check").get()?.quick_check || "");
+      if (integrity !== "ok") throw new Error(`会话备份完整性检查失败：${integrity || "unknown"}`);
+    } finally {
+      candidate.close();
+    }
+    this.createBackup("before-restore");
+    this.close();
+    try {
+      fs.rmSync(`${this.databaseFile}-wal`, { force: true });
+      fs.rmSync(`${this.databaseFile}-shm`, { force: true });
+      fs.copyFileSync(source, this.databaseFile);
+    } finally {
+      this.open();
+    }
+    return this.listBackups();
   }
 
   close() {
@@ -160,6 +243,14 @@ class AgentStore {
         db.prepare("UPDATE agent_approvals SET status = 'dismissed', resolved_at = ? WHERE session_id = ? AND status = 'pending'")
           .run(completedAt, session.id);
         db.prepare("UPDATE agent_sessions SET status = 'idle' WHERE id = ?").run(session.id);
+      });
+      events.push(event);
+    }
+    const interruptedQueues = this.db.prepare("SELECT id, session_id FROM agent_pending_inputs WHERE status = 'dispatching'").all();
+    for (const pending of interruptedQueues) {
+      const event = this.commit(pending.session_id, "queue.failed", { id: pending.id, error: { message, recoverable: true } }, (db) => {
+        db.prepare("UPDATE agent_pending_inputs SET status = 'failed', error_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
+          .run(JSON.stringify({ message, recoverable: true }), now(), pending.id);
       });
       events.push(event);
     }
@@ -213,6 +304,7 @@ class AgentStore {
       reasoningEffort: String(input.reasoningEffort || "").trim(),
       approvalPolicy: String(input.approvalPolicy || "on-request").trim(),
       sandboxMode: String(input.sandboxMode || "workspace-write").trim(),
+      runtimeBinding: input.runtimeBinding && typeof input.runtimeBinding === "object" ? input.runtimeBinding : {},
       status: input.status || "idle",
       legacySourceId: input.legacySourceId || null,
       createdAt,
@@ -221,12 +313,12 @@ class AgentStore {
       this.db.prepare(`
         INSERT INTO agent_sessions(
           id, provider, provider_thread_id, title, workspace_root, model, reasoning_effort,
-          approval_policy, sandbox_mode, status, revision, legacy_source_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+          approval_policy, sandbox_mode, status, revision, runtime_binding_json, legacy_source_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
       `).run(
         row.id, row.provider, row.providerThreadId, row.title, row.workspaceRoot, row.model,
         row.reasoningEffort, row.approvalPolicy, row.sandboxMode, row.status,
-        row.legacySourceId, row.createdAt, row.createdAt
+        JSON.stringify(row.runtimeBinding), row.legacySourceId, row.createdAt, row.createdAt
       );
       return this._insertEvent(id, "session.created", { session: row });
     });
@@ -263,6 +355,7 @@ class AgentStore {
       reasoningEffort: row.reasoning_effort,
       approvalPolicy: row.approval_policy,
       sandboxMode: row.sandbox_mode,
+      runtimeBinding: parseJson(row.runtime_binding_json, {}),
       status: row.status,
       revision: Number(row.revision),
       legacySourceId: row.legacy_source_id || "",
@@ -289,10 +382,7 @@ class AgentStore {
       id: row.id, turnId: row.turn_id || "", providerRequestId: row.provider_request_id, method: row.method,
       params: parseJson(row.params_json, {}), status: row.status, createdAt: Number(row.created_at),
     }));
-    const pendingInputs = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? ORDER BY created_at").all(sessionId).map((row) => ({
-      id: row.id, clientRequestId: row.client_request_id, input: row.input_text,
-      attachments: parseJson(row.attachments_json, []), createdAt: Number(row.created_at),
-    }));
+    const pendingInputs = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, position, created_at").all(sessionId).map((row) => this._mapPendingInput(row));
     const activities = this.db.prepare(`
       SELECT revision, type, payload_json, created_at FROM agent_events
       WHERE session_id = ? AND type NOT IN ('message.delta', 'message.completed')
@@ -314,8 +404,8 @@ class AgentStore {
     return { sessionId, revision: Number(row.revision), type: row.type, payload: parseJson(row.payload_json, {}), createdAt: Number(row.created_at) };
   }
 
-  findSessionByThread(providerThreadId) {
-    const row = this.db.prepare("SELECT id FROM agent_sessions WHERE provider = 'codex' AND provider_thread_id = ?").get(providerThreadId);
+  findSessionByThread(providerThreadId, provider = "codex") {
+    const row = this.db.prepare("SELECT id FROM agent_sessions WHERE provider = ? AND provider_thread_id = ?").get(provider, providerThreadId);
     return row ? this.getSessionSummary(row.id) : null;
   }
 
@@ -333,11 +423,12 @@ class AgentStore {
   }
 
   bindThread(sessionId, threadId, settings = {}) {
-    return this.commit(sessionId, "session.thread-bound", { threadId, provider: "codex" }, (db) => {
+    const provider = settings.provider === "claude" ? "claude" : "codex";
+    return this.commit(sessionId, "session.thread-bound", { threadId, provider }, (db) => {
       db.prepare(`
-        UPDATE agent_sessions SET provider = 'codex', provider_thread_id = ?, workspace_root = ?, model = ?,
-          reasoning_effort = ?, approval_policy = ?, sandbox_mode = ?, status = 'idle' WHERE id = ?
-      `).run(threadId, settings.workspaceRoot, settings.model || "", settings.reasoningEffort || "", settings.approvalPolicy, settings.sandboxMode, sessionId);
+        UPDATE agent_sessions SET provider = ?, provider_thread_id = ?, workspace_root = ?, model = ?,
+          reasoning_effort = ?, approval_policy = ?, sandbox_mode = ?, runtime_binding_json = ? WHERE id = ?
+      `).run(provider, threadId, settings.workspaceRoot, settings.model || "", settings.reasoningEffort || "", settings.approvalPolicy, settings.sandboxMode, JSON.stringify(settings.runtimeBinding || {}), sessionId);
     });
   }
 
@@ -379,14 +470,24 @@ class AgentStore {
   findPendingInputByClientRequestId(sessionId, clientRequestId) {
     const row = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? AND client_request_id = ? LIMIT 1")
       .get(sessionId, clientRequestId);
-    return row ? {
+    return row ? this._mapPendingInput(row) : null;
+  }
+
+  _mapPendingInput(row) {
+    return {
       id: row.id,
       sessionId: row.session_id,
       clientRequestId: row.client_request_id,
       input: row.input_text,
       attachments: parseJson(row.attachments_json, []),
+      mode: row.mode === "steer" ? "steer" : "queue",
+      status: row.status || "queued",
+      revision: Number(row.revision || 0),
+      position: Number(row.position || 0),
+      error: parseJson(row.error_json, null),
       createdAt: Number(row.created_at),
-    } : null;
+      updatedAt: Number(row.updated_at || row.created_at),
+    };
   }
 
   bindTurn(sessionId, localTurnId, providerTurnId) {
@@ -458,29 +559,116 @@ class AgentStore {
   queueInput(sessionId, input = {}) {
     const id = crypto.randomUUID();
     const createdAt = now();
-    const event = this.commit(sessionId, "queue.added", { id, input: input.text, clientRequestId: input.clientRequestId }, (db) => {
-      db.prepare("INSERT INTO agent_pending_inputs(id, session_id, client_request_id, input_text, attachments_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, sessionId, input.clientRequestId, input.text, JSON.stringify(input.attachments || []), createdAt);
+    const mode = input.mode === "steer" ? "steer" : "queue";
+    const position = Number(this.db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS position FROM agent_pending_inputs WHERE session_id = ?").get(sessionId)?.position || 1);
+    const event = this.commit(sessionId, "queue.added", { id, input: input.text, clientRequestId: input.clientRequestId, mode }, (db) => {
+      db.prepare(`INSERT INTO agent_pending_inputs(
+        id, session_id, client_request_id, input_text, attachments_json, mode, status, revision, position, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?)`)
+        .run(id, sessionId, input.clientRequestId, input.text, JSON.stringify(input.attachments || []), mode, position, createdAt, createdAt);
     });
-    return { pending: { id, sessionId, clientRequestId: input.clientRequestId, input: input.text, attachments: input.attachments || [], createdAt }, event };
+    return { pending: this.findPendingInputByClientRequestId(sessionId, input.clientRequestId), event };
   }
 
-  takeNextInput(sessionId) {
+  takeNextInput(sessionId, pendingId = "") {
     return this._transaction(() => {
-      const row = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? ORDER BY created_at LIMIT 1").get(sessionId);
+      const row = pendingId
+        ? this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? AND id = ? AND status = 'queued'").get(sessionId, pendingId)
+        : this.db.prepare(`SELECT * FROM agent_pending_inputs
+          WHERE session_id = ? AND status = 'queued'
+          ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, position, created_at LIMIT 1`).get(sessionId);
       if (!row) return null;
-      this.db.prepare("DELETE FROM agent_pending_inputs WHERE id = ?").run(row.id);
-      const event = this._insertEvent(sessionId, "queue.removed", { id: row.id });
+      const updatedAt = now();
+      this.db.prepare("UPDATE agent_pending_inputs SET status = 'dispatching', revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(updatedAt, row.id);
+      const event = this._insertEvent(sessionId, "queue.dispatching", { id: row.id });
       return {
-        input: { id: row.id, clientRequestId: row.client_request_id, text: row.input_text, attachments: parseJson(row.attachments_json, []) },
+        input: this._mapPendingInput({ ...row, status: "dispatching", revision: Number(row.revision || 0) + 1, updated_at: updatedAt }),
         event,
       };
     });
   }
 
-  removePendingInput(sessionId, pendingId) {
+  completePendingInput(sessionId, pendingId) {
     const row = this.db.prepare("SELECT id FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
     if (!row) return null;
+    return this.commit(sessionId, "queue.removed", { id: pendingId }, (db) => {
+      db.prepare("DELETE FROM agent_pending_inputs WHERE id = ? AND session_id = ?").run(pendingId, sessionId);
+    });
+  }
+
+  failPendingInput(sessionId, pendingId, error) {
+    const row = this.db.prepare("SELECT id FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
+    if (!row) return null;
+    const detail = { message: String(error?.message || error || "消息派发失败"), recoverable: true };
+    return this.commit(sessionId, "queue.failed", { id: pendingId, error: detail }, (db) => {
+      db.prepare("UPDATE agent_pending_inputs SET status = 'failed', error_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(detail), now(), pendingId);
+    });
+  }
+
+  retryPendingInput(sessionId, pendingId) {
+    const row = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
+    if (!row) return null;
+    if (row.status !== "failed") throw new Error("只有失败的排队消息可以重试");
+    const clientRequestId = crypto.randomUUID();
+    const event = this.commit(sessionId, "queue.retried", { id: pendingId, clientRequestId }, (db) => {
+      db.prepare("UPDATE agent_pending_inputs SET client_request_id = ?, status = 'queued', error_json = NULL, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(clientRequestId, now(), pendingId);
+    });
+    return { pending: this.findPendingInputByClientRequestId(sessionId, clientRequestId), event };
+  }
+
+  updatePendingInput(sessionId, pendingId, input = {}) {
+    const row = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
+    if (!row) return null;
+    if (!new Set(["queued", "failed"]).has(row.status)) throw new Error("该消息正在派发，暂时不能编辑");
+    if (input.revision != null && Number(input.revision) !== Number(row.revision)) throw Object.assign(new Error("排队消息已更新，请刷新后重试"), { statusCode: 409, code: "QUEUE_REVISION_CONFLICT" });
+    const text = input.text == null ? row.input_text : String(input.text).trim();
+    const attachments = input.attachmentIds == null ? parseJson(row.attachments_json, []) : input.attachmentIds;
+    if (!text && !attachments.length) throw new Error("消息和附件不能同时为空");
+    const mode = input.mode == null ? row.mode : input.mode === "steer" ? "steer" : "queue";
+    const event = this.commit(sessionId, "queue.updated", { id: pendingId }, (db) => {
+      db.prepare("UPDATE agent_pending_inputs SET input_text = ?, attachments_json = ?, mode = ?, status = 'queued', error_json = NULL, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(text || "请处理附件。", JSON.stringify(attachments), mode, now(), pendingId);
+    });
+    return { pending: this._mapPendingInput(this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ?").get(pendingId)), event };
+  }
+
+  movePendingInput(sessionId, pendingId, direction) {
+    const rows = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? AND status IN ('queued','failed') ORDER BY position, created_at").all(sessionId);
+    const index = rows.findIndex((row) => row.id === pendingId);
+    if (index < 0) return null;
+    const targetIndex = direction === "up" ? index - 1 : direction === "down" ? index + 1 : -1;
+    if (targetIndex < 0 || targetIndex >= rows.length) return { pending: this._mapPendingInput(rows[index]), event: null };
+    const target = rows[targetIndex];
+    const event = this.commit(sessionId, "queue.reordered", { id: pendingId, direction }, (db) => {
+      db.prepare("UPDATE agent_pending_inputs SET position = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(target.position, now(), rows[index].id);
+      db.prepare("UPDATE agent_pending_inputs SET position = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(rows[index].position, now(), target.id);
+    });
+    const updated = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ?").get(pendingId);
+    return { pending: this._mapPendingInput(updated), event };
+  }
+
+  promotePendingInput(sessionId, pendingId) {
+    const row = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
+    if (!row) return null;
+    if (row.status === "dispatching") throw new Error("该消息已经开始派发");
+    const minimum = Number(this.db.prepare("SELECT COALESCE(MIN(position), 1) - 1 AS position FROM agent_pending_inputs WHERE session_id = ?").get(sessionId)?.position || 0);
+    const event = this.commit(sessionId, "queue.promoted", { id: pendingId }, (db) => {
+      db.prepare("UPDATE agent_pending_inputs SET mode = 'steer', status = 'queued', position = ?, error_json = NULL, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(minimum, now(), pendingId);
+      db.prepare("UPDATE agent_pending_inputs SET mode = 'queue', revision = revision + 1, updated_at = ? WHERE session_id = ? AND id <> ? AND mode = 'steer'")
+        .run(now(), sessionId, pendingId);
+    });
+    const updated = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE id = ?").get(pendingId);
+    return { pending: this._mapPendingInput(updated), event };
+  }
+
+  removePendingInput(sessionId, pendingId) {
+    const row = this.db.prepare("SELECT id, status FROM agent_pending_inputs WHERE id = ? AND session_id = ?").get(pendingId, sessionId);
+    if (!row) return null;
+    if (row.status === "dispatching") throw new Error("该消息正在派发，不能移除");
     return this.commit(sessionId, "queue.removed", { id: pendingId }, (db) => {
       db.prepare("DELETE FROM agent_pending_inputs WHERE id = ? AND session_id = ?").run(pendingId, sessionId);
     });

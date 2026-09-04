@@ -56,10 +56,11 @@ function activityLabel(payload = {}) {
 function activityDetails(payload = {}) {
   const item = payload.item && typeof payload.item === "object" ? payload.item : {};
   const params = payload.params && typeof payload.params === "object" ? payload.params : {};
-  return String(
+  const detail = payload.detail && typeof payload.detail === "object" ? payload.detail : {};
+  const value =
     item.aggregatedOutput || item.output || item.diff || params.diff || params.delta ||
-    payload.summary || item.command || ""
-  ).trim();
+    detail.output || detail.input || payload.summary || item.command || "";
+  return (typeof value === "string" ? value : JSON.stringify(value, null, 2)).trim();
 }
 
 function approvalLabel(method = "") {
@@ -123,6 +124,17 @@ export function createAgentController(options = {}) {
   let historyOpen = false;
   let disconnected = false;
 
+  async function handleDataRestored() {
+    if (!initialized) return;
+    ++selectionGeneration;
+    unsubscribe?.();
+    unsubscribe = null;
+    session = null;
+    localStorage.removeItem(CURRENT_SESSION_KEY);
+    await refreshRuntime();
+    setStatus("AI 会话备份已恢复", "success");
+  }
+
   function isBusy() {
     return Boolean(session && ACTIVE_STATUSES.has(session.status));
   }
@@ -153,13 +165,15 @@ export function createAgentController(options = {}) {
   function renderHeader() {
     if (refs.title) refs.title.textContent = session?.title || "新会话";
     if (refs.mode) {
-      const model = session?.model || runtime?.settings?.defaultModel || "自动模型";
+      const provider = session?.provider || runtime?.activeProvider || "codex";
+      const providerName = provider === "claude" ? "Claude" : "Codex";
+      const model = session?.model || runtime?.providers?.[provider]?.selectedModel || "未选模型";
       const stateLabel = disconnected ? "正在重连" : session?.status === "waitingApproval" ? "等待确认" : isBusy() ? "运行中" : "就绪";
-      refs.mode.textContent = `Codex · ${model} · ${stateLabel}`;
+      refs.mode.textContent = `${providerName} · ${model} · ${stateLabel}`;
     }
     if (refs.rename) refs.rename.disabled = !session || Boolean(action);
     if (refs.fork) refs.fork.disabled = !session || isBusy() || Boolean(action) || runtime?.workspaceValid === false;
-    if (refs.newSession) refs.newSession.disabled = Boolean(action) || runtime?.workspaceValid === false;
+    if (refs.newSession) refs.newSession.disabled = Boolean(action) || runtime?.ready !== true;
     renderHistory();
   }
 
@@ -176,15 +190,21 @@ export function createAgentController(options = {}) {
   }
 
   function renderRuntimeNotice() {
+    const provider = runtime?.activeProvider === "claude" ? "claude" : "codex";
+    const providerName = provider === "claude" ? "Claude Code" : "Codex CLI";
+    const providerState = runtime?.providers?.[provider] || {};
+    const notice = (title, detail) => `<section class="agent-runtime-notice"><img class="agent-runtime-logo" src="/assets/brand/FreeFlow_app_icon.png" alt="" /><div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p><button class="agent-inline-action" type="button" data-agent-open-settings>打开 AI 设置</button></div></section>`;
     if (runtime?.workspaceValid === false) {
-      return `<section class="agent-runtime-notice"><strong>需要配置 AI 工作区</strong><p>${escapeHtml(runtime.error || "默认工作区必须位于系统设置授权的目录内。")}</p><button class="agent-inline-action" type="button" data-agent-open-settings>打开 AI 设置</button></section>`;
+      return notice("需要配置 AI 工作区", runtime.error || "默认工作区必须位于系统设置授权的目录内。");
     }
-    if (!runtime?.available) {
-      return `<section class="agent-runtime-notice"><strong>未找到 Codex CLI</strong><p>${escapeHtml(runtime?.error || "请在系统设置的 AI 模型页配置 Codex CLI。")}</p><button class="agent-inline-action" type="button" data-agent-open-settings>打开 AI 设置</button></section>`;
+    if (!providerState.available) {
+      return notice(providerState.requiresSelection ? `请选择 ${providerName}` : `未找到 ${providerName}`, providerState.error || `请在系统设置的 AI 模型页检测并绑定 ${providerName}。`);
     }
-    if (!runtime.authenticated) {
-      return `<section class="agent-runtime-notice"><strong>需要登录 ChatGPT</strong><p>登录由 Codex CLI 官方流程完成。登录后刷新当前界面即可开始。</p><button class="agent-inline-action" type="button" data-agent-open-settings>打开 AI 设置</button></section>`;
+    if (!providerState.configured) {
+      return notice("连接尚未配置", "请保存第三方中转站的 Base URL 与 API Key。");
     }
+    if (!providerState.modelSelected) return notice("请选择 AI 模型", "先刷新模型目录，再手动选择本次使用的模型。");
+    if (!providerState.modelValidated) return notice("连接尚未验证", "测试所选模型通过后即可创建会话。");
     return "";
   }
 
@@ -227,7 +247,7 @@ export function createAgentController(options = {}) {
       rows.push({
         createdAt: message.createdAt,
         html: `<article class="agent-message is-${escapeHtml(message.role)}${streaming ? " is-streaming" : ""}" data-agent-message="${escapeHtml(message.id)}">
-          <div class="agent-message-meta"><strong>${message.role === "user" ? "你" : "Codex"}</strong><time>${escapeHtml(formatTime(message.createdAt))}</time></div>
+          <div class="agent-message-meta"><strong>${message.role === "user" ? "你" : session?.provider === "claude" ? "Claude" : "Codex"}</strong><time>${escapeHtml(formatTime(message.createdAt))}</time></div>
           <div class="agent-message-content" data-agent-message-content></div>
         </article>`,
         message,
@@ -246,11 +266,23 @@ export function createAgentController(options = {}) {
     }
     for (const approval of session?.approvals || []) rows.push({ createdAt: approval.createdAt, html: renderApproval(approval) });
     for (const pending of session?.pendingInputs || []) {
-      rows.push({ createdAt: pending.createdAt, html: `<section class="agent-queue"><div class="agent-queue-head"><strong>已排队</strong><button class="agent-queue-remove" type="button" data-agent-remove-queue="${escapeHtml(pending.id)}">移除</button></div><span>${escapeHtml(truncate(pending.input, 160))}</span></section>` });
+      const failed = pending.status === "failed";
+      rows.push({ createdAt: pending.createdAt, html: `<section class="agent-queue${failed ? " is-failed" : ""}" data-agent-queue="${escapeHtml(pending.id)}" data-agent-queue-revision="${Number(pending.revision || 0)}"><div class="agent-queue-head"><strong>${failed ? "派发失败" : pending.mode === "steer" ? "即时引导" : "已排队"}</strong><span>${failed ? escapeHtml(pending.error?.message || "可重试") : "等待执行"}</span></div><p>${escapeHtml(truncate(pending.input, 240))}</p><div class="agent-queue-actions">${failed ? `<button type="button" data-agent-queue-action="retry" title="重试">重试</button>` : `<button type="button" data-agent-queue-action="promote" title="提升为即时引导">立即</button><button type="button" data-agent-queue-action="up" title="上移">↑</button><button type="button" data-agent-queue-action="down" title="下移">↓</button>`}<button type="button" data-agent-queue-action="edit" title="编辑">编辑</button><button type="button" data-agent-queue-action="remove" title="移除">移除</button></div></section>` });
     }
-    rows.sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+    const pendingInputs = session?.pendingInputs || [];
+    pendingInputs.forEach((pending, index) => {
+      const row = rows[rows.length - pendingInputs.length + index];
+      if (row) row.queuePosition = Number(pending.position || 0);
+    });
+    rows.sort((a, b) => {
+      if (a.queuePosition != null && b.queuePosition != null) return a.queuePosition - b.queuePosition;
+      if (a.queuePosition != null) return 1;
+      if (b.queuePosition != null) return -1;
+      return Number(a.createdAt) - Number(b.createdAt);
+    });
     if (!rows.length) {
-      rows.push({ createdAt: 0, html: `<section class="agent-empty"><strong>从当前工作区开始</strong><p>描述目标，Codex 会在所选工作区中读取、分析和执行。需要写入或运行命令时会遵循系统设置中的审批与沙箱策略。</p></section>` });
+      const providerName = session?.provider === "claude" ? "Claude" : "Codex";
+      rows.push({ createdAt: 0, html: `<section class="agent-empty"><img src="/assets/brand/FreeFlow_app_icon.png" alt="" /><strong>FreeFlow AI</strong><p>${providerName} 已连接，可以开始新的工作。</p></section>` });
     }
     refs.chatLog.innerHTML = rows.map((row) => row.html).join("");
     rows.filter((row) => row.message).forEach((row) => {
@@ -262,10 +294,10 @@ export function createAgentController(options = {}) {
 
   function renderComposer() {
     const busy = isBusy();
-    if (refs.send) refs.send.disabled = !session || Boolean(action) || runtime?.workspaceValid === false || (!runtime?.available || !runtime?.authenticated);
+    if (refs.send) refs.send.disabled = !session || Boolean(action) || runtime?.ready !== true;
     if (refs.stop) refs.stop.disabled = !busy || action === "stop";
     refs.submitMode?.classList.toggle("is-hidden", !busy);
-    if (refs.attach) refs.attach.disabled = !session || action === "attachment" || runtime?.workspaceValid === false;
+    if (refs.attach) refs.attach.disabled = !session || action === "attachment" || runtime?.ready !== true;
     if (refs.composerStatus) {
       refs.composerStatus.textContent = disconnected
         ? "连接中断，正在自动恢复"
@@ -289,7 +321,14 @@ export function createAgentController(options = {}) {
     try {
       runtime = (await client.getRuntime({ start: true, refresh })).runtime;
     } catch (error) {
-      runtime = { available: false, authenticated: false, state: "error", error: error.message };
+      runtime = {
+        activeProvider: "codex",
+        providers: { codex: { available: false, ready: false, error: error.message } },
+        available: false,
+        ready: false,
+        state: "error",
+        error: error.message,
+      };
     }
     return runtime;
   }
@@ -379,7 +418,7 @@ export function createAgentController(options = {}) {
   }
 
   async function newSession() {
-    if (action || runtime?.workspaceValid === false) return;
+    if (action || runtime?.ready !== true) return;
     action = "new";
     render();
     try {
@@ -397,7 +436,7 @@ export function createAgentController(options = {}) {
   }
 
   async function submit() {
-    if (!initialized || action || !session || runtime?.workspaceValid === false) return;
+    if (!initialized || action || !session || runtime?.ready !== true) return;
     const text = String(refs.prompt?.value || "").trim() || (selectedAttachmentIds.length ? "请阅读附件并根据其中内容继续。" : "");
     if (!text) return;
     const mode = isBusy() && refs.submitMode?.value === "steer" && !selectedAttachmentIds.length ? "steer" : "queue";
@@ -410,7 +449,7 @@ export function createAgentController(options = {}) {
       selectedAttachmentIds = [];
       if (result.queued) setStatus("消息已加入队列", "success");
       else if (result.steered) setStatus("已更新当前任务方向", "success");
-      else setStatus("Codex 已开始处理", "success");
+      else setStatus(`${session.provider === "claude" ? "Claude" : "Codex"} 已开始处理`, "success");
       await scheduleImmediateRefresh();
     } catch (error) {
       setStatus(`发送失败：${error.message}`, "warning");
@@ -489,8 +528,10 @@ export function createAgentController(options = {}) {
       await client.deleteSession(sessionId);
       sessions = sessions.filter((item) => item.id !== sessionId);
       if (session?.id === sessionId) {
+        session = null;
+        localStorage.removeItem(CURRENT_SESSION_KEY);
         if (sessions.length) await selectSession(sessions[0].id, { closeHistory: false });
-        else {
+        else if (runtime?.ready === true) {
           action = "";
           await newSession();
         }
@@ -562,6 +603,33 @@ export function createAgentController(options = {}) {
     }
   }
 
+  async function handleQueueAction(container, queueAction) {
+    if (!session || action || !container) return;
+    const pendingId = container.dataset.agentQueue;
+    const pending = session.pendingInputs?.find((item) => item.id === pendingId);
+    if (!pending) return;
+    action = "queue";
+    renderComposer();
+    try {
+      if (queueAction === "remove") await client.removePendingInput(session.id, pendingId);
+      if (queueAction === "retry") await client.retryPendingInput(session.id, pendingId);
+      if (queueAction === "promote") await client.promotePendingInput(session.id, pendingId);
+      if (queueAction === "up" || queueAction === "down") await client.movePendingInput(session.id, pendingId, queueAction);
+      if (queueAction === "edit") {
+        const text = window.prompt("编辑排队消息", pending.input || "");
+        if (text == null) return;
+        await client.updatePendingInput(session.id, pendingId, { text, revision: Number(pending.revision || 0) });
+      }
+      await scheduleImmediateRefresh();
+      setStatus(queueAction === "retry" ? "已重新加入队列" : queueAction === "promote" ? "已提升为即时引导" : "队列已更新", "success");
+    } catch (error) {
+      setStatus(`队列更新失败：${error.message}`, "warning");
+    } finally {
+      action = "";
+      render();
+    }
+  }
+
   function bindEvents() {
     refs.historyToggle?.addEventListener("click", () => setHistoryOpen(!historyOpen));
     refs.historyClose?.addEventListener("click", () => setHistoryOpen(false));
@@ -588,16 +656,12 @@ export function createAgentController(options = {}) {
     });
     refs.chatLog?.addEventListener("click", (event) => {
       if (event.target.closest("[data-agent-open-settings]")) onOpenSettings("ai");
-      const queueTarget = event.target.closest("[data-agent-remove-queue]");
-      if (queueTarget && session) {
-        void client.removePendingInput(session.id, queueTarget.dataset.agentRemoveQueue)
-          .then(scheduleImmediateRefresh)
-          .then(render)
-          .catch((error) => setStatus(`移除排队消息失败：${error.message}`, "warning"));
-      }
+      const queueTarget = event.target.closest("[data-agent-queue-action]");
+      if (queueTarget) void handleQueueAction(queueTarget.closest("[data-agent-queue]"), queueTarget.dataset.agentQueueAction);
       const decisionTarget = event.target.closest("[data-agent-approval-decision]");
       if (decisionTarget) void resolveApproval(decisionTarget.closest("[data-agent-approval]"), decisionTarget.dataset.agentApprovalDecision);
     });
+    window.addEventListener("freeflow:agent-data-restored", handleDataRestored);
   }
 
   async function initialize() {
@@ -613,7 +677,7 @@ export function createAgentController(options = {}) {
       const preferred = localStorage.getItem(CURRENT_SESSION_KEY);
       const target = sessions.find((item) => item.id === preferred) || sessions[0];
       if (target) await selectSession(target.id);
-      else if (runtime?.workspaceValid === false) {
+      else if (runtime?.ready !== true) {
         session = null;
         localStorage.removeItem(CURRENT_SESSION_KEY);
       }
@@ -639,7 +703,7 @@ export function createAgentController(options = {}) {
       const target = sessions.find((item) => item.id === session?.id) || sessions[0];
       if (target) {
         await selectSession(target.id);
-      } else if (runtime?.workspaceValid !== false) {
+      } else if (runtime?.ready === true) {
         action = "";
         await newSession();
       } else {
@@ -659,6 +723,7 @@ export function createAgentController(options = {}) {
     unsubscribe = null;
     if (refreshTimer) window.clearTimeout(refreshTimer);
     refreshTimer = 0;
+    window.removeEventListener("freeflow:agent-data-restored", handleDataRestored);
     initialized = false;
   }
 

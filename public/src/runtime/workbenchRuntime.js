@@ -2034,7 +2034,7 @@ const canvasItemInteractionController = createCanvasItemInteractionController({
 
 function updatePromptPlaceholder() {
   if (!promptInput) return;
-  promptInput.placeholder = `给 ${getAssistantDisplayName()} 发送任务，例如：分析当前工作区、修改代码或运行检查。`;
+  promptInput.placeholder = `给 ${getAssistantDisplayName()} 发送任务`;
 }
 
 function getAppDisplayName() {
@@ -3773,27 +3773,33 @@ async function openSettingsCenterSection(section = "general") {
 }
 
 function syncAgentRuntimeOverview(runtime, session) {
-  const model = String(session?.model || runtime?.settings?.defaultModel || "").trim();
+  const providerId = session?.provider === "claude" ? "claude" : runtime?.activeProvider === "claude" ? "claude" : "codex";
+  const provider = runtime?.providers?.[providerId] || {};
+  const model = String(session?.model || provider.selectedModel || "").trim();
   if (defaultModelEl) {
-    defaultModelEl.textContent = model || "自动选择";
+    defaultModelEl.textContent = model || "尚未选择";
   }
   if (connectionStatusEl) {
     connectionStatusEl.textContent = runtime?.workspaceValid === false
       ? "等待配置工作区"
-      : !runtime?.available
-      ? "CLI 不可用"
-      : !runtime?.authenticated
-        ? "等待登录"
-        : runtime.state === "ready"
-          ? "已连接"
-          : "正在启动";
+      : !provider.available
+        ? provider.requiresSelection ? "等待选择 CLI" : "CLI 不可用"
+        : !provider.configured
+          ? "等待连接配置"
+          : !provider.modelSelected
+            ? "等待选择模型"
+            : !provider.modelValidated
+              ? "等待连接验证"
+              : runtime?.ready
+                ? "已连接"
+                : "正在启动";
   }
   if (responseModeLabelEl) {
     responseModeLabelEl.textContent = session?.status === "waitingApproval"
       ? "等待确认"
       : agentController?.isActive()
         ? "正在处理"
-        : runtime?.available && runtime?.authenticated
+        : runtime?.ready
           ? "可接收任务"
           : "需要配置";
   }
@@ -9106,12 +9112,14 @@ document.addEventListener("keydown", (event) => {
 
   if (event.key === "Escape" && screenSourceSelectMenuEl?.hasAttribute("open")) {
     event.preventDefault();
+    event.stopPropagation();
     closeScreenSourceTargetMenu({ restoreFocus: true });
     return;
   }
 
   if (event.key === "Escape" && screenSourceHeaderMenuOpen) {
     event.preventDefault();
+    event.stopPropagation();
     setScreenSourceHeaderMenuOpen(false, { restoreFocus: true });
     return;
   }

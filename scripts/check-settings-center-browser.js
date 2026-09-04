@@ -57,13 +57,21 @@ async function main() {
   snapshot.sections.ai = {
     agent: {
       ...snapshot.sections.ai.agent,
-      provider: "codex",
-      cliPath: "",
+      schemaVersion: 2,
+      activeProvider: "codex",
       workspaceRoot: "D:\\FreeFlow-WorkBoard",
-      defaultModel: "gpt-5.6-codex",
-      reasoningEffort: "high",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      providers: {
+        codex: {
+          provider: "codex", cliPath: "", cliSource: "", cliVersion: "", baseUrl: "",
+          apiKeyConfigured: false, models: [], modelsFetchedAt: 0, selectedModel: "", modelValidatedAt: 0,
+          reasoningEffort: "high", approvalPolicy: "on-request", sandboxMode: "workspace-write",
+        },
+        claude: {
+          provider: "claude", cliPath: "", cliSource: "", cliVersion: "", baseUrl: "",
+          apiKeyConfigured: false, models: [], modelsFetchedAt: 0, selectedModel: "", modelValidatedAt: 0,
+          reasoningEffort: "high", approvalPolicy: "on-request", sandboxMode: "workspace-write",
+        },
+      },
       queueWhileRunning: true,
       showReasoning: true,
     },
@@ -77,6 +85,57 @@ async function main() {
   let agentWorkspaceValid = false;
   let agentSession = null;
   let agentSessionCreates = 0;
+  let backups = [];
+  let backupRestoreCount = 0;
+  const cliCandidates = {
+    codex: [{ path: "C:\\tools\\codex.cmd", source: "npm", version: "codex-cli test", label: "用户 npm" }],
+    claude: [{ path: "C:\\tools\\claude.cmd", source: "npm", version: "Claude Code test", label: "用户 npm" }],
+  };
+
+  function advanceRevision() {
+    snapshot.revision = `browser-${++revision}`;
+  }
+
+  function buildRuntime() {
+    const providers = Object.fromEntries(["codex", "claude"].map((id) => {
+      const provider = snapshot.sections.ai.agent.providers[id];
+      const candidate = cliCandidates[id].find((item) => item.path === provider.cliPath);
+      const available = Boolean(candidate);
+      const configured = Boolean(provider.baseUrl && provider.apiKeyConfigured);
+      const modelSelected = Boolean(provider.selectedModel);
+      const modelValidated = Boolean(provider.modelValidatedAt);
+      return [id, {
+        provider: id,
+        available,
+        requiresSelection: !available && cliCandidates[id].length > 0,
+        candidates: cliCandidates[id],
+        path: candidate?.path || "",
+        version: candidate?.version || "",
+        configured,
+        modelSelected,
+        modelValidated,
+        ready: available && configured && modelSelected && modelValidated && agentWorkspaceValid,
+        models: clone(provider.models),
+        selectedModel: provider.selectedModel,
+        error: available ? "" : `请选择 ${id} CLI`,
+      }];
+    }));
+    const activeProvider = snapshot.sections.ai.agent.activeProvider;
+    const active = providers[activeProvider];
+    return {
+      provider: activeProvider,
+      activeProvider,
+      providers,
+      available: active.available,
+      requiresSelection: active.requiresSelection,
+      candidates: active.candidates,
+      state: active.ready ? "ready" : "configuration-required",
+      workspaceValid: agentWorkspaceValid,
+      ready: active.ready,
+      error: agentWorkspaceValid ? active.error : "默认工作区未授权",
+      settings: clone(snapshot.sections.ai.agent),
+    };
+  }
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -90,23 +149,92 @@ async function main() {
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        runtime: {
-          provider: "codex",
-          available: true,
-          authenticated: true,
-          state: agentWorkspaceValid ? "ready" : "configuration-required",
-          workspaceValid: agentWorkspaceValid,
-          error: agentWorkspaceValid ? "" : "默认工作区未授权",
-          version: "codex-cli test",
-          account: { type: "chatgpt", email: "tester@example.com" },
-          models: [
-            { id: "gpt-5.6-codex", displayName: "GPT-5.6 Codex" },
-            { id: "gpt-5.5-codex", displayName: "GPT-5.5 Codex" },
-          ],
-          settings: clone(snapshot.sections.ai.agent),
-        },
+        runtime: buildRuntime(),
       }),
     });
+  });
+  await page.route("**/api/agent/providers/**", async (route) => {
+    const request = route.request();
+    const match = new URL(request.url()).pathname.match(/\/api\/agent\/providers\/(codex|claude)\/(.+)$/);
+    const providerId = match?.[1];
+    const operation = match?.[2];
+    const provider = snapshot.sections.ai.agent.providers[providerId];
+    if (!provider) {
+      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ ok: false, error: "unknown provider" }) });
+      return;
+    }
+    if (operation === "runtime/refresh" && request.method() === "POST") {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, provider: buildRuntime().providers[providerId] }) });
+      return;
+    }
+    if (operation === "runtime" && request.method() === "PUT") {
+      const selected = request.postDataJSON().path;
+      const candidate = cliCandidates[providerId].find((item) => item.path === selected);
+      provider.cliPath = selected;
+      provider.cliSource = candidate?.source || "configured";
+      provider.cliVersion = candidate?.version || "test";
+      advanceRevision();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, runtime: buildRuntime() }) });
+      return;
+    }
+    if (operation === "connection" && request.method() === "PUT") {
+      const input = request.postDataJSON();
+      provider.baseUrl = input.baseUrl;
+      provider.apiKeyConfigured = input.apiKeyAction === "clear" ? false : Boolean(input.apiKey) || provider.apiKeyConfigured;
+      provider.models = [];
+      provider.selectedModel = "";
+      provider.modelValidatedAt = 0;
+      advanceRevision();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, settings: clone(snapshot.sections.ai.agent) }) });
+      return;
+    }
+    if (operation === "models/refresh" && request.method() === "POST") {
+      provider.models = [
+        { id: "gpt-5.6-codex", displayName: "GPT-5.6 Codex" },
+        { id: "gpt-5.5-codex", displayName: "GPT-5.5 Codex" },
+      ];
+      provider.modelsFetchedAt = Date.now();
+      provider.selectedModel = "";
+      provider.modelValidatedAt = 0;
+      advanceRevision();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, models: provider.models, settings: clone(snapshot.sections.ai.agent) }) });
+      return;
+    }
+    if (operation === "model" && request.method() === "PUT") {
+      provider.selectedModel = request.postDataJSON().model;
+      provider.modelValidatedAt = 0;
+      advanceRevision();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, model: provider.selectedModel, settings: clone(snapshot.sections.ai.agent) }) });
+      return;
+    }
+    if (operation === "test" && request.method() === "POST") {
+      provider.modelValidatedAt = Date.now();
+      advanceRevision();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, ready: true, model: provider.selectedModel, settings: clone(snapshot.sections.ai.agent) }) });
+      return;
+    }
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false, error: `unhandled provider route ${request.method()} ${operation}` }) });
+  });
+  await page.route("**/api/agent/backups**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, backups: clone(backups) }) });
+      return;
+    }
+    if (request.method() === "POST" && pathname.endsWith("/backups")) {
+      const backup = { name: `agent-sessions-${backups.length + 1}.sqlite`, createdAt: Date.now(), sizeBytes: 4096 };
+      backups.unshift(backup);
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, backup }) });
+      return;
+    }
+    if (request.method() === "POST" && pathname.endsWith("/restore")) {
+      backupRestoreCount += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, backups: clone(backups), sessions: agentSession ? [agentSession] : [] }) });
+      return;
+    }
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false, error: "unhandled backup route" }) });
   });
   await page.route("**/api/agent/sessions", async (route) => {
     if (route.request().method() === "GET") {
@@ -126,10 +254,10 @@ async function main() {
       title: "新会话",
       preview: "",
       workspaceRoot: snapshot.sections.ai.agent.workspaceRoot,
-      model: snapshot.sections.ai.agent.defaultModel,
-      reasoningEffort: snapshot.sections.ai.agent.reasoningEffort,
-      approvalPolicy: snapshot.sections.ai.agent.approvalPolicy,
-      sandboxMode: snapshot.sections.ai.agent.sandboxMode,
+      model: snapshot.sections.ai.agent.providers.codex.selectedModel,
+      reasoningEffort: snapshot.sections.ai.agent.providers.codex.reasoningEffort,
+      approvalPolicy: snapshot.sections.ai.agent.providers.codex.approvalPolicy,
+      sandboxMode: snapshot.sections.ai.agent.providers.codex.sandboxMode,
       status: "idle",
       revision: 1,
       messages: [],
@@ -190,14 +318,15 @@ async function main() {
     await page.locator("#conversation-shell-more").evaluate((button) => button.click());
 
     await openSettings(page);
+    await page.locator('[data-settings-path="general.workspaceSubtitle"]').fill("Draft preserved across Agent actions");
     await openSection(page, "ai");
     const aiPlacement = await page.evaluate(() => ({
-      cli: Boolean(document.querySelector('[data-settings-path="ai.agent.cliPath"]')),
+      cli: Boolean(document.querySelector("[data-agent-cli-path]")),
       workspace: Boolean(document.querySelector('[data-settings-path="ai.agent.workspaceRoot"]')),
-      model: Boolean(document.querySelector('[data-settings-path="ai.agent.defaultModel"]')),
-      reasoning: Boolean(document.querySelector('[data-settings-path="ai.agent.reasoningEffort"]')),
-      approval: Boolean(document.querySelector('[data-settings-path="ai.agent.approvalPolicy"]')),
-      sandbox: Boolean(document.querySelector('[data-settings-path="ai.agent.sandboxMode"]')),
+      model: Boolean(document.querySelector("[data-agent-model-select]")),
+      reasoning: Boolean(document.querySelector('[data-settings-path="ai.agent.providers.codex.reasoningEffort"]')),
+      approval: Boolean(document.querySelector('[data-settings-path="ai.agent.providers.codex.approvalPolicy"]')),
+      sandbox: Boolean(document.querySelector('[data-settings-path="ai.agent.providers.codex.sandboxMode"]')),
       providerControls: document.querySelectorAll('[data-settings-path^="ai.provider"], [data-settings-path^="ai.profiles"]').length,
       moreAiControls: document.querySelectorAll('#conversation-shell-menu [data-settings-path^="ai."]').length,
     }));
@@ -206,17 +335,40 @@ async function main() {
       "Codex settings are not exclusively owned by the AI settings section",
       aiPlacement
     );
-    await page.locator('[data-settings-path="ai.agent.defaultModel"]').selectOption("gpt-5.5-codex");
-    await page.locator('[data-settings-path="ai.agent.reasoningEffort"]').selectOption("xhigh");
-    await page.locator('[data-settings-path="ai.agent.sandboxMode"]').selectOption("read-only");
+    await page.locator('[data-settings-action="agent-discover"]').click();
+    assert(await page.locator("[data-agent-cli-path]").isDisabled(), "CLI selection remained interactive while discovery was running");
+    await page.waitForFunction(() => {
+      const discover = document.querySelector('[data-settings-action="agent-discover"]');
+      const select = document.querySelector("[data-agent-cli-path]");
+      return discover && !discover.disabled && select && !select.disabled && select.options.length > 1;
+    });
+    await page.locator("[data-agent-cli-path]").selectOption("C:\\tools\\codex.cmd");
+    await page.locator('[data-settings-action="agent-bind"]').click();
+    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("连接配置"));
+    await page.locator('[data-settings-path="ai.agent.providers.codex.reasoningEffort"]').selectOption("xhigh");
+    await page.locator('[data-settings-path="ai.agent.providers.codex.sandboxMode"]').selectOption("read-only");
+    await page.locator('[data-agent-connection-field="baseUrl"]').fill("https://gateway.example.test/v1");
+    await page.locator('[data-agent-connection-field="apiKey"]').fill("secret-test-key");
+    await page.locator('[data-settings-action="agent-save-connection"]').click();
+    await page.waitForFunction(() => document.querySelector(".settings-center-credential-state")?.textContent.includes("已保存"));
+    await page.locator('[data-settings-action="agent-refresh-models"]').click();
+    await page.waitForFunction(() => document.querySelector("[data-agent-model-select]")?.options.length === 3);
+    await page.locator("[data-agent-model-select]").selectOption("gpt-5.5-codex");
+    await page.locator('[data-settings-action="agent-select-model"]').click();
+    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("连接测试"));
+    await page.locator('[data-settings-action="agent-test-connection"]').click();
+    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("配置完成"));
+    await openSection(page, "general");
+    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Draft preserved across Agent actions", "Agent actions discarded an unrelated unsaved draft");
+    await openSection(page, "ai");
     await saveSettings(page);
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("已保存"));
     await page.waitForFunction(() => !document.querySelector("#clear-btn")?.disabled && document.querySelector("#conversation-title")?.textContent === "新会话");
     assert(agentSessionCreates === 1, "saving a valid Agent workspace did not create the first new-history session", { agentSessionCreates });
     assert(
-      successfulPosts.at(-1).sections.ai.agent.defaultModel === "gpt-5.5-codex" &&
-        successfulPosts.at(-1).sections.ai.agent.reasoningEffort === "xhigh" &&
-        successfulPosts.at(-1).sections.ai.agent.sandboxMode === "read-only",
+      successfulPosts.at(-1).sections.ai.agent.providers.codex.selectedModel === "gpt-5.5-codex" &&
+        successfulPosts.at(-1).sections.ai.agent.providers.codex.reasoningEffort === "xhigh" &&
+        successfulPosts.at(-1).sections.ai.agent.providers.codex.sandboxMode === "read-only",
       "Codex defaults were not submitted"
     );
 
@@ -285,6 +437,18 @@ async function main() {
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("已保存"));
     assert((await page.locator(".canvas-stage").getAttribute("data-workspace-dock")) === targetSide, "workbench preference was not applied");
 
+    await openSection(page, "diagnostics");
+    await page.locator('[data-settings-action="agent-create-backup"]').click();
+    await page.waitForSelector("[data-agent-restore-backup]");
+    await page.locator("[data-agent-restore-backup]").click();
+    await page.waitForSelector('[data-settings-action="agent-confirm-restore"]');
+    await page.locator('[data-settings-action="agent-cancel-restore"]').click();
+    assert(backupRestoreCount === 0, "cancelling backup restore still replaced Agent data");
+    await page.locator("[data-agent-restore-backup]").click();
+    await page.locator('[data-settings-action="agent-confirm-restore"]').click();
+    await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("会话已恢复"));
+    assert(backupRestoreCount === 1, "confirmed backup restore did not run exactly once", { backupRestoreCount });
+
     await page.setViewportSize({ width: 680, height: 720 });
     await page.waitForTimeout(100);
     const compact = await page.evaluate(() => {
@@ -301,7 +465,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("[check-settings-center-browser] Codex settings ownership and recovery paths passed");
+  console.log("[check-settings-center-browser] Provider setup, settings recovery, backup restore, and compact layout passed");
 }
 
 main().catch((error) => {

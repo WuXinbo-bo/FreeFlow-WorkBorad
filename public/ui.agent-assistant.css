@@ -1,7 +1,14 @@
 .conversation-panel {
-  --agent-accent: #178078;
-  --agent-border: rgba(36, 50, 59, 0.14);
-  --agent-muted: #738089;
+  --agent-accent: rgb(var(--app-button-rgb) / 1);
+  --agent-accent-text: rgb(var(--app-button-text-rgb) / 1);
+  --agent-border: rgb(var(--app-pattern-rgb) / 0.24);
+  --agent-muted: rgb(var(--theme-panel-text-rgb) / 0.66);
+  --agent-text: rgb(var(--theme-panel-text-rgb) / 1);
+  --agent-panel: rgb(var(--theme-panel-surface-rgb) / 0.98);
+  --agent-control: rgb(var(--theme-control-surface-rgb) / 0.92);
+  --agent-control-active: rgb(var(--theme-control-active-rgb) / 1);
+  --agent-message: rgb(var(--theme-message-surface-rgb) / 0.94);
+  --agent-message-user: rgb(var(--theme-message-user-surface-rgb) / 0.96);
 }
 
 .conversation-panel.assistant-view-active .conversation-header {
@@ -443,4 +450,139 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-message.is-streaming .agent-message-content::after { animation: none; }
+}
+
+.agent-icon-button,
+.agent-history-search input,
+.agent-submit-mode,
+.agent-approval-actions button {
+  border-color: var(--agent-border);
+  color: var(--agent-muted);
+  background: var(--agent-control);
+}
+
+.agent-icon-button:hover,
+.agent-icon-button:focus-visible {
+  color: var(--agent-text);
+  background: var(--agent-control-active);
+}
+
+.agent-icon-button.is-primary,
+.agent-approval-actions .is-accept {
+  border-color: var(--agent-accent);
+  color: var(--agent-accent-text);
+  background: var(--agent-accent);
+}
+
+.agent-history-panel {
+  border-color: var(--agent-border);
+  background: var(--agent-panel);
+  box-shadow: 0 18px 42px rgb(var(--theme-pass-through-shadow-rgb) / 0.2);
+}
+
+.agent-history-item,
+.agent-empty,
+.agent-runtime-notice,
+.agent-message-content,
+.agent-activity,
+.agent-queue,
+.agent-approval {
+  color: var(--agent-text);
+}
+
+.agent-history-item:hover,
+.agent-history-item.is-active {
+  border-color: var(--agent-border);
+  background: var(--agent-control-active);
+}
+
+.agent-runtime-notice {
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 22px 6px;
+}
+
+.agent-runtime-notice > div {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-runtime-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.agent-empty img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.agent-inline-action {
+  border-color: var(--agent-border);
+  color: var(--agent-accent-text);
+  background: var(--agent-accent);
+}
+
+.agent-message-content {
+  border-color: var(--agent-border);
+  background: var(--agent-message);
+}
+
+.agent-message.is-user .agent-message-content {
+  border-color: rgb(var(--app-button-rgb) / 0.28);
+  background: var(--agent-message-user);
+}
+
+.agent-activity,
+.agent-queue,
+.agent-approval {
+  border-color: var(--agent-border);
+  background: var(--agent-control);
+}
+
+.agent-activity pre,
+.agent-approval pre {
+  color: var(--agent-text);
+  background: rgb(var(--theme-code-surface-rgb) / 1);
+}
+
+.agent-queue p {
+  margin: 0;
+  color: var(--agent-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-queue-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-queue-actions button {
+  min-width: 32px;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid var(--agent-border);
+  border-radius: 5px;
+  color: var(--agent-muted);
+  background: var(--agent-control-active);
+  cursor: pointer;
+}
+
+.agent-queue.is-failed {
+  border-color: rgba(176, 68, 68, 0.36);
+}
+
+.settings-center-agent-state,
+.settings-center-agent-account {
+  border: 1px solid var(--settings-border, var(--agent-border));
+  color: var(--settings-muted, var(--agent-muted));
+  background: var(--settings-control-strong, var(--agent-control));
 }

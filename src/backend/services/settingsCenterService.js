@@ -125,16 +125,36 @@ function createSettingsCenterService(deps) {
             fieldErrors: { "ai.agent.workspaceRoot": "请选择默认工作区目录" },
           });
         }
-        agentPatch = {
-          cliPath: normalizePath(agent.cliPath, "ai.agent.cliPath"),
-          defaultModel: String(agent.defaultModel || "").trim().slice(0, 200),
-          reasoningEffort: String(agent.reasoningEffort || "high"),
-          approvalPolicy: String(agent.approvalPolicy || "on-request"),
-          sandboxMode: String(agent.sandboxMode || "workspace-write"),
-          workspaceRoot,
-          queueWhileRunning: agent.queueWhileRunning !== false,
-          showReasoning: agent.showReasoning !== false,
-        };
+        if (agent.providers && typeof agent.providers === "object") {
+          const providerPatches = {};
+          for (const provider of ["codex", "claude"]) {
+            const source = agent.providers[provider];
+            if (!source || typeof source !== "object") continue;
+            providerPatches[provider] = {
+              reasoningEffort: String(source.reasoningEffort || "high"),
+              approvalPolicy: String(source.approvalPolicy || "on-request"),
+              sandboxMode: String(source.sandboxMode || "workspace-write"),
+            };
+          }
+          agentPatch = {
+            activeProvider: agent.activeProvider === "claude" ? "claude" : "codex",
+            providers: providerPatches,
+            workspaceRoot,
+            queueWhileRunning: agent.queueWhileRunning !== false,
+            showReasoning: agent.showReasoning !== false,
+          };
+        } else {
+          agentPatch = {
+            cliPath: normalizePath(agent.cliPath, "ai.agent.cliPath"),
+            defaultModel: String(agent.defaultModel || "").trim().slice(0, 200),
+            reasoningEffort: String(agent.reasoningEffort || "high"),
+            approvalPolicy: String(agent.approvalPolicy || "on-request"),
+            sandboxMode: String(agent.sandboxMode || "workspace-write"),
+            workspaceRoot,
+            queueWhileRunning: agent.queueWhileRunning !== false,
+            showReasoning: agent.showReasoning !== false,
+          };
+        }
       }
     }
 

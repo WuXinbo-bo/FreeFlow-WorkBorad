@@ -3,6 +3,20 @@
 }
 
 #insight-drawer.ui-chrome-drawer {
+  --settings-surface: rgb(var(--theme-floating-surface-rgb) / 0.98);
+  --settings-panel: rgb(var(--theme-panel-surface-rgb) / 1);
+  --settings-control: rgb(var(--theme-control-surface-rgb) / 1);
+  --settings-control-strong: rgb(var(--theme-control-surface-strong-rgb) / 1);
+  --settings-active: rgb(var(--theme-control-active-rgb) / 1);
+  --settings-input: rgb(var(--theme-input-surface-rgb) / 1);
+  --settings-text: rgb(var(--theme-panel-text-rgb) / 1);
+  --settings-muted: rgb(var(--theme-panel-text-rgb) / 0.66);
+  --settings-soft: rgb(var(--theme-panel-text-rgb) / 0.48);
+  --settings-border: rgb(var(--app-pattern-rgb) / 0.24);
+  --settings-border-strong: rgb(var(--app-pattern-rgb) / 0.38);
+  --settings-accent: rgb(var(--app-button-rgb) / 1);
+  --settings-accent-strong: rgb(var(--app-button-strong-rgb) / 1);
+  --settings-accent-text: rgb(var(--app-button-text-rgb) / 1);
   top: max(12px, env(safe-area-inset-top)) !important;
   right: max(12px, env(safe-area-inset-right)) !important;
   bottom: max(12px, env(safe-area-inset-bottom)) !important;
@@ -556,6 +570,7 @@
 
 .settings-center-secret-field button,
 .settings-center-inline-actions button,
+.settings-center-group-heading-inline > button,
 .settings-center-path-row > div button,
 .settings-center-root-add button,
 .settings-center-load-error button,
@@ -573,6 +588,7 @@
 
 .settings-center-secret-field button:disabled,
 .settings-center-inline-actions button:disabled,
+.settings-center-group-heading-inline > button:disabled,
 .settings-center-path-row > div button:disabled,
 .settings-center-root-add button:disabled {
   opacity: 0.45;
@@ -1026,5 +1042,349 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-center-loading span {
     animation: none;
+  }
+}
+
+/* Settings consume the same live theme contract as the canvas and workspaces. */
+#insight-drawer.ui-chrome-drawer {
+  border-color: var(--settings-border) !important;
+  color: var(--settings-text) !important;
+  background: var(--settings-surface) !important;
+  box-shadow: 0 28px 80px rgb(var(--theme-pass-through-shadow-rgb) / 0.24) !important;
+}
+
+.settings-center-frame-header,
+.settings-center-footer {
+  border-color: var(--settings-border);
+  background: var(--settings-panel);
+}
+
+.settings-center-frame-header span,
+.settings-center-section-heading p {
+  color: var(--settings-accent-strong);
+}
+
+.settings-center-frame-header h3,
+.settings-center-section-heading h4,
+.settings-center-group-heading h5,
+.settings-center-field input,
+.settings-center-field select,
+.settings-center-field textarea,
+.settings-center-profile-row input,
+.settings-center-profile-row select,
+.settings-center-root-add input,
+.settings-center-diagnostic-grid strong {
+  color: var(--settings-text);
+}
+
+.settings-center-frame-header button,
+.settings-center-nav-item,
+.settings-center-section-heading > span,
+.settings-center-group-heading p,
+.settings-center-disclosure summary small,
+.settings-center-field small,
+.settings-center-toggle-copy small,
+.settings-center-theme-presets small,
+.settings-center-profile-row span,
+.settings-center-profile-row small,
+.settings-center-permission small,
+.settings-center-root-list span,
+.settings-center-empty-inline,
+.settings-center-diagnostic-grid span,
+.settings-center-revision span,
+.settings-center-revision code,
+.settings-center-save-state,
+.settings-center-loading,
+.settings-center-load-error {
+  color: var(--settings-muted);
+}
+
+.settings-center-nav {
+  border-color: var(--settings-border);
+  background: var(--settings-control-strong);
+}
+
+.settings-center-content {
+  background: var(--settings-panel);
+}
+
+.settings-center-frame-header button:hover,
+.settings-center-frame-header button:focus-visible,
+.settings-center-nav-item:hover,
+.settings-center-nav-item:focus-visible {
+  border-color: var(--settings-border);
+  color: var(--settings-text);
+  background: var(--settings-control);
+}
+
+.settings-center-nav-item.is-active {
+  border-color: var(--settings-border-strong);
+  color: var(--settings-text);
+  background: var(--settings-active);
+}
+
+.settings-center-nav-item small {
+  color: var(--settings-soft);
+}
+
+.settings-center-group,
+.settings-center-section-heading + .settings-center-group,
+.settings-center-profile-list,
+.settings-center-profile-row,
+.settings-center-permission {
+  border-color: var(--settings-border);
+}
+
+.settings-center-field,
+.settings-center-toggle,
+.settings-center-range-grid label,
+.settings-center-color-grid label,
+.settings-center-disclosure summary,
+.settings-center-profile-row > div strong,
+.settings-center-permission strong {
+  color: var(--settings-text);
+}
+
+.settings-center-field input,
+.settings-center-field select,
+.settings-center-field textarea,
+.settings-center-profile-row input,
+.settings-center-profile-row select,
+.settings-center-root-add input,
+.settings-center-color-grid input,
+.settings-center-theme-presets button,
+.settings-center-root-list > div:not(.settings-center-empty-inline),
+.settings-center-diagnostic-grid > div,
+.settings-center-footer-actions button,
+.settings-center-secret-field button,
+.settings-center-inline-actions button,
+.settings-center-group-heading-inline > button,
+.settings-center-path-row > div button,
+.settings-center-root-add button,
+.settings-center-load-error button,
+.settings-center-risk-confirm button {
+  border-color: var(--settings-border);
+  color: var(--settings-text);
+  background: var(--settings-input);
+}
+
+.settings-center-field input:focus,
+.settings-center-field select:focus,
+.settings-center-field textarea:focus,
+.settings-center-profile-row input:focus,
+.settings-center-profile-row select:focus,
+.settings-center-root-add input:focus {
+  border-color: var(--settings-accent);
+  box-shadow: 0 0 0 3px rgb(var(--app-button-rgb) / 0.14);
+}
+
+.settings-center-field input:disabled {
+  color: var(--settings-muted);
+  background: var(--settings-control-strong);
+}
+
+.settings-center-switch,
+.settings-center-permission i {
+  background: var(--settings-border-strong);
+}
+
+.settings-center-switch::after,
+.settings-center-permission i::after {
+  background: var(--settings-input);
+  box-shadow: 0 1px 3px rgb(var(--theme-pass-through-shadow-rgb) / 0.3);
+}
+
+.settings-center-toggle input:checked + .settings-center-switch,
+.settings-center-permission input:checked + i,
+.settings-center-range-grid input {
+  accent-color: var(--settings-accent);
+}
+
+.settings-center-toggle input:checked + .settings-center-switch,
+.settings-center-permission input:checked + i {
+  background: var(--settings-accent);
+}
+
+.settings-center-segmented,
+.settings-center-model-tags span {
+  border-color: var(--settings-border);
+  color: var(--settings-muted);
+  background: var(--settings-control-strong);
+}
+
+.settings-center-segmented span {
+  color: var(--settings-muted);
+}
+
+.settings-center-segmented input:checked + span {
+  color: var(--settings-text);
+  background: var(--settings-active);
+  box-shadow: 0 1px 4px rgb(var(--theme-pass-through-shadow-rgb) / 0.14);
+}
+
+.settings-center-theme-presets button:hover,
+.settings-center-theme-presets button.is-active {
+  border-color: var(--settings-accent);
+  box-shadow: 0 0 0 2px rgb(var(--app-button-rgb) / 0.12);
+}
+
+.settings-center-color-grid code {
+  color: var(--settings-muted);
+}
+
+.settings-center-provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 4px;
+  border: 1px solid var(--settings-border);
+  border-radius: 7px;
+  background: var(--settings-control-strong);
+}
+
+.settings-center-provider-tabs button {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--settings-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-center-provider-tabs button.is-active {
+  border-color: var(--settings-border);
+  color: var(--settings-text);
+  background: var(--settings-active);
+}
+
+.settings-center-provider-tabs strong,
+.settings-center-provider-tabs small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-center-provider-tabs small {
+  color: var(--settings-soft);
+  font-size: 0.67rem;
+}
+
+.settings-center-readiness {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.settings-center-readiness span {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--settings-soft);
+  font-size: 0.65rem;
+  text-align: center;
+}
+
+.settings-center-readiness b {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--settings-border);
+  border-radius: 50%;
+  color: var(--settings-muted);
+  background: var(--settings-control);
+}
+
+.settings-center-readiness span.is-ready,
+.settings-center-readiness span.is-ready b {
+  color: var(--settings-text);
+}
+
+.settings-center-readiness span.is-ready b,
+.settings-center-agent-state.is-ready,
+.settings-center-credential-state.is-ready {
+  border-color: rgb(var(--app-button-rgb) / 0.38);
+  color: var(--settings-accent-text);
+  background: var(--settings-accent);
+}
+
+.settings-center-agent-state,
+.settings-center-credential-state,
+.settings-center-agent-account {
+  border: 1px solid var(--settings-border);
+  color: var(--settings-muted);
+  background: var(--settings-control-strong);
+}
+
+.settings-center-backup-list {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-center-backup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 8px 7px 11px;
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.settings-center-backup-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-center-backup-row strong,
+.settings-center-backup-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-center-backup-row strong {
+  color: var(--settings-text);
+  font-size: 0.75rem;
+}
+
+.settings-center-backup-row small {
+  color: var(--settings-muted);
+  font-size: 0.68rem;
+}
+
+.settings-center-backup-row button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--settings-border);
+  border-radius: 5px;
+  color: var(--settings-text);
+  background: var(--settings-input);
+  cursor: pointer;
+}
+
+.settings-center-footer-actions button.is-primary {
+  border-color: var(--settings-accent-strong);
+  color: var(--settings-accent-text);
+  background: var(--settings-accent);
+}
+
+.settings-center-loading span {
+  border-color: var(--settings-border);
+  border-top-color: var(--settings-accent);
+}
+
+@media (max-width: 760px) {
+  .settings-center-readiness {
+    grid-template-columns: repeat(5, minmax(76px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 4px;
   }
 }

@@ -26445,7 +26445,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return Boolean(
       target instanceof Element &&
       target.closest(
-        "button, input, textarea, select, a[href], [contenteditable='true'], [role='dialog'], [role='menuitem'], [data-canvas-ui-focus-scope]"
+        "button, summary, input, textarea, select, a[href], [contenteditable='true'], [role='dialog'], [role='menuitem'], [data-canvas-ui-focus-scope]"
       )
     );
   }

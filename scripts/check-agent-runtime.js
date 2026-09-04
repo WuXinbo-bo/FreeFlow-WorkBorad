@@ -3,7 +3,10 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { EventEmitter } = require("events");
+const { DatabaseSync } = require("node:sqlite");
 const { AgentRuntime } = require("../src/backend/agent/agentRuntime");
+const { getDefaultAgentSettings } = require("../src/backend/agent/agentSettingsModel");
+const { AgentStore } = require("../src/backend/agent/agentStore");
 
 class FakeCodexClient extends EventEmitter {
   constructor() {
@@ -67,26 +70,72 @@ async function eventually(check, message) {
   assert.fail(message);
 }
 
+function checkStoreMigration(tempDir) {
+  const databaseFile = path.join(tempDir, "migration", "agent-v1.sqlite");
+  const backupsDir = path.join(tempDir, "migration-backups");
+  fs.mkdirSync(path.dirname(databaseFile), { recursive: true });
+  const legacy = new DatabaseSync(databaseFile);
+  legacy.exec(`
+    CREATE TABLE agent_sessions (
+      id TEXT PRIMARY KEY, provider TEXT NOT NULL DEFAULT 'codex', provider_thread_id TEXT,
+      title TEXT NOT NULL, workspace_root TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+      reasoning_effort TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT 'on-request',
+      sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write', status TEXT NOT NULL DEFAULT 'idle',
+      revision INTEGER NOT NULL DEFAULT 0, legacy_source_id TEXT UNIQUE,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE agent_pending_inputs (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+      client_request_id TEXT NOT NULL UNIQUE, input_text TEXT NOT NULL,
+      attachments_json TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL
+    );
+    INSERT INTO agent_sessions(id, title, workspace_root, created_at, updated_at)
+      VALUES ('legacy-session', 'Legacy session', '${tempDir.replaceAll("'", "''")}', 100, 100);
+    INSERT INTO agent_pending_inputs(id, session_id, client_request_id, input_text, created_at)
+      VALUES ('legacy-queue', 'legacy-session', 'legacy-request', 'queued before upgrade', 110);
+    PRAGMA user_version = 1;
+  `);
+  legacy.close();
+
+  const store = new AgentStore(databaseFile, { backupsDir }).open();
+  const pending = store.getSession("legacy-session").pendingInputs[0];
+  assert.equal(pending.status, "queued", "v1 queue status was not migrated");
+  assert.equal(pending.position, 110, "v1 queue order was not preserved");
+  assert.equal(pending.updatedAt, 110, "v1 queue update time was not initialized");
+  assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 2, "Agent store schema version was not advanced");
+  assert(store.listBackups().some((item) => item.name.includes("schema-v1-to-v2")), "schema migration did not create a recovery backup");
+  store.close();
+}
+
 async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-agent-runtime-"));
+  checkStoreMigration(tempDir);
   const clients = [];
-  const settings = {
-    provider: "codex",
-    cliPath: "",
-    defaultModel: "gpt-test",
-    reasoningEffort: "high",
-    approvalPolicy: "on-request",
-    sandboxMode: "workspace-write",
-    workspaceRoot: tempDir,
-    queueWhileRunning: true,
-    showReasoning: true,
+  const clientConfigs = [];
+  const settings = getDefaultAgentSettings(tempDir);
+  settings.providers.codex = {
+    ...settings.providers.codex,
+    cliPath: "fake-codex",
+    baseUrl: "https://example.test",
+    apiKeyConfigured: true,
+    models: [{ id: "gpt-test", displayName: "GPT Test" }],
+    selectedModel: "gpt-test",
+    modelValidatedAt: Date.now(),
   };
   let legacyCleared = false;
+  const legacySnapshot = { currentSessionId: "legacy-one", sessions: [{ id: "legacy-one", title: "Legacy history" }] };
   const runtime = new AgentRuntime({
     databaseFile: path.join(tempDir, "agent.sqlite"),
     attachmentsDir: path.join(tempDir, "attachments"),
     appVersion: "test",
-    settingsService: { async readAgentSettings() { return { ...settings }; } },
+    settingsService: {
+      async readAgentSettings() { return structuredClone(settings); },
+      async readAgentRuntimeSettings(provider) { return { ...structuredClone(settings.providers[provider]), apiKey: "test-key", workspaceRoot: settings.workspaceRoot }; },
+      async updateProviderRuntime(provider, detected) {
+        settings.providers[provider] = { ...settings.providers[provider], cliPath: detected.path, cliVersion: detected.version, cliSource: detected.source };
+        return structuredClone(settings);
+      },
+    },
     permissionsService: {
       async readPermissionsStore() { return { allowedRoots: [tempDir] }; },
       async resolveAllowedExistingPath(value) {
@@ -96,12 +145,14 @@ async function main() {
       },
     },
     legacySessionService: {
+      async readSessionStore() { return structuredClone(legacySnapshot); },
       async writeSessionStore(payload) {
         legacyCleared = Array.isArray(payload.sessions) && payload.sessions.length === 0;
       },
     },
     discoverExecutable: async () => ({ available: true, command: "fake-codex", version: "codex-cli test" }),
-    clientFactory: () => {
+    clientFactory: (config) => {
+      clientConfigs.push(config);
       const client = new FakeCodexClient();
       clients.push(client);
       return client;
@@ -113,16 +164,19 @@ async function main() {
   await runtime.initialize();
   assert.equal((await runtime.listSessions()).filter((item) => item.provider === "legacy").length, 0, "legacy sessions were retained");
   assert.equal(legacyCleared, true, "legacy JSON history was not retired");
+  assert(fs.readdirSync(path.join(tempDir, "AgentBackups")).some((name) => name.startsWith("legacy-agent-history-")), "legacy history was retired without a recovery snapshot");
 
   settings.workspaceRoot = path.dirname(tempDir);
   const invalidWorkspaceRuntime = await runtime.getRuntimeStatus({ start: true, refresh: true });
   assert.equal(invalidWorkspaceRuntime.workspaceValid, false, "invalid default workspace escaped runtime status validation");
-  assert.match(invalidWorkspaceRuntime.error, /outside allowed roots/);
+  assert.match(invalidWorkspaceRuntime.error, /权限页添加该目录/);
   settings.workspaceRoot = tempDir;
 
   const session = await runtime.createSession({ title: "Agent session" });
   const first = await runtime.startTurn(session.id, { text: "first", clientRequestId: "request-1" });
   assert.equal(first.turn.status, "running");
+  assert(clientConfigs[0].args.includes("features.multi_agent=false"), "Codex native multi-agent support was not disabled");
+  assert.equal(Object.hasOwn(clientConfigs[0].env, "WORKBENCH_AGENT_BRIDGE_TOKEN"), false, "Codex inherited a delegation bridge token");
   assert.equal((await runtime.getSession(session.id)).status, "running");
   const client = clients[0];
   assert(fs.existsSync(path.join(tempDir, "attachments", session.id)), "thread workspace attachment root was not created");
@@ -172,8 +226,11 @@ async function main() {
   await runtime.deleteSession(cleanupSession.id);
   assert.equal(fs.existsSync(path.join(tempDir, "attachments", cleanupSession.id)), false, "session deletion left its attachment directory behind");
 
+  settings.activeProvider = "claude";
   const forked = await runtime.forkSession(titledSession.id);
+  settings.activeProvider = "codex";
   assert(forked.id !== titledSession.id, "fork did not create a distinct session");
+  assert.equal(forked.provider, "codex", "Codex fork followed the unrelated active Provider");
   assert.equal(client.requests.findLast((entry) => entry.method === "thread/fork")?.params.excludeTurns, true, "thread fork requested full provider history");
 
   await assert.rejects(
@@ -295,7 +352,39 @@ async function main() {
     turn: { id: queueFailureFirst.turn.providerTurnId, status: "completed", items: [] },
   });
   await eventually(() => (runtime.store.findTurnByClientRequestId(queueFailureSession.id, "queue-failure-2")?.status === "failed"), "failed queued input disappeared without a persisted turn");
+  const failedQueue = (await runtime.getSession(queueFailureSession.id)).pendingInputs;
+  assert.equal(failedQueue.length, 1, "failed queued input was removed instead of remaining recoverable");
+  assert.equal(failedQueue[0].status, "failed");
+  const editedQueue = await runtime.updatePendingInput(queueFailureSession.id, failedQueue[0].id, { text: "retry this message", revision: failedQueue[0].revision });
+  assert.equal(editedQueue.status, "queued");
+  assert.equal(editedQueue.input, "retry this message");
+  await assert.rejects(
+    () => runtime.updatePendingInput(queueFailureSession.id, failedQueue[0].id, { text: "stale edit", revision: failedQueue[0].revision }),
+    (error) => error.code === "QUEUE_REVISION_CONFLICT",
+    "stale queue edits were not rejected"
+  );
+  await runtime.removePendingInput(queueFailureSession.id, failedQueue[0].id);
   assert.equal((await runtime.getSession(queueFailureSession.id)).pendingInputs.length, 0);
+
+  const queueOrderSession = await runtime.createSession({ title: "Queue order" });
+  const queueOrderFirst = await runtime.startTurn(queueOrderSession.id, { text: "active", clientRequestId: "queue-order-active" });
+  const queueA = await runtime.startTurn(queueOrderSession.id, { text: "A", clientRequestId: "queue-order-a" });
+  const queueB = await runtime.startTurn(queueOrderSession.id, { text: "B", clientRequestId: "queue-order-b" });
+  await runtime.movePendingInput(queueOrderSession.id, queueB.pending.id, "up");
+  assert.deepEqual((await runtime.getSession(queueOrderSession.id)).pendingInputs.map((item) => item.input), ["B", "A"]);
+  client.emit("notification", "turn/completed", {
+    threadId: (await runtime.getSession(queueOrderSession.id)).providerThreadId,
+    turn: { id: queueOrderFirst.turn.providerTurnId, status: "completed", items: [] },
+  });
+  await eventually(() => runtime.store.getActiveTurn(queueOrderSession.id)?.input === "B", "reordered queue did not dispatch the first visible item");
+  const queuedAfterReorder = (await runtime.getSession(queueOrderSession.id)).pendingInputs[0];
+  const activeAfterReorder = runtime.store.getActiveTurn(queueOrderSession.id);
+  await runtime.promotePendingInput(queueOrderSession.id, queuedAfterReorder.id);
+  assert(
+    client.requests.some((entry) => entry.method === "turn/steer" && entry.params.expectedTurnId === activeAfterReorder.providerTurnId && entry.params.input[0].text === "A"),
+    "promoting a Codex queue item did not steer the active turn"
+  );
+  assert.equal((await runtime.getSession(queueOrderSession.id)).pendingInputs.length, 0, "successfully promoted queue item remained pending");
 
   const revisionBeforeRestart = (await runtime.getSession(session.id)).revision;
   await runtime.restart();
@@ -326,6 +415,15 @@ async function main() {
   const events = runtime.store.getEventsAfter(session.id, 0);
   assert(events.length > 0 && events.every((event, index) => index === 0 || event.revision > events[index - 1].revision), "event revisions are not strictly increasing");
   assert(published.some((event) => event.type === "approval.requested"));
+
+  const backup = await runtime.createBackup();
+  assert(backup?.name && !Object.hasOwn(backup, "path"), "manual Agent backup leaked or omitted metadata");
+  assert((await runtime.listBackups()).some((item) => item.name === backup.name), "created Agent backup was not listed");
+  const afterBackup = await runtime.createSession({ title: "Created after backup" });
+  assert(await runtime.getSession(afterBackup.id));
+  await runtime.restoreBackup(backup.name);
+  assert.equal(await runtime.getSession(afterBackup.id), null, "restoring a backup did not replace newer session state");
+  assert(await runtime.getSession(session.id), "restoring a backup lost the captured session state");
 
   await runtime.shutdown();
   fs.rmSync(tempDir, { recursive: true, force: true });

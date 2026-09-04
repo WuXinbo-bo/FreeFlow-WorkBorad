@@ -3,7 +3,11 @@ const fs = require("fs/promises");
 const path = require("path");
 const { EventEmitter } = require("events");
 const { AgentStore } = require("./agentStore");
-const { CodexAppServerClient, discoverCodexExecutable } = require("./codexAppServerClient");
+const { CodexAppServerClient } = require("./codexAppServerClient");
+const { createCliRuntimeRegistry, wrapperCommand } = require("./cliRuntimeRegistry");
+const { createClaudeCliRunner } = require("./claudeCliRunner");
+const { providerApiRoot } = require("./agentConnectionService");
+const { normalizeAgentSettings } = require("./agentSettingsModel");
 const { APPROVAL_METHODS, buildApprovalResponse, normalizeNotification } = require("./agentProtocol");
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -13,43 +17,91 @@ function safeName(value) {
   return String(value || "attachment").replace(/[<>:"/\\|?*\x00-\x1f]+/g, "_").slice(0, 160) || "attachment";
 }
 
-function publicAccount(account) {
-  if (!account || typeof account !== "object") return null;
-  return {
-    type: String(account.type || ""),
-    email: String(account.email || account.accountEmail || ""),
-    planType: String(account.planType || account.plan_type || ""),
-  };
+function providerReady(provider, runtime) {
+  return Boolean(
+    runtime?.available &&
+    provider?.baseUrl &&
+    (provider?.apiKeyConfigured || provider?.apiKey) &&
+    provider?.selectedModel &&
+    provider?.modelValidatedAt
+  );
 }
 
-function modelSummary(model) {
+function codexClientConfig(provider, command, cwd, profileDir, appVersion) {
+  const launch = wrapperCommand(command);
+  const apiRoot = providerApiRoot("codex", provider.baseUrl);
+  const config = [
+    ["model_provider", "freeflow"],
+    ["model_providers.freeflow.name", "FreeFlow Connection"],
+    ["model_providers.freeflow.base_url", apiRoot],
+    ["model_providers.freeflow.env_key", "OPENAI_API_KEY"],
+    ["model_providers.freeflow.wire_api", "responses"],
+    ["model_providers.freeflow.supports_websockets", false],
+    ["model_providers.freeflow.request_max_retries", 3],
+    ["model_providers.freeflow.stream_max_retries", 5],
+    ["model_providers.freeflow.stream_idle_timeout_ms", 300000],
+    ["features.multi_agent", false],
+  ];
+  const args = [...launch.args, "app-server", "--stdio"];
+  for (const [key, value] of config) args.push("--config", `${key}=${typeof value === "string" ? JSON.stringify(value) : value}`);
+  const env = {
+    ...process.env,
+    CODEX_HOME: profileDir,
+    CODEX_API_KEY: provider.apiKey,
+    OPENAI_API_KEY: provider.apiKey,
+  };
+  for (const key of [
+    "CLAUDE_WORKER_BRIDGE_URL", "CLAUDE_WORKER_BRIDGE_TOKEN", "CLAUDE_WORKBENCH_PARENT_TASK_ID",
+    "CLAUDE_CODEX_BRIDGE_URL", "CLAUDE_CODEX_BRIDGE_TOKEN",
+    "WORKBENCH_AGENT_BRIDGE_URL", "WORKBENCH_AGENT_BRIDGE_TOKEN",
+  ]) delete env[key];
   return {
-    id: String(model?.id || model?.model || ""),
-    displayName: String(model?.displayName || model?.display_name || model?.id || ""),
-    description: String(model?.description || ""),
-    isDefault: model?.isDefault === true || model?.is_default === true,
-    hidden: model?.hidden === true,
+    command: launch.command,
+    args,
+    cwd,
+    clientVersion: appVersion,
+    env,
   };
 }
 
 class AgentRuntime extends EventEmitter {
   constructor(options) {
     super();
-    this.store = options.store || new AgentStore(options.databaseFile);
+    this.store = options.store || new AgentStore(options.databaseFile, { backupsDir: options.backupsDir });
     this.settingsService = options.settingsService;
     this.permissionsService = options.permissionsService;
     this.legacySessionService = options.legacySessionService;
     this.attachmentsDir = path.resolve(options.attachmentsDir);
+    this.profilesDir = path.resolve(options.profilesDir || path.join(this.attachmentsDir, "..", "AgentProfiles"));
+    this.backupsDir = path.resolve(options.backupsDir || path.join(this.attachmentsDir, "..", "AgentBackups"));
     this.appVersion = options.appVersion || "0.0.0";
     this.clientFactory = options.clientFactory || ((clientOptions) => new CodexAppServerClient(clientOptions));
-    this.discoverExecutable = options.discoverExecutable || discoverCodexExecutable;
+    this.claudeRunner = options.claudeRunner || createClaudeCliRunner();
+    this.cliRegistry = options.cliRegistry || (options.discoverExecutable ? {
+      detect: async (provider, input = {}) => {
+        if (provider !== "codex") return { provider, available: false, requiresSelection: false, candidates: [], path: "", version: "", source: "", error: "未配置测试 Provider", checkedAt: Date.now() };
+        const result = await options.discoverExecutable(input.configuredPath || "");
+        return {
+          provider,
+          available: Boolean(result.available),
+          requiresSelection: false,
+          candidates: result.available ? [{ path: result.command, version: result.version, source: "configured", label: "测试" }] : [],
+          path: result.command || "",
+          version: result.version || "",
+          source: "configured",
+          error: result.error || "",
+          checkedAt: Date.now(),
+        };
+      },
+    } : createCliRuntimeRegistry());
     this.client = null;
     this.clientCommand = "";
     this.runtimeGeneration = 0;
     this.runtimeState = "stopped";
     this.lastRuntimeError = "";
-    this.discoveryCache = null;
+    this.discoveryCache = new Map();
     this.startPromise = null;
+    this.activeClaudeRuns = new Map();
     this.initialized = false;
   }
 
@@ -57,8 +109,20 @@ class AgentRuntime extends EventEmitter {
     if (this.initialized) return;
     this.store.open();
     this.store.recoverOrphanedState();
-    await fs.mkdir(this.attachmentsDir, { recursive: true });
+    await Promise.all([
+      fs.mkdir(this.attachmentsDir, { recursive: true }),
+      fs.mkdir(path.join(this.profilesDir, "codex"), { recursive: true }),
+      fs.mkdir(path.join(this.profilesDir, "claude"), { recursive: true }),
+      fs.mkdir(this.backupsDir, { recursive: true }),
+    ]);
     if (this.store.getMeta("legacy-history-retired-v1") !== "done") {
+      const legacySessions = this.store.listSessions().filter((session) => session.provider === "legacy");
+      const legacyJson = await this.legacySessionService?.readSessionStore?.().catch(() => null);
+      if (legacySessions.length || legacyJson?.sessions?.length) {
+        this.store.createBackup("before-legacy-retirement");
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        await fs.writeFile(path.join(this.backupsDir, `legacy-agent-history-${stamp}.json`), JSON.stringify({ sqliteSessions: legacySessions, jsonStore: legacyJson }, null, 2), "utf8");
+      }
       this.store.deleteLegacySessions();
       await this.legacySessionService?.writeSessionStore?.({ currentSessionId: null, sessions: [] });
       this.store.setMeta("legacy-history-retired-v1", "done");
@@ -66,21 +130,36 @@ class AgentRuntime extends EventEmitter {
     this.initialized = true;
   }
 
+  async _readSettings() {
+    return normalizeAgentSettings(await this.settingsService.readAgentSettings());
+  }
+
+  async _detectProvider(provider, settings, refresh = false) {
+    const cached = this.discoveryCache.get(provider);
+    if (!refresh && cached && Date.now() - cached.checkedAt <= 5000) return cached;
+    const detected = await this.cliRegistry.detect(provider, { configuredPath: settings.providers[provider].cliPath });
+    this.discoveryCache.set(provider, detected);
+    return detected;
+  }
+
   async getRuntimeStatus({ start = false, refresh = false } = {}) {
     await this.initialize();
-    const settings = await this.settingsService.readAgentSettings();
-    if (refresh || !this.discoveryCache || Date.now() - this.discoveryCache.checkedAt > 5000) {
-      this.discoveryCache = { ...(await this.discoverExecutable(settings.cliPath)), checkedAt: Date.now() };
-    }
+    const settings = await this._readSettings();
+    const detected = Object.fromEntries(await Promise.all(["codex", "claude"].map(async (provider) => [
+      provider,
+      await this._detectProvider(provider, settings, refresh),
+    ])));
     let workspaceValid = true;
     let workspaceError = "";
     try {
       await this._resolveWorkspaceRoot(settings.workspaceRoot);
-    } catch (error) {
+    } catch {
       workspaceValid = false;
-      workspaceError = error.message;
+      workspaceError = "默认工作区不在已授权目录中，请先在系统设置的权限页添加该目录。";
     }
-    if (start && this.discoveryCache.available && workspaceValid) {
+    const activeProvider = settings.activeProvider;
+    const activeSettings = settings.providers[activeProvider];
+    if (start && activeProvider === "codex" && providerReady(activeSettings, detected.codex) && workspaceValid) {
       try {
         await this.ensureClient();
       } catch (error) {
@@ -88,54 +167,79 @@ class AgentRuntime extends EventEmitter {
         this.runtimeState = "error";
       }
     }
-    let account = null;
-    let requiresOpenaiAuth = true;
-    let models = [];
-    if (this.client?.initialized) {
-      try {
-        const [accountResult, modelResult] = await Promise.all([
-          this.client.request("account/read", { refreshToken: false }),
-          this.client.request("model/list", { limit: 100, includeHidden: false }),
-        ]);
-        account = publicAccount(accountResult?.account);
-        requiresOpenaiAuth = accountResult?.requiresOpenaiAuth !== false;
-        models = (modelResult?.data || []).map(modelSummary).filter((item) => item.id);
-      } catch (error) {
-        this.lastRuntimeError = error.message;
-      }
-    }
+    const providers = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
+      ...detected[provider],
+      configured: Boolean(settings.providers[provider].baseUrl && settings.providers[provider].apiKeyConfigured),
+      modelSelected: Boolean(settings.providers[provider].selectedModel),
+      modelValidated: Boolean(settings.providers[provider].modelValidatedAt),
+      ready: providerReady(settings.providers[provider], detected[provider]) && workspaceValid,
+      models: settings.providers[provider].models,
+      selectedModel: settings.providers[provider].selectedModel,
+    }]));
+    const active = providers[activeProvider];
     return {
-      provider: "codex",
-      available: Boolean(this.discoveryCache.available),
-      command: settings.cliPath ? this.discoveryCache.command : "",
-      version: this.discoveryCache.version || "",
-      state: this.runtimeState,
+      provider: activeProvider,
+      activeProvider,
+      providers,
+      available: active.available,
+      requiresSelection: active.requiresSelection,
+      candidates: active.candidates,
+      command: active.path,
+      version: active.version,
+      state: activeProvider === "claude" ? (active.ready ? "ready" : "stopped") : this.runtimeState,
       generation: this.runtimeGeneration,
       pid: this.client?.process?.pid || 0,
-      authenticated: Boolean(account) || !requiresOpenaiAuth,
-      requiresOpenaiAuth,
-      account,
-      models,
+      authenticated: active.configured,
+      requiresOpenaiAuth: false,
+      account: null,
+      models: active.models,
+      ready: active.ready,
       workspaceValid,
-      error: workspaceError || this.discoveryCache.error || this.lastRuntimeError || "",
+      error: workspaceError || active.error || this.lastRuntimeError || "",
       settings,
     };
   }
 
+  async bindRuntime(provider, selectedPath) {
+    const id = String(provider || "").trim().toLowerCase();
+    if (!new Set(["codex", "claude"]).has(id)) throw Object.assign(new Error("不支持的 Provider"), { statusCode: 400 });
+    const detected = await this.cliRegistry.detect(id, { configuredPath: String(selectedPath || "").trim() });
+    if (!detected.available) throw Object.assign(new Error(detected.error || "CLI 路径不可用"), { statusCode: 400 });
+    await this.settingsService.updateProviderRuntime(id, detected);
+    this.discoveryCache.set(id, detected);
+    if (id === "codex" && this.client) await this.restart({ start: false });
+    return this.getRuntimeStatus({ refresh: true });
+  }
+
+  async discoverProvider(provider) {
+    const id = String(provider || "").trim().toLowerCase();
+    if (!new Set(["codex", "claude"]).has(id)) throw Object.assign(new Error("不支持的 Provider"), { statusCode: 400 });
+    const status = await this.getRuntimeStatus({ refresh: true });
+    return status.providers[id];
+  }
+
   async ensureClient() {
     await this.initialize();
-    const settings = await this.settingsService.readAgentSettings();
-    const discovery = await this.discoverExecutable(settings.cliPath);
-    this.discoveryCache = { ...discovery, checkedAt: Date.now() };
+    const settings = await this._readSettings();
+    const provider = await this.settingsService.readAgentRuntimeSettings("codex");
+    const discovery = await this._detectProvider("codex", settings, true);
     if (!discovery.available) throw new Error(discovery.error || "未找到 Codex CLI");
+    if (!providerReady(provider, discovery)) throw new Error("请先保存连接、刷新模型、手动选择并完成验证");
     const workspaceRoot = await this._resolveWorkspaceRoot(settings.workspaceRoot);
-    if (this.client?.initialized && this.clientCommand === discovery.command) return this.client;
+    const clientIdentity = `${discovery.path}\n${provider.baseUrl}\n${provider.selectedModel}`;
+    if (this.client?.initialized && this.clientCommand === clientIdentity) return this.client;
     if (this.startPromise) return this.startPromise;
     this.startPromise = (async () => {
       if (this.client) await this.client.stop().catch(() => {});
-      const client = this.clientFactory({ command: discovery.command, cwd: workspaceRoot, clientVersion: this.appVersion });
+      const client = this.clientFactory(codexClientConfig(
+        provider,
+        discovery.path,
+        workspaceRoot,
+        path.join(this.profilesDir, "codex"),
+        this.appVersion
+      ));
       this.client = client;
-      this.clientCommand = discovery.command;
+      this.clientCommand = clientIdentity;
       this.runtimeState = "starting";
       this.runtimeGeneration += 1;
       const generation = this.runtimeGeneration;
@@ -152,7 +256,7 @@ class AgentRuntime extends EventEmitter {
     return this.startPromise;
   }
 
-  async restart() {
+  async restart(options = {}) {
     await this.initialize();
     this.store.recoverOrphanedState("Codex runtime restarted before this task completed").forEach((event) => this._publish(event));
     this.runtimeGeneration += 1;
@@ -160,7 +264,8 @@ class AgentRuntime extends EventEmitter {
     this.client = null;
     this.runtimeState = "stopped";
     await client?.stop().catch(() => {});
-    return this.getRuntimeStatus({ start: true, refresh: true });
+    for (const run of this.activeClaudeRuns.values()) run.controller.abort();
+    return this.getRuntimeStatus({ start: options.start !== false, refresh: true });
   }
 
   async shutdown() {
@@ -172,6 +277,7 @@ class AgentRuntime extends EventEmitter {
     this.client = null;
     this.runtimeState = "stopped";
     this.emit("shutdown");
+    for (const run of this.activeClaudeRuns.values()) run.controller.abort();
     await client?.stop().catch(() => {});
     this.store.close();
     this.initialized = false;
@@ -197,50 +303,37 @@ class AgentRuntime extends EventEmitter {
 
   async createSession(input = {}) {
     await this.initialize();
-    const settings = await this.settingsService.readAgentSettings();
+    const settings = await this._readSettings();
+    const requestedProvider = String(input.provider || "").trim().toLowerCase();
+    const providerId = new Set(["codex", "claude"]).has(requestedProvider) ? requestedProvider : settings.activeProvider;
+    const provider = settings.providers[providerId];
+    const detected = await this._detectProvider(providerId, settings, false);
+    if (!providerReady(provider, detected)) {
+      throw Object.assign(new Error("请先在 AI 模型设置中绑定 CLI、保存连接、刷新模型、选择模型并完成验证"), { statusCode: 409, code: "AGENT_PROVIDER_NOT_READY" });
+    }
     const workspaceRoot = await this._resolveWorkspaceRoot(input.workspaceRoot || settings.workspaceRoot);
     const created = this.store.createSession({
-      provider: "codex",
+      provider: providerId,
       providerThreadId: input.providerThreadId || null,
       title: input.title,
       workspaceRoot,
-      model: input.model ?? settings.defaultModel,
-      reasoningEffort: input.reasoningEffort ?? settings.reasoningEffort,
-      approvalPolicy: input.approvalPolicy || settings.approvalPolicy,
-      sandboxMode: input.sandboxMode || settings.sandboxMode,
+      model: provider.selectedModel,
+      reasoningEffort: input.reasoningEffort ?? provider.reasoningEffort,
+      approvalPolicy: input.approvalPolicy || provider.approvalPolicy,
+      sandboxMode: input.sandboxMode || provider.sandboxMode,
+      runtimeBinding: { provider: providerId, cliPath: detected.path, cliVersion: detected.version, baseUrl: provider.baseUrl },
       status: input.status || "idle",
     });
     this._publish(created.event);
     return created.session;
   }
 
-  async startLogin(input = {}) {
-    const client = await this.ensureClient();
-    const type = input.type === "chatgptDeviceCode" ? "chatgptDeviceCode" : "chatgpt";
-    const params = type === "chatgptDeviceCode"
-      ? { type }
-      : { type, useHostedLoginSuccessPage: true, appBrand: "chatgpt" };
-    return client.request("account/login/start", params, { timeoutMs: 30_000 });
-  }
-
-  async cancelLogin(loginId) {
-    if (!this.client?.initialized) return { cancelled: false };
-    await this.client.request("account/login/cancel", { loginId: String(loginId || "") });
-    return { cancelled: true };
-  }
-
-  async logout() {
-    const client = await this.ensureClient();
-    await client.request("account/logout", {});
-    return this.getRuntimeStatus({ refresh: true });
-  }
-
   async renameSession(sessionId, title) {
     await this.initialize();
     const event = this.store.renameSession(sessionId, title);
     this._publish(event);
-    if (this.client?.initialized) {
-      const session = this.store.getSessionSummary(sessionId);
+    const session = this.store.getSessionSummary(sessionId);
+    if (session?.provider === "codex" && this.client?.initialized) {
       if (session?.providerThreadId) this.client.request("thread/name/set", { threadId: session.providerThreadId, name: String(title).trim() }).catch(() => {});
     }
     return this.store.getSessionSummary(sessionId);
@@ -251,7 +344,7 @@ class AgentRuntime extends EventEmitter {
     const session = this.store.getSessionSummary(sessionId);
     if (!session) return false;
     if (ACTIVE_STATUSES.has(session.status)) throw Object.assign(new Error("请先停止当前任务"), { statusCode: 409 });
-    if (this.client?.initialized && session.providerThreadId) {
+    if (session.provider === "codex" && this.client?.initialized && session.providerThreadId) {
       await this.client.request("thread/delete", { threadId: session.providerThreadId }).catch(() => {});
     }
     const deleted = this.store.deleteSession(sessionId);
@@ -311,24 +404,39 @@ class AgentRuntime extends EventEmitter {
     if (existingPending) return { queued: true, steered: false, duplicate: true, pending: existingPending };
     const active = this.store.getActiveTurn(sessionId);
     if (active) {
-      if (input.mode === "steer" && active.providerTurnId && session.providerThreadId) {
-        const client = await this.ensureClient();
-        await client.request("turn/steer", {
-          threadId: session.providerThreadId,
-          expectedTurnId: active.providerTurnId,
-          input: [{ type: "text", text }],
-          clientUserMessageId: clientRequestId,
-        });
-        const event = this.store.addActivity(sessionId, { activityType: "steer", status: "completed", summary: text, turnId: active.id });
-        this._publish(event);
-        return { queued: false, steered: true, turn: active };
-      }
-      const settings = await this.settingsService.readAgentSettings();
-      if (!settings.queueWhileRunning) {
+      const settings = await this._readSettings();
+      const mode = input.mode === "steer" ? "steer" : "queue";
+      if (mode === "queue" && !settings.queueWhileRunning) {
         throw Object.assign(new Error("当前任务仍在运行，请先停止或使用即时引导"), { statusCode: 409 });
       }
-      const queued = this.store.queueInput(sessionId, { text, clientRequestId, attachments: input.attachmentIds || [] });
+      const queued = this.store.queueInput(sessionId, { text, clientRequestId, attachments: input.attachmentIds || [], mode });
       this._publish(queued.event);
+      if (mode === "steer") {
+        if (session.provider === "codex" && active.providerTurnId && session.providerThreadId) {
+          const claimed = this.store.takeNextInput(sessionId, queued.pending.id);
+          if (claimed?.event) this._publish(claimed.event);
+          try {
+            const client = await this.ensureClient();
+            await client.request("turn/steer", {
+              threadId: session.providerThreadId,
+              expectedTurnId: active.providerTurnId,
+              input: [{ type: "text", text }],
+              clientUserMessageId: clientRequestId,
+            });
+            this._publish(this.store.completePendingInput(sessionId, queued.pending.id));
+            this._publish(this.store.addActivity(sessionId, { activityType: "steer", status: "completed", summary: text, turnId: active.id }));
+            return { queued: false, steered: true, turn: active };
+          } catch (error) {
+            this._publish(this.store.failPendingInput(sessionId, queued.pending.id, error));
+            throw error;
+          }
+        }
+        const run = this.activeClaudeRuns.get(sessionId);
+        if (run) {
+          run.controller.abort();
+          return { queued: true, steered: true, pending: queued.pending };
+        }
+      }
       return { queued: true, steered: false, pending: queued.pending };
     }
     return this._startTurnNow(sessionId, { ...input, text, clientRequestId });
@@ -351,7 +459,7 @@ class AgentRuntime extends EventEmitter {
     }
     const result = await client.request("thread/start", {
       cwd: workspaceRoot,
-      model: session.model || settings.defaultModel || null,
+      model: session.model || settings.selectedModel || null,
       approvalPolicy: session.approvalPolicy || settings.approvalPolicy,
       sandbox: session.sandboxMode || settings.sandboxMode,
       runtimeWorkspaceRoots: [workspaceRoot, attachmentRoot],
@@ -363,23 +471,30 @@ class AgentRuntime extends EventEmitter {
     if (!threadId) throw new Error("Codex did not return a thread id");
     const event = this.store.bindThread(session.id, threadId, {
       workspaceRoot,
-      model: result.model || session.model || settings.defaultModel,
+      provider: "codex",
+      model: result.model || session.model || settings.selectedModel,
       reasoningEffort: result.reasoningEffort || session.reasoningEffort || settings.reasoningEffort,
       approvalPolicy: result.approvalPolicy || session.approvalPolicy || settings.approvalPolicy,
       sandboxMode: result.sandbox || session.sandboxMode || settings.sandboxMode,
+      runtimeBinding: session.runtimeBinding,
     });
     this._publish(event);
     return threadId;
   }
 
   async _startTurnNow(sessionId, input) {
-    const settings = await this.settingsService.readAgentSettings();
     let session = this.store.getSessionSummary(sessionId);
+    if (!session) throw Object.assign(new Error("会话不存在"), { statusCode: 404 });
+    const settings = await this._readSettings();
+    const provider = await this.settingsService.readAgentRuntimeSettings(session.provider);
+    const discovery = await this._detectProvider(session.provider, settings, false);
+    if (!providerReady(provider, discovery)) throw Object.assign(new Error("当前会话的模型连接尚未就绪"), { statusCode: 409, code: "AGENT_PROVIDER_NOT_READY" });
     const created = this.store.createTurn(sessionId, { text: input.text, clientRequestId: input.clientRequestId, messageId: input.messageId });
     this._publish(created.event);
     try {
+      if (session.provider === "claude") return this._startClaudeTurn(session, provider, discovery, created, input);
       const client = await this.ensureClient();
-      const threadId = await this._ensureThread(session, settings, client);
+      const threadId = await this._ensureThread(session, provider, client);
       session = this.store.getSessionSummary(sessionId);
       const attachments = this.store.getAttachments(sessionId, input.attachmentIds || []);
       const providerInput = [{ type: "text", text: input.text }];
@@ -391,9 +506,9 @@ class AgentRuntime extends EventEmitter {
         threadId,
         input: providerInput,
         clientUserMessageId: input.clientRequestId,
-        model: session.model || settings.defaultModel || null,
-        effort: session.reasoningEffort || settings.reasoningEffort || null,
-        approvalPolicy: session.approvalPolicy || settings.approvalPolicy,
+        model: session.model || provider.selectedModel || null,
+        effort: session.reasoningEffort || provider.reasoningEffort || null,
+        approvalPolicy: session.approvalPolicy || provider.approvalPolicy,
         cwd: session.workspaceRoot,
         runtimeWorkspaceRoots: [session.workspaceRoot, path.join(this.attachmentsDir, session.id)],
         turnTrigger: "user",
@@ -410,6 +525,67 @@ class AgentRuntime extends EventEmitter {
     }
   }
 
+  _startClaudeTurn(session, provider, discovery, created, input) {
+    const controller = new AbortController();
+    const attachmentText = this.store.getAttachments(session.id, input.attachmentIds || [])
+      .map((item) => `- ${item.name}: ${item.storedPath}`)
+      .join("\n");
+    const prompt = attachmentText ? `${input.text}\n\n附件路径：\n${attachmentText}` : input.text;
+    const handle = this.claudeRunner.start({
+      commandPath: discovery.path,
+      profileDir: path.join(this.profilesDir, "claude"),
+      provider,
+      session,
+      prompt,
+      signal: controller.signal,
+      onSession: async (threadId) => {
+        const current = this.store.getSessionSummary(session.id);
+        if (current?.providerThreadId === threadId) return;
+        this._publish(this.store.bindThread(session.id, threadId, {
+          provider: "claude",
+          workspaceRoot: session.workspaceRoot,
+          model: session.model,
+          reasoningEffort: session.reasoningEffort,
+          approvalPolicy: session.approvalPolicy,
+          sandboxMode: session.sandboxMode,
+          runtimeBinding: session.runtimeBinding,
+        }));
+      },
+      onDelta: async (itemId, delta) => this._publish(this.store.appendAgentDelta(session.id, created.turn.id, itemId, delta)),
+      onMessage: async (itemId, text) => this._publish(this.store.completeAgentMessage(session.id, created.turn.id, itemId, text)),
+      onActivity: async (activity) => this._publish(this.store.addActivity(session.id, { ...activity, turnId: created.turn.id })),
+    });
+    const providerTurnId = `claude:${handle.sessionId}`;
+    this._publish(this.store.bindTurn(session.id, created.turn.id, providerTurnId));
+    this.activeClaudeRuns.set(session.id, { controller, handle, turnId: created.turn.id });
+    handle.completion.then((result) => {
+      const current = this.store.getSessionSummary(session.id);
+      if (current && result.sessionId && current.providerThreadId !== result.sessionId) {
+        this._publish(this.store.bindThread(session.id, result.sessionId, {
+          provider: "claude",
+          workspaceRoot: session.workspaceRoot,
+          model: session.model,
+          reasoningEffort: session.reasoningEffort,
+          approvalPolicy: session.approvalPolicy,
+          sandboxMode: session.sandboxMode,
+          runtimeBinding: session.runtimeBinding,
+        }));
+      }
+      if (result.finalText && !(this.store.getSession(session.id)?.messages || []).some((message) => message.turnId === created.turn.id && message.role === "assistant")) {
+        this._publish(this.store.completeAgentMessage(session.id, created.turn.id, `claude:${result.sessionId}`, result.finalText));
+      }
+      this._publish(this.store.updateTurnState(session.id, created.turn.id, "completed"));
+    }).catch((error) => {
+      const status = error?.name === "AbortError" ? "cancelled" : "failed";
+      this._publish(this.store.updateTurnState(session.id, created.turn.id, status, status === "failed" ? { message: error.message, recoverable: true } : null));
+    }).finally(() => {
+      const active = this.activeClaudeRuns.get(session.id);
+      if (active?.turnId === created.turn.id) this.activeClaudeRuns.delete(session.id);
+      queueMicrotask(() => this._startNextQueued(session.id));
+    });
+    return { queued: false, steered: false, turn: { ...created.turn, providerTurnId, status: "running" } };
+  }
+
   async interruptTurn(sessionId) {
     await this.initialize();
     const session = this.store.getSessionSummary(sessionId);
@@ -417,6 +593,14 @@ class AgentRuntime extends EventEmitter {
     if (!session || !active) return { interrupted: false };
     const event = this.store.updateTurnState(sessionId, active.id, "interrupting");
     this._publish(event);
+    if (session.provider === "claude") {
+      const run = this.activeClaudeRuns.get(sessionId);
+      if (!run) {
+        this._publish(this.store.updateTurnState(sessionId, active.id, "cancelled"));
+        queueMicrotask(() => this._startNextQueued(sessionId));
+      } else run.controller.abort();
+      return { interrupted: true };
+    }
     if (!this.client?.initialized || !session.providerThreadId || !active.providerTurnId) {
       const cancelled = this.store.updateTurnState(sessionId, active.id, "cancelled");
       this._publish(cancelled);
@@ -433,6 +617,67 @@ class AgentRuntime extends EventEmitter {
     if (!event) throw Object.assign(new Error("排队消息不存在"), { statusCode: 404 });
     this._publish(event);
     return true;
+  }
+
+  async updatePendingInput(sessionId, pendingId, input = {}) {
+    await this.initialize();
+    const result = this.store.updatePendingInput(sessionId, pendingId, input);
+    if (!result) throw Object.assign(new Error("排队消息不存在"), { statusCode: 404 });
+    this._publish(result.event);
+    return result.pending;
+  }
+
+  async movePendingInput(sessionId, pendingId, direction) {
+    await this.initialize();
+    const result = this.store.movePendingInput(sessionId, pendingId, direction);
+    if (!result) throw Object.assign(new Error("排队消息不存在"), { statusCode: 404 });
+    this._publish(result.event);
+    return result.pending;
+  }
+
+  async promotePendingInput(sessionId, pendingId) {
+    await this.initialize();
+    const session = this.store.getSessionSummary(sessionId);
+    const pending = this.store.getSession(sessionId)?.pendingInputs.find((item) => item.id === pendingId);
+    if (session?.provider === "codex" && pending?.attachments?.length) {
+      throw Object.assign(new Error("包含附件的排队消息不能提升为 Codex 即时引导"), { statusCode: 409 });
+    }
+    const result = this.store.promotePendingInput(sessionId, pendingId);
+    if (!result) throw Object.assign(new Error("排队消息不存在"), { statusCode: 404 });
+    this._publish(result.event);
+    const active = this.store.getActiveTurn(sessionId);
+    if (active && session?.provider === "codex" && active.providerTurnId && session.providerThreadId) {
+      const claimed = this.store.takeNextInput(sessionId, pendingId);
+      if (claimed?.event) this._publish(claimed.event);
+      try {
+        const client = await this.ensureClient();
+        await client.request("turn/steer", {
+          threadId: session.providerThreadId,
+          expectedTurnId: active.providerTurnId,
+          input: [{ type: "text", text: claimed.input.input }],
+          clientUserMessageId: claimed.input.clientRequestId,
+        });
+        this._publish(this.store.completePendingInput(sessionId, pendingId));
+        this._publish(this.store.addActivity(sessionId, { activityType: "steer", status: "completed", summary: claimed.input.input, turnId: active.id }));
+      } catch (error) {
+        this._publish(this.store.failPendingInput(sessionId, pendingId, error));
+        throw error;
+      }
+    } else if (active && session?.provider === "claude") {
+      this.activeClaudeRuns.get(sessionId)?.controller.abort();
+    } else if (!active) {
+      queueMicrotask(() => this._startNextQueued(sessionId));
+    }
+    return result.pending;
+  }
+
+  async retryPendingInput(sessionId, pendingId) {
+    await this.initialize();
+    const result = this.store.retryPendingInput(sessionId, pendingId);
+    if (!result) throw Object.assign(new Error("排队消息不存在"), { statusCode: 404 });
+    this._publish(result.event);
+    if (!this.store.getActiveTurn(sessionId)) queueMicrotask(() => this._startNextQueued(sessionId));
+    return result.pending;
   }
 
   async resolveApproval(approvalId, input = {}) {
@@ -454,7 +699,7 @@ class AgentRuntime extends EventEmitter {
     await this.initialize();
     const source = this.store.getSessionSummary(sessionId);
     if (!source) throw Object.assign(new Error("会话不存在"), { statusCode: 404 });
-    if (!source.providerThreadId) return this.createSession({ ...source, title: input.title || `${source.title} 副本` });
+    if (!source.providerThreadId || source.provider === "claude") return this.createSession({ provider: source.provider, title: input.title || `${source.title} 副本`, workspaceRoot: source.workspaceRoot });
     const client = await this.ensureClient();
     const result = await client.request("thread/fork", {
       threadId: source.providerThreadId,
@@ -468,7 +713,7 @@ class AgentRuntime extends EventEmitter {
       threadSource: "freeflow",
     });
     return this.createSession({
-      title: input.title || `${source.title} 分支`, workspaceRoot: source.workspaceRoot, model: source.model,
+      provider: "codex", title: input.title || `${source.title} 分支`, workspaceRoot: source.workspaceRoot, model: source.model,
       reasoningEffort: source.reasoningEffort, approvalPolicy: source.approvalPolicy,
       sandboxMode: source.sandboxMode, providerThreadId: result?.thread?.id,
     });
@@ -540,13 +785,35 @@ class AgentRuntime extends EventEmitter {
     this._publish(next.event);
     try {
       await this._startTurnNow(sessionId, {
-        text: next.input.text,
+        text: next.input.input,
         clientRequestId: next.input.clientRequestId,
         attachmentIds: next.input.attachments,
       });
-    } catch {
-      // The failed turn and recovery state are already persisted.
+      this._publish(this.store.completePendingInput(sessionId, next.input.id));
+    } catch (error) {
+      this._publish(this.store.failPendingInput(sessionId, next.input.id, error));
     }
+  }
+
+  async listBackups() {
+    await this.initialize();
+    return this.store.listBackups();
+  }
+
+  async createBackup() {
+    await this.initialize();
+    const backup = this.store.createBackup("manual");
+    return backup ? { name: backup.name, createdAt: backup.createdAt, sizeBytes: backup.sizeBytes } : null;
+  }
+
+  async restoreBackup(name) {
+    await this.initialize();
+    if (this.store.listSessions().some((session) => ACTIVE_STATUSES.has(session.status))) {
+      throw Object.assign(new Error("请先停止所有正在运行的任务"), { statusCode: 409 });
+    }
+    const backups = this.store.restoreBackup(name);
+    this.emit("restored");
+    return backups;
   }
 
   _publish(event) {

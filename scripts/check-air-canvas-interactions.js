@@ -465,12 +465,34 @@ async function checkRightWorkspaceGlass(page, viewport) {
     parentExpanded: document.querySelector("#screen-source-header-menu > summary")?.getAttribute("aria-expanded"),
     panelHidden: document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"),
     focused: document.activeElement === document.querySelector("#screen-source-header-menu > summary"),
+    focusedId: document.activeElement?.id || "",
+    focusedTag: document.activeElement?.tagName || "",
   }));
   assert(
     !parentEscapeState.parentOpen && parentEscapeState.parentExpanded === "false" && parentEscapeState.panelHidden && parentEscapeState.focused,
     "Escape did not close the mapping parent and restore trigger focus",
     { viewport, parentEscapeState }
   );
+
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    await mappingTrigger.click();
+    await targetTrigger.click();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const repeatedEscapeState = await page.evaluate(() => ({
+      parentOpen: document.querySelector("#screen-source-header-menu")?.hasAttribute("open"),
+      targetOpen: document.querySelector("#screen-source-select-menu")?.hasAttribute("open"),
+      focused: document.activeElement === document.querySelector("#screen-source-header-menu > summary"),
+      focusedId: document.activeElement?.id || "",
+      focusedTag: document.activeElement?.tagName || "",
+    }));
+    assert(
+      !repeatedEscapeState.parentOpen && !repeatedEscapeState.targetOpen && repeatedEscapeState.focused,
+      "repeated Escape did not preserve the mapping menu recovery state",
+      { viewport, cycle, repeatedEscapeState }
+    );
+  }
 
   await mappingTrigger.click();
   await page.waitForFunction(() => !document.querySelector(".screen-source-header-panel")?.classList.contains("is-hidden"));
