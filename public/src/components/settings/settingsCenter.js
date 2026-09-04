@@ -1,5 +1,9 @@
 import { PERMISSION_META, THEME_PRESET_DEFS } from "../../config/ui-meta.js";
-import { DEFAULT_THEME_SETTINGS, THEME_SETTING_KEYS } from "../../theme/themeSettings.js";
+import {
+  DEFAULT_THEME_SETTINGS,
+  deriveCustomThemeSettings,
+  normalizeThemeSettings,
+} from "../../theme/themeSettings.js";
 
 const SECTION_DEFS = Object.freeze([
   { key: "general", label: "通用", icon: "sliders" },
@@ -26,20 +30,12 @@ function renderSectionIcon(name) {
 }
 
 const COLOR_FIELDS = Object.freeze([
-  ["backgroundColor", "背景底色"],
+  ["backgroundColor", "应用背景"],
   ["shellPanelColor", "主面板"],
-  ["floatingPanelColor", "浮层面板"],
-  ["controlColor", "控件底色"],
-  ["controlActiveColor", "控件激活"],
-  ["inputColor", "输入框"],
-  ["messageColor", "助手消息"],
-  ["userMessageColor", "用户消息"],
-  ["textColor", "全局文字"],
-  ["shellPanelTextColor", "面板文字"],
-  ["buttonColor", "主按钮"],
-  ["buttonTextColor", "按钮文字"],
-  ["patternColor", "纹理线条"],
-  ["dialogColor", "弹窗底色"],
+  ["controlColor", "控件表面"],
+  ["buttonColor", "强调色"],
+  ["shellPanelTextColor", "主文字"],
+  ["messageColor", "消息区域"],
 ]);
 
 const HIGH_RISK_PERMISSIONS = new Set(["appControl", "inputControl", "scriptExecution", "selfRepair"]);
@@ -352,32 +348,33 @@ export function mountSettingsCenter(host, options = {}) {
     const presets = Object.values(THEME_PRESET_DEFS).filter((preset) => preset.key !== "custom");
     return `
       <div class="settings-center-section-heading">
-        <div><p>Appearance</p><h4>主题与外观</h4></div>
-        <span>实时预览，取消即恢复</span>
+        <div><p>Appearance</p><h4>外观</h4></div>
+        <span>实时预览 · 取消恢复</span>
       </div>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>主题预设</h5><p>选择后立即预览，只有保存才会成为新默认。</p></div>
+      <section class="settings-center-group settings-center-appearance-presets">
+        <div class="settings-center-group-heading"><h5>主题</h5><p>选择一套完整的界面配色，画布始终保持白色。</p></div>
         <div class="settings-center-theme-presets">
           ${presets.map((preset) => {
             const colors = preset.settings || DEFAULT_THEME_SETTINGS;
-            return `<button type="button" data-theme-preset="${preset.key}" class="${theme.themePreset === preset.key ? "is-active" : ""}"><span class="settings-center-theme-swatch" style="--swatch-bg:${escapeHtml(colors.backgroundColor)};--swatch-panel:${escapeHtml(colors.shellPanelColor)};--swatch-accent:${escapeHtml(colors.buttonColor)}"></span><strong>${escapeHtml(preset.label)}</strong><small>${escapeHtml(preset.description)}</small></button>`;
+            return `<button type="button" data-theme-preset="${preset.key}" class="${theme.themePreset === preset.key ? "is-active" : ""}" aria-pressed="${theme.themePreset === preset.key ? "true" : "false"}">
+              <span class="settings-center-theme-preview" style="--preview-bg:${escapeHtml(colors.backgroundColor)};--preview-panel:${escapeHtml(colors.shellPanelColor)};--preview-control:${escapeHtml(colors.controlColor)};--preview-accent:${escapeHtml(colors.buttonColor)};--preview-text:${escapeHtml(colors.shellPanelTextColor)};--preview-message:${escapeHtml(colors.messageColor)}">
+                <i class="settings-center-theme-preview-rail"><b></b><b></b><b></b></i>
+                <i class="settings-center-theme-preview-canvas"></i>
+                <i class="settings-center-theme-preview-workbench"><b></b><em></em></i>
+              </span>
+              <span class="settings-center-theme-preset-copy"><strong>${escapeHtml(preset.label)}</strong><small>${escapeHtml(preset.description)}</small></span>
+              <i class="settings-center-theme-selected" aria-hidden="true">✓</i>
+            </button>`;
           }).join("")}
         </div>
       </section>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>透明度</h5><p>面板、画布与背景分别控制。</p></div>
-        <div class="settings-center-range-grid">
-          ${[["panelOpacity", "面板", 55], ["canvasOpacity", "画布", 20], ["backgroundOpacity", "背景", 0]].map(([key, label, min]) => `
-            <label><span>${label}<strong>${Math.round(Number(theme[key]) * 100)}%</strong></span><input type="range" min="${min}" max="100" step="1" data-theme-range="${key}" value="${Math.round(Number(theme[key]) * 100)}" /></label>
-          `).join("")}
-        </div>
-      </section>
-      <details class="settings-center-group settings-center-disclosure" open>
-        <summary><span><strong>颜色</strong><small>调整核心界面颜色</small></span><span>展开</span></summary>
+      <section class="settings-center-group settings-center-appearance-colors">
+        <div class="settings-center-group-heading"><h5>自定义颜色</h5><p>只调整核心颜色，其余状态色由系统自动生成。</p></div>
         <div class="settings-center-color-grid">
           ${COLOR_FIELDS.map(([key, label]) => `<label><span>${escapeHtml(label)}</span><div><input type="color" data-theme-color="${key}" value="${escapeHtml(theme[key] || DEFAULT_THEME_SETTINGS[key] || "#ffffff")}" /><code>${escapeHtml(theme[key] || "")}</code></div></label>`).join("")}
         </div>
-      </details>
+        <div class="settings-center-canvas-lock"><span aria-hidden="true">✓</span><div><strong>白色画布已锁定</strong><small>主题只改变界面，不影响画布、截图和导出背景。</small></div></div>
+      </section>
     `;
   }
 
@@ -616,6 +613,7 @@ export function mountSettingsCenter(host, options = {}) {
       const data = await readJsonResponse(response, "系统设置");
       if (!response.ok || !data.ok) throw new Error(data.error || "无法读取系统设置");
       if (sequence !== requestSequence) return;
+      data.sections.appearance = normalizeThemeSettings(data.sections.appearance);
       snapshot = clone(data);
       draft = clone(data.sections);
       agentConnectionDrafts = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
@@ -691,6 +689,7 @@ export function mountSettingsCenter(host, options = {}) {
         throw error;
       }
       if (sequence !== requestSequence) return;
+      data.sections.appearance = normalizeThemeSettings(data.sections.appearance);
       snapshot = clone(data);
       draft = clone(data.sections);
       shortcutSnapshot = clone(shortcutDraft);
@@ -759,6 +758,7 @@ export function mountSettingsCenter(host, options = {}) {
     if (!response.ok || !data.ok) throw new Error(data.error || "无法刷新 AI 设置");
     const freshAgent = data.sections.ai.agent;
     const previousAgent = previous.ai.agent;
+    data.sections.appearance = normalizeThemeSettings(data.sections.appearance);
     snapshot = clone(data);
     draft = previous;
     draft.ai.agent = {
@@ -982,17 +982,11 @@ export function mountSettingsCenter(host, options = {}) {
       markDraftChanged();
       return;
     }
-    if (target.dataset.themeRange) {
-      draft.appearance[target.dataset.themeRange] = Number(target.value) / 100;
-      draft.appearance.themePreset = "custom";
-      previewTheme();
-      markDraftChanged();
-      target.closest("label")?.querySelector("strong")?.replaceChildren(`${target.value}%`);
-      return;
-    }
     if (target.dataset.themeColor) {
-      draft.appearance[target.dataset.themeColor] = target.value;
-      draft.appearance.themePreset = "custom";
+      draft.appearance = deriveCustomThemeSettings({
+        ...draft.appearance,
+        [target.dataset.themeColor]: target.value,
+      });
       previewTheme();
       markDraftChanged();
       target.closest("label")?.querySelector("code")?.replaceChildren(target.value);

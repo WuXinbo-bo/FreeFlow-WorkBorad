@@ -218,114 +218,104 @@ function resolvePanelStyle(layerRect, targetRect, placement = "bottom", panelSiz
   return best?.style || buildPanelCandidate(anchorRect, panelWidth, panelHeight, preferred, layerRect);
 }
 
+const TUTORIAL_ICON_PATHS = Object.freeze({
+  layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M9 9h12"/>',
+  canvas: '<path d="M4 19.5V7.8L8.2 3h8.9L20 5.9v13.6H4Z"/><path d="M8 3v5h5M8 14h8M8 17h5"/>',
+  screen: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M8 9h8M8 12h5"/>',
+  keyboard: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 9h.01M9 9h.01M12 9h.01M15 9h.01M18 9h.01M7 13h10"/>',
+  play: '<path d="m9 7 8 5-8 5V7Z"/>',
+  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+});
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderTutorialIcon(name, className = "") {
+  return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${TUTORIAL_ICON_PATHS[name] || TUTORIAL_ICON_PATHS.book}</svg>`;
+}
+
+function renderCloseButton(attribute) {
+  return `<button type="button" class="canvas2d-tutorial-center-close is-icon" ${attribute} aria-label="关闭" title="关闭">${renderTutorialIcon("close")}</button>`;
+}
+
+function renderTutorialCard(item) {
+  const stepCount = Math.max(0, Number(item.stepCount) || 0);
+  const completedSteps = Math.min(stepCount, Math.max(0, Number(item.completedSteps) || 0));
+  return `
+    <button type="button" class="tutorial-center-card" data-global-tutorial-action="${escapeHtml(item.id)}">
+      <span class="tutorial-center-card-head">
+        <span class="tutorial-center-card-icon">${renderTutorialIcon(item.icon)}</span>
+        <span class="tutorial-center-card-meta">${escapeHtml(item.category || "教程")} · ${stepCount} 步</span>
+        ${renderTutorialIcon("arrow", "tutorial-center-card-arrow")}
+      </span>
+      <strong>${escapeHtml(item.label)}</strong>
+      <small>${escapeHtml(item.description)}</small>
+      <progress value="${completedSteps}" max="${Math.max(1, stepCount)}" aria-label="${escapeHtml(item.label)}进度"></progress>
+    </button>
+  `;
+}
+
 function createCenterMarkup(snapshot) {
-  const items = createGlobalTutorialEntryItems(snapshot?.config || null);
+  const items = createGlobalTutorialEntryItems(snapshot);
   const centerView = String(snapshot?.centerView || "root").trim().toLowerCase();
   if (centerView === "intro-later") {
     return `
-      <div
-        class="canvas2d-tutorial-layer global-tutorial-layer"
-        data-shape-include="true"
-        data-shape-padding="0"
-      >
+      <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
         <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
-        <div
-          class="canvas2d-tutorial-center global-tutorial-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="教程入口提示"
-          data-shape-include="true"
-          data-shape-padding="8"
-          style="width:min(560px, calc(100vw - 48px)); padding:32px 32px 26px; border-radius:30px;"
-        >
-          <div class="canvas2d-tutorial-center-header" style="margin-bottom: 18px;">
-            <div>
-              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(100,116,139,0.92); margin-bottom: 10px;">
-                Tutorial
-              </div>
-              <div class="canvas2d-tutorial-center-title" style="font-size: 30px; line-height: 1.08; font-weight: 800; letter-spacing: -0.03em;">
-                后续入口
-              </div>
-            </div>
+        <div class="canvas2d-tutorial-center global-tutorial-center is-intro-later" role="dialog" aria-modal="true" aria-label="教程入口提示" data-shape-include="true" data-shape-padding="8">
+          <span class="tutorial-later-icon">${renderTutorialIcon("book")}</span>
+          <div class="tutorial-later-copy">
+            <span class="tutorial-eyebrow">使用说明</span>
+            <h2>以后也能随时回来</h2>
+            <p>打开画布右上角菜单，选择“画布教程”即可继续学习。</p>
           </div>
-          <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section" style="display:flex; flex-direction:column; gap:14px;">
-            <div
-              class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary is-static"
-              style="padding: 22px 22px; border-radius: 24px; background: linear-gradient(180deg, rgba(248,250,252,0.98) 0%, rgba(241,245,249,0.96) 100%); border: 1px solid rgba(148,163,184,0.18); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);"
-            >
-              <span style="font-size: 16px; line-height: 1.9; white-space: normal; color: rgba(51,65,85,0.92);">
-                若后续需要使用教程，可随时点击画布右上角三点菜单，进入「教程中心」查看完整引导～
-              </span>
-            </div>
-            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group" style="margin-top: 2px;">
-              <button
-                type="button"
-                class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
-                data-global-tutorial-later-confirm
-                style="min-height: 60px; border-radius: 20px; font-size: 18px; font-weight: 700; justify-content: center; background: rgba(15,23,42,0.92); color: #f8fafc;"
-              >
-                <span>我知道了</span>
-              </button>
-            </div>
-          </div>
+          <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-later-confirm>知道了</button>
         </div>
       </div>
     `;
   }
   if (centerView === "intro") {
     return `
-      <div
-        class="canvas2d-tutorial-layer global-tutorial-layer"
-        data-shape-include="true"
-        data-shape-padding="0"
-      >
+      <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
         <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
-        <div
-          class="canvas2d-tutorial-center global-tutorial-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="欢迎使用 FreeFlow"
-          data-shape-include="true"
-          data-shape-padding="8"
-          style="width:min(620px, calc(100vw - 48px)); padding:34px 34px 28px; border-radius:32px;"
-        >
-          <div class="canvas2d-tutorial-center-header" style="margin-bottom: 22px;">
-            <div>
-              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(100,116,139,0.92); margin-bottom: 10px;">
-                Welcome
-              </div>
-              <div class="canvas2d-tutorial-center-title" style="font-size: 40px; line-height: 1.04; font-weight: 800; letter-spacing: -0.035em;">
-                欢迎使用 FreeFlow
-              </div>
-              <div class="canvas2d-tutorial-center-subtitle" style="margin-top: 10px; font-size: 16px; line-height: 1.8; color: rgba(71,85,105,0.92);">
-                随时点击画布内右上角三点菜单，再次进入「教程中心」～
-              </div>
-            </div>
+        <div class="canvas2d-tutorial-center global-tutorial-center is-intro" role="dialog" aria-modal="true" aria-label="欢迎使用 FreeFlow" data-shape-include="true" data-shape-padding="8">
+          <div class="tutorial-intro-brand">
+            <img class="tutorial-intro-logo" src="./assets/brand/FreeFlow_app_icon.png" alt="" />
+            <span><strong>FreeFlow</strong><small>Air Canvas</small></span>
           </div>
-          <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section" style="display:flex; flex-direction:column; gap:14px;">
-            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
-              <button
-                type="button"
-                class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
-                data-global-tutorial-open-center
-                style="min-height: 132px; border-radius: 28px; padding: 24px 28px; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 100%); color: #f8fafc; box-shadow: 0 18px 42px rgba(15,23,42,0.16);"
-              >
-                <span style="font-size: 24px; font-weight: 800; line-height: 1.12; letter-spacing: -0.015em; text-align: center;">教程中心</span>
-                <span class="canvas2d-engine-menu-meta" style="font-size: 14px; line-height: 1.8; white-space: normal; color: rgba(226,232,240,0.72); text-align: center; max-width: 460px; margin-top: 8px;">
-                  点击后立即进入完整教程内容，查看主界面教程、画布教程、AI 镜像教程与快捷键说明。
-                </span>
-              </button>
-            </div>
-            <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
-              <button
-                type="button"
-                class="canvas2d-engine-menu-item"
-                data-global-tutorial-dismiss-intro
-                style="min-height: 58px; border-radius: 20px; justify-content: center; font-size: 16px; font-weight: 700; background: rgba(248,250,252,0.96); color: rgba(30,41,59,0.9); border: 1px solid rgba(148,163,184,0.18);"
-              >
-                <span>稍后再看</span>
-              </button>
-            </div>
+          <div class="tutorial-intro-copy">
+            <span class="tutorial-eyebrow">快速了解</span>
+            <h2>欢迎使用 FreeFlow</h2>
+            <p>在左侧组织想法，在右侧与 AI 协作，让内容始终留在同一个工作空间。</p>
+          </div>
+          <div class="tutorial-workflow" aria-label="FreeFlow 工作流示意">
+            <section class="tutorial-workflow-panel is-canvas">
+              <header><span>${renderTutorialIcon("canvas")}</span><strong>画布</strong></header>
+              <div class="tutorial-workflow-canvas"><i></i><i></i><i></i><b></b></div>
+            </section>
+            <span class="tutorial-workflow-link">${renderTutorialIcon("arrow")}</span>
+            <section class="tutorial-workflow-panel is-assistant">
+              <header><span>${renderTutorialIcon("screen")}</span><strong>AI 工作台</strong></header>
+              <div class="tutorial-workflow-chat"><i></i><i></i><b></b></div>
+            </section>
+          </div>
+          <div class="tutorial-intro-steps">
+            <div class="tutorial-intro-step"><span>01</span><strong>创建内容</strong><small>文字、文件与节点</small></div>
+            <div class="tutorial-intro-step"><span>02</span><strong>组织画布</strong><small>排布、连接与聚焦</small></div>
+            <div class="tutorial-intro-step"><span>03</span><strong>交给 AI</strong><small>基于当前工作区协作</small></div>
+          </div>
+          <div class="tutorial-intro-actions">
+            <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-open-center>${renderTutorialIcon("play")}<span>开始快速了解</span></button>
+            <button type="button" class="canvas2d-tutorial-overlay-btn is-secondary" data-global-tutorial-dismiss-intro>稍后再看</button>
           </div>
         </div>
       </div>
@@ -333,91 +323,35 @@ function createCenterMarkup(snapshot) {
   }
   if (centerView === "shortcut-guide") {
     return `
-      <div
-        class="canvas2d-tutorial-layer global-tutorial-layer"
-        data-shape-include="true"
-        data-shape-padding="0"
-      >
+      <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
         <button type="button" class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-label="关闭教程中心"></button>
-        <div
-          class="canvas2d-tutorial-center global-tutorial-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="快捷键说明"
-          data-shape-include="true"
-          data-shape-padding="8"
-        >
+        <div class="canvas2d-tutorial-center global-tutorial-center is-shortcuts" role="dialog" aria-modal="true" aria-label="快捷键说明" data-shape-include="true" data-shape-padding="8">
           <div class="canvas2d-tutorial-center-header">
-            <div>
-              <div class="canvas2d-tutorial-center-title">快捷键说明</div>
-            </div>
-            <div class="canvas2d-tutorial-center-header-actions">
-              <button type="button" class="canvas2d-tutorial-center-close" data-global-tutorial-close>关闭</button>
-            </div>
+            <div><span class="tutorial-eyebrow">效率工具</span><div class="canvas2d-tutorial-center-title">快捷键速查</div></div>
+            <div class="canvas2d-tutorial-center-header-actions">${renderCloseButton("data-global-tutorial-close")}</div>
           </div>
-          <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section">
-            <div class="canvas2d-engine-menu-title">快捷键速查</div>
-            <div class="canvas2d-engine-menu-group canvas2d-floating-card-shortcuts">
-              ${SHORTCUT_GUIDE_ITEMS.map(
-                (item) => `
-                  <div class="canvas2d-shortcut-row">
-                    <kbd>${item.key}</kbd>
-                    <span>${item.value}</span>
-                  </div>
-                `
-              ).join("")}
-            </div>
-            <div class="canvas2d-engine-menu-group">
-              <button type="button" class="canvas2d-engine-menu-item" data-global-tutorial-back-root>
-                <span>返回教程分区</span>
-              </button>
-            </div>
+          <div class="tutorial-shortcut-grid">
+            ${SHORTCUT_GUIDE_ITEMS.map((item) => `<div class="canvas2d-shortcut-row"><kbd>${escapeHtml(item.key)}</kbd><span>${escapeHtml(item.value)}</span></div>`).join("")}
           </div>
+          <button type="button" class="tutorial-text-action" data-global-tutorial-back-root>${renderTutorialIcon("back")}<span>返回教程中心</span></button>
         </div>
       </div>
     `;
   }
+  const hasProgress = Boolean(snapshot?.lastStartedAt && !snapshot?.completed && snapshot?.currentStep);
   return `
-    <div
-      class="canvas2d-tutorial-layer global-tutorial-layer"
-      data-shape-include="true"
-      data-shape-padding="0"
-    >
+    <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
       <button type="button" class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-label="关闭教程中心"></button>
-      <div
-        class="canvas2d-tutorial-center global-tutorial-center"
-        role="dialog"
-        aria-modal="true"
-        aria-label="教程中心"
-        data-shape-include="true"
-        data-shape-padding="8"
-      >
+      <div class="canvas2d-tutorial-center global-tutorial-center is-directory" role="dialog" aria-modal="true" aria-label="教程中心" data-shape-include="true" data-shape-padding="8">
         <div class="canvas2d-tutorial-center-header">
-          <div>
-            <div class="canvas2d-tutorial-center-title">教程中心</div>
-          </div>
-          <div class="canvas2d-tutorial-center-header-actions">
-            <button type="button" class="canvas2d-tutorial-center-close" data-global-tutorial-close>关闭</button>
-          </div>
+          <div><span class="tutorial-eyebrow">学习中心</span><div class="canvas2d-tutorial-center-title">选择一条学习路径</div><div class="canvas2d-tutorial-center-subtitle">每个教程都可以随时退出，进度会自动保留。</div></div>
+          <div class="canvas2d-tutorial-center-header-actions">${renderCloseButton("data-global-tutorial-close")}</div>
         </div>
-        <div class="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section">
-          <div class="canvas2d-engine-menu-title">教程分区</div>
-          <div class="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
-            ${items
-              .map(
-                (item) => `
-                  <button
-                    type="button"
-                    class="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
-                    data-global-tutorial-action="${item.id}"
-                  >
-                    <span>${item.label}</span>
-                    <span class="canvas2d-engine-menu-meta">${item.description}</span>
-                  </button>
-                `
-              )
-              .join("")}
-          </div>
+        ${hasProgress ? `<button type="button" class="tutorial-resume-bar" data-global-tutorial-action="resume">${renderTutorialIcon("play")}<span><strong>继续上次进度</strong><small>${escapeHtml(snapshot?.currentStep?.title || "继续教程")}</small></span>${renderTutorialIcon("arrow")}</button>` : ""}
+        <div class="tutorial-center-grid">${items.map(renderTutorialCard).join("")}</div>
+        <div class="tutorial-center-tools">
+          <button type="button" data-global-tutorial-open-board>${renderTutorialIcon("canvas")}<span><strong>打开示例画布</strong><small>在独立示例中自由练习</small></span></button>
+          <button type="button" data-global-tutorial-action="shortcut-guide">${renderTutorialIcon("keyboard")}<span><strong>快捷键说明</strong><small>快速查看常用操作</small></span></button>
         </div>
       </div>
     </div>
@@ -445,15 +379,13 @@ function createOverlayMarkup(snapshot) {
       >
         <div class="canvas2d-tutorial-overlay-header">
           <div>
-            <div class="canvas2d-tutorial-overlay-step-meta">
-              第 ${snapshot?.currentStepNumber || 0} / ${snapshot?.totalSteps || 0} 步
-            </div>
+            <div class="canvas2d-tutorial-overlay-chapter">${escapeHtml(snapshot?.currentChapter?.title || "教程步骤")}</div>
             <div class="canvas2d-tutorial-overlay-title">${snapshot?.currentStep?.title || "教程步骤"}</div>
           </div>
-          <button type="button" class="canvas2d-tutorial-overlay-close" data-global-tutorial-close>关闭</button>
+          ${renderCloseButton("data-global-tutorial-close")}
         </div>
+        <div class="tutorial-step-progress"><progress value="${snapshot?.currentStepNumber || 0}" max="${Math.max(1, snapshot?.totalSteps || 0)}"></progress><span>${snapshot?.currentStepNumber || 0} / ${snapshot?.totalSteps || 0}</span></div>
         <div class="canvas2d-tutorial-overlay-body">
-          <div class="canvas2d-tutorial-overlay-chapter">${snapshot?.currentChapter?.title || "教程步骤"}</div>
           <div class="canvas2d-tutorial-overlay-description">
             ${snapshot?.currentStep?.description || "教程步骤说明"}
           </div>
@@ -607,6 +539,11 @@ export function mountGlobalTutorialHost({
       runtime.setCenterView("shortcut-guide");
       return;
     }
+    if (action === "resume") {
+      runtime.resumeTutorial();
+      startMeasureLoop();
+      return;
+    }
     startTutorial(action);
   }
 
@@ -654,6 +591,13 @@ export function mountGlobalTutorialHost({
     host.querySelector("[data-global-tutorial-later-confirm]")?.addEventListener("click", () => {
       dismissIntroForCurrentVersion();
       closeCenter();
+    });
+    host.querySelector("[data-global-tutorial-open-board]")?.addEventListener("click", () => {
+      closeCenter();
+      dispatchTutorialUiEvent({
+        type: TUTORIAL_EVENT_TYPES.START_CANVAS_TUTORIAL,
+        action: "open-board",
+      });
     });
     host.querySelector("[data-global-tutorial-back-root]")?.addEventListener("click", () => runtime.setCenterView("root"));
     host.querySelector("[data-global-tutorial-prev]")?.addEventListener("click", () => runtime.goToPreviousStep());

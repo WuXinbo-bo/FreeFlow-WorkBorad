@@ -55,6 +55,8 @@
     "test:air-canvas-interactions": "node scripts/check-air-canvas-interactions.js",
     "test:panel-resize-performance": "node scripts/check-panel-resize-performance.js",
     "test:startup-lifecycle": "node scripts/check-startup-lifecycle.js",
+    "test:tutorial-browser": "node scripts/check-tutorial-browser.js",
+    "test:theme-system": "node scripts/check-theme-system.mjs",
     "test:settings-center": "node scripts/check-settings-center.js",
     "test:settings-center-browser": "node scripts/check-settings-center-browser.js",
     "test:agent-runtime": "node scripts/check-agent-runtime.js",

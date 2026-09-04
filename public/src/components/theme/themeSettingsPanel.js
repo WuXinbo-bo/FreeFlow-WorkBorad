@@ -1,5 +1,5 @@
 import { THEME_PRESET_DEFS } from "../../config/ui-meta.js";
-import { DEFAULT_THEME_SETTINGS, THEME_SETTING_KEYS } from "../../theme/themeSettings.js";
+import { DEFAULT_THEME_SETTINGS, deriveCustomThemeSettings } from "../../theme/themeSettings.js";
 import { getThemePresetMeta } from "./themePresetMeta.js";
 
 const PRESET_ITEMS = Object.freeze(
@@ -7,21 +7,12 @@ const PRESET_ITEMS = Object.freeze(
 );
 
 const COLOR_FIELDS = Object.freeze([
-  { key: "backgroundColor", label: "背景底色", description: "主界面背景" },
+  { key: "backgroundColor", label: "应用背景", description: "主界面背景" },
   { key: "shellPanelColor", label: "主面板", description: "左右主背景板" },
-  { key: "floatingPanelColor", label: "浮层面板", description: "抽屉与悬浮卡片" },
-  { key: "dialogColor", label: "弹窗底色", description: "菜单与弹出面板" },
-  { key: "controlColor", label: "控件底色", description: "按钮槽与切换器" },
-  { key: "controlActiveColor", label: "控件激活", description: "激活态控件" },
-  { key: "inputColor", label: "输入框底色", description: "输入框与编辑区" },
-  { key: "textColor", label: "全局文本", description: "说明与辅助文字" },
-  { key: "shellPanelTextColor", label: "主面板文字", description: "主界面正文" },
-  { key: "inputTextColor", label: "输入框文字", description: "输入内容文字" },
-  { key: "messageColor", label: "AI 对话框", description: "助手消息气泡" },
-  { key: "userMessageColor", label: "我的对话框", description: "用户消息气泡" },
-  { key: "buttonColor", label: "主按钮", description: "主操作按钮" },
-  { key: "buttonTextColor", label: "按钮文字", description: "主按钮文本" },
-  { key: "patternColor", label: "纹理线条", description: "背景纹理与分隔氛围" },
+  { key: "controlColor", label: "控件表面", description: "按钮槽与切换器" },
+  { key: "buttonColor", label: "强调色", description: "主操作与选中状态" },
+  { key: "shellPanelTextColor", label: "主文字", description: "主界面正文" },
+  { key: "messageColor", label: "消息区域", description: "助手消息与日志" },
 ]);
 
 function escapeHtml(value) {
@@ -31,24 +22,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function toPanelOpacityPercent(value) {
-  const next = Number(value);
-  if (!Number.isFinite(next)) return Math.round(DEFAULT_THEME_SETTINGS.panelOpacity * 100);
-  return Math.round(Math.min(Math.max(next, 0.55), 1) * 100);
-}
-
-function toCanvasOpacityPercent(value) {
-  const next = Number(value);
-  if (!Number.isFinite(next)) return Math.round(DEFAULT_THEME_SETTINGS.canvasOpacity * 100);
-  return Math.round(Math.min(Math.max(next, 0.2), 1) * 100);
-}
-
-function toBackgroundOpacityPercent(value) {
-  const next = Number(value);
-  if (!Number.isFinite(next)) return Math.round(DEFAULT_THEME_SETTINGS.backgroundOpacity * 100);
-  return Math.round(Math.min(Math.max(next, 0), 1) * 100);
 }
 
 function renderPresetButtons(activePresetKey) {
@@ -121,23 +94,6 @@ export function mountThemeSettingsPanel(
           <span class="theme-panel-section-indicator" aria-hidden="true"></span>
         </summary>
         <div class="theme-panel-section-body">
-          <div class="theme-panel-slider-grid">
-            <label class="settings-field theme-panel-slider">
-              <span class="label">面板透明度</span>
-              <input class="theme-panel-range" data-theme-slider="panelOpacity" type="range" min="55" max="100" step="1" />
-              <span class="theme-panel-slider-value" data-theme-value="panelOpacity"></span>
-            </label>
-            <label class="settings-field theme-panel-slider">
-              <span class="label">画布透明度</span>
-              <input class="theme-panel-range" data-theme-slider="canvasOpacity" type="range" min="20" max="100" step="1" />
-              <span class="theme-panel-slider-value" data-theme-value="canvasOpacity"></span>
-            </label>
-            <label class="settings-field theme-panel-slider">
-              <span class="label">背景透出</span>
-              <input class="theme-panel-range" data-theme-slider="backgroundOpacity" type="range" min="0" max="100" step="1" />
-              <span class="theme-panel-slider-value" data-theme-value="backgroundOpacity"></span>
-            </label>
-          </div>
           <div class="theme-panel-color-grid" data-theme-colors></div>
         </div>
       </details>
@@ -150,23 +106,16 @@ export function mountThemeSettingsPanel(
 
   const presetGridEl = host.querySelector("[data-theme-presets]");
   const descriptionEl = host.querySelector("[data-theme-description]");
-  const panelOpacityRangeEl = host.querySelector('[data-theme-slider="panelOpacity"]');
-  const canvasOpacityRangeEl = host.querySelector('[data-theme-slider="canvasOpacity"]');
-  const backgroundOpacityRangeEl = host.querySelector('[data-theme-slider="backgroundOpacity"]');
-  const panelOpacityValueEl = host.querySelector('[data-theme-value="panelOpacity"]');
-  const canvasOpacityValueEl = host.querySelector('[data-theme-value="canvasOpacity"]');
-  const backgroundOpacityValueEl = host.querySelector('[data-theme-value="backgroundOpacity"]');
   const colorGridEl = host.querySelector("[data-theme-colors]");
+  let currentSettings = { ...DEFAULT_THEME_SETTINGS };
 
   function getEventTargetElement(event) {
     return event?.target instanceof Element ? event.target : null;
   }
 
   function update(settings = {}) {
+    currentSettings = { ...DEFAULT_THEME_SETTINGS, ...settings };
     const themePreset = getThemePresetMeta(settings.themePreset);
-    const panelOpacityPercent = toPanelOpacityPercent(settings.panelOpacity);
-    const canvasOpacityPercent = toCanvasOpacityPercent(settings.canvasOpacity);
-    const backgroundOpacityPercent = toBackgroundOpacityPercent(settings.backgroundOpacity);
 
     if (presetGridEl) {
       presetGridEl.innerHTML = renderPresetButtons(themePreset.key);
@@ -176,24 +125,6 @@ export function mountThemeSettingsPanel(
         themePreset.key === "custom"
           ? "当前为自定义主题。以下颜色统一控制宿主层 UI，不影响两个独立嵌入引擎。"
           : `${themePreset.label} · ${themePreset.description}`;
-    }
-    if (panelOpacityRangeEl) {
-      panelOpacityRangeEl.value = String(panelOpacityPercent);
-    }
-    if (canvasOpacityRangeEl) {
-      canvasOpacityRangeEl.value = String(canvasOpacityPercent);
-    }
-    if (backgroundOpacityRangeEl) {
-      backgroundOpacityRangeEl.value = String(backgroundOpacityPercent);
-    }
-    if (panelOpacityValueEl) {
-      panelOpacityValueEl.textContent = `${panelOpacityPercent}%`;
-    }
-    if (canvasOpacityValueEl) {
-      canvasOpacityValueEl.textContent = `${canvasOpacityPercent}%`;
-    }
-    if (backgroundOpacityValueEl) {
-      backgroundOpacityValueEl.textContent = `${backgroundOpacityPercent}%`;
     }
     if (colorGridEl) {
       colorGridEl.innerHTML = renderColorFields(settings);
@@ -229,43 +160,12 @@ export function mountThemeSettingsPanel(
 
   function handleInput(event) {
     const eventTarget = getEventTargetElement(event);
-    const slider = eventTarget?.closest("[data-theme-slider]");
-    if (slider) {
-      event.stopPropagation();
-      if (slider.dataset.themeSlider === "panelOpacity") {
-        onPreviewChange({
-          panelOpacity: Math.min(Math.max(Number(slider.value) / 100, 0.55), 1),
-          themePreset: "custom",
-        });
-        return;
-      }
-
-      if (slider.dataset.themeSlider === "canvasOpacity") {
-        onPreviewChange({
-          canvasOpacity: Math.min(Math.max(Number(slider.value) / 100, 0.2), 1),
-          themePreset: "custom",
-        });
-        return;
-      }
-
-      if (slider.dataset.themeSlider === "backgroundOpacity") {
-        onPreviewChange({
-          backgroundOpacity: Math.min(Math.max(Number(slider.value) / 100, 0), 1),
-          themePreset: "custom",
-        });
-      }
-      return;
-    }
-
     const colorInput = eventTarget?.closest("[data-theme-color]");
     if (!colorInput) return;
 
     const key = colorInput.dataset.themeColor;
-    if (!THEME_SETTING_KEYS.includes(key)) return;
-    onPreviewChange({
-      [key]: String(colorInput.value || "").trim(),
-      themePreset: "custom",
-    });
+    if (!COLOR_FIELDS.some((field) => field.key === key)) return;
+    onPreviewChange(deriveCustomThemeSettings({ ...currentSettings, [key]: String(colorInput.value || "").trim() }));
   }
 
   host.addEventListener("click", handleClick);

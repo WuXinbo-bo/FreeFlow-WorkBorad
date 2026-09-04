@@ -1802,6 +1802,10 @@ function Canvas2DControls({ engine }) {
         return;
       }
       if (detail.type === TUTORIAL_EVENT_TYPES.START_CANVAS_TUTORIAL) {
+        if (detail.action === "open-board") {
+          void tutorialRuntime.handleEntryAction("open-board");
+          return;
+        }
         tutorialRuntime.startCanvasTutorial();
         return;
       }

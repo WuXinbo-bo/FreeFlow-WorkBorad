@@ -2,50 +2,64 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createTutorialEntryItems } from "./tutorialEntry.js";
 import { TUTORIAL_ENTRY_ACTIONS } from "./tutorialConfig.js";
 
+function TutorialIcon({ type = "book" }) {
+  const paths = {
+    layout: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M9 9h12" /></>,
+    canvas: <><path d="M4 19.5V7.8L8.2 3h8.9L20 5.9v13.6H4Z" /><path d="M8 3v5h5M8 14h8M8 17h5" /></>,
+    screen: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M8 9h8M8 12h5" /></>,
+    close: <path d="m6 6 12 12M18 6 6 18" />,
+    back: <path d="m15 18-6-6 6-6" />,
+    arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
+    book: <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z" />,
+  };
+  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[type] || paths.book}</svg>;
+}
+
 function TutorialCenter({ snapshot, onAction, onClose, entryItemsFactory = createTutorialEntryItems }) {
   const items = entryItemsFactory(snapshot);
   const inStartMenu = String(snapshot?.centerView || "").trim() === "start-menu";
+  const iconTypes = ["layout", "canvas", "screen"];
   return (
-    <div className="canvas2d-tutorial-center" role="dialog" aria-modal="true" aria-label="画布教程中心">
+    <div className="canvas2d-tutorial-center is-canvas-directory" role="dialog" aria-modal="true" aria-label="画布教程中心">
       <div className="canvas2d-tutorial-center-header">
         <div>
-          <div className="canvas2d-tutorial-center-title">{inStartMenu ? "选择教程分区" : "画布教程"}</div>
+          <span className="tutorial-eyebrow">画布学习</span>
+          <div className="canvas2d-tutorial-center-title">{inStartMenu ? "选择一条学习路径" : "画布教程"}</div>
           <div className="canvas2d-tutorial-center-subtitle">
-            {inStartMenu ? "从三个独立教程板块中选择一个进入。" : "新手引导、教程画布与进度管理入口"}
+            {inStartMenu ? "按需要进入独立教程，退出时会保留进度。" : "从基础操作开始，逐步掌握画布。"}
           </div>
         </div>
         <div className="canvas2d-tutorial-center-header-actions">
           {inStartMenu ? (
             <button
               type="button"
-              className="canvas2d-tutorial-center-close"
+              className="tutorial-text-action"
               onClick={() => onAction?.(TUTORIAL_ENTRY_ACTIONS.BACK_TO_ROOT)}
             >
-              返回
+              <TutorialIcon type="back" />
+              <span>返回</span>
             </button>
           ) : null}
-          <button type="button" className="canvas2d-tutorial-center-close" onClick={() => onClose?.()}>
-            关闭
+          <button type="button" className="canvas2d-tutorial-center-close is-icon" aria-label="关闭" title="关闭" onClick={() => onClose?.()}>
+            <TutorialIcon type="close" />
           </button>
         </div>
       </div>
       {inStartMenu ? (
-        <div className="canvas2d-tutorial-center-submenu canvas2d-engine-menu-section">
-          <div className="canvas2d-engine-menu-title">完整教程分区</div>
-          <div className="canvas2d-engine-menu-group canvas2d-tutorial-center-submenu-group">
-            {items.map((item) => (
+        <div className="tutorial-center-grid">
+            {items.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
-                className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
+                className="tutorial-center-card"
                 disabled={item.disabled}
                 onClick={() => onAction?.(item.id)}
               >
-                <span>{item.label}</span>
-                <span className="canvas2d-engine-menu-meta">{item.description}</span>
+                <span className="tutorial-center-card-head"><span className="tutorial-center-card-icon"><TutorialIcon type={iconTypes[index]} /></span><TutorialIcon type="arrow" /></span>
+                <strong>{item.label}</strong>
+                <small>{item.description}</small>
               </button>
             ))}
-          </div>
         </div>
       ) : (
         <div className="canvas2d-tutorial-center-actions">
@@ -200,19 +214,18 @@ function TutorialStage({ rootRef, snapshot, onClose, onNext, onPrevious, onSkip 
       >
         <div className="canvas2d-tutorial-overlay-header">
           <div>
-            <div className="canvas2d-tutorial-overlay-step-meta">
-              第 {snapshot?.currentStepNumber || 0} / {snapshot?.totalSteps || 0} 步
-            </div>
+            <div className="canvas2d-tutorial-overlay-chapter">{snapshot?.currentChapter?.title || "教程步骤"}</div>
             <div className="canvas2d-tutorial-overlay-title">{snapshot?.currentStep?.title || "画布教程"}</div>
           </div>
-          <button type="button" className="canvas2d-tutorial-overlay-close" onClick={() => onClose?.()}>
-            关闭
+          <button type="button" className="canvas2d-tutorial-overlay-close is-icon" aria-label="关闭" title="关闭" onClick={() => onClose?.()}>
+            <TutorialIcon type="close" />
           </button>
         </div>
+        <div className="tutorial-step-progress">
+          <progress value={snapshot?.currentStepNumber || 0} max={Math.max(1, snapshot?.totalSteps || 0)} />
+          <span>{snapshot?.currentStepNumber || 0} / {snapshot?.totalSteps || 0}</span>
+        </div>
         <div className="canvas2d-tutorial-overlay-body">
-          <div className="canvas2d-tutorial-overlay-chapter">
-            {snapshot?.currentChapter?.title || "教程步骤"}
-          </div>
           <div className="canvas2d-tutorial-overlay-description">
             {snapshot?.currentStep?.description || "教程流程骨架已接入，后续任务包会逐步填充具体步骤与判定。"}
           </div>

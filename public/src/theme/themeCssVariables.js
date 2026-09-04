@@ -65,8 +65,8 @@ export function buildThemeCssVariables(payload = {}) {
 
   return {
     "--app-color-scheme": isLightTheme ? "light" : "dark",
-    "--air-canvas": theme.backgroundColor,
-    "--air-canvas-surface": isLightTheme ? "#ffffff" : theme.backgroundColor,
+    "--air-canvas": "#ffffff",
+    "--air-canvas-surface": "#ffffff",
     "--air-canvas-strong": theme.shellPanelColor,
     "--air-workspace": theme.backgroundColor,
     "--air-ink": theme.shellPanelTextColor,
@@ -98,7 +98,7 @@ export function buildThemeCssVariables(payload = {}) {
     "--app-button-shadow-rgb": rgbToCss(buttonShadow),
     "--app-button-text-rgb": rgbToCss(buttonText),
     "--surface-alpha": theme.panelOpacity.toFixed(2),
-    "--canvas-viewport-alpha": theme.canvasOpacity.toFixed(2),
+    "--canvas-viewport-alpha": "1.00",
     "--surface-elevated-alpha": Math.min(theme.panelOpacity + 0.04, 0.98).toFixed(2),
     "--surface-card-alpha": Math.max(theme.panelOpacity - 0.02, 0.5).toFixed(2),
     "--surface-desktop-alpha": Math.max(theme.panelOpacity - 0.44, 0.14).toFixed(2),

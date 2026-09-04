@@ -10159,9 +10159,7 @@ body.is-office-embedded #right-pane-resizer.is-hidden {
 }
 
 #canvas-canvas2d-host {
-  background:
-    linear-gradient(180deg, rgb(var(--theme-floating-surface-rgb) / 0.08), rgb(var(--theme-floating-surface-rgb) / 0.02)),
-    rgb(var(--theme-panel-surface-rgb) / 0.18);
+  background: #fff;
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.34);
 }
 
@@ -14203,6 +14201,598 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 
 .canvas2d-tutorial-overlay-btn.is-secondary {
   color: #475569;
+}
+
+/* Shared product tour presentation for the global and canvas tutorial runtimes. */
+.canvas2d-tutorial-layer,
+.canvas2d-tutorial-layer * {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+
+.canvas2d-tutorial-backdrop {
+  background: rgb(var(--app-shell-underlay-rgb) / 0.34);
+  backdrop-filter: blur(7px) saturate(112%);
+  -webkit-backdrop-filter: blur(7px) saturate(112%);
+  pointer-events: auto;
+}
+
+.canvas2d-tutorial-center,
+.canvas2d-tutorial-overlay-panel {
+  width: min(720px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.34);
+  border-radius: 8px;
+  color: rgb(var(--theme-panel-text-rgb) / 1);
+  background: rgb(var(--theme-floating-surface-rgb) / 0.96);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.3),
+    0 24px 70px rgb(var(--theme-pass-through-shadow-rgb) / 0.26);
+  backdrop-filter: blur(28px) saturate(120%);
+  -webkit-backdrop-filter: blur(28px) saturate(120%);
+  scrollbar-gutter: stable;
+}
+
+.canvas2d-tutorial-center.is-intro {
+  width: min(820px, calc(100vw - 40px));
+  padding: 24px 26px;
+}
+
+.canvas2d-tutorial-center.is-directory,
+.canvas2d-tutorial-center.is-shortcuts,
+.canvas2d-tutorial-center.is-canvas-directory {
+  width: min(780px, calc(100vw - 40px));
+}
+
+.canvas2d-tutorial-center.is-intro-later {
+  width: min(430px, calc(100vw - 40px));
+  justify-items: center;
+  padding: 28px;
+  text-align: center;
+}
+
+.tutorial-eyebrow {
+  display: block;
+  margin-bottom: 5px;
+  color: rgb(var(--app-accent-rgb) / 0.9);
+  font-size: 0.68rem;
+  font-weight: 760;
+}
+
+.canvas2d-tutorial-center-title,
+.canvas2d-tutorial-overlay-title {
+  color: rgb(var(--theme-panel-text-rgb) / 1);
+  font-size: 1.28rem;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.canvas2d-tutorial-center-subtitle,
+.canvas2d-tutorial-overlay-description {
+  color: rgb(var(--theme-panel-text-rgb) / 0.68);
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.canvas2d-tutorial-center-header {
+  align-items: center;
+}
+
+.canvas2d-tutorial-center-close,
+.canvas2d-tutorial-overlay-close {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 7px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.34);
+  border-radius: 6px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.68);
+  background: rgb(var(--theme-control-surface-rgb) / 0.78);
+}
+
+.canvas2d-tutorial-center-close svg,
+.canvas2d-tutorial-overlay-close svg,
+.tutorial-text-action svg,
+.tutorial-intro-actions svg,
+.tutorial-center-tools svg,
+.tutorial-resume-bar > svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.canvas2d-tutorial-center-close:hover,
+.canvas2d-tutorial-overlay-close:hover {
+  border-color: rgb(var(--app-accent-rgb) / 0.38);
+  color: rgb(var(--theme-panel-text-rgb) / 1);
+  background: rgb(var(--theme-control-active-rgb) / 0.72);
+}
+
+.tutorial-intro-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tutorial-intro-logo {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 7px 14px rgb(var(--app-accent-rgb) / 0.15));
+}
+
+.tutorial-intro-brand > span,
+.tutorial-intro-copy,
+.tutorial-later-copy {
+  display: grid;
+}
+
+.tutorial-intro-brand strong {
+  color: rgb(var(--theme-panel-text-rgb) / 1);
+  font-size: 0.9rem;
+  font-weight: 760;
+}
+
+.tutorial-intro-brand small {
+  color: rgb(var(--theme-panel-text-rgb) / 0.5);
+  font-size: 0.64rem;
+}
+
+.tutorial-intro-copy {
+  gap: 4px;
+  max-width: 610px;
+}
+
+.tutorial-intro-copy h2,
+.tutorial-later-copy h2 {
+  margin: 0;
+  color: rgb(var(--theme-panel-text-rgb) / 1);
+  font-size: 1.68rem;
+  font-weight: 780;
+  line-height: 1.2;
+}
+
+.tutorial-intro-copy p,
+.tutorial-later-copy p {
+  margin: 0;
+  color: rgb(var(--theme-panel-text-rgb) / 0.68);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.tutorial-workflow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) 34px minmax(0, 0.9fr);
+  align-items: stretch;
+  min-height: 150px;
+  padding: 12px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.28);
+  border-radius: 7px;
+  background: rgb(var(--theme-control-surface-rgb) / 0.52);
+}
+
+.tutorial-workflow-panel {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.28);
+  border-radius: 6px;
+  background: rgb(var(--theme-panel-surface-rgb) / 0.74);
+}
+
+.tutorial-workflow-panel header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.78);
+  font-size: 0.68rem;
+}
+
+.tutorial-workflow-panel header > span {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 5px;
+  color: rgb(var(--app-accent-rgb) / 1);
+  background: rgb(var(--app-accent-rgb) / 0.1);
+}
+
+.tutorial-workflow-panel header svg,
+.tutorial-workflow-link svg,
+.tutorial-center-card svg,
+.tutorial-later-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tutorial-workflow-canvas {
+  position: relative;
+  height: 88px;
+  overflow: hidden;
+  border: 1px solid rgb(207 214 219 / 0.86);
+  border-radius: 4px;
+  background-color: #fff;
+  background-image: radial-gradient(circle, rgb(169 178 185 / 0.32) 0.8px, transparent 0.9px);
+  background-size: 10px 10px;
+}
+
+.tutorial-workflow-canvas i,
+.tutorial-workflow-canvas b {
+  position: absolute;
+  display: block;
+  border: 1px solid rgb(var(--app-accent-rgb) / 0.28);
+  border-radius: 4px;
+  background: rgb(var(--app-accent-rgb) / 0.11);
+}
+
+.tutorial-workflow-canvas i:nth-child(1) { top: 18px; left: 16px; width: 58px; height: 28px; }
+.tutorial-workflow-canvas i:nth-child(2) { top: 49px; left: 82px; width: 74px; height: 24px; }
+.tutorial-workflow-canvas i:nth-child(3) { top: 14px; right: 18px; width: 50px; height: 22px; }
+.tutorial-workflow-canvas b { top: 34px; left: 67px; width: 72px; height: 1px; border: 0; border-top: 1px solid rgb(var(--app-accent-rgb) / 0.4); background: transparent; transform: rotate(18deg); }
+
+.tutorial-workflow-link {
+  display: grid;
+  place-items: center;
+  color: rgb(var(--app-accent-rgb) / 0.72);
+}
+
+.tutorial-workflow-chat {
+  display: grid;
+  align-content: end;
+  gap: 7px;
+  height: 88px;
+}
+
+.tutorial-workflow-chat i,
+.tutorial-workflow-chat b {
+  display: block;
+  height: 20px;
+  border-radius: 5px;
+  background: rgb(var(--theme-message-surface-rgb) / 0.92);
+}
+
+.tutorial-workflow-chat i:first-child { width: 82%; }
+.tutorial-workflow-chat i:nth-child(2) { width: 70%; margin-left: auto; background: rgb(var(--theme-message-user-surface-rgb) / 0.9); }
+.tutorial-workflow-chat b { height: 24px; border: 1px solid rgb(var(--app-pattern-rgb) / 0.26); background: rgb(var(--theme-input-surface-rgb) / 0.86); }
+
+.tutorial-intro-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tutorial-intro-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-left: 2px solid rgb(var(--app-accent-rgb) / 0.44);
+}
+
+.tutorial-intro-step > span {
+  grid-row: 1 / 3;
+  color: rgb(var(--app-accent-rgb) / 0.72);
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+
+.tutorial-intro-step strong { color: rgb(var(--theme-panel-text-rgb) / 0.9); font-size: 0.72rem; }
+.tutorial-intro-step small { overflow: hidden; color: rgb(var(--theme-panel-text-rgb) / 0.52); font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+
+.tutorial-intro-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.canvas2d-tutorial-overlay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.32);
+  border-radius: 6px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.76);
+  background: rgb(var(--theme-control-surface-rgb) / 0.78);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.canvas2d-tutorial-overlay-btn.is-primary {
+  border-color: rgb(var(--app-accent-rgb) / 0.72);
+  color: rgb(var(--app-button-text-rgb) / 1);
+  background: rgb(var(--app-accent-rgb) / 1);
+  box-shadow: 0 7px 18px rgb(var(--app-accent-rgb) / 0.18);
+}
+
+.canvas2d-tutorial-overlay-btn.is-primary:hover:not(:disabled) {
+  border-color: rgb(var(--app-accent-rgb) / 0.82);
+  background: rgb(var(--app-button-strong-rgb) / 1);
+}
+
+.tutorial-later-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 7px;
+  color: rgb(var(--app-accent-rgb) / 1);
+  background: rgb(var(--app-accent-rgb) / 0.1);
+}
+
+.tutorial-later-icon svg { width: 21px; height: 21px; }
+.tutorial-later-copy { gap: 5px; }
+.tutorial-later-copy h2 { font-size: 1.25rem; }
+
+.tutorial-center-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tutorial-center-card {
+  display: grid;
+  grid-template-rows: auto auto minmax(36px, auto) auto;
+  gap: 7px;
+  min-width: 0;
+  min-height: 168px;
+  padding: 13px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.3);
+  border-radius: 7px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.88);
+  background: rgb(var(--theme-control-surface-rgb) / 0.58);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tutorial-center-card:hover:not(:disabled),
+.tutorial-center-card:focus-visible {
+  border-color: rgb(var(--app-accent-rgb) / 0.48);
+  background: rgb(var(--theme-control-active-rgb) / 0.54);
+  outline: none;
+}
+
+.tutorial-center-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tutorial-center-card-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: rgb(var(--app-accent-rgb) / 1);
+  background: rgb(var(--app-accent-rgb) / 0.1);
+}
+
+.tutorial-center-card-meta {
+  flex: 1;
+  color: rgb(var(--theme-panel-text-rgb) / 0.52);
+  font-size: 0.64rem;
+  font-weight: 660;
+}
+
+.tutorial-center-card-arrow {
+  color: rgb(var(--theme-panel-text-rgb) / 0.42);
+}
+
+.tutorial-center-card > strong {
+  font-size: 0.86rem;
+  font-weight: 740;
+}
+
+.tutorial-center-card > small {
+  color: rgb(var(--theme-panel-text-rgb) / 0.62);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.tutorial-center-card progress,
+.tutorial-step-progress progress {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  appearance: none;
+  background: rgb(var(--app-pattern-rgb) / 0.24);
+}
+
+.tutorial-center-card progress::-webkit-progress-bar,
+.tutorial-step-progress progress::-webkit-progress-bar { background: rgb(var(--app-pattern-rgb) / 0.24); }
+.tutorial-center-card progress::-webkit-progress-value,
+.tutorial-step-progress progress::-webkit-progress-value { background: rgb(var(--app-accent-rgb) / 0.9); }
+
+.tutorial-center-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(var(--app-pattern-rgb) / 0.26);
+}
+
+.tutorial-center-tools button,
+.tutorial-resume-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.28);
+  border-radius: 6px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.78);
+  background: transparent;
+  text-align: left;
+}
+
+.tutorial-center-tools button:hover,
+.tutorial-resume-bar:hover {
+  border-color: rgb(var(--app-accent-rgb) / 0.42);
+  background: rgb(var(--theme-control-active-rgb) / 0.42);
+}
+
+.tutorial-center-tools button > span,
+.tutorial-resume-bar > span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.tutorial-center-tools strong,
+.tutorial-resume-bar strong { font-size: 0.72rem; }
+.tutorial-center-tools small,
+.tutorial-resume-bar small { color: rgb(var(--theme-panel-text-rgb) / 0.52); font-size: 0.63rem; }
+.tutorial-center-tools button > svg { color: rgb(var(--app-accent-rgb) / 0.88); }
+
+.tutorial-resume-bar {
+  border-color: rgb(var(--app-accent-rgb) / 0.28);
+  background: rgb(var(--app-accent-rgb) / 0.07);
+}
+
+.tutorial-resume-bar > svg:first-child { color: rgb(var(--app-accent-rgb) / 1); }
+.tutorial-resume-bar > svg:last-child { color: rgb(var(--theme-panel-text-rgb) / 0.44); }
+
+.tutorial-text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  min-height: 32px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  color: rgb(var(--theme-panel-text-rgb) / 0.64);
+  background: transparent;
+  font-size: 0.7rem;
+  font-weight: 680;
+}
+
+.tutorial-text-action:hover { color: rgb(var(--theme-panel-text-rgb) / 1); background: rgb(var(--theme-control-active-rgb) / 0.42); }
+
+.tutorial-shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+  overflow: auto;
+}
+
+.tutorial-shortcut-grid .canvas2d-shortcut-row {
+  min-height: 34px;
+  border-bottom: 1px solid rgb(var(--app-pattern-rgb) / 0.22);
+  color: rgb(var(--theme-panel-text-rgb) / 0.68);
+}
+
+.tutorial-shortcut-grid .canvas2d-shortcut-row kbd {
+  border-color: rgb(var(--app-pattern-rgb) / 0.3);
+  color: rgb(var(--theme-panel-text-rgb) / 0.82);
+  background: rgb(var(--theme-control-surface-rgb) / 0.72);
+}
+
+.canvas2d-tutorial-highlight {
+  border-color: rgb(var(--app-accent-rgb) / 0.92);
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 9999px rgb(var(--app-shell-underlay-rgb) / 0.16),
+    0 0 0 6px rgb(var(--app-accent-rgb) / 0.12),
+    0 14px 36px rgb(var(--theme-pass-through-shadow-rgb) / 0.2);
+}
+
+.canvas2d-tutorial-overlay-panel {
+  width: min(390px, calc(100vw - 32px));
+  gap: 13px;
+  padding: 17px;
+}
+
+.canvas2d-tutorial-overlay-chapter {
+  margin-bottom: 4px;
+  color: rgb(var(--app-accent-rgb) / 0.9);
+  font-size: 0.66rem;
+  font-weight: 740;
+}
+
+.tutorial-step-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.tutorial-step-progress span {
+  color: rgb(var(--theme-panel-text-rgb) / 0.52);
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
+.canvas2d-tutorial-overlay-body {
+  padding: 11px 0 13px;
+  border-top: 1px solid rgb(var(--app-pattern-rgb) / 0.22);
+  border-bottom: 1px solid rgb(var(--app-pattern-rgb) / 0.22);
+}
+
+.canvas2d-tutorial-overlay-actions {
+  gap: 8px;
+}
+
+.canvas2d-tutorial-overlay-actions-right {
+  gap: 7px;
+}
+
+@media (max-width: 720px) {
+  .canvas2d-tutorial-center,
+  .canvas2d-tutorial-center.is-intro,
+  .canvas2d-tutorial-center.is-directory,
+  .canvas2d-tutorial-center.is-shortcuts,
+  .canvas2d-tutorial-center.is-canvas-directory {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+  }
+
+  .tutorial-center-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorial-center-card {
+    grid-template-rows: auto auto auto auto;
+    min-height: 132px;
+  }
+
+  .tutorial-shortcut-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .tutorial-intro-copy h2 { font-size: 1.4rem; }
+  .tutorial-workflow { grid-template-columns: minmax(0, 1.15fr) 22px minmax(0, 0.9fr); padding: 8px; }
+  .tutorial-workflow-panel { padding: 7px; }
+  .tutorial-intro-steps { gap: 2px; }
+  .tutorial-intro-step { grid-template-columns: 20px minmax(0, 1fr); padding-inline: 6px; }
+  .tutorial-intro-step small { display: none; }
+  .tutorial-intro-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .tutorial-center-tools { grid-template-columns: 1fr; }
 }
 
 .canvas2d-navigator-drag-indicator {

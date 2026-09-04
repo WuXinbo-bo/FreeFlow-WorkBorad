@@ -18,6 +18,10 @@ async function openSettings(page) {
     await page.locator("#conversation-settings-btn").evaluate((button) => button.click());
   }
   await page.waitForFunction(() => document.querySelector("#insight-drawer")?.classList.contains("is-open"));
+  await page.waitForFunction(() => {
+    const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
+    return rect && rect.left >= -1 && rect.right <= innerWidth + 1;
+  });
   await page.waitForSelector("[data-settings-section=general]");
 }
 
@@ -347,13 +351,21 @@ async function main() {
       const header = document.querySelector(".settings-center-frame-header");
       const navItems = Array.from(document.querySelectorAll(".settings-center-nav-item"));
       const drawerStyle = getComputedStyle(drawer);
+      const drawerRect = drawer.getBoundingClientRect();
       return {
         headerText: header?.textContent.trim(),
         navCount: navItems.length,
         navIconCount: navItems.filter((item) => item.querySelector("svg")).length,
         navDescriptions: document.querySelectorAll(".settings-center-nav-item small").length,
         backdropFilter: drawerStyle.backdropFilter,
-        height: drawer.getBoundingClientRect().height,
+        frame: {
+          left: drawerRect.left,
+          top: drawerRect.top,
+          right: innerWidth - drawerRect.right,
+          bottom: innerHeight - drawerRect.bottom,
+          width: drawerRect.width,
+          height: drawerRect.height,
+        },
       };
     });
     assert(
@@ -362,7 +374,12 @@ async function main() {
         settingsVisualContract.navIconCount === 7 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
-        settingsVisualContract.height <= 761,
+        settingsVisualContract.frame.left <= 13 &&
+        settingsVisualContract.frame.top <= 13 &&
+        settingsVisualContract.frame.right <= 13 &&
+        settingsVisualContract.frame.bottom <= 13 &&
+        settingsVisualContract.frame.width >= 1414 &&
+        settingsVisualContract.frame.height >= 874,
       "settings visual hierarchy regressed",
       settingsVisualContract
     );
@@ -485,19 +502,33 @@ async function main() {
       committedTheme
     );
     await openSection(page, "appearance");
+    const appearanceContract = await page.evaluate(() => ({
+      presetLabels: Array.from(document.querySelectorAll(".settings-center-theme-presets button strong"), (node) => node.textContent.trim()),
+      semanticColors: Array.from(document.querySelectorAll("[data-theme-color]"), (node) => node.getAttribute("data-theme-color")),
+      opacityControls: document.querySelectorAll("[data-theme-range]").length,
+      canvasPreviews: document.querySelectorAll(".settings-center-theme-preview-canvas").length,
+    }));
+    assert(
+      JSON.stringify(appearanceContract.presetLabels) === JSON.stringify(["极简冷灰", "深夜墨色", "清昼白", "海湾蓝", "云杉绿"]) &&
+        JSON.stringify(appearanceContract.semanticColors) === JSON.stringify(["backgroundColor", "shellPanelColor", "controlColor", "buttonColor", "shellPanelTextColor", "messageColor"]) &&
+        appearanceContract.opacityControls === 0 &&
+        appearanceContract.canvasPreviews === 5,
+      "appearance settings did not expose the simplified theme system",
+      appearanceContract
+    );
     await page.locator('[data-theme-preset="midnight-slate-glow"]').click();
-    await page.waitForFunction(() => {
+    await page.waitForFunction((previousRoot) => {
+      const currentRoot = getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb");
       const canvas = document.querySelector("#canvas-office-canvas");
       const pixel = canvas.getContext("2d").getImageData(Math.max(0, canvas.width - 4), Math.max(0, canvas.height - 4), 1, 1).data;
-      return pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80;
-    });
+      return currentRoot !== previousRoot && pixel[0] === 255 && pixel[1] === 255 && pixel[2] === 255;
+    }, committedTheme.root);
     const previewTheme = await readThemeState();
     assert(
       previewTheme.root !== committedTheme.root &&
-        previewTheme.canvasBackground !== committedTheme.canvasBackground &&
-        previewTheme.canvasBackground !== "rgb(248, 250, 248)" &&
-        previewTheme.canvasPixel.every((value) => value < 80),
-      "theme preset did not update the settings and canvas surfaces together",
+        previewTheme.canvasBackground === "rgb(255, 255, 255)" &&
+        previewTheme.canvasPixel.every((value) => value === 255),
+      "theme preset changed the protected white canvas surface",
       { committedTheme, previewTheme }
     );
     failNextSave = true;
@@ -605,7 +636,16 @@ async function main() {
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     });
     assert(
-      restoredDesktop.left >= 0 && restoredDesktop.top >= 0 && restoredDesktop.right <= 1440 && restoredDesktop.bottom <= 900 && restoredDesktop.width <= 821 && restoredDesktop.height <= 761,
+      restoredDesktop.left >= 0 &&
+        restoredDesktop.left <= 13 &&
+        restoredDesktop.top >= 0 &&
+        restoredDesktop.top <= 13 &&
+        restoredDesktop.right <= 1440 &&
+        1440 - restoredDesktop.right <= 13 &&
+        restoredDesktop.bottom <= 900 &&
+        900 - restoredDesktop.bottom <= 13 &&
+        restoredDesktop.width >= 1414 &&
+        restoredDesktop.height >= 874,
       "settings center did not recover after rapid responsive changes",
       restoredDesktop
     );

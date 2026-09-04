@@ -1,10 +1,10 @@
-import { THEME_PRESET_DEFS } from "../config/ui-meta.js";
+import { THEME_PRESET_ALIASES, THEME_PRESET_DEFS } from "../config/ui-meta.js";
 import { hexToRgb, mixRgb, normalizeThemeHexColor } from "../utils/color.js";
 
 const DEFAULT_THEME_PRESET_KEY = "minimalist-slate";
 const DEFAULT_THEME_PRESET_SOURCE = Object.freeze({
   panelOpacity: 0.96,
-  canvasOpacity: 0.95,
+  canvasOpacity: 1,
   backgroundColor: "#f8f9fa",
   backgroundOpacity: 1,
   textColor: "#212529",
@@ -118,7 +118,8 @@ export function pickThemeSettings(payload = {}) {
 }
 
 export function resolveThemePresetKey(settings = {}, requestedKey = "") {
-  const normalizedRequestedKey = typeof requestedKey === "string" ? requestedKey.trim() : "";
+  const rawRequestedKey = typeof requestedKey === "string" ? requestedKey.trim() : "";
+  const normalizedRequestedKey = THEME_PRESET_ALIASES[rawRequestedKey] || rawRequestedKey;
   if (normalizedRequestedKey && THEME_PRESET_DEFS[normalizedRequestedKey] && normalizedRequestedKey !== "custom") {
     return normalizedRequestedKey;
   }
@@ -149,19 +150,14 @@ export function resolveThemePresetKey(settings = {}, requestedKey = "") {
 }
 
 export function normalizeThemeSettings(payload = {}) {
-  const source = pickThemeSource(payload);
-  const parsedOpacity = Number(source.panelOpacity);
-  const panelOpacity = Number.isFinite(parsedOpacity)
-    ? Math.min(Math.max(parsedOpacity, 0.55), 1)
-    : DEFAULT_THEME_SETTINGS.panelOpacity;
-  const parsedCanvasOpacity = Number(source.canvasOpacity);
-  const canvasOpacity = Number.isFinite(parsedCanvasOpacity)
-    ? Math.min(Math.max(parsedCanvasOpacity, 0.2), 1)
-    : DEFAULT_THEME_SETTINGS.canvasOpacity;
-  const parsedBackgroundOpacity = Number(source.backgroundOpacity);
-  const backgroundOpacity = Number.isFinite(parsedBackgroundOpacity)
-    ? Math.min(Math.max(parsedBackgroundOpacity, 0), 1)
-    : DEFAULT_THEME_SETTINGS.backgroundOpacity;
+  const rawSource = pickThemeSource(payload);
+  const aliasedPreset = THEME_PRESET_ALIASES[String(rawSource.themePreset || "").trim()] || "";
+  const source = aliasedPreset
+    ? { ...rawSource, ...THEME_PRESET_DEFS[aliasedPreset]?.settings, themePreset: aliasedPreset }
+    : rawSource;
+  const panelOpacity = DEFAULT_THEME_SETTINGS.panelOpacity;
+  const canvasOpacity = 1;
+  const backgroundOpacity = 1;
   const colors = deriveThemeColors(source);
 
   return {
@@ -178,5 +174,39 @@ export function normalizeThemeSettings(payload = {}) {
       },
       source.themePreset
     ),
+  };
+}
+
+export function deriveCustomThemeSettings(payload = {}) {
+  const source = { ...DEFAULT_THEME_SETTINGS, ...pickThemeSource(payload) };
+  const backgroundColor = normalizeThemeHexColor(source.backgroundColor, DEFAULT_THEME_SETTINGS.backgroundColor);
+  const shellPanelColor = normalizeThemeHexColor(source.shellPanelColor, DEFAULT_THEME_SETTINGS.shellPanelColor);
+  const controlColor = normalizeThemeHexColor(source.controlColor, DEFAULT_THEME_SETTINGS.controlColor);
+  const buttonColor = normalizeThemeHexColor(source.buttonColor, DEFAULT_THEME_SETTINGS.buttonColor);
+  const shellPanelTextColor = normalizeThemeHexColor(source.shellPanelTextColor, DEFAULT_THEME_SETTINGS.shellPanelTextColor);
+  const messageColor = normalizeThemeHexColor(source.messageColor, DEFAULT_THEME_SETTINGS.messageColor);
+  const isLight = getColorBrightness(backgroundColor) >= 158;
+  const buttonTextColor = getColorBrightness(buttonColor) >= 150 ? "#182026" : "#ffffff";
+
+  return {
+    panelOpacity: DEFAULT_THEME_SETTINGS.panelOpacity,
+    canvasOpacity: 1,
+    backgroundColor,
+    backgroundOpacity: 1,
+    textColor: shellPanelTextColor,
+    patternColor: mixHex(backgroundColor, shellPanelTextColor, isLight ? 0.18 : 0.28),
+    buttonColor,
+    buttonTextColor,
+    shellPanelColor,
+    shellPanelTextColor,
+    controlColor,
+    controlActiveColor: mixHex(controlColor, buttonColor, isLight ? 0.28 : 0.38),
+    floatingPanelColor: mixHex(shellPanelColor, buttonColor, isLight ? 0.08 : 0.16),
+    inputColor: mixHex(shellPanelColor, isLight ? "#ffffff" : "#111820", isLight ? 0.32 : 0.22),
+    inputTextColor: shellPanelTextColor,
+    messageColor,
+    userMessageColor: mixHex(messageColor, buttonColor, isLight ? 0.2 : 0.34),
+    dialogColor: mixHex(shellPanelColor, buttonColor, isLight ? 0.06 : 0.14),
+    themePreset: "custom",
   };
 }

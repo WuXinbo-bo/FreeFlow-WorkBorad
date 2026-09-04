@@ -1,5 +1,6 @@
 import { TUTORIAL_IDS, TUTORIAL_VERSION } from "../../tutorial-core/tutorialTypes.js";
 import { MAIN_SHELL_TUTORIAL_CHAPTERS, MAIN_SHELL_TUTORIAL_DEFINITION } from "../../engines/canvas2d-core/tutorial-system/tutorials/mainShellTutorial.js";
+import { CANVAS_TUTORIAL_CHAPTERS } from "../../engines/canvas2d-core/tutorial-system/tutorials/canvasTutorial.js";
 import { AI_MIRROR_TUTORIAL_CHAPTERS, AI_MIRROR_TUTORIAL_DEFINITION } from "../../engines/canvas2d-core/tutorial-system/tutorials/aiMirrorTutorial.js";
 
 export const GLOBAL_TUTORIAL_IDS = Object.freeze({
@@ -96,16 +97,19 @@ export const GLOBAL_TUTORIAL_DEFINITIONS = Object.freeze([
   {
     ...MAIN_SHELL_TUTORIAL_DEFINITION,
     description: "整体界面的介绍以及交互键的使用指南",
+    stepCount: MAIN_SHELL_TUTORIAL_CHAPTERS.reduce((total, chapter) => total + (chapter.steps?.length || 0), 0),
   },
   {
     id: GLOBAL_TUTORIAL_IDS.CANVAS,
     title: "画布教程",
     description: "FreeFlow自研画布的使用指南",
     chapterIds: [],
+    stepCount: CANVAS_TUTORIAL_CHAPTERS.reduce((total, chapter) => total + (chapter.steps?.length || 0), 0),
   },
   {
     ...AI_MIRROR_TUTORIAL_DEFINITION,
     description: "AI 镜像功能工作区使用指南",
+    stepCount: AI_MIRROR_TUTORIAL_CHAPTERS.reduce((total, chapter) => total + (chapter.steps?.length || 0), 0),
   },
 ]);
 

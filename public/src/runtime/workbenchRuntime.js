@@ -5514,11 +5514,11 @@ async function bootstrap() {
   } catch {
     // Ignore desktop boot readiness signal failures.
   }
-  finishBootSplash();
-
-  if (shouldAutoShowStartupTutorialIntro()) {
-    globalTutorialHost.openIntro();
-  }
+  finishBootSplash(() => {
+    if (shouldAutoShowStartupTutorialIntro()) {
+      globalTutorialHost.openIntro();
+    }
+  });
 
   if (IS_DESKTOP_APP && state.uiSettings?.updateCheckEnabled !== false) {
     window.setTimeout(() => {
@@ -7630,13 +7630,16 @@ function releaseBootShapeLock() {
   }
 }
 
-function finishBootSplash() {
+function finishBootSplash(onComplete) {
   if (bootShapeUnlockTimer) {
     window.clearTimeout(bootShapeUnlockTimer);
     bootShapeUnlockTimer = 0;
   }
 
+  let released = false;
   const releaseAfterSplash = () => {
+    if (released) return;
+    released = true;
     bootSplashEl?.removeEventListener("transitionend", handleBootSplashTransitionEnd);
     if (bootShapeUnlockTimer) {
       window.clearTimeout(bootShapeUnlockTimer);
@@ -7644,6 +7647,7 @@ function finishBootSplash() {
     }
     markBootMilestone("splash-exit-end");
     releaseBootShapeLock();
+    onComplete?.();
   };
   const handleBootSplashTransitionEnd = (event) => {
     if (event.target === bootSplashEl && event.propertyName === "opacity") {

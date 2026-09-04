@@ -36,7 +36,7 @@ function getColorBrightness(hexColor) {
 
 const DEFAULT_THEME_SETTINGS = Object.freeze({
   panelOpacity: 0.96,
-  canvasOpacity: 0.95,
+  canvasOpacity: 1,
   backgroundColor: "#f8f9fa",
   backgroundOpacity: 1,
   textColor: "#212529",
@@ -79,21 +79,15 @@ const THEME_SETTING_KEYS = Object.freeze([
 ]);
 
 function normalizePanelOpacity(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return DEFAULT_THEME_SETTINGS.panelOpacity;
-  return Math.min(Math.max(parsed, 0.55), 1);
+  return DEFAULT_THEME_SETTINGS.panelOpacity;
 }
 
 function normalizeCanvasOpacity(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return DEFAULT_THEME_SETTINGS.canvasOpacity;
-  return Math.min(Math.max(parsed, 0.2), 1);
+  return 1;
 }
 
 function normalizeBackgroundOpacity(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return DEFAULT_THEME_SETTINGS.backgroundOpacity;
-  return Math.min(Math.max(parsed, 0), 1);
+  return 1;
 }
 
 function normalizeHexColor(value, fallback) {

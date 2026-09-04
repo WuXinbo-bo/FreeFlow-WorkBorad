@@ -8,6 +8,7 @@ const CHECKS = [
   "scripts/check-generated-bundles.js",
   "scripts/check-backend-security.js",
   "scripts/check-settings-center.js",
+  "scripts/check-theme-system.mjs",
   "scripts/check-agent-activity-presentation.js",
   "scripts/check-agent-runtime.js",
   "scripts/check-agent-provider-stack.js",
@@ -142,6 +143,9 @@ async function main() {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
     await runNodeScript("scripts/check-settings-center-browser.js", {
+      AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
+    });
+    await runNodeScript("scripts/check-tutorial-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
     await runNodeScript("scripts/check-agent-browser.js", {
