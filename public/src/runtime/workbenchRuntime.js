@@ -6815,7 +6815,6 @@ function beginPaneResize(side, startX, startY, pointerId) {
   resizeFrameElement.style.left = `${Math.round(initialResizeEdge)}px`;
   resizeFrameElement.style.top = `${Math.round(initialY)}px`;
   resizeFrameElement.style.height = `${Math.round(initialHeight)}px`;
-  if (side === "right") resizeFrameElement.style.width = `${Math.round(initialWidth)}px`;
   resizeFrameElement.style.zIndex = String(Math.max(2, Number(panel.zIndex) || 2) + 1);
   workspaceEl?.append(resizeFrameElement);
 
@@ -6855,17 +6854,16 @@ function beginPaneResize(side, startX, startY, pointerId) {
   const renderResizeFrame = () => {
     const resizeEdge = resizeFromLeft ? panel.x : panel.x + panel.width;
     const scaleY = Math.max(0.01, panel.height / initialHeight);
-    if (side === "right") resizeFrameElement.style.width = `${Math.round(panel.width)}px`;
     resizeFrameElement.style.transform = `translate3d(${Math.round(resizeEdge - initialResizeEdge)}px, ${Math.round(panel.y - initialY)}px, 0) scaleY(${scaleY})`;
-    if (side === "right") {
-      return;
-    }
     if (resizeViewport instanceof HTMLElement && viewportRect) {
       const clipTop = Math.max(0, panel.y - initialY);
       const clipRight = Math.max(0, initialX + initialWidth - (panel.x + panel.width));
       const clipBottom = Math.max(0, initialY + initialHeight - (panel.y + panel.height));
       const clipLeft = Math.max(0, panel.x - initialX);
-      resizeViewport.style.clip = `rect(${clipTop}px, ${Math.max(0, viewportRect.width - clipRight)}px, ${Math.max(0, viewportRect.height - clipBottom)}px, ${clipLeft}px)`;
+      const nextClip = `rect(${clipTop}px, ${Math.max(0, viewportRect.width - clipRight)}px, ${Math.max(0, viewportRect.height - clipBottom)}px, ${clipLeft}px)`;
+      if (resizeViewport.style.clip !== nextClip) {
+        resizeViewport.style.clip = nextClip;
+      }
     }
   };
   renderResizeFrame();

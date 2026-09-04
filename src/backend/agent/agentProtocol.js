@@ -21,6 +21,9 @@ const APPROVAL_METHODS = new Set([
 
 const APPROVAL_POLICIES = new Set(["untrusted", "on-request", "never"]);
 const SANDBOX_MODES = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const HIDDEN_ITEM_TYPES = new Set(["userMessage", "agentMessage"]);
+const DELTA_ACTIVITY_TYPES = new Set(["command-output", "file-output", "file-change"]);
+const ROUTINE_STATUS_PATTERN = /(?:session|thread|turn).*(?:start|complete)|connected|initialized|会话已连接|开始运行|任务完成/i;
 
 function normalizeApprovalPolicy(value, fallback = "on-request") {
   const candidate = typeof value === "string"
@@ -103,6 +106,145 @@ function getThreadItemSummary(item = {}) {
   }
 }
 
+function activitySemanticType(payload = {}) {
+  const type = String(payload.semanticType || payload.activityType || payload.item?.type || "unknown");
+  if (["commandExecution", "command-output"].includes(type)) return "command";
+  if (["fileChange", "file-change", "file-output", "diff"].includes(type)) return "file";
+  if (["read", "fileRead"].includes(type)) return "read";
+  if (type === "webSearch") return "search";
+  if (["mcpToolCall", "mcp"].includes(type)) return "mcp";
+  if (["tool", "imageView"].includes(type)) return "tool";
+  if (["plan", "todo"].includes(type)) return "plan";
+  if (type === "reasoning") return "reasoning";
+  if (["warning", "error"].includes(type)) return "error";
+  if (["status", "contextCompaction", "steer"].includes(type)) return "status";
+  return "unknown";
+}
+
+function activityTitle(semanticType, payload = {}) {
+  if (semanticType === "command") return "执行命令";
+  if (semanticType === "file") return "修改文件";
+  if (semanticType === "read") return "读取资料";
+  if (semanticType === "search") return "网页搜索";
+  if (semanticType === "mcp") return "调用 MCP";
+  if (semanticType === "tool") return "调用工具";
+  if (semanticType === "plan") return "更新计划";
+  if (semanticType === "reasoning") return "思考";
+  if (semanticType === "error") return payload.activityType === "warning" ? "运行提醒" : "执行失败";
+  if (payload.activityType === "steer") return "即时引导";
+  return semanticType === "status" ? "运行状态" : "其他操作";
+}
+
+function normalizeActivityPhase(value, semanticType) {
+  const status = String(value || "").toLowerCase();
+  if (["failed", "error", "cancelled", "canceled"].includes(status) || semanticType === "error") return "failed";
+  if (["completed", "complete", "success", "succeeded"].includes(status)) return "completed";
+  return "running";
+}
+
+function activityProjectionKey(event, payload, semanticType) {
+  const turnId = String(payload.turnId || "session");
+  const itemId = String(payload.itemId || payload.item?.id || "");
+  if (itemId) return `${turnId}:${itemId}`;
+  if (["reasoning", "plan"].includes(semanticType)) return `${turnId}:${semanticType}`;
+  if (semanticType === "status" && ROUTINE_STATUS_PATTERN.test(String(payload.summary || ""))) return `${turnId}:routine-status`;
+  return `${turnId}:${semanticType}:${event.revision}`;
+}
+
+function appendBounded(left, right, limit = 12_000) {
+  const value = `${String(left || "")}${String(right || "")}`;
+  return value.length > limit ? value.slice(-limit) : value;
+}
+
+function normalizeProjectedActivity(event) {
+  if (event.type === "runtime.recovered") {
+    const summary = String(event.payload?.error?.message || event.payload?.message || "任务未完成");
+    return {
+      id: `recovery:${event.revision}`,
+      sessionId: event.sessionId,
+      revision: event.revision,
+      type: "activity",
+      turnId: "",
+      semanticType: "error",
+      phase: "failed",
+      title: "运行恢复",
+      summary,
+      detail: event.payload?.error || null,
+      createdAt: event.createdAt,
+      updatedAt: event.createdAt,
+    };
+  }
+  if (event.type !== "activity") return null;
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+  const rawType = String(payload.activityType || payload.item?.type || "unknown");
+  if (HIDDEN_ITEM_TYPES.has(rawType)) return null;
+  const semanticType = activitySemanticType(payload);
+  if (semanticType === "unknown") return null;
+  const phase = normalizeActivityPhase(payload.phase || payload.status, semanticType);
+  const turnId = String(payload.turnId || "");
+  const providerItemId = String(payload.itemId || payload.item?.id || "");
+  const summary = String(payload.summary || getThreadItemSummary(payload.item || {}) || activityTitle(semanticType, payload));
+  return {
+    id: activityProjectionKey(event, payload, semanticType),
+    sessionId: event.sessionId,
+    revision: event.revision,
+    type: "activity",
+    turnId,
+    providerItemId,
+    semanticType,
+    phase,
+    title: activityTitle(semanticType, payload),
+    summary,
+    detail: payload.detail ?? payload.item ?? payload.params ?? null,
+    rawType,
+    createdAt: event.createdAt,
+    updatedAt: event.createdAt,
+  };
+}
+
+function mergeProjectedActivity(current, next) {
+  const delta = DELTA_ACTIVITY_TYPES.has(next.rawType);
+  const reasoningDelta = next.semanticType === "reasoning" && next.phase === "running";
+  const summary = delta
+    ? current.summary
+    : reasoningDelta
+      ? appendBounded(current.summary === "正在思考" ? "" : current.summary, next.summary, 4_000)
+      : next.summary || current.summary;
+  const detail = delta
+    ? { ...(current.detail && typeof current.detail === "object" ? current.detail : {}), output: appendBounded(current.detail?.output, next.summary) }
+    : next.detail ?? current.detail;
+  return {
+    ...current,
+    ...next,
+    createdAt: current.createdAt,
+    summary,
+    detail,
+    phase: current.phase === "failed" || next.phase === "failed"
+      ? "failed"
+      : next.phase === "completed"
+        ? "completed"
+        : current.phase,
+  };
+}
+
+function projectActivityEvents(events = [], limit = 250) {
+  const ordered = [];
+  const byId = new Map();
+  for (const event of Array.isArray(events) ? events : []) {
+    const activity = normalizeProjectedActivity(event);
+    if (!activity) continue;
+    const existing = byId.get(activity.id);
+    if (existing) {
+      const merged = mergeProjectedActivity(existing, activity);
+      Object.assign(existing, merged);
+      continue;
+    }
+    byId.set(activity.id, activity);
+    ordered.push(activity);
+  }
+  return ordered.slice(-Math.max(1, Number(limit) || 250));
+}
+
 function normalizeNotification(method, params = {}) {
   if (method === "serverRequest/resolved") {
     return { kind: "approval-resolved", threadId: params.threadId, requestId: params.requestId };
@@ -122,6 +264,9 @@ function normalizeNotification(method, params = {}) {
   }
   if (method === "item/started" || method === "item/completed") {
     const item = params.item || {};
+    if (item.type === "userMessage" || (item.type === "agentMessage" && method === "item/started")) {
+      return { kind: "ignored", threadId: params.threadId, turnId: params.turnId, itemId: item.id || "" };
+    }
     if (item.type === "agentMessage" && method === "item/completed") {
       return { kind: "message-completed", threadId: params.threadId, turnId: params.turnId, itemId: item.id, text: item.text || "", item };
     }
@@ -190,5 +335,6 @@ module.exports = {
   normalizeNotification,
   normalizeSandboxMode,
   normalizeThreadStartResponse,
+  projectActivityEvents,
   serializeAgentError,
 };

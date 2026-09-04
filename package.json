@@ -58,6 +58,7 @@
     "test:settings-center": "node scripts/check-settings-center.js",
     "test:settings-center-browser": "node scripts/check-settings-center-browser.js",
     "test:agent-runtime": "node scripts/check-agent-runtime.js",
+    "test:agent-presentation": "node scripts/check-agent-activity-presentation.js",
     "test:agent-provider-stack": "node scripts/check-agent-provider-stack.js",
     "test:agent-claude-runtime": "node scripts/check-agent-claude-runtime.js",
     "test:agent-http": "node scripts/check-agent-http.js",

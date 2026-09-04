@@ -910,6 +910,8 @@ class AgentRuntime extends EventEmitter {
     let event = null;
     if (normalized.kind === "approval-resolved") {
       event = this.store.dismissApprovalByProviderRequestId(session.id, normalized.requestId);
+    } else if (normalized.kind === "ignored" || normalized.kind === "unknown") {
+      return;
     } else if (normalized.kind === "message-delta") {
       event = this.store.appendAgentDelta(session.id, turn?.id, normalized.itemId, normalized.delta);
     } else if (normalized.kind === "message-completed") {

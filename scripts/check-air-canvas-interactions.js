@@ -37,6 +37,8 @@ async function readEdgeRail(page, selector) {
     return {
       cursor: style.cursor,
       indicatorOpacity: Number(indicator.opacity),
+      indicatorTransitionDuration: indicator.transitionDuration,
+      indicatorTransitionProperty: indicator.transitionProperty,
     };
   });
 }
@@ -189,6 +191,14 @@ async function checkChromeStates(page, viewport) {
     statusHover,
   });
   await moveAway(page, viewport);
+  await page.waitForFunction(
+    ({ selector, opacity, background }) => {
+      const style = getComputedStyle(document.querySelector(selector));
+      return Number(style.opacity) === opacity && style.backgroundColor === background;
+    },
+    { selector: statusSelector, opacity: statusIdle.opacity, background: statusIdle.background },
+    { timeout: 1_000 }
+  );
   const statusAfterHover = await readSurface(page, statusSelector);
   assert(statusAfterHover.opacity === statusIdle.opacity && statusAfterHover.background === statusIdle.background, "status hover did not restore", {
     viewport,
@@ -739,6 +749,14 @@ async function checkMirrorFrame(page, viewport) {
       switcherTop: document.querySelector("#right-panel-window-strip")?.getBoundingClientRect().top || 0,
       canvasToolbarTop: document.querySelector(".canvas2d-engine-toolbar")?.getBoundingClientRect().top || 0,
       loaderSize: document.querySelector("#screen-source-loader-host")?.getBoundingClientRect().width || 0,
+      emptyCenter: (() => {
+        const rect = document.querySelector(".screen-source-empty-shell")?.getBoundingClientRect();
+        return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+      })(),
+      contentCenter: (() => {
+        const rect = preview.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })(),
       insets: {
         left: previewRect.left - panelRect.left,
         right: panelRect.right - previewRect.right,
@@ -753,14 +771,20 @@ async function checkMirrorFrame(page, viewport) {
     { viewport, expectedPanelPadding, frame }
   );
   assert(
-    Math.abs(frame.panelFrame.left - assistantPanelFrame.left) <= 0.5 &&
+      Math.abs(frame.panelFrame.left - assistantPanelFrame.left) <= 0.5 &&
       Math.abs(frame.panelFrame.top - assistantPanelFrame.top) <= 0.5 &&
       Math.abs(frame.panelFrame.width - assistantPanelFrame.width) <= 0.5 &&
       Math.abs(frame.panelFrame.height - assistantPanelFrame.height) <= 0.5,
     "AI assistant and AI mirror change the outer workspace dimensions when switched",
     { viewport, assistantPanelFrame, mirrorPanelFrame: frame.panelFrame }
   );
-  assert(frame.loaderSize > 0 && frame.loaderSize <= 84, "AI mirror empty-state product mark is oversized", { viewport, frame });
+  assert(
+    Math.abs(frame.loaderSize - 64) <= 0.5 &&
+      Math.abs(frame.emptyCenter.x - frame.contentCenter.x) <= 1 &&
+      Math.abs(frame.emptyCenter.y - frame.contentCenter.y) <= 1,
+    "AI mirror empty state is not consistently sized and centered",
+    { viewport, frame }
+  );
   assert(
     frame.switcherTop - frame.panelFrame.top <= (viewport.width <= 720 ? 56 : 24) &&
       (viewport.width <= 720 || Math.abs(frame.switcherTop - frame.canvasToolbarTop) <= 4),
@@ -796,7 +820,11 @@ async function checkEdgeRails(page, viewport) {
     const hitPoint = await findInteractiveRailPoint(page, railSelector);
     assert(Boolean(hitPoint), "edge rail has no unobstructed interactive point", { viewport, railClass });
     await page.mouse.move(hitPoint.x, hitPoint.y);
-    await page.waitForTimeout(180);
+    await page.waitForFunction(
+      (selector) => Number(getComputedStyle(document.querySelector(selector), "::after").opacity) > 0.95,
+      railSelector,
+      { timeout: 1_000 }
+    ).catch(() => {});
     const hovered = await readEdgeRail(page, railSelector);
     assert(hovered.indicatorOpacity > 0.95, "edge rail did not reveal on hover", { viewport, railClass, hovered });
 
@@ -820,6 +848,61 @@ async function checkEdgeRails(page, viewport) {
       panel: document.querySelector(".desktop-clear-stage")?.classList.contains("is-stage-moving"),
     }));
     assert(!restored.body && !restored.resizing && !restored.panel, "edge drag state did not restore after pointer-up", { viewport, railClass, restored });
+  }
+
+  for (const railClass of rails) {
+    const leftRailSelector = `.desktop-clear-stage > .canvas-chrome-edge-rail.${railClass}`;
+    const rightRailSelector = `.conversation-panel > .canvas-chrome-edge-rail.${railClass}`;
+    await moveAway(page, viewport);
+    const leftIdle = await readEdgeRail(page, leftRailSelector);
+    const rightIdle = await readEdgeRail(page, rightRailSelector);
+    assert(
+      rightIdle.cursor === leftIdle.cursor &&
+        rightIdle.indicatorTransitionDuration === leftIdle.indicatorTransitionDuration &&
+        rightIdle.indicatorTransitionDuration !== "0s" &&
+        rightIdle.indicatorTransitionProperty === leftIdle.indicatorTransitionProperty,
+      "conversation edge rail animation does not match the canvas edge rail",
+      { viewport, railClass, leftIdle, rightIdle }
+    );
+
+    const hitPoint = await findInteractiveRailPoint(page, rightRailSelector);
+    assert(Boolean(hitPoint), "conversation edge rail has no unobstructed interactive point", { viewport, railClass });
+    await page.mouse.move(hitPoint.x, hitPoint.y);
+    await page.waitForFunction(
+      (selector) => Number(getComputedStyle(document.querySelector(selector), "::after").opacity) > 0.95,
+      rightRailSelector,
+      { timeout: 1_000 }
+    );
+    const hovered = await readEdgeRail(page, rightRailSelector);
+    assert(hovered.indicatorOpacity > 0.95, "conversation edge rail did not animate into view", {
+      viewport,
+      railClass,
+      hovered,
+    });
+
+    await page.mouse.down();
+    await page.mouse.move(hitPoint.x - 6, hitPoint.y + 5, { steps: 2 });
+    const dragging = await page.evaluate(() => ({
+      body: document.body.classList.contains("is-stage-dragging"),
+      panel: document.querySelector(".conversation-panel")?.classList.contains("is-stage-moving"),
+    }));
+    assert(dragging.body && dragging.panel, "conversation edge drag did not enter its active state", {
+      viewport,
+      railClass,
+      dragging,
+    });
+    await page.mouse.up();
+    await moveAway(page, viewport);
+    const restored = await page.evaluate(() => ({
+      body: document.body.classList.contains("is-stage-dragging"),
+      resizing: document.body.classList.contains("is-resizing"),
+      panel: document.querySelector(".conversation-panel")?.classList.contains("is-stage-moving"),
+    }));
+    assert(!restored.body && !restored.resizing && !restored.panel, "conversation edge drag state did not restore", {
+      viewport,
+      railClass,
+      restored,
+    });
   }
 
   const topRailSelector = ".desktop-clear-stage > .canvas-chrome-edge-rail.is-top";

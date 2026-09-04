@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
+const { projectActivityEvents } = require("./agentProtocol");
 
 const AGENT_STORE_SCHEMA_VERSION = 3;
 
@@ -397,11 +398,12 @@ class AgentStore {
       params: parseJson(row.params_json, {}), status: row.status, createdAt: Number(row.created_at),
     }));
     const pendingInputs = this.db.prepare("SELECT * FROM agent_pending_inputs WHERE session_id = ? ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, position, created_at").all(sessionId).map((row) => this._mapPendingInput(row));
-    const activities = this.db.prepare(`
+    const activityEvents = this.db.prepare(`
       SELECT revision, type, payload_json, created_at FROM agent_events
-      WHERE session_id = ? AND type NOT IN ('message.delta', 'message.completed')
-      ORDER BY revision DESC LIMIT 250
+      WHERE session_id = ? AND type IN ('activity', 'runtime.recovered')
+      ORDER BY revision DESC LIMIT 2000
     `).all(sessionId).reverse().map((row) => this._mapEvent(sessionId, row));
+    const activities = projectActivityEvents(activityEvents, 250);
     const attachments = this.getAttachments(sessionId);
     return { ...session, messages, turns, approvals, pendingInputs, activities, attachments };
   }

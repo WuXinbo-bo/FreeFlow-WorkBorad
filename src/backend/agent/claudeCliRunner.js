@@ -95,12 +95,12 @@ function createClaudeCliRunner(options = {}) {
           if (item.session_id) providerSessionId = String(item.session_id);
           if (item.type === "system" && item.subtype === "init") {
             await input.onSession?.(providerSessionId);
-            await input.onActivity?.({ activityType: "status", status: "completed", summary: "Claude 会话已连接" });
+            await input.onActivity?.({ itemId: "runtime", activityType: "status", status: "completed", summary: "Claude 会话已连接" });
             continue;
           }
           if (item.type === "system") {
             if (!["status", "thinking_tokens"].includes(String(item.subtype || ""))) {
-              await input.onActivity?.({ activityType: "status", status: "running", summary: String(item.message || item.subtype || "Claude 状态已更新") });
+              await input.onActivity?.({ itemId: `status:${item.subtype || "runtime"}`, activityType: "status", status: "running", summary: String(item.message || item.subtype || "Claude 状态已更新") });
             }
             continue;
           }
@@ -112,7 +112,7 @@ function createClaudeCliRunner(options = {}) {
               await input.onDelta?.(currentMessageId || `claude:${providerSessionId}`, String(event.delta.text));
             }
             if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta" && event.delta.thinking) {
-              await input.onActivity?.({ activityType: "reasoning", status: "running", summary: String(event.delta.thinking) });
+              await input.onActivity?.({ itemId: currentMessageId ? `reasoning:${currentMessageId}` : "reasoning", activityType: "reasoning", status: "running", summary: String(event.delta.thinking) });
             }
             continue;
           }
@@ -126,11 +126,11 @@ function createClaudeCliRunner(options = {}) {
               await input.onMessage?.(sourceId, text, streamedText);
             }
             for (const block of content) {
-              if (block?.type === "thinking" && block.thinking) await input.onActivity?.({ activityType: "reasoning", status: "running", summary: String(block.thinking) });
+              if (block?.type === "thinking" && block.thinking) await input.onActivity?.({ itemId: `reasoning:${sourceId}`, activityType: "reasoning", status: "completed", summary: String(block.thinking) });
               if (block?.type === "tool_use") {
                 const toolId = String(block.id || crypto.randomUUID());
                 toolNames.set(toolId, String(block.name || "工具"));
-                await input.onActivity?.({ activityType: "tool", status: "running", summary: `${toolNames.get(toolId)} 正在执行`, detail: block.input || {} });
+                await input.onActivity?.({ itemId: toolId, activityType: "tool", status: "running", summary: `${toolNames.get(toolId)} 正在执行`, detail: block.input || {} });
               }
             }
             continue;
@@ -143,7 +143,7 @@ function createClaudeCliRunner(options = {}) {
               if (/permission (?:isn't|wasn't|hasn't been|not) granted|requires approval|permission denied|not authorized|unauthori[sz]ed/i.test(toolOutput)) {
                 permissionError = toolOutput.replace(/\s+/g, " ").slice(0, 500);
               }
-              await input.onActivity?.({ activityType: "tool", status: block.is_error ? "failed" : "completed", summary: `${toolNames.get(toolId) || "工具"}${block.is_error ? "执行失败" : "执行完成"}` });
+              await input.onActivity?.({ itemId: toolId, activityType: "tool", status: block.is_error ? "failed" : "completed", summary: `${toolNames.get(toolId) || "工具"}${block.is_error ? "执行失败" : "执行完成"}` });
             }
             continue;
           }

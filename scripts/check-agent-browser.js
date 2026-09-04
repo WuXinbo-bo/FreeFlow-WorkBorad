@@ -348,18 +348,132 @@ async function main() {
     }));
     assert(Object.values(legacyState).every((value) => value === null || value === true), "legacy browser history was retained", legacyState);
 
+    const originalPanelStyle = await page.locator(".conversation-panel").getAttribute("style");
+    const emptyLayouts = [];
+    for (const panelWidth of [670, 470, 350]) {
+      await page.locator(".conversation-panel").evaluate((panel, width) => {
+        panel.style.setProperty("min-width", "0", "important");
+        panel.style.setProperty("width", `${width}px`, "important");
+      }, panelWidth);
+      await page.locator("#right-panel-tab-assistant").click();
+      await page.waitForSelector("#chat-log.is-empty");
+      const assistant = await page.evaluate(() => {
+        const viewport = document.querySelector("#thread-viewport").getBoundingClientRect();
+        const empty = document.querySelector("#chat-log .agent-empty").getBoundingClientRect();
+        const mark = document.querySelector("#chat-log .agent-runtime-brand").getBoundingClientRect();
+        return {
+          mark: { width: mark.width, height: mark.height },
+          offset: {
+            x: empty.left + empty.width / 2 - (viewport.left + viewport.width / 2),
+            y: empty.top + empty.height / 2 - (viewport.top + viewport.height / 2),
+          },
+        };
+      });
+      await page.locator("#right-panel-tab-screen").click();
+      await page.waitForSelector("#screen-source-panel.is-active");
+      const mirror = await page.evaluate(() => {
+        const viewport = document.querySelector(".screen-source-preview-shell").getBoundingClientRect();
+        const empty = document.querySelector(".screen-source-empty-shell").getBoundingClientRect();
+        const mark = document.querySelector("#screen-source-loader-host").getBoundingClientRect();
+        return {
+          mark: { width: mark.width, height: mark.height },
+          offset: {
+            x: empty.left + empty.width / 2 - (viewport.left + viewport.width / 2),
+            y: empty.top + empty.height / 2 - (viewport.top + viewport.height / 2),
+          },
+        };
+      });
+      emptyLayouts.push({ panelWidth, assistant, mirror });
+    }
+    assert(
+      emptyLayouts.every(({ assistant, mirror }) =>
+        Math.abs(assistant.mark.width - mirror.mark.width) <= 0.5 &&
+        Math.abs(assistant.mark.height - mirror.mark.height) <= 0.5 &&
+        Math.abs(assistant.offset.x) <= 1 &&
+        Math.abs(assistant.offset.y) <= 1 &&
+        Math.abs(mirror.offset.x) <= 1 &&
+        Math.abs(mirror.offset.y) <= 1
+      ),
+      "assistant and mirror empty states do not share a centered size contract",
+      emptyLayouts
+    );
+    await page.locator("#right-panel-tab-assistant").click();
+    await page.waitForSelector("#chat-log.is-empty");
+    await page.locator(".conversation-panel").evaluate((panel, style) => {
+      if (style == null) panel.removeAttribute("style");
+      else panel.setAttribute("style", style);
+    }, originalPanelStyle);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
     await page.locator("#prompt-input").fill("分析当前工作区");
     await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => !document.querySelector("#stop-btn")?.disabled);
+    assert(
+      await page.locator("#chat-log.is-empty, #thread-viewport.is-empty").count() === 0,
+      "assistant empty state did not exit after a message was sent"
+    );
     assert((await page.locator(".agent-message.is-user").last().textContent()).includes("分析当前工作区"), "user turn was not rendered");
 
     const firstTurn = initial.turns.at(-1);
+    initial.activities.push(
+      { id: "hidden-user-lifecycle", turnId: firstTurn.id, rawType: "userMessage", semanticType: "unknown", phase: "completed", title: "内部消息", summary: "userMessage", createdAt: Date.now() },
+      { id: "routine-status", turnId: firstTurn.id, rawType: "status", semanticType: "status", phase: "completed", title: "运行状态", summary: "turn completed", createdAt: Date.now() + 1 },
+      { id: "command-live", turnId: firstTurn.id, providerItemId: "command-live", rawType: "commandExecution", semanticType: "command", phase: "running", title: "执行命令", summary: "npm test", detail: { output: "running" }, createdAt: Date.now() + 2 },
+    );
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "activity", payload: {}, createdAt: Date.now() });
+    await page.waitForSelector(`[data-agent-turn="${firstTurn.id}"] [data-agent-activity="command-live"]`, { state: "attached" });
+    assert(await page.locator(`[data-agent-turn="${firstTurn.id}"] .agent-message.is-user`).count() === 1, "turn rendered duplicate user messages");
+    assert(!/userMessage|agentMessage|\brunning\b|\bcompleted\b/.test(await page.locator("#chat-log").innerText()), "internal protocol state leaked into the conversation");
+    const processDisclosure = page.locator(`[data-agent-turn="${firstTurn.id}"] .agent-turn-process`);
+    assert(!(await processDisclosure.evaluate((element) => element.open)), "execution process was not collapsed by default");
+    await processDisclosure.locator(":scope > summary").click();
+    await page.waitForFunction(
+      (turnId) => document.querySelector(`[data-agent-turn="${turnId}"] .agent-turn-process`)?.open,
+      firstTurn.id
+    );
+    await processDisclosure.locator(".agent-activity-detail > summary").click();
+    const liveActivity = initial.activities.find((item) => item.id === "command-live");
+    liveActivity.phase = "completed";
+    liveActivity.summary = "npm test · 完成";
+    liveActivity.detail.output = "passed";
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "activity", payload: {}, createdAt: Date.now() });
+    await page.waitForFunction((turnId) => document.querySelector(`[data-agent-turn="${turnId}"] .agent-activity-head`)?.textContent.includes("完成"), firstTurn.id);
+    assert(await processDisclosure.evaluate((element) => element.open), "stream refresh collapsed the turn process disclosure");
+    assert(await processDisclosure.locator(".agent-activity-detail").evaluate((element) => element.open), "stream refresh collapsed the activity detail disclosure");
+
     initial.messages.find((item) => item.role === "assistant" && item.turnId === firstTurn.id).content = "分析已经完成。";
     firstTurn.status = "completed";
     initial.status = "idle";
     initial.revision += 1;
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "turn.completed", payload: {}, createdAt: Date.now() });
     await page.waitForFunction(() => document.querySelector("#chat-log")?.textContent.includes("分析已经完成") && document.querySelector("#stop-btn")?.disabled);
+    assert(await page.locator(`[data-agent-turn="${firstTurn.id}"] .agent-message.is-assistant`).count() === 1, "turn did not render exactly one formal assistant reply");
+    const messageVisualContract = await page.locator(`[data-agent-turn="${firstTurn.id}"]`).evaluate((turn) => {
+      const userContent = turn.querySelector(".agent-message.is-user .agent-message-content");
+      const assistantContent = turn.querySelector(".agent-message.is-assistant .agent-message-content");
+      return {
+        assistantAvatars: turn.querySelectorAll(".agent-message.is-assistant .agent-message-avatar img").length,
+        userWeight: Number.parseInt(getComputedStyle(userContent).fontWeight, 10),
+        assistantWeight: Number.parseInt(getComputedStyle(assistantContent).fontWeight, 10),
+        processLabel: turn.querySelector(".agent-turn-process > summary")?.textContent.trim(),
+      };
+    });
+    assert(
+      messageVisualContract.assistantAvatars === 1 &&
+        messageVisualContract.userWeight >= 600 &&
+        messageVisualContract.assistantWeight >= 600 &&
+        messageVisualContract.processLabel.startsWith("处理完成"),
+      "conversation visual hierarchy regressed",
+      messageVisualContract
+    );
+    await processDisclosure.locator(":scope > summary").click();
+    assert(!(await processDisclosure.evaluate((element) => element.open)), "completed process could not be collapsed");
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "activity", payload: {}, createdAt: Date.now() });
+    await page.waitForTimeout(120);
+    assert(!(await processDisclosure.evaluate((element) => element.open)), "stream refresh reopened a collapsed completed process");
 
     const failedAt = Date.now();
     const failedTurn = {
@@ -403,10 +517,11 @@ async function main() {
     await page.locator("#prompt-input").fill("排队消息 B");
     await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => document.querySelectorAll(".agent-queue").length === 2);
+    assert(await page.locator("#agent-queue-tray:not(.is-hidden)").count() === 1 && await page.locator("#chat-log .agent-queue").count() === 0, "queued messages were not isolated above the composer");
     await page.locator('[data-agent-queue-action="up"]').last().click();
-    await page.waitForFunction(() => document.querySelector(".agent-queue p")?.textContent.includes("排队消息 B"));
+    await page.waitForFunction(() => document.querySelector(".agent-queue-head span")?.textContent.includes("排队消息 B"));
     await page.locator('[data-agent-queue-action="edit"]').first().click();
-    await page.waitForFunction(() => document.querySelector(".agent-queue p")?.textContent.includes("编辑后的排队消息"));
+    await page.waitForFunction(() => document.querySelector(".agent-queue-head span")?.textContent.includes("编辑后的排队消息"));
     await page.locator('[data-agent-queue-action="promote"]').first().click();
     await page.waitForFunction(() => document.querySelector(".agent-queue strong")?.textContent.includes("即时引导"));
     const failedPending = initial.pendingInputs[0];
@@ -469,6 +584,15 @@ async function main() {
 
     await page.locator("#agent-history-toggle-btn").click();
     await page.waitForFunction(() => !document.querySelector("#agent-history-panel")?.classList.contains("is-hidden"));
+    const historySurface = await page.locator("#agent-history-panel").evaluate((panel) => ({
+      backdropFilter: getComputedStyle(panel).backdropFilter,
+      width: panel.getBoundingClientRect().width,
+    }));
+    assert(historySurface.backdropFilter.includes("blur") && historySurface.width <= 277, "conversation history lost its compact frosted surface", historySurface);
+    await page.locator("#agent-history-close-btn").click();
+    await page.waitForFunction(() => document.querySelector("#agent-history-panel")?.classList.contains("is-hidden"));
+    await page.locator("#agent-history-toggle-btn").click();
+    await page.waitForFunction(() => !document.querySelector("#agent-history-panel")?.classList.contains("is-hidden"));
     state.slowSessionId = initial.id;
     await page.evaluate(({ slowId, fastId }) => {
       document.querySelector(`[data-agent-session="${slowId}"]`)?.click();
@@ -511,12 +635,60 @@ async function main() {
     await page.locator(`[data-agent-delete-session="${lastId}"]`).click();
     await page.waitForFunction(() => document.querySelector("#conversation-title")?.textContent === "新会话");
     assert(state.sessions.length === 1 && state.sessions[0].id !== lastId, "deleting the last session did not recover with a new session", state.sessions);
+    assert(
+      await page.locator("#chat-log.is-empty").count() === 1 && await page.locator("#thread-viewport.is-empty").count() === 1,
+      "deleting the last session did not restore the centered empty state"
+    );
 
     const current = state.sessions[0];
-    current.activities.push({ id: "activity-long", type: "activity", payload: { activityType: "commandExecution", status: "completed", item: { command: `node ${"very-long-segment/".repeat(30)}` } }, createdAt: Date.now() });
+    const historyBase = Date.now();
+    for (let index = 0; index < 14; index += 1) {
+      const turnId = `history-turn-${index}`;
+      current.turns.push({ id: turnId, status: "completed", createdAt: historyBase + index * 10, startedAt: historyBase + index * 10, completedAt: historyBase + index * 10 + 8 });
+      current.messages.push(
+        { id: `history-user-${index}`, role: "user", content: `历史问题 ${index + 1}`, turnId, createdAt: historyBase + index * 10 },
+        { id: `history-assistant-${index}`, role: "assistant", content: `这是第 ${index + 1} 条用于验证滚动恢复的正式回复。`, turnId, createdAt: historyBase + index * 10 + 5 },
+      );
+    }
+    current.activities.push({
+      id: "activity-long",
+      turnId: "history-turn-13",
+      providerItemId: "activity-long",
+      rawType: "commandExecution",
+      semanticType: "command",
+      phase: "completed",
+      title: "执行命令",
+      summary: `node ${"very-long-segment/".repeat(30)}`,
+      detail: { output: "completed" },
+      createdAt: historyBase + 136,
+    });
     current.revision += 1;
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: current.id, revision: current.revision, type: "activity", payload: {}, createdAt: Date.now() });
-    await page.waitForSelector(".agent-activity");
+    await page.waitForSelector(".agent-activity", { state: "attached" });
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector("#thread-viewport");
+      return viewport && viewport.scrollHeight > viewport.clientHeight + 100;
+    });
+    await page.locator("#thread-viewport").evaluate((viewport) => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    current.messages.find((message) => message.id === "history-assistant-13").content += " 新的流式内容。";
+    current.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: current.id, revision: current.revision, type: "activity", payload: {}, createdAt: Date.now() });
+    await page.waitForFunction(() => document.querySelector("#chat-log")?.textContent.includes("新的流式内容"));
+    const frozenScroll = await page.locator("#thread-viewport").evaluate((viewport) => viewport.scrollTop);
+    assert(frozenScroll < 10 && await page.locator("#agent-scroll-bottom:not(.is-hidden)").count() === 1, "user scroll position was not preserved during a stream refresh", { frozenScroll });
+    await page.locator("#agent-scroll-bottom").click();
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector("#thread-viewport");
+      return viewport && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 3;
+    });
+    assert(await page.locator("#agent-scroll-bottom:not(.is-hidden)").count() === 0, "return-to-bottom did not restore scroll following");
+    const latestProcess = page.locator(".agent-turn-process").last();
+    await latestProcess.locator(":scope > summary").click();
+    await page.locator("#prompt-input").fill("拖拽过程中保留的草稿");
+    await page.locator("#prompt-input").focus();
     const responsiveStates = [];
     for (const contentWidth of [640, 440, 320]) {
       responsiveStates.push(await page.locator(".conversation-panel").evaluate((panel, width) => {
@@ -535,13 +707,25 @@ async function main() {
           forkVisible: getComputedStyle(fork).display !== "none",
           moreVisible: getComputedStyle(more).display !== "none",
           noticeColumns: runtimeNotice ? getComputedStyle(runtimeNotice).gridTemplateColumns : "",
+          messageFontSize: getComputedStyle(panel.querySelector(".agent-message-content")).fontSize,
+          actionWidth: panel.querySelector("#send-btn").getBoundingClientRect().width,
           overflow: elements.some((element) => element.scrollWidth > element.clientWidth + 1),
+          messageFontWeight: Number.parseInt(getComputedStyle(panel.querySelector(".agent-message-content")).fontWeight, 10),
         })));
       }, contentWidth));
     }
     assert(responsiveStates[0].renameVisible && responsiveStates[0].forkVisible && !responsiveStates[0].moreVisible, "wide Agent controls did not use the full action layout", responsiveStates);
     assert(!responsiveStates[1].renameVisible && !responsiveStates[1].forkVisible && responsiveStates[1].moreVisible, "medium Agent controls did not collapse into the session menu", responsiveStates);
     assert(!responsiveStates[2].overflow && responsiveStates[2].moreVisible, "narrow Agent layout overflowed or lost session actions", responsiveStates);
+    assert(new Set(responsiveStates.map((item) => item.messageFontSize)).size === 1, "panel width scaled conversation typography", responsiveStates);
+    assert(responsiveStates.every((item) => item.messageFontWeight >= 600), "panel width weakened conversation text", responsiveStates);
+    assert(Math.max(...responsiveStates.map((item) => item.actionWidth)) - Math.min(...responsiveStates.map((item) => item.actionWidth)) <= 2, "panel width distorted action controls", responsiveStates);
+    const preservedInteraction = await page.evaluate(() => ({
+      draft: document.querySelector("#prompt-input")?.value,
+      promptFocused: document.activeElement === document.querySelector("#prompt-input"),
+      processOpen: Array.from(document.querySelectorAll(".agent-turn-process")).at(-1)?.open,
+    }));
+    assert(preservedInteraction.draft === "拖拽过程中保留的草稿" && preservedInteraction.promptFocused && preservedInteraction.processOpen, "responsive reflow lost draft, focus, or disclosure state", preservedInteraction);
     await page.locator(".conversation-panel").evaluate((panel) => {
       panel.style.removeProperty("min-width");
       panel.style.removeProperty("width");

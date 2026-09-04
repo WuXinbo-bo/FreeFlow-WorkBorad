@@ -714,7 +714,7 @@
                     <h2 id="conversation-title">新会话</h2>
                     <div class="agent-session-meta">
                       <div id="conversation-mode-pill" class="conversation-mode-pill">Codex · 正在连接</div>
-                      <span id="agent-runtime-status" class="agent-runtime-status"><i aria-hidden="true"></i><span>连接中</span></span>
+                      <span id="agent-runtime-status" class="agent-runtime-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>连接中</span></span>
                     </div>
                   </div>
                 </div>
@@ -752,7 +752,9 @@
           <aside id="agent-history-panel" class="agent-history-panel is-hidden" aria-hidden="true">
             <div class="agent-history-head">
               <strong>会话</strong>
-              <button id="agent-history-close-btn" class="agent-icon-button" type="button" title="关闭会话历史" aria-label="关闭会话历史">×</button>
+              <button id="agent-history-close-btn" class="agent-icon-button" type="button" title="关闭会话历史" aria-label="关闭会话历史">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
+              </button>
             </div>
             <label class="agent-history-search">
               <span class="sr-only">搜索会话</span>
@@ -790,9 +792,15 @@
             </div>
           </section>
 
-          <div id="thread-viewport" class="thread-viewport" aria-live="polite">
+          <div id="thread-viewport" class="thread-viewport">
             <div id="chat-log" class="chat-log"></div>
+            <button id="agent-scroll-bottom" class="agent-scroll-bottom is-hidden" type="button" title="回到底部" aria-label="回到底部">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              <span>回到底部</span>
+            </button>
           </div>
+
+          <section id="agent-queue-tray" class="agent-queue-tray is-hidden" aria-label="待发送消息" aria-live="polite"></section>
 
           <form id="chat-form" class="composer glass-inset ui-chrome-composer">
             <div class="composer-top">
@@ -861,11 +869,10 @@
 
       <aside id="insight-drawer" class="insight-drawer glass-panel ui-chrome-drawer" role="dialog" aria-modal="false" aria-label="系统设置" aria-hidden="true">
         <header class="settings-center-frame-header">
-          <div>
-            <span>FreeFlow</span>
-            <h3>系统设置</h3>
-          </div>
-          <button id="drawer-close-btn" type="button" aria-label="关闭系统设置" title="关闭系统设置">×</button>
+          <h3>系统设置</h3>
+          <button id="drawer-close-btn" type="button" aria-label="关闭系统设置" title="关闭系统设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
+          </button>
         </header>
         <div id="settings-center-host" class="settings-center-host"></div>
         <div class="settings-center-legacy" aria-hidden="true">

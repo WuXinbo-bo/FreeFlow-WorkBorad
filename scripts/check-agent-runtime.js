@@ -212,8 +212,62 @@ async function main() {
   assert.equal(duplicateFirst.duplicate, true, "active turn retry was not idempotent");
   assert.equal(client.requests.filter((entry) => entry.method === "turn/start").length, 1, "active turn retry started a second provider turn");
 
+  const providerThreadId = (await runtime.getSession(session.id)).providerThreadId;
+  for (const method of ["item/started", "item/completed"]) {
+    client.emit("notification", method, {
+      threadId: providerThreadId,
+      turnId: first.turn.providerTurnId,
+      item: { id: "user-item-1", type: "userMessage", text: "first" },
+    });
+  }
+  client.emit("notification", "item/started", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    item: { id: "command-1", type: "commandExecution", command: "npm test" },
+  });
+  client.emit("notification", "item/commandExecution/outputDelta", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    itemId: "command-1",
+    delta: "tests running\n",
+  });
+  client.emit("notification", "item/completed", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    item: { id: "command-1", type: "commandExecution", command: "npm test", status: "completed", aggregatedOutput: "tests passed" },
+  });
+  client.emit("notification", "item/reasoning/summaryTextDelta", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    itemId: "reasoning-1",
+    delta: "Analy",
+  });
+  client.emit("notification", "item/reasoning/summaryTextDelta", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    itemId: "reasoning-1",
+    delta: "sis",
+  });
+  client.emit("notification", "item/started", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    item: { id: "answer-1", type: "agentMessage" },
+  });
+  const revisionBeforeUnknown = (await runtime.getSession(session.id)).revision;
+  client.emit("notification", "thread/status/changed", {
+    threadId: providerThreadId,
+    turnId: first.turn.providerTurnId,
+    status: { type: "active" },
+  });
+  const projectedActivities = (await runtime.getSession(session.id)).activities;
+  assert.equal(projectedActivities.some((activity) => /userMessage|agentMessage/.test(activity.rawType)), false, "message lifecycle leaked into activities");
+  assert.equal(projectedActivities.filter((activity) => activity.providerItemId === "command-1").length, 1, "command lifecycle was not projected as one activity");
+  assert.equal(projectedActivities.find((activity) => activity.providerItemId === "command-1")?.phase, "completed", "command projection did not reach completed state");
+  assert.equal(projectedActivities.find((activity) => activity.providerItemId === "reasoning-1")?.summary, "Analysis", "reasoning deltas were not merged in order");
+  assert.equal((await runtime.getSession(session.id)).revision, revisionBeforeUnknown, "unknown protocol notification mutated the conversation log");
+
   client.emit("notification", "item/agentMessage/delta", {
-    threadId: (await runtime.getSession(session.id)).providerThreadId,
+    threadId: providerThreadId,
     turnId: first.turn.providerTurnId,
     itemId: "answer-1",
     delta: "hello",
@@ -322,7 +376,10 @@ async function main() {
     threadId: (await runtime.getSession(session.id)).providerThreadId,
     turn: { id: second.turn.providerTurnId, status: "completed", items: [] },
   });
-  await eventually(() => runtime.store.getActiveTurn(session.id)?.input === "queued", "queued input did not start after the previous turn completed");
+  await eventually(() => {
+    const nextActive = runtime.store.getActiveTurn(session.id);
+    return nextActive?.input === "queued" && Boolean(nextActive.providerTurnId);
+  }, "queued input did not bind after the previous turn completed");
 
   const active = runtime.store.getActiveTurn(session.id);
   const steered = await runtime.startTurn(session.id, { text: "change direction", clientRequestId: "request-4", mode: "steer" });

@@ -148,7 +148,11 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock,
 }
 
 .conversation-header {
-  --right-header-shift: 0px !important;
+  --right-header-shift: 46px !important;
+}
+
+.conversation-panel.screen-view-active .conversation-header {
+  --right-header-shift: 44px !important;
 }
 
 .conversation-panel[data-workspace-dock="right"] .conversation-header {
@@ -156,8 +160,8 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock,
 }
 
 .conversation-header-topline .right-panel-window-controls {
-  margin-left: 0 !important;
-  max-width: 100% !important;
+  margin-left: var(--right-header-shift) !important;
+  max-width: calc(100% - var(--right-header-shift)) !important;
 }
 
 .conversation-header-topline .right-panel-window-strip {
@@ -1006,6 +1010,10 @@ body.desktop-full-pass-through .canvas-chrome-surface {
   .conversation-panel .conversation-header {
     padding-top: 34px !important;
     padding-left: 0 !important;
+  }
+
+  .conversation-panel.screen-view-active .conversation-header {
+    padding-top: 39px !important;
   }
 }
 

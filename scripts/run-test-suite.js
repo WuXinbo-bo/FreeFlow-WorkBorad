@@ -8,6 +8,7 @@ const CHECKS = [
   "scripts/check-generated-bundles.js",
   "scripts/check-backend-security.js",
   "scripts/check-settings-center.js",
+  "scripts/check-agent-activity-presentation.js",
   "scripts/check-agent-runtime.js",
   "scripts/check-agent-provider-stack.js",
   "scripts/check-agent-claude-runtime.js",

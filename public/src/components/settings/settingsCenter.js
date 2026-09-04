@@ -2,14 +2,28 @@ import { PERMISSION_META, THEME_PRESET_DEFS } from "../../config/ui-meta.js";
 import { DEFAULT_THEME_SETTINGS, THEME_SETTING_KEYS } from "../../theme/themeSettings.js";
 
 const SECTION_DEFS = Object.freeze([
-  { key: "general", label: "通用", description: "名称与更新" },
-  { key: "ai", label: "AI 模型", description: "CLI、连接与执行策略" },
-  { key: "appearance", label: "外观", description: "主题与画布视觉" },
-  { key: "workbench", label: "工作台", description: "布局与快捷键" },
-  { key: "canvas", label: "画布", description: "目录与编辑习惯" },
-  { key: "permissions", label: "权限", description: "本地能力与目录" },
-  { key: "diagnostics", label: "诊断", description: "配置与连接状态" },
+  { key: "general", label: "通用", icon: "sliders" },
+  { key: "ai", label: "AI 模型", icon: "bot" },
+  { key: "appearance", label: "外观", icon: "palette" },
+  { key: "workbench", label: "工作台", icon: "panels" },
+  { key: "canvas", label: "画布", icon: "pen-tool" },
+  { key: "permissions", label: "权限", icon: "shield" },
+  { key: "diagnostics", label: "诊断", icon: "activity" },
 ]);
+
+const SECTION_ICON_PATHS = Object.freeze({
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
+  bot: '<rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/>',
+  palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 22a10 10 0 1 1 10-10c0 5.5-4.5 2-5.5 4-.8 1.6 1.5 2.5.5 4.1-1 1.5-3 1.9-5 1.9Z"/>',
+  panels: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M9 9h12"/>',
+  "pen-tool": '<path d="m12 19 7-7 3 3-7 7-3-3Z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="m9 12 2 2 4-4"/>',
+  activity: '<path d="M3 12h4l3-9 4 18 3-9h4"/>',
+});
+
+function renderSectionIcon(name) {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${SECTION_ICON_PATHS[name] || SECTION_ICON_PATHS.sliders}</svg>`;
+}
 
 const COLOR_FIELDS = Object.freeze([
   ["backgroundColor", "背景底色"],
@@ -185,9 +199,10 @@ export function mountSettingsCenter(host, options = {}) {
         type="button"
         data-settings-section="${section.key}"
         aria-current="${activeSection === section.key ? "page" : "false"}"
+        title="${escapeHtml(section.label)}"
       >
-        <span>${escapeHtml(section.label)}</span>
-        <small>${escapeHtml(section.description)}</small>
+        <span class="settings-center-nav-icon">${renderSectionIcon(section.icon)}</span>
+        <span class="settings-center-nav-label">${escapeHtml(section.label)}</span>
       </button>
     `).join("");
   }
@@ -242,7 +257,7 @@ export function mountSettingsCenter(host, options = {}) {
     if (currentStep === 0) {
       setupContent = `
         <section class="settings-center-agent-summary">
-          <div class="settings-center-agent-summary-head"><div><span>配置完成</span><h5>${providerName}</h5></div><strong>已就绪</strong></div>
+          <div class="settings-center-agent-summary-head"><h5>${providerName}</h5></div>
           <dl>
             <div><dt>CLI</dt><dd>${escapeHtml(provider.cliVersion || providerRuntime.version || "已绑定")}</dd></div>
             <div><dt>连接</dt><dd>${escapeHtml(provider.baseUrl || "已保存")}</dd></div>
@@ -301,8 +316,8 @@ export function mountSettingsCenter(host, options = {}) {
     }
     return `
       <div class="settings-center-section-heading">
-        <div><p>AI Runtime</p><h4>AI 模型调用</h4></div>
-        <span>${setupComplete ? "配置已就绪" : `第 ${currentStep} 步，共 5 步`}</span>
+        <div><h4>AI 模型</h4></div>
+        ${setupComplete ? '<span class="settings-center-status-dot is-ready" role="status" aria-label="配置已就绪" title="配置已就绪"><i aria-hidden="true"></i></span>' : `<span>第 ${currentStep} 步，共 5 步</span>`}
       </div>
       ${renderProgress()}
       ${setupContent}

@@ -43,7 +43,20 @@ async function saveSettings(page) {
     }));
     throw new Error(`settings save did not become available: ${JSON.stringify(detail)} (${error.message})`);
   }
-  await button.click();
+  try {
+    await button.click();
+  } catch (error) {
+    const geometry = await page.evaluate(() => {
+      const drawer = document.querySelector("#insight-drawer");
+      const host = document.querySelector("#settings-center-host");
+      const layout = document.querySelector(".settings-center-layout");
+      const footer = document.querySelector(".settings-center-footer");
+      const button = document.querySelector('[data-settings-action="save"]');
+      const rect = (element) => element ? Object.fromEntries(["left", "top", "right", "bottom", "width", "height"].map((key) => [key, element.getBoundingClientRect()[key]])) : null;
+      return { viewport: { width: innerWidth, height: innerHeight }, drawer: rect(drawer), host: rect(host), layout: rect(layout), footer: rect(footer), button: rect(button), drawerClass: drawer?.className };
+    });
+    throw new Error(`settings save button is not reachable: ${JSON.stringify(geometry)} (${error.message})`);
+  }
 }
 
 async function main() {
@@ -329,6 +342,30 @@ async function main() {
     await page.locator("#conversation-shell-more").evaluate((button) => button.click());
 
     await openSettings(page);
+    const settingsVisualContract = await page.evaluate(() => {
+      const drawer = document.querySelector("#insight-drawer");
+      const header = document.querySelector(".settings-center-frame-header");
+      const navItems = Array.from(document.querySelectorAll(".settings-center-nav-item"));
+      const drawerStyle = getComputedStyle(drawer);
+      return {
+        headerText: header?.textContent.trim(),
+        navCount: navItems.length,
+        navIconCount: navItems.filter((item) => item.querySelector("svg")).length,
+        navDescriptions: document.querySelectorAll(".settings-center-nav-item small").length,
+        backdropFilter: drawerStyle.backdropFilter,
+        height: drawer.getBoundingClientRect().height,
+      };
+    });
+    assert(
+      settingsVisualContract.headerText === "系统设置" &&
+        settingsVisualContract.navCount === 7 &&
+        settingsVisualContract.navIconCount === 7 &&
+        settingsVisualContract.navDescriptions === 0 &&
+        settingsVisualContract.backdropFilter.includes("blur") &&
+        settingsVisualContract.height <= 761,
+      "settings visual hierarchy regressed",
+      settingsVisualContract
+    );
     await page.locator('[data-settings-path="general.workspaceSubtitle"]').fill("Draft preserved across Agent actions");
     await page.locator("#drawer-backdrop").evaluate((element) => element.click());
     const persistentDrawer = await page.evaluate(() => ({
@@ -397,6 +434,7 @@ async function main() {
     await page.locator('[data-settings-action="agent-test-connection"]').click();
     await page.waitForSelector(".settings-center-agent-summary");
     assert(await page.locator(".settings-center-setup-progress").count() === 0, "completed AI setup kept the setup progress visible");
+    assert(await page.locator('.settings-center-section-heading .settings-center-status-dot[aria-label="配置已就绪"]').count() === 1, "ready Agent setup did not collapse into a single status indicator");
     await page.locator(".settings-center-agent-policy > summary").click();
     const codexApprovalOptions = await page.locator('[data-settings-path="ai.agent.providers.codex.approvalPolicy"] option').allTextContents();
     assert(!codexApprovalOptions.includes("失败时询问"), "Codex settings exposed the unsupported on-failure approval policy", codexApprovalOptions);
@@ -546,16 +584,31 @@ async function main() {
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("会话已恢复"));
     assert(backupRestoreCount === 1, "confirmed backup restore did not run exactly once", { backupRestoreCount });
 
-    await page.setViewportSize({ width: 680, height: 720 });
-    await page.waitForTimeout(100);
-    const compact = await page.evaluate(() => {
-      const drawer = document.querySelector("#insight-drawer");
-      const content = document.querySelector(".settings-center-content");
-      const footer = document.querySelector(".settings-center-footer");
+    for (const viewport of [{ width: 680, height: 720 }, { width: 420, height: 680 }]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(100);
+      const compact = await page.evaluate(() => {
+        const drawer = document.querySelector("#insight-drawer");
+        const content = document.querySelector(".settings-center-content");
+        const footer = document.querySelector(".settings-center-footer");
+        const rect = drawer.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, contentOverflow: content.scrollWidth - content.clientWidth, drawerOverflow: drawer.scrollWidth - drawer.clientWidth, footerBottom: footer.getBoundingClientRect().bottom };
+      });
+      assert(compact.left >= 0 && compact.right <= viewport.width && compact.top >= 0 && compact.bottom <= viewport.height && compact.contentOverflow <= 1 && compact.drawerOverflow <= 1 && compact.footerBottom <= viewport.height, "settings center is clipped in a responsive viewport", { viewport, compact });
+    }
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 420, height: 680 }, { width: 680, height: 720 }, { width: 1440, height: 900 }]) {
+      await page.setViewportSize(viewport);
+    }
+    await page.waitForTimeout(240);
+    const restoredDesktop = await page.locator("#insight-drawer").evaluate((drawer) => {
       const rect = drawer.getBoundingClientRect();
-      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, contentOverflow: content.scrollWidth - content.clientWidth, drawerOverflow: drawer.scrollWidth - drawer.clientWidth, footerBottom: footer.getBoundingClientRect().bottom };
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     });
-    assert(compact.left >= 0 && compact.right <= 680 && compact.top >= 0 && compact.bottom <= 720 && compact.contentOverflow <= 1 && compact.drawerOverflow <= 1 && compact.footerBottom <= 720, "settings center is clipped in the compact viewport", compact);
+    assert(
+      restoredDesktop.left >= 0 && restoredDesktop.top >= 0 && restoredDesktop.right <= 1440 && restoredDesktop.bottom <= 900 && restoredDesktop.width <= 821 && restoredDesktop.height <= 761,
+      "settings center did not recover after rapid responsive changes",
+      restoredDesktop
+    );
     assert(pageErrors.length === 0, "settings interactions caused page errors", pageErrors);
   } finally {
     await context.close();

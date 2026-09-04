@@ -164,9 +164,12 @@ async function measureGesture(page, { side, deltaX, label }) {
   await page.waitForTimeout(34);
   const during = await page.evaluate(({ side, panelSelector, contentSelector, resizerSelector, measureCanvasSurface, dragEdge }) => {
     const panel = document.querySelector(panelSelector);
+    const content = document.querySelector(contentSelector);
     const panelRect = panel.getBoundingClientRect();
-    const contentRect = document.querySelector(contentSelector).getBoundingClientRect();
-    const resizeFrame = document.querySelector(`.pane-resize-frame[data-resize-side="${side}"]`).getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    const resizeFrameElement = document.querySelector(`.pane-resize-frame[data-resize-side="${side}"]`);
+    const resizeFrame = resizeFrameElement.getBoundingClientRect();
+    const resizeFrameStyle = getComputedStyle(resizeFrameElement);
     const surfaceRect = measureCanvasSurface
       ? document.querySelector("#canvas-canvas2d-host").getBoundingClientRect()
       : null;
@@ -175,11 +178,21 @@ async function measureGesture(page, { side, deltaX, label }) {
       attributeMutations: window.__freeflowPanelResizeProbe.attributeMutations,
       panelEdge: resizeFrame.left,
       resizeFrameWidth: resizeFrame.width,
+      resizeFrameAppearance: {
+        backgroundColor: resizeFrameStyle.backgroundColor,
+        borderTopWidth: resizeFrameStyle.borderTopWidth,
+        borderRadius: resizeFrameStyle.borderRadius,
+      },
       sourcePanelWidth: panelRect.width,
       handleOpacity: Number(getComputedStyle(document.querySelector(resizerSelector)).opacity),
       panelHeight: panelRect.height,
       contentWidth: contentRect.width,
       contentHeight: contentRect.height,
+      panelVisibility: getComputedStyle(panel).visibility,
+      panelBackingDisplay: getComputedStyle(panel, "::before").display,
+      panelBackingFilter: getComputedStyle(panel, "::before").backdropFilter,
+      contentVisibility: getComputedStyle(content).visibility,
+      contentOpacity: Number(getComputedStyle(content).opacity),
       surfaceWidth: surfaceRect?.width || 0,
       surfaceHeight: surfaceRect?.height || 0,
       panelClassName: panel.className,
@@ -190,7 +203,12 @@ async function measureGesture(page, { side, deltaX, label }) {
         return { x: matrix.a, y: matrix.d };
       })(),
       beginCalls: window.__freeflowWindowShapeCalls.filter((call) => call.kind === "begin").length,
-      exactCalls: window.__freeflowWindowShapeCalls.filter((call) => call.kind === "exact").length,
+      exactCalls: (() => {
+        const beginIndex = window.__freeflowWindowShapeCalls.findLastIndex((call) => call.kind === "begin");
+        return window.__freeflowWindowShapeCalls
+          .slice(beginIndex + 1)
+          .filter((call) => call.kind === "exact").length;
+      })(),
     };
   }, {
     side,
@@ -215,19 +233,22 @@ async function measureGesture(page, { side, deltaX, label }) {
       label,
       during,
     });
+    assert(
+      during.panelVisibility === "visible" &&
+        during.panelBackingDisplay === "none" &&
+        during.panelBackingFilter === "none" &&
+        during.contentVisibility === "visible" &&
+        during.contentOpacity > 0.95,
+      "right workspace content disappeared during live resize",
+      { label, during }
+    );
   }
   assert(
     Math.abs(during.panelEdge - initial.panel[initial.dragEdge] - deltaX) <= 2,
     "workspace edge fell behind the pointer",
     { label, initial, during }
   );
-  if (side === "right") {
-    assert(Math.abs(during.resizeFrameWidth - expectedPanelWidth) <= 2, "right workspace resize outline lost the target width", {
-      label,
-      expectedPanelWidth,
-      during,
-    });
-  }
+  assert(during.resizeFrameWidth <= 2, "workspace resize preview is not a moving edge rail", { label, during });
   assert(
     Math.abs(during.panelTransformScale.x - 1) <= 0.001 &&
       Math.abs(during.panelTransformScale.y - 1) <= 0.001,
@@ -277,6 +298,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       viewportInlineClip: viewport.style.clip,
       panelGlassSuspended: panelElement.classList.contains("is-pane-glass-suspended"),
       panelBackdropFilter: getComputedStyle(panelElement).backdropFilter,
+      panelVisibility: getComputedStyle(panelElement).visibility,
+      contentVisibility: getComputedStyle(content).visibility,
       handleOpacity: Number(getComputedStyle(document.querySelector(resizerSelector)).opacity),
       handleLeft: handle.left,
       handleWidth: handle.width,
@@ -292,7 +315,9 @@ async function measureGesture(page, { side, deltaX, label }) {
       finalGeometry.handleOpacity >= 0.9 &&
       !finalGeometry.previewExists &&
       !finalGeometry.panelPreviewActive &&
-      finalGeometry.viewportInlineClip === "",
+      finalGeometry.viewportInlineClip === "" &&
+      finalGeometry.panelVisibility === "visible" &&
+      finalGeometry.contentVisibility === "visible",
     "workspace geometry did not commit and restore its resize handle",
     { label, expectedPanelWidth, finalGeometry }
   );
@@ -322,13 +347,73 @@ async function measureGesture(page, { side, deltaX, label }) {
     messageCount: initial.messageCount,
     longTasks: result.longTasks.filter((duration) => duration >= 50),
     slowFrames: result.interactionFrameIntervals.filter((duration) => duration > 20).slice(0, 20),
+    resizeFrameAppearance: during.resizeFrameAppearance,
   };
+}
+
+async function checkRightPanelCancelRecovery(page) {
+  const resizer = page.locator("#right-pane-resizer");
+  const box = await resizer.boundingBox();
+  assert(Boolean(box), "right workspace resize handle is unavailable for cancellation recovery");
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX - 48, startY + 24, { steps: 8 });
+  await page.waitForFunction(() => document.body.classList.contains("is-pane-resizing"));
+  const active = await page.evaluate(() => {
+    const panel = document.querySelector(".conversation-panel");
+    const content = panel.querySelector(".conversation-resize-content");
+    return {
+      panelVisibility: getComputedStyle(panel).visibility,
+      contentVisibility: getComputedStyle(content).visibility,
+      contentOpacity: Number(getComputedStyle(content).opacity),
+    };
+  });
+  assert(
+    active.panelVisibility === "visible" && active.contentVisibility === "visible" && active.contentOpacity > 0.95,
+    "right workspace content disappeared before resize cancellation",
+    active
+  );
+
+  await page.evaluate(() => document.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 })));
+  await page.mouse.up();
+  await page.waitForFunction(() => !document.body.classList.contains("is-pane-resizing"));
+  await page.waitForFunction(() => getComputedStyle(document.querySelector(".conversation-panel")).backdropFilter.includes("blur"));
+  const recovered = await page.evaluate(() => {
+    const panel = document.querySelector(".conversation-panel");
+    const content = panel.querySelector(".conversation-resize-content");
+    const viewport = panel.querySelector('[data-pane-resize-viewport="right"]');
+    return {
+      panelVisibility: getComputedStyle(panel).visibility,
+      contentVisibility: getComputedStyle(content).visibility,
+      previewActive: panel.classList.contains("is-pane-resize-preview"),
+      glassSuspended: panel.classList.contains("is-pane-glass-suspended"),
+      previewExists: Boolean(document.querySelector('.pane-resize-frame[data-resize-side="right"]')),
+      viewportLeft: viewport.style.left,
+      viewportRight: viewport.style.right,
+      viewportWidth: viewport.style.width,
+    };
+  });
+  assert(
+    recovered.panelVisibility === "visible" &&
+      recovered.contentVisibility === "visible" &&
+      !recovered.previewActive &&
+      !recovered.glassSuspended &&
+      !recovered.previewExists &&
+      recovered.viewportLeft === "" &&
+      recovered.viewportRight === "" &&
+      recovered.viewportWidth === "",
+    "right workspace did not recover after resize cancellation",
+    recovered
+  );
 }
 
 async function checkRightPanelDirectionReversal(page) {
   const panelSelector = ".conversation-panel";
   const resizer = page.locator("#right-pane-resizer");
-  await resizer.dblclick();
+  await resizer.evaluate((element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
   await page.waitForTimeout(160);
   const box = await resizer.boundingBox();
   assert(Boolean(box), "right workspace resize handle is unavailable for direction reversal");
@@ -424,7 +509,9 @@ async function main() {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15_000 });
     await page.waitForFunction(() => !document.body.classList.contains("app-booting"));
-    await page.locator("#left-pane-resizer").dblclick();
+    await page.locator("#left-pane-resizer").evaluate(
+      (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))
+    );
     await page.waitForTimeout(80);
     const canvasOutward = await measureGesture(page, { side: "left", deltaX: 140, label: "canvas-outward" });
     const canvasInward = await measureGesture(page, { side: "left", deltaX: -100, label: "canvas-inward" });
@@ -435,7 +522,9 @@ async function main() {
       await page.locator("#restore-right-pane-btn").click();
       await page.waitForTimeout(320);
     }
-    await page.locator("#right-pane-resizer").dblclick();
+    await page.locator("#right-pane-resizer").evaluate(
+      (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))
+    );
     await page.waitForTimeout(320);
     const conversationOutward = await measureGesture(page, {
       side: "right",
@@ -447,8 +536,15 @@ async function main() {
       deltaX: 80,
       label: "conversation-inward",
     });
+    await checkRightPanelCancelRecovery(page);
     await checkRightPanelDirectionReversal(page);
     const metrics = { canvasOutward, canvasInward, conversationOutward, conversationInward };
+    const resizeFrameAppearances = Object.values(metrics).map((result) => JSON.stringify(result.resizeFrameAppearance));
+    assert(
+      new Set(resizeFrameAppearances).size === 1,
+      "canvas and conversation resize edge rails do not share the same visual treatment",
+      metrics
+    );
     console.log(`[panel-resize-performance:metrics] ${JSON.stringify(metrics)}`);
     const longTaskFailures = [canvasOutward, canvasInward, conversationOutward, conversationInward]
       .filter((result) => result.longTasks.length > 0)

@@ -1,3 +1,5 @@
+import { activityGroupLabel, buildConversationTurns } from "./activityPresentation.js";
+
 const ACTIVE_STATUSES = new Set(["starting", "running", "waitingApproval", "interrupting"]);
 const CURRENT_SESSION_KEY = "freeflow_agent_current_session_v1";
 const LEGACY_STORAGE_KEYS = [
@@ -34,33 +36,13 @@ function truncate(value, length = 54) {
   return text.length > length ? `${text.slice(0, length - 1)}…` : text;
 }
 
-function activityLabel(payload = {}) {
-  const labels = {
-    plan: "计划",
-    reasoning: "推理摘要",
-    commandExecution: "命令",
-    "command-output": "命令输出",
-    fileChange: "文件变更",
-    "file-change": "文件变更",
-    "file-output": "文件输出",
-    webSearch: "网页搜索",
-    mcpToolCall: "工具调用",
-    tool: "工具调用",
-    warning: "警告",
-    error: "错误",
-    steer: "即时引导",
-  };
-  return labels[payload.activityType] || payload.activityType || "活动";
-}
-
-function activityDetails(payload = {}) {
-  const item = payload.item && typeof payload.item === "object" ? payload.item : {};
-  const params = payload.params && typeof payload.params === "object" ? payload.params : {};
-  const detail = payload.detail && typeof payload.detail === "object" ? payload.detail : {};
-  const value =
-    item.aggregatedOutput || item.output || item.diff || params.diff || params.delta ||
-    detail.output || detail.input || payload.summary || item.command || "";
-  return (typeof value === "string" ? value : JSON.stringify(value, null, 2)).trim();
+function activityDetails(activity = {}) {
+  const detail = activity.detail;
+  if (detail == null || detail === "") return "";
+  if (typeof detail === "string") return detail.trim();
+  if (typeof detail !== "object") return String(detail).trim();
+  const value = detail.aggregatedOutput || detail.output || detail.diff || detail.command || detail.query || detail.path || detail.input;
+  return (typeof value === "string" ? value : JSON.stringify(detail, null, 2)).trim();
 }
 
 function approvalLabel(method = "") {
@@ -84,6 +66,8 @@ function getElements(doc) {
     runtimeStatus: doc.querySelector("#agent-runtime-status"),
     chatLog: doc.querySelector("#chat-log"),
     threadViewport: doc.querySelector("#thread-viewport"),
+    scrollBottom: doc.querySelector("#agent-scroll-bottom"),
+    queueTray: doc.querySelector("#agent-queue-tray"),
     form: doc.querySelector("#chat-form"),
     prompt: doc.querySelector("#prompt-input"),
     send: doc.querySelector("#send-btn"),
@@ -125,6 +109,7 @@ export function createAgentController(options = {}) {
   let action = "";
   let historyOpen = false;
   let disconnected = false;
+  let followThread = true;
 
   async function handleDataRestored() {
     if (!initialized) return;
@@ -227,15 +212,21 @@ export function createAgentController(options = {}) {
     return "";
   }
 
-  function renderActivity(event) {
-    const payload = event.payload || {};
-    const label = activityLabel(payload);
-    const details = activityDetails(payload);
-    const error = payload.status === "failed" || payload.activityType === "error";
-    return `<details class="agent-activity${error ? " is-error" : ""}"${error ? " open" : ""}>
-      <summary class="agent-activity-head"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(payload.status || "")}</span></summary>
-      ${details ? `<pre>${escapeHtml(details)}</pre>` : ""}
-    </details>`;
+  function renderActivity(activity) {
+    const details = activityDetails(activity);
+    const error = activity.phase === "failed" || activity.semanticType === "error";
+    const phase = activity.phase === "running" ? "进行中" : error ? "未完成" : "完成";
+    return `<div class="agent-activity${error ? " is-error" : ""}" data-agent-activity="${escapeHtml(activity.id)}" data-agent-activity-type="${escapeHtml(activity.semanticType)}">
+      <div class="agent-activity-head"><strong>${escapeHtml(activity.title)}</strong><span>${escapeHtml(activity.summary)}</span><em>${phase}</em></div>
+      ${details ? `<details class="agent-activity-detail" data-agent-disclosure="activity:${escapeHtml(activity.id)}"><summary>查看详情</summary><pre>${escapeHtml(details)}</pre></details>` : ""}
+    </div>`;
+  }
+
+  function renderActivityGroup(group) {
+    return `<section class="agent-activity-group" data-agent-activity-group="${escapeHtml(group.id)}">
+      <div class="agent-activity-group-title">${escapeHtml(activityGroupLabel(group))}</div>
+      <div class="agent-activity-group-list">${group.activities.map(renderActivity).join("")}</div>
+    </section>`;
   }
 
   function renderTurnError(turn) {
@@ -246,7 +237,7 @@ export function createAgentController(options = {}) {
       <div class="agent-turn-error-mark" aria-hidden="true">!</div>
       <div class="agent-turn-error-copy">
         <div class="agent-turn-error-head"><div><span>任务未完成</span><strong>${escapeHtml(summary)}</strong></div><button type="button" data-agent-retry-turn="${escapeHtml(turn.id)}"${action ? " disabled" : ""}>${action === `retry:${turn.id}` ? "重试中" : "重试"}</button></div>
-        ${technical ? `<details><summary>技术详情</summary><pre>${escapeHtml(technical)}</pre></details>` : ""}
+        ${technical ? `<details data-agent-disclosure="error:${escapeHtml(turn.id)}"><summary>技术详情</summary><pre>${escapeHtml(technical)}</pre></details>` : ""}
       </div>
     </section>`;
   }
@@ -266,65 +257,95 @@ export function createAgentController(options = {}) {
     </section>`;
   }
 
+  function renderMessage(message, { streaming = false } = {}) {
+    const roleName = message.role === "user" ? "你" : session?.provider === "claude" ? "Claude" : "Codex";
+    return `<article class="agent-message is-${escapeHtml(message.role)}${streaming ? " is-streaming" : ""}" data-agent-message="${escapeHtml(message.id)}">
+      ${message.role === "assistant" ? '<span class="agent-message-avatar" aria-hidden="true"><img src="/assets/brand/FreeFlow_app_icon.png" alt="" /></span>' : ""}
+      <div class="agent-message-body">
+        <div class="agent-message-meta"><strong>${roleName}</strong><time>${escapeHtml(formatTime(message.createdAt))}</time></div>
+        <div class="agent-message-content" data-agent-message-content></div>
+      </div>
+    </article>`;
+  }
+
+  function renderTurn(item, messageRows) {
+    const userMessage = item.userMessages[0];
+    const assistantMessage = item.assistantMessages.at(-1);
+    const hasAssistantContent = Boolean(String(assistantMessage?.content || "").trim());
+    const process = !item.turn.id
+      ? ""
+      : item.activities.length
+        ? `<details class="agent-turn-process${item.active ? " is-active" : ""}" data-agent-disclosure="turn:${escapeHtml(item.id)}">
+          <summary><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong><span class="agent-process-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg></span></summary>
+          <div class="agent-process-body">${item.activityGroups.map(renderActivityGroup).join("")}</div>
+        </details>`
+        : `<div class="agent-turn-process is-static${item.active ? " is-active" : ""}"><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong></div>`;
+    if (userMessage) messageRows.push(userMessage);
+    if (assistantMessage && hasAssistantContent) messageRows.push(assistantMessage);
+    return `<section class="agent-turn${item.active ? " is-active" : ""}" data-agent-turn="${escapeHtml(item.id)}">
+      ${userMessage ? renderMessage(userMessage) : ""}
+      ${process}
+      ${item.approvals.map(renderApproval).join("")}
+      ${item.turn.status === "failed" ? renderTurnError(item.turn) : ""}
+      ${assistantMessage && hasAssistantContent ? renderMessage(assistantMessage, { streaming: item.active }) : ""}
+    </section>`;
+  }
+
+  function renderQueueTray() {
+    if (!refs.queueTray) return;
+    const pendingInputs = [...(session?.pendingInputs || [])].sort((left, right) => {
+      const modeOrder = Number(left.mode !== "steer") - Number(right.mode !== "steer");
+      return modeOrder || Number(left.position || 0) - Number(right.position || 0);
+    });
+    refs.queueTray.classList.toggle("is-hidden", pendingInputs.length === 0);
+    refs.queueTray.innerHTML = pendingInputs.length ? `
+      <div class="agent-queue-tray-head"><strong>待发送</strong><span>${pendingInputs.length} 条</span></div>
+      <div class="agent-queue-list">${pendingInputs.map((pending) => {
+        const failed = pending.status === "failed";
+        return `<section class="agent-queue${failed ? " is-failed" : ""}" data-agent-queue="${escapeHtml(pending.id)}" data-agent-queue-revision="${Number(pending.revision || 0)}">
+          <div class="agent-queue-head"><strong>${failed ? "派发失败" : pending.mode === "steer" ? "即时引导" : "排队"}</strong><span>${failed ? escapeHtml(pending.error?.message || "可重试") : escapeHtml(truncate(pending.input, 120))}</span></div>
+          <div class="agent-queue-actions">${failed ? `<button type="button" data-agent-queue-action="retry">重试</button>` : `<button type="button" data-agent-queue-action="promote" title="提升为即时引导">立即</button><button type="button" data-agent-queue-action="up" title="上移" aria-label="上移">↑</button><button type="button" data-agent-queue-action="down" title="下移" aria-label="下移">↓</button>`}<button type="button" data-agent-queue-action="edit">编辑</button><button type="button" data-agent-queue-action="remove">移除</button></div>
+        </section>`;
+      }).join("")}</div>` : "";
+  }
+
+  function updateScrollFollowing() {
+    if (!refs.threadViewport) return;
+    followThread = refs.threadViewport.scrollHeight - refs.threadViewport.scrollTop - refs.threadViewport.clientHeight < 96;
+    refs.scrollBottom?.classList.toggle("is-hidden", followThread);
+  }
+
   function renderChat() {
     if (!refs.chatLog) return;
-    const nearBottom = !refs.threadViewport || refs.threadViewport.scrollHeight - refs.threadViewport.scrollTop - refs.threadViewport.clientHeight < 100;
+    const expanded = new Set(Array.from(refs.chatLog.querySelectorAll("[data-agent-disclosure][open]"), (element) => element.dataset.agentDisclosure));
+    const previousScrollTop = refs.threadViewport?.scrollTop || 0;
     const runtimeNotice = renderRuntimeNotice();
     refs.chatLog.className = `chat-log agent-chat-log${runtimeNotice ? " is-runtime-blocked" : ""}`;
-    const rows = [];
-    if (runtimeNotice) rows.push({ createdAt: 0, html: runtimeNotice });
-    for (const message of session?.messages || []) {
-      const turn = session?.turns?.find((item) => item.id === message.turnId);
-      const streaming = message.role === "assistant" && turn && ACTIVE_STATUSES.has(turn.status);
-      rows.push({
-        createdAt: message.createdAt,
-        html: `<article class="agent-message is-${escapeHtml(message.role)}${streaming ? " is-streaming" : ""}" data-agent-message="${escapeHtml(message.id)}">
-          <div class="agent-message-meta"><strong>${message.role === "user" ? "你" : session?.provider === "claude" ? "Claude" : "Codex"}</strong><time>${escapeHtml(formatTime(message.createdAt))}</time></div>
-          <div class="agent-message-content" data-agent-message-content></div>
-        </article>`,
-        message,
-      });
+    const { turns, sessionActivities, sessionApprovals } = buildConversationTurns(session || {}, { showReasoning: runtime?.settings?.showReasoning !== false });
+    const messageRows = [];
+    const rows = runtimeNotice ? [runtimeNotice] : turns.map((turn) => renderTurn(turn, messageRows));
+    if (!runtimeNotice && sessionActivities.length) {
+      rows.push(`<details class="agent-turn-process is-session" data-agent-disclosure="session:activities"><summary><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong>会话活动</strong><span class="agent-process-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg></span></summary><div class="agent-process-body">${sessionActivities.map(renderActivity).join("")}</div></details>`);
     }
-    for (const event of session?.activities || []) {
-      if (event.type === "activity") {
-        if (event.payload?.activityType === "reasoning" && runtime?.settings?.showReasoning === false) continue;
-        rows.push({ createdAt: event.createdAt, html: renderActivity(event) });
-      } else if (event.type === "runtime.recovered") {
-        rows.push({
-          createdAt: event.createdAt,
-          html: renderActivity({ payload: { activityType: "error", status: "failed", summary: event.payload?.error?.message || event.payload?.message || "任务未完成" } }),
-        });
-      }
-    }
-    for (const turn of session?.turns || []) {
-      if (turn.status === "failed") rows.push({ createdAt: turn.completedAt || turn.createdAt, html: renderTurnError(turn) });
-    }
-    for (const approval of session?.approvals || []) rows.push({ createdAt: approval.createdAt, html: renderApproval(approval) });
-    for (const pending of session?.pendingInputs || []) {
-      const failed = pending.status === "failed";
-      rows.push({ createdAt: pending.createdAt, html: `<section class="agent-queue${failed ? " is-failed" : ""}" data-agent-queue="${escapeHtml(pending.id)}" data-agent-queue-revision="${Number(pending.revision || 0)}"><div class="agent-queue-head"><strong>${failed ? "派发失败" : pending.mode === "steer" ? "即时引导" : "已排队"}</strong><span>${failed ? escapeHtml(pending.error?.message || "可重试") : "等待执行"}</span></div><p>${escapeHtml(truncate(pending.input, 240))}</p><div class="agent-queue-actions">${failed ? `<button type="button" data-agent-queue-action="retry" title="重试">重试</button>` : `<button type="button" data-agent-queue-action="promote" title="提升为即时引导">立即</button><button type="button" data-agent-queue-action="up" title="上移">↑</button><button type="button" data-agent-queue-action="down" title="下移">↓</button>`}<button type="button" data-agent-queue-action="edit" title="编辑">编辑</button><button type="button" data-agent-queue-action="remove" title="移除">移除</button></div></section>` });
-    }
-    const pendingInputs = session?.pendingInputs || [];
-    pendingInputs.forEach((pending, index) => {
-      const row = rows[rows.length - pendingInputs.length + index];
-      if (row) row.queuePosition = Number(pending.position || 0);
-    });
-    rows.sort((a, b) => {
-      if (a.queuePosition != null && b.queuePosition != null) return a.queuePosition - b.queuePosition;
-      if (a.queuePosition != null) return 1;
-      if (b.queuePosition != null) return -1;
-      return Number(a.createdAt) - Number(b.createdAt);
-    });
-    if (!rows.length) {
+    if (!runtimeNotice && sessionApprovals.length) rows.push(...sessionApprovals.map(renderApproval));
+    const isEmpty = rows.length === 0;
+    if (isEmpty) {
       const providerName = session?.provider === "claude" ? "Claude" : "Codex";
-      rows.push({ createdAt: 0, html: `<section class="agent-empty"><div class="agent-runtime-brand"><img src="/assets/brand/FreeFlow_app_icon.png" alt="" /></div><span>FreeFlow AI</span><strong>开始新的对话</strong><p>${providerName} 已连接 · FreeFlow 独立空间</p></section>` });
+      refs.chatLog.classList.add("is-empty");
+      rows.push(`<section class="agent-empty"><div class="agent-runtime-brand"><img src="/assets/brand/FreeFlow_app_icon.png" alt="" /></div><span>FreeFlow AI</span><strong>开始新的对话</strong><p>${providerName} 已连接 · FreeFlow 独立空间</p></section>`);
     }
-    refs.chatLog.innerHTML = rows.map((row) => row.html).join("");
-    rows.filter((row) => row.message).forEach((row) => {
-      const element = refs.chatLog.querySelector(`[data-agent-message="${CSS.escape(row.message.id)}"] [data-agent-message-content]`);
-      if (element) setRichContent(element, row.message.content || (row.message.role === "assistant" ? "正在响应…" : ""), { streaming: element.closest(".is-streaming") != null });
+    refs.threadViewport?.classList.toggle("is-empty", isEmpty);
+    refs.chatLog.innerHTML = rows.join("");
+    messageRows.forEach((message) => {
+      const element = refs.chatLog.querySelector(`[data-agent-message="${CSS.escape(message.id)}"] [data-agent-message-content]`);
+      if (element) setRichContent(element, message.content, { streaming: element.closest(".is-streaming") != null });
     });
-    if (nearBottom) requestAnimationFrame(() => { if (refs.threadViewport) refs.threadViewport.scrollTop = refs.threadViewport.scrollHeight; });
+    refs.chatLog.querySelectorAll("[data-agent-disclosure]").forEach((element) => { element.open = expanded.has(element.dataset.agentDisclosure); });
+    requestAnimationFrame(() => {
+      if (!refs.threadViewport) return;
+      refs.threadViewport.scrollTop = followThread ? refs.threadViewport.scrollHeight : previousScrollTop;
+      updateScrollFollowing();
+    });
   }
 
   function renderComposer() {
@@ -348,6 +369,7 @@ export function createAgentController(options = {}) {
   function render() {
     renderHeader();
     renderChat();
+    renderQueueTray();
     renderComposer();
     onRuntime(runtime, session);
   }
@@ -440,6 +462,7 @@ export function createAgentController(options = {}) {
       const next = (await client.getSession(id)).session;
       if (generation !== selectionGeneration) return;
       session = next;
+      followThread = true;
       localStorage.setItem(CURRENT_SESSION_KEY, id);
       if (closeHistory) setHistoryOpen(false);
       subscribeToSession(id, next.revision, generation);
@@ -723,12 +746,20 @@ export function createAgentController(options = {}) {
     });
     refs.chatLog?.addEventListener("click", (event) => {
       if (event.target.closest("[data-agent-open-settings]")) onOpenSettings("ai");
-      const queueTarget = event.target.closest("[data-agent-queue-action]");
-      if (queueTarget) void handleQueueAction(queueTarget.closest("[data-agent-queue]"), queueTarget.dataset.agentQueueAction);
       const retryTarget = event.target.closest("[data-agent-retry-turn]");
       if (retryTarget) void retryTurn(retryTarget.dataset.agentRetryTurn);
       const decisionTarget = event.target.closest("[data-agent-approval-decision]");
       if (decisionTarget) void resolveApproval(decisionTarget.closest("[data-agent-approval]"), decisionTarget.dataset.agentApprovalDecision);
+    });
+    refs.queueTray?.addEventListener("click", (event) => {
+      const queueTarget = event.target.closest("[data-agent-queue-action]");
+      if (queueTarget) void handleQueueAction(queueTarget.closest("[data-agent-queue]"), queueTarget.dataset.agentQueueAction);
+    });
+    refs.threadViewport?.addEventListener("scroll", updateScrollFollowing, { passive: true });
+    refs.scrollBottom?.addEventListener("click", () => {
+      followThread = true;
+      if (refs.threadViewport) refs.threadViewport.scrollTop = refs.threadViewport.scrollHeight;
+      updateScrollFollowing();
     });
     window.addEventListener("freeflow:agent-data-restored", handleDataRestored);
   }
