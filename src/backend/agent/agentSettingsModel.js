@@ -1,6 +1,10 @@
-const AGENT_SETTINGS_SCHEMA_VERSION = 2;
+const crypto = require("crypto");
+
+const AGENT_SETTINGS_SCHEMA_VERSION = 3;
 const AGENT_PROVIDERS = Object.freeze(["codex", "claude"]);
-const APPROVAL_POLICIES = new Set(["untrusted", "on-request", "on-failure", "never"]);
+const CODEX_APPROVAL_POLICIES = new Set(["untrusted", "on-request", "never"]);
+const CLAUDE_APPROVAL_POLICIES = new Set(["untrusted", "on-request", "on-failure", "never"]);
+const APPROVAL_POLICIES = new Set([...CODEX_APPROVAL_POLICIES, ...CLAUDE_APPROVAL_POLICIES]);
 const SANDBOX_MODES = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const CLAUDE_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -34,6 +38,8 @@ function getDefaultProviderSettings(provider) {
     modelsFetchedAt: 0,
     selectedModel: "",
     modelValidatedAt: 0,
+    validationFingerprint: "",
+    connectionRevision: 0,
     legacyModelHint: "",
     reasoningEffort: "high",
     approvalPolicy: "on-request",
@@ -62,11 +68,12 @@ function normalizeProviderSettings(provider, payload = {}) {
   const efforts = provider === "claude" ? CLAUDE_REASONING_EFFORTS : CODEX_REASONING_EFFORTS;
   const reasoningEffort = String(payload.reasoningEffort ?? defaults.reasoningEffort).trim();
   const approvalPolicy = String(payload.approvalPolicy || defaults.approvalPolicy).trim();
+  const approvalPolicies = provider === "codex" ? CODEX_APPROVAL_POLICIES : CLAUDE_APPROVAL_POLICIES;
   const sandboxMode = String(payload.sandboxMode || defaults.sandboxMode).trim();
   const models = normalizeModels(payload.models);
   const selectedModel = String(payload.selectedModel || "").trim().slice(0, 200);
   const selectedIsKnown = models.some((item) => item.id === selectedModel);
-  return {
+  const normalized = {
     provider,
     cliPath: String(payload.cliPath || "").trim().slice(0, 1000),
     cliSource: String(payload.cliSource || "").trim().slice(0, 40),
@@ -76,12 +83,44 @@ function normalizeProviderSettings(provider, payload = {}) {
     models,
     modelsFetchedAt: Math.max(0, Number(payload.modelsFetchedAt) || 0),
     selectedModel: selectedIsKnown ? selectedModel : "",
-    modelValidatedAt: selectedIsKnown ? Math.max(0, Number(payload.modelValidatedAt) || 0) : 0,
+    modelValidatedAt: 0,
+    validationFingerprint: "",
+    connectionRevision: Math.max(0, Number(payload.connectionRevision) || 0),
     legacyModelHint: String(payload.legacyModelHint || "").trim().slice(0, 200),
     reasoningEffort: efforts.has(reasoningEffort) ? reasoningEffort : defaults.reasoningEffort,
-    approvalPolicy: APPROVAL_POLICIES.has(approvalPolicy) ? approvalPolicy : defaults.approvalPolicy,
+    approvalPolicy: approvalPolicies.has(approvalPolicy) ? approvalPolicy : defaults.approvalPolicy,
     sandboxMode: SANDBOX_MODES.has(sandboxMode) ? sandboxMode : defaults.sandboxMode,
   };
+  const storedFingerprint = String(payload.validationFingerprint || "");
+  if (selectedIsKnown && storedFingerprint && storedFingerprint === providerValidationFingerprint(provider, normalized)) {
+    normalized.modelValidatedAt = Math.max(0, Number(payload.modelValidatedAt) || 0);
+    normalized.validationFingerprint = storedFingerprint;
+  }
+  return normalized;
+}
+
+function providerValidationFingerprint(provider, settings = {}) {
+  const value = JSON.stringify({
+    provider,
+    cliPath: String(settings.cliPath || "").trim(),
+    cliVersion: String(settings.cliVersion || "").trim(),
+    baseUrl: String(settings.baseUrl || "").trim().replace(/\/+$/, ""),
+    connectionRevision: Math.max(0, Number(settings.connectionRevision) || 0),
+    selectedModel: String(settings.selectedModel || "").trim(),
+    reasoningEffort: String(settings.reasoningEffort || "").trim(),
+    approvalPolicy: String(settings.approvalPolicy || "").trim(),
+    sandboxMode: String(settings.sandboxMode || "").trim(),
+  });
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function isProviderValidationCurrent(provider, settings = {}) {
+  return Boolean(
+    settings.selectedModel &&
+    settings.modelValidatedAt &&
+    settings.validationFingerprint &&
+    settings.validationFingerprint === providerValidationFingerprint(provider, settings)
+  );
 }
 
 function migrateLegacySettings(payload, defaults) {
@@ -105,8 +144,13 @@ function migrateLegacySettings(payload, defaults) {
 
 function normalizeAgentSettings(payload = {}, options = {}) {
   const defaults = getDefaultAgentSettings(options.workspaceRoot);
+  const requestedWorkspaceRoot = String(payload.workspaceRoot || "").trim();
+  const legacyWorkspaceRoot = String(options.legacyWorkspaceRoot || "").trim();
+  const workspaceRoot = !requestedWorkspaceRoot || (
+    legacyWorkspaceRoot && requestedWorkspaceRoot.toLowerCase() === legacyWorkspaceRoot.toLowerCase()
+  ) ? defaults.workspaceRoot : requestedWorkspaceRoot.slice(0, 1000);
   if (!payload.providers || typeof payload.providers !== "object") {
-    return migrateLegacySettings(payload, defaults);
+    return { ...migrateLegacySettings(payload, defaults), workspaceRoot };
   }
   const activeProvider = AGENT_PROVIDERS.includes(String(payload.activeProvider))
     ? String(payload.activeProvider)
@@ -118,7 +162,7 @@ function normalizeAgentSettings(payload = {}, options = {}) {
       codex: normalizeProviderSettings("codex", payload.providers.codex),
       claude: normalizeProviderSettings("claude", payload.providers.claude),
     },
-    workspaceRoot: String(payload.workspaceRoot || defaults.workspaceRoot).trim().slice(0, 1000),
+    workspaceRoot,
     queueWhileRunning: payload.queueWhileRunning !== false,
     showReasoning: payload.showReasoning !== false,
     updatedAt: Number(payload.updatedAt) || Date.now(),
@@ -129,6 +173,8 @@ module.exports = {
   AGENT_SETTINGS_SCHEMA_VERSION,
   AGENT_PROVIDERS,
   APPROVAL_POLICIES,
+  CODEX_APPROVAL_POLICIES,
+  CLAUDE_APPROVAL_POLICIES,
   SANDBOX_MODES,
   REASONING_EFFORTS,
   getDefaultAgentSettings,
@@ -136,4 +182,6 @@ module.exports = {
   normalizeAgentSettings,
   normalizeModels,
   normalizeProviderSettings,
+  providerValidationFingerprint,
+  isProviderValidationCurrent,
 };

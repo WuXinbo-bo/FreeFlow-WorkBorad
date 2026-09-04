@@ -712,7 +712,10 @@
                   </button>
                   <div>
                     <h2 id="conversation-title">新会话</h2>
-                    <div id="conversation-mode-pill" class="conversation-mode-pill">Codex · 正在连接</div>
+                    <div class="agent-session-meta">
+                      <div id="conversation-mode-pill" class="conversation-mode-pill">Codex · 正在连接</div>
+                      <span id="agent-runtime-status" class="agent-runtime-status"><i aria-hidden="true"></i><span>连接中</span></span>
+                    </div>
                   </div>
                 </div>
                 <input
@@ -731,6 +734,15 @@
               <button id="agent-fork-session-btn" class="agent-icon-button" type="button" title="创建会话分支" aria-label="创建会话分支">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="19" r="2" /><path d="M6 7v3c0 2 2 3 6 3s6-1 6-3V7M12 13v4" /></svg>
               </button>
+              <details id="agent-session-more" class="agent-session-more">
+                <summary class="agent-icon-button" title="会话操作" aria-label="会话操作">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg>
+                </summary>
+                <div class="agent-session-menu ui-chrome-popover">
+                  <button type="button" data-agent-session-action="rename">重命名</button>
+                  <button type="button" data-agent-session-action="fork">创建分支</button>
+                </div>
+              </details>
               <button id="clear-btn" class="agent-icon-button is-primary" type="button" title="新建会话" aria-label="新建会话">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
               </button>
@@ -847,7 +859,7 @@
 
       <div id="drawer-backdrop" class="drawer-backdrop ui-chrome-backdrop"></div>
 
-      <aside id="insight-drawer" class="insight-drawer glass-panel ui-chrome-drawer" aria-hidden="true">
+      <aside id="insight-drawer" class="insight-drawer glass-panel ui-chrome-drawer" role="dialog" aria-modal="false" aria-label="系统设置" aria-hidden="true">
         <header class="settings-center-frame-header">
           <div>
             <span>FreeFlow</span>

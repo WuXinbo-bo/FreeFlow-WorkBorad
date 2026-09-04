@@ -76,6 +76,8 @@ async function runScenario({
   process.env.FREEFLOW_TEMP_DRAG_DIR = path.join(appDataDir, "Runtime", "drag-export");
 
   const { SHORTCUT_SETTINGS_FILE } = requireFresh("../src/backend/config/paths");
+  const { UI_SETTINGS_SCHEMA_VERSION } = requireFresh("../src/backend/models/uiSettingsModel");
+  const { MODEL_PROVIDER_SETTINGS_SCHEMA_VERSION } = requireFresh("../src/backend/models/modelProviderSettingsModel");
 
   await writeJson(path.join(appDataDir, "ui-settings.json"), {
     appName: "FreeFlow",
@@ -178,7 +180,7 @@ async function runScenario({
   const shortcutSettings = JSON.parse(await fsp.readFile(SHORTCUT_SETTINGS_FILE, "utf8"));
 
   assert(startupContext.ok, `${name}: 启动上下文初始化失败`);
-  assert(uiSettings.schemaVersion === 2, `${name}: ui-settings 未写入 schemaVersion`);
+  assert(uiSettings.schemaVersion === UI_SETTINGS_SCHEMA_VERSION, `${name}: ui-settings 未写入 schemaVersion`);
   assert(uiSettings.textColor === "#123456", `${name}: 主题设置未保留`);
   assert(uiSettings.dialogColor === "#f0f0f0", `${name}: 对话框颜色未保留`);
   assert(uiSettings.defaultCanvasPanelSide === "left", `${name}: 习惯设置默认画布侧未兼容`);
@@ -197,7 +199,7 @@ async function runScenario({
   );
   assert(uiSettings.lastTutorialIntroVersion === lastTutorialIntroVersion, `${name}: 教程介绍版本被启动迁移覆盖`);
   assert(shortcutSettings.clickThroughAccelerator === "Control+Alt+X", `${name}: 快捷键设置未保留`);
-  assert(providerSettings.schemaVersion === 1, `${name}: AI 配置未纳入 schemaVersion`);
+  assert(providerSettings.schemaVersion === MODEL_PROVIDER_SETTINGS_SCHEMA_VERSION, `${name}: AI 配置未纳入 schemaVersion`);
   assert(providerSettings.cloud.baseUrl === "https://api.example.com/v1", `${name}: AI 配置未保留`);
   assert(sessions.schemaVersion === 1, `${name}: 历史会话未纳入 schemaVersion`);
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `${name}: 历史会话未保留`);

@@ -119,12 +119,6 @@ function createSettingsCenterService(deps) {
     if (sections.ai) {
       if (sections.ai.agent && typeof sections.ai.agent === "object") {
         const agent = sections.ai.agent;
-        const workspaceRoot = normalizePath(agent.workspaceRoot, "ai.agent.workspaceRoot");
-        if (!workspaceRoot) {
-          throw createSettingsError("设置内容校验失败", {
-            fieldErrors: { "ai.agent.workspaceRoot": "请选择默认工作区目录" },
-          });
-        }
         if (agent.providers && typeof agent.providers === "object") {
           const providerPatches = {};
           for (const provider of ["codex", "claude"]) {
@@ -139,7 +133,6 @@ function createSettingsCenterService(deps) {
           agentPatch = {
             activeProvider: agent.activeProvider === "claude" ? "claude" : "codex",
             providers: providerPatches,
-            workspaceRoot,
             queueWhileRunning: agent.queueWhileRunning !== false,
             showReasoning: agent.showReasoning !== false,
           };
@@ -150,7 +143,6 @@ function createSettingsCenterService(deps) {
             reasoningEffort: String(agent.reasoningEffort || "high"),
             approvalPolicy: String(agent.approvalPolicy || "on-request"),
             sandboxMode: String(agent.sandboxMode || "workspace-write"),
-            workspaceRoot,
             queueWhileRunning: agent.queueWhileRunning !== false,
             showReasoning: agent.showReasoning !== false,
           };
@@ -202,15 +194,6 @@ function createSettingsCenterService(deps) {
       }
       const sections = payload.sections && typeof payload.sections === "object" ? payload.sections : {};
       const patches = buildPatches(sections, stores);
-      const effectiveAgent = patches.agentPatch || stores.agentSettings;
-      const effectiveRoots = patches.permissionsPatch?.allowedRoots || stores.permissionStore.allowedRoots;
-      try {
-        await permissionsService.resolveAllowedExistingPath(effectiveAgent.workspaceRoot, effectiveRoots);
-      } catch {
-        throw createSettingsError("设置内容校验失败", {
-          fieldErrors: { "ai.agent.workspaceRoot": "默认工作区必须位于权限页的授权目录内" },
-        });
-      }
       const changed = [];
       try {
         if (Object.keys(patches.uiPatch).length) {

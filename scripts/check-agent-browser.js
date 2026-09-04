@@ -61,6 +61,7 @@ async function main() {
     nextPending: 1,
     nextAttachment: 1,
     slowSessionId: "",
+    retryCalls: 0,
   };
   const runtime = {
     provider: "codex",
@@ -234,6 +235,19 @@ async function main() {
       session.revision += 1;
       return send({ ok: true, turn: clone(session.turns.at(-1)) }, 202);
     }
+    const retryTurnMatch = relative.match(/^\/sessions\/([^/]+)\/turns\/([^/]+)\/retry$/);
+    if (retryTurnMatch && method === "POST") {
+      const session = state.sessions.find((item) => item.id === retryTurnMatch[1]);
+      const turn = session?.turns.find((item) => item.id === retryTurnMatch[2] && item.status === "failed");
+      if (!turn) return send({ ok: false, error: "任务不存在" }, 404);
+      state.retryCalls += 1;
+      turn.status = "running";
+      turn.error = null;
+      turn.completedAt = 0;
+      session.status = "running";
+      session.revision += 1;
+      return send({ ok: true, turn: clone(turn) }, 202);
+    }
     const interruptMatch = relative.match(/^\/sessions\/([^/]+)\/interrupt$/);
     if (interruptMatch && method === "POST") {
       const session = state.sessions.find((item) => item.id === interruptMatch[1]);
@@ -317,7 +331,7 @@ async function main() {
   try {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.body.classList.contains("app-booting"), null, { timeout: 15_000 });
-    await page.waitForFunction(() => document.querySelector("#conversation-mode-pill")?.textContent.includes("就绪"));
+    await page.waitForFunction(() => document.querySelector("#agent-runtime-status")?.textContent.includes("就绪"));
     await page.locator("#restore-right-pane-btn").evaluate((button) => {
       if (!button.classList.contains("is-hidden")) button.click();
     });
@@ -346,6 +360,33 @@ async function main() {
     initial.revision += 1;
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "turn.completed", payload: {}, createdAt: Date.now() });
     await page.waitForFunction(() => document.querySelector("#chat-log")?.textContent.includes("分析已经完成") && document.querySelector("#stop-btn")?.disabled);
+
+    const failedAt = Date.now();
+    const failedTurn = {
+      id: "turn-failed",
+      status: "failed",
+      input: "检查构建错误",
+      clientRequestId: "failed-request",
+      createdAt: failedAt,
+      completedAt: failedAt + 1,
+      error: { code: "AGENT_RUNTIME_ERROR", message: "AI 运行环境暂时不可用", technicalMessage: "forced browser failure", recoverable: true },
+    };
+    initial.turns.push(failedTurn);
+    initial.messages.push({ id: `message-${state.nextMessage++}`, role: "user", content: failedTurn.input, turnId: failedTurn.id, createdAt: failedAt });
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "turn.failed", payload: {}, createdAt: failedAt + 1 });
+    await page.waitForFunction(() => document.querySelector(".agent-turn-error")?.textContent.includes("AI 运行环境暂时不可用"));
+    assert(await page.locator(".agent-turn-error details").count() === 1, "failed turn did not keep technical details behind a disclosure");
+    const failedUserMessages = initial.messages.filter((message) => message.role === "user" && message.turnId === failedTurn.id).length;
+    await page.locator(`[data-agent-retry-turn="${failedTurn.id}"]`).click();
+    await page.waitForFunction((turnId) => !document.querySelector(`[data-agent-failed-turn="${turnId}"]`), failedTurn.id);
+    assert(state.retryCalls === 1, "failed turn retry did not reach the retry endpoint", state);
+    assert(initial.messages.filter((message) => message.role === "user" && message.turnId === failedTurn.id).length === failedUserMessages, "failed turn retry duplicated the user message");
+    failedTurn.status = "completed";
+    initial.status = "idle";
+    initial.revision += 1;
+    await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "turn.completed", payload: {}, createdAt: Date.now() });
+    await page.waitForFunction(() => document.querySelector("#stop-btn")?.disabled && !document.querySelector("#send-btn")?.disabled);
 
     await page.locator("#prompt-input").fill("启动第二个任务");
     await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
@@ -390,7 +431,7 @@ async function main() {
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: initial.id, revision: initial.revision, type: "approval.requested", payload: {}, createdAt: Date.now() });
     await page.waitForSelector(".agent-approval");
     await page.locator('[data-agent-approval-decision="accept"]').click();
-    await page.waitForFunction(() => !document.querySelector(".agent-approval") && document.querySelector("#conversation-mode-pill")?.textContent.includes("就绪"));
+    await page.waitForFunction(() => !document.querySelector(".agent-approval") && document.querySelector("#agent-runtime-status")?.textContent.includes("就绪"));
 
     await page.locator("#agent-file-input").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
     await page.waitForFunction(() => document.querySelector(".composer-attachment-chip")?.textContent.includes("notes.txt"));
@@ -417,7 +458,12 @@ async function main() {
     second.revision += 1;
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: second.id, revision: second.revision, type: "session.renamed", payload: {}, createdAt: Date.now() });
     await page.waitForFunction(() => document.querySelector("#conversation-title")?.textContent === "第二会话");
-    await page.locator("#agent-fork-session-btn").click();
+    if (await page.locator("#agent-fork-session-btn").isVisible()) {
+      await page.locator("#agent-fork-session-btn").click();
+    } else {
+      await page.locator("#agent-session-more > summary").click();
+      await page.locator('[data-agent-session-action="fork"]').click();
+    }
     await page.waitForFunction(() => document.querySelector("#conversation-title")?.textContent.includes("分支"));
     const forked = state.sessions[0];
 
@@ -471,6 +517,35 @@ async function main() {
     current.revision += 1;
     await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: current.id, revision: current.revision, type: "activity", payload: {}, createdAt: Date.now() });
     await page.waitForSelector(".agent-activity");
+    const responsiveStates = [];
+    for (const contentWidth of [640, 440, 320]) {
+      responsiveStates.push(await page.locator(".conversation-panel").evaluate((panel, width) => {
+        panel.style.setProperty("min-width", "0", "important");
+        panel.style.setProperty("width", `${width + 30}px`, "important");
+        const content = panel.querySelector(".conversation-resize-content");
+        const rename = panel.querySelector("#agent-rename-session-btn");
+        const fork = panel.querySelector("#agent-fork-session-btn");
+        const more = panel.querySelector("#agent-session-more");
+        const runtimeNotice = panel.querySelector(".agent-runtime-notice");
+        const elements = [panel.querySelector(".conversation-header"), panel.querySelector("#thread-viewport"), panel.querySelector("#chat-form")].filter(Boolean);
+        return new Promise((resolve) => requestAnimationFrame(() => resolve({
+          requestedWidth: width,
+          contentWidth: content.getBoundingClientRect().width,
+          renameVisible: getComputedStyle(rename).display !== "none",
+          forkVisible: getComputedStyle(fork).display !== "none",
+          moreVisible: getComputedStyle(more).display !== "none",
+          noticeColumns: runtimeNotice ? getComputedStyle(runtimeNotice).gridTemplateColumns : "",
+          overflow: elements.some((element) => element.scrollWidth > element.clientWidth + 1),
+        })));
+      }, contentWidth));
+    }
+    assert(responsiveStates[0].renameVisible && responsiveStates[0].forkVisible && !responsiveStates[0].moreVisible, "wide Agent controls did not use the full action layout", responsiveStates);
+    assert(!responsiveStates[1].renameVisible && !responsiveStates[1].forkVisible && responsiveStates[1].moreVisible, "medium Agent controls did not collapse into the session menu", responsiveStates);
+    assert(!responsiveStates[2].overflow && responsiveStates[2].moreVisible, "narrow Agent layout overflowed or lost session actions", responsiveStates);
+    await page.locator(".conversation-panel").evaluate((panel) => {
+      panel.style.removeProperty("min-width");
+      panel.style.removeProperty("width");
+    });
     await page.setViewportSize({ width: 680, height: 720 });
     await page.waitForTimeout(120);
     const layout = await page.evaluate(() => {

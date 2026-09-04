@@ -26,6 +26,7 @@ export function buildThemeCssVariables(payload = {}) {
   const messageColor = hexToRgb(theme.messageColor);
   const userMessageColor = hexToRgb(theme.userMessageColor);
   const dialogColor = hexToRgb(theme.dialogColor);
+  const isLightTheme = (baseColor.r * 299 + baseColor.g * 587 + baseColor.b * 114) / 1000 >= 158;
 
   const deepColor = mixRgb(baseColor, { r: 3, g: 6, b: 14 }, 0.64);
   const edgeColor = mixToWhite(baseColor, 0.08);
@@ -63,6 +64,19 @@ export function buildThemeCssVariables(payload = {}) {
   const assistantAvatarEnd = mixRgb(shellSurfaceDeeper, buttonBase, 0.08);
 
   return {
+    "--app-color-scheme": isLightTheme ? "light" : "dark",
+    "--air-canvas": theme.backgroundColor,
+    "--air-canvas-surface": isLightTheme ? "#ffffff" : theme.backgroundColor,
+    "--air-canvas-strong": theme.shellPanelColor,
+    "--air-workspace": theme.backgroundColor,
+    "--air-ink": theme.shellPanelTextColor,
+    "--air-ink-muted": `rgb(${rgbToCss(shellPanelTextColor)} / 0.68)`,
+    "--air-ink-soft": `rgb(${rgbToCss(shellPanelTextColor)} / 0.46)`,
+    "--air-line": `rgb(${rgbToCss(patternColor)} / 0.28)`,
+    "--air-line-strong": `rgb(${rgbToCss(patternColor)} / 0.44)`,
+    "--air-hover": `rgb(${rgbToCss(buttonBase)} / 0.08)`,
+    "--air-active": `rgb(${rgbToCss(buttonBase)} / 0.14)`,
+    "--air-accent": theme.buttonColor,
     "--app-bg-start-rgb": rgbToCss(edgeColor),
     "--app-bg-end-rgb": rgbToCss(deepColor),
     "--app-bg-ambient-a-rgb": rgbToCss(ambientA),

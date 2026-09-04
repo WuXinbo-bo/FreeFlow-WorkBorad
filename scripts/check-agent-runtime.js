@@ -5,7 +5,7 @@ const path = require("path");
 const { EventEmitter } = require("events");
 const { DatabaseSync } = require("node:sqlite");
 const { AgentRuntime } = require("../src/backend/agent/agentRuntime");
-const { getDefaultAgentSettings } = require("../src/backend/agent/agentSettingsModel");
+const { getDefaultAgentSettings, providerValidationFingerprint } = require("../src/backend/agent/agentSettingsModel");
 const { AgentStore } = require("../src/backend/agent/agentStore");
 
 class FakeCodexClient extends EventEmitter {
@@ -18,6 +18,7 @@ class FakeCodexClient extends EventEmitter {
     this.requests = [];
     this.responses = [];
     this.failNextTurnStart = false;
+    this.failNextThreadDelete = false;
   }
 
   async start() {
@@ -38,8 +39,22 @@ class FakeCodexClient extends EventEmitter {
         model: "gpt-test",
         reasoningEffort: "high",
         approvalPolicy: params.approvalPolicy,
-        sandbox: params.sandbox,
+        sandbox: {
+          type: params.sandbox === "read-only"
+            ? "readOnly"
+            : params.sandbox === "danger-full-access"
+              ? "dangerFullAccess"
+              : "workspaceWrite",
+          ...(params.sandbox === "workspace-write" ? { writableRoots: [params.cwd], networkAccess: false } : {}),
+        },
       };
+    }
+    if (method === "thread/delete") {
+      if (this.failNextThreadDelete) {
+        this.failNextThreadDelete = false;
+        throw new Error("forced thread cleanup failure");
+      }
+      return {};
     }
     if (method === "thread/resume") return { thread: { id: params.threadId } };
     if (method === "thread/fork") return { thread: { id: `thread-${++this.threadSequence}` } };
@@ -102,8 +117,8 @@ function checkStoreMigration(tempDir) {
   assert.equal(pending.status, "queued", "v1 queue status was not migrated");
   assert.equal(pending.position, 110, "v1 queue order was not preserved");
   assert.equal(pending.updatedAt, 110, "v1 queue update time was not initialized");
-  assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 2, "Agent store schema version was not advanced");
-  assert(store.listBackups().some((item) => item.name.includes("schema-v1-to-v2")), "schema migration did not create a recovery backup");
+  assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 3, "Agent store schema version was not advanced");
+  assert(store.listBackups().some((item) => item.name.includes("schema-v1-to-v3")), "schema migration did not create a recovery backup");
   store.close();
 }
 
@@ -112,7 +127,8 @@ async function main() {
   checkStoreMigration(tempDir);
   const clients = [];
   const clientConfigs = [];
-  const settings = getDefaultAgentSettings(tempDir);
+  const managedWorkspacesDir = path.join(tempDir, "AIWorkspaces");
+  const settings = getDefaultAgentSettings(managedWorkspacesDir);
   settings.providers.codex = {
     ...settings.providers.codex,
     cliPath: "fake-codex",
@@ -122,11 +138,14 @@ async function main() {
     selectedModel: "gpt-test",
     modelValidatedAt: Date.now(),
   };
+  settings.providers.codex.validationFingerprint = providerValidationFingerprint("codex", settings.providers.codex);
   let legacyCleared = false;
+  const permissionChecks = [];
   const legacySnapshot = { currentSessionId: "legacy-one", sessions: [{ id: "legacy-one", title: "Legacy history" }] };
   const runtime = new AgentRuntime({
     databaseFile: path.join(tempDir, "agent.sqlite"),
     attachmentsDir: path.join(tempDir, "attachments"),
+    workspacesDir: path.join(tempDir, "AIWorkspaces"),
     appVersion: "test",
     settingsService: {
       async readAgentSettings() { return structuredClone(settings); },
@@ -140,6 +159,10 @@ async function main() {
       async readPermissionsStore() { return { allowedRoots: [tempDir] }; },
       async resolveAllowedExistingPath(value) {
         const resolved = path.resolve(value);
+        permissionChecks.push(resolved);
+        if (resolved === managedWorkspacesDir || resolved.startsWith(`${managedWorkspacesDir}${path.sep}`)) {
+          throw new Error("managed workspace reached external permission validation");
+        }
         if (resolved !== tempDir && !resolved.startsWith(`${tempDir}${path.sep}`)) throw new Error("Path is outside allowed roots");
         return resolved;
       },
@@ -162,23 +185,28 @@ async function main() {
   const published = [];
   runtime.on("event", (event) => published.push(event));
   await runtime.initialize();
+  const runtimeStatus = await runtime.getRuntimeStatus();
+  assert.equal(runtimeStatus.workspaceValid, true, "managed workspace root was rejected by external permissions");
+  assert.equal(permissionChecks.length, 0, "managed workspace root entered external permission validation");
   assert.equal((await runtime.listSessions()).filter((item) => item.provider === "legacy").length, 0, "legacy sessions were retained");
   assert.equal(legacyCleared, true, "legacy JSON history was not retired");
   assert(fs.readdirSync(path.join(tempDir, "AgentBackups")).some((name) => name.startsWith("legacy-agent-history-")), "legacy history was retired without a recovery snapshot");
 
-  settings.workspaceRoot = path.dirname(tempDir);
-  const invalidWorkspaceRuntime = await runtime.getRuntimeStatus({ start: true, refresh: true });
-  assert.equal(invalidWorkspaceRuntime.workspaceValid, false, "invalid default workspace escaped runtime status validation");
-  assert.match(invalidWorkspaceRuntime.error, /权限页添加该目录/);
-  settings.workspaceRoot = tempDir;
-
   const session = await runtime.createSession({ title: "Agent session" });
+  assert.equal(session.runtimeBinding.workspaceKind, "managed", "default session did not use the managed workspace policy");
+  assert.equal(path.dirname(session.workspaceRoot), path.join(tempDir, "AIWorkspaces"), "managed session escaped its isolated workspace root");
+  assert(fs.existsSync(session.workspaceRoot), "managed session workspace was not created");
+  assert.equal(permissionChecks.length, 0, "managed session entered external permission validation");
   const first = await runtime.startTurn(session.id, { text: "first", clientRequestId: "request-1" });
   assert.equal(first.turn.status, "running");
   assert(clientConfigs[0].args.includes("features.multi_agent=false"), "Codex native multi-agent support was not disabled");
   assert.equal(Object.hasOwn(clientConfigs[0].env, "WORKBENCH_AGENT_BRIDGE_TOKEN"), false, "Codex inherited a delegation bridge token");
   assert.equal((await runtime.getSession(session.id)).status, "running");
   const client = clients[0];
+  const boundSession = await runtime.getSession(session.id);
+  assert.equal(boundSession.sandboxMode, "workspace-write", "structured Codex sandbox response was not normalized before SQLite persistence");
+  assert.equal(boundSession.approvalPolicy, "on-request", "Codex approval policy was not normalized before SQLite persistence");
+  assert.equal(client.requests.find((entry) => entry.method === "thread/start")?.params.sandbox, "workspace-write", "thread start sandbox no longer matches the installed app-server request schema");
   assert(fs.existsSync(path.join(tempDir, "attachments", session.id)), "thread workspace attachment root was not created");
   const duplicateFirst = await runtime.startTurn(session.id, { text: "first", clientRequestId: "request-1" });
   assert.equal(duplicateFirst.duplicate, true, "active turn retry was not idempotent");
@@ -203,6 +231,32 @@ async function main() {
   assert.equal((await runtime.getSession(session.id)).status, "idle", "completed turn did not restore idle state");
   assert.equal((await runtime.getSession(session.id)).messages.at(-1).content, "hello world", "completed message did not replace the streamed projection");
 
+  const bindFailureSession = await runtime.createSession({ title: "Binding recovery" });
+  const originalBindThread = runtime.store.bindThread.bind(runtime.store);
+  let failBindingOnce = true;
+  client.failNextThreadDelete = true;
+  runtime.store.bindThread = (sessionId, threadId, threadSettings) => {
+    if (sessionId === bindFailureSession.id && failBindingOnce) {
+      failBindingOnce = false;
+      throw Object.assign(new Error("forced local thread binding failure"), { code: "SQLITE_BIND_TEST" });
+    }
+    return originalBindThread(sessionId, threadId, threadSettings);
+  };
+  await assert.rejects(
+    () => runtime.startTurn(bindFailureSession.id, { text: "retry without duplication", clientRequestId: "bind-failure-1" }),
+    /binding failure/,
+    "local thread binding failure did not reach the caller"
+  );
+  assert(client.requests.some((entry) => entry.method === "thread/delete" && entry.params.threadId === "thread-2"), "failed local binding did not compensate the remote thread");
+  assert.equal(runtime.store.listRemoteThreadCleanups().length, 1, "failed remote cleanup was not persisted for restart recovery");
+  const failedBindingTurn = (await runtime.getSession(bindFailureSession.id)).turns.find((turn) => turn.clientRequestId === "bind-failure-1");
+  assert.equal(failedBindingTurn?.status, "failed", "binding failure did not remain recoverable in local history");
+  const retriedBinding = await runtime.retryTurn(bindFailureSession.id, failedBindingTurn.id);
+  assert.equal(retriedBinding.turn.status, "running", "failed turn retry did not start a replacement provider turn");
+  const retriedSession = await runtime.getSession(bindFailureSession.id);
+  assert.equal(retriedSession.messages.filter((message) => message.role === "user" && message.content === "retry without duplication").length, 1, "failed turn retry duplicated the visible user message");
+  assert.equal(retriedSession.sandboxMode, "workspace-write", "retry lost the normalized sandbox policy");
+
   const titledSession = await runtime.createSession();
   await runtime.startTurn(titledSession.id, { text: "  # Build the new Agent history  ", clientRequestId: "title-request" });
   assert.equal((await runtime.getSession(titledSession.id)).title, "Build the new Agent history", "first user turn did not name a new session");
@@ -222,9 +276,27 @@ async function main() {
 
   const cleanupSession = await runtime.createSession({ title: "Attachment cleanup" });
   const cleanupAttachment = await runtime.importAttachment(cleanupSession.id, { filePath: attachmentSource, name: "cleanup.txt", mimeType: "text/plain" });
+  fs.writeFileSync(path.join(cleanupSession.workspaceRoot, "managed-output.txt"), "managed output");
   assert(fs.existsSync(cleanupAttachment.storedPath), "cleanup attachment was not stored");
   await runtime.deleteSession(cleanupSession.id);
   assert.equal(fs.existsSync(path.join(tempDir, "attachments", cleanupSession.id)), false, "session deletion left its attachment directory behind");
+  assert.equal(fs.existsSync(cleanupSession.workspaceRoot), false, "session deletion left its managed workspace behind");
+
+  const projectWorkspace = path.join(tempDir, "ProjectWorkspace");
+  fs.mkdirSync(projectWorkspace);
+  fs.writeFileSync(path.join(projectWorkspace, "keep.txt"), "project data");
+  const projectSession = await runtime.createSession({ title: "Project workspace", workspaceRoot: projectWorkspace });
+  assert.equal(projectSession.runtimeBinding.workspaceKind, "project");
+  await runtime.deleteSession(projectSession.id);
+  assert(fs.existsSync(path.join(projectWorkspace, "keep.txt")), "session deletion removed an external project workspace");
+
+  const sharedWorkspaceSession = await runtime.createSession({
+    title: "Shared managed workspace",
+    workspaceRoot: session.workspaceRoot,
+    workspaceKind: "managed",
+  });
+  await runtime.deleteSession(sharedWorkspaceSession.id);
+  assert(fs.existsSync(session.workspaceRoot), "deleting one session removed a managed workspace still used by another session");
 
   settings.activeProvider = "claude";
   const forked = await runtime.forkSession(titledSession.id);
@@ -391,6 +463,7 @@ async function main() {
   const replacement = clients.at(-1);
   replacement.turnSequence = 100;
   assert.notEqual(replacement, client, "runtime restart reused the stale client");
+  assert.equal(runtime.store.listRemoteThreadCleanups().length, 0, "runtime restart did not drain the persisted remote cleanup");
   client.emit("notification", "item/agentMessage/delta", {
     threadId: (await runtime.getSession(session.id)).providerThreadId,
     turnId: active.providerTurnId,
@@ -399,15 +472,22 @@ async function main() {
   });
   assert.equal((await runtime.getSession(session.id)).revision, revisionBeforeRestart, "stale client event mutated the recovered session");
 
+  const clientBeforeCredentialChange = runtime.client;
+  settings.providers.codex.connectionRevision += 1;
+  settings.providers.codex.validationFingerprint = providerValidationFingerprint("codex", settings.providers.codex);
+  const credentialClient = await runtime.ensureClient();
+  credentialClient.turnSequence = 100;
+  assert.notEqual(credentialClient, clientBeforeCredentialChange, "connection revision change reused the previous app-server client");
+
   const crashTurn = await runtime.startTurn(session.id, { text: "crash recovery", clientRequestId: "crash-request" });
-  replacement.emit("server-request", {
+  credentialClient.emit("server-request", {
     jsonrpc: "2.0",
     id: 82,
     method: "item/fileChange/requestApproval",
     params: { threadId: (await runtime.getSession(session.id)).providerThreadId, turnId: crashTurn.turn.providerTurnId, reason: "crash test" },
   });
   assert.equal((await runtime.getSession(session.id)).approvals.length, 1);
-  replacement.emit("exit", { expected: false, generation: 1, error: new Error("forced crash") });
+  credentialClient.emit("exit", { expected: false, generation: runtime.runtimeGeneration, error: new Error("forced crash") });
   const recoveredAfterCrash = await runtime.getSession(session.id);
   assert.equal(recoveredAfterCrash.status, "idle", "runtime crash did not restore the session to idle");
   assert.equal(recoveredAfterCrash.approvals.length, 0, "runtime crash left a stale approval visible");
@@ -424,6 +504,31 @@ async function main() {
   await runtime.restoreBackup(backup.name);
   assert.equal(await runtime.getSession(afterBackup.id), null, "restoring a backup did not replace newer session state");
   assert(await runtime.getSession(session.id), "restoring a backup lost the captured session state");
+
+  await runtime.restart({ start: false });
+  const workingClientFactory = runtime.clientFactory;
+  runtime.clientFactory = () => {
+    const failing = new FakeCodexClient();
+    failing.start = async () => { throw new Error("forced app-server startup failure"); };
+    return failing;
+  };
+  const unavailableRuntime = await runtime.getRuntimeStatus({ start: true, refresh: true });
+  assert.equal(unavailableRuntime.ready, false, "failed app-server startup was reported as ready");
+  assert.equal(unavailableRuntime.providers.codex.ready, false, "failed Codex process left the provider ready");
+  runtime.clientFactory = workingClientFactory;
+  await runtime.restart();
+
+  const pendingClient = runtime.client;
+  runtime._bufferPendingNotification("unknown-thread", pendingClient, runtime.runtimeGeneration, "item/agentMessage/delta", { delta: "first" });
+  const firstPendingBuffer = runtime.pendingNotifications.get("unknown-thread");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  runtime._bufferPendingNotification("unknown-thread", pendingClient, runtime.runtimeGeneration, "item/agentMessage/delta", { delta: "second" });
+  const latestPendingBuffer = runtime.pendingNotifications.get("unknown-thread");
+  assert.notEqual(latestPendingBuffer, firstPendingBuffer, "pending notification buffer did not advance its expiry identity");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(runtime.pendingNotifications.get("unknown-thread"), latestPendingBuffer, "an older expiry timer removed newer pending notifications");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(runtime.pendingNotifications.has("unknown-thread"), false, "pending notifications were not removed after their latest expiry");
 
   await runtime.shutdown();
   fs.rmSync(tempDir, { recursive: true, force: true });

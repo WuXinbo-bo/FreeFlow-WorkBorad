@@ -32,6 +32,7 @@ const AGENT_SETTINGS_FILE = path.join(DATA_DIR, "agent-settings.json");
 const AGENT_ATTACHMENTS_DIR = path.join(DATA_DIR, "AgentAttachments");
 const AGENT_PROFILES_DIR = path.join(DATA_DIR, "AgentProfiles");
 const AGENT_BACKUPS_DIR = path.join(DATA_DIR, "AgentBackups");
+const AGENT_WORKSPACES_DIR = path.join(USER_APP_DIR, "AIWorkspaces");
 const SHORTCUT_SETTINGS_FILE = path.join(DATA_DIR, "shortcut-settings.json");
 const CANVAS_BOARD_FILE = path.join(CANVAS_BOARD_DIR, "canvas-board.freeflow");
 const AGENT_SCREENSHOT_FILE = path.join(DATA_DIR, "agent-current-window.png");
@@ -72,6 +73,7 @@ module.exports = {
   AGENT_ATTACHMENTS_DIR,
   AGENT_PROFILES_DIR,
   AGENT_BACKUPS_DIR,
+  AGENT_WORKSPACES_DIR,
   SHORTCUT_SETTINGS_FILE,
   CANVAS_BOARD_FILE,
   AGENT_SCREENSHOT_FILE,

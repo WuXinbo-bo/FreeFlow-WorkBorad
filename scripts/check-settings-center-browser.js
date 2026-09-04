@@ -32,7 +32,17 @@ async function openSection(page, section) {
 async function saveSettings(page) {
   const button = page.locator('[data-settings-action="save"]');
   await button.waitFor({ state: "visible" });
-  await page.waitForFunction(() => !document.querySelector('[data-settings-action="save"]')?.disabled);
+  try {
+    await page.waitForFunction(() => !document.querySelector('[data-settings-action="save"]')?.disabled, null, { timeout: 5000 });
+  } catch (error) {
+    const detail = await page.evaluate(() => ({
+      value: document.querySelector('[data-settings-path="general.workspaceSubtitle"]')?.value,
+      state: document.querySelector(".settings-center-save-state")?.textContent,
+      saveDisabled: document.querySelector('[data-settings-action="save"]')?.disabled,
+      discardDisabled: document.querySelector('[data-settings-action="cancel"]')?.disabled,
+    }));
+    throw new Error(`settings save did not become available: ${JSON.stringify(detail)} (${error.message})`);
+  }
   await button.click();
 }
 
@@ -57,7 +67,7 @@ async function main() {
   snapshot.sections.ai = {
     agent: {
       ...snapshot.sections.ai.agent,
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProvider: "codex",
       workspaceRoot: "D:\\FreeFlow-WorkBoard",
       providers: {
@@ -82,7 +92,7 @@ async function main() {
   for (const key of Object.keys(snapshot.sections.permissions.permissions || {})) {
     snapshot.sections.permissions.permissions[key] = false;
   }
-  let agentWorkspaceValid = false;
+  let agentWorkspaceValid = true;
   let agentSession = null;
   let agentSessionCreates = 0;
   let backups = [];
@@ -253,7 +263,8 @@ async function main() {
       providerThreadId: "",
       title: "新会话",
       preview: "",
-      workspaceRoot: snapshot.sections.ai.agent.workspaceRoot,
+      workspaceRoot: "D:\\FreeFlow\\AIWorkspaces\\settings-agent-session",
+      runtimeBinding: { workspaceKind: "managed" },
       model: snapshot.sections.ai.agent.providers.codex.selectedModel,
       reasoningEffort: snapshot.sections.ai.agent.providers.codex.reasoningEffort,
       approvalPolicy: snapshot.sections.ai.agent.providers.codex.approvalPolicy,
@@ -301,8 +312,8 @@ async function main() {
   try {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.body.classList.contains("app-booting"), null, { timeout: 15_000 });
-    await page.waitForFunction(() => document.querySelector(".agent-runtime-notice strong")?.textContent.includes("配置 AI 工作区"));
-    assert(agentSessionCreates === 0 && (await page.locator("#clear-btn").isDisabled()), "invalid Agent workspace created a session before settings recovery");
+    await page.waitForFunction(() => document.querySelector(".agent-runtime-notice strong")?.textContent.includes("完成 AI 助手设置"));
+    assert(agentSessionCreates === 0 && (await page.locator("#clear-btn").isDisabled()), "incomplete AI setup created a session before provider validation");
 
     await page.locator("#conversation-shell-more").evaluate((button) => button.click());
     await page.waitForFunction(() => !document.querySelector("#conversation-shell-menu")?.classList.contains("is-hidden"));
@@ -319,6 +330,22 @@ async function main() {
 
     await openSettings(page);
     await page.locator('[data-settings-path="general.workspaceSubtitle"]').fill("Draft preserved across Agent actions");
+    await page.locator("#drawer-backdrop").evaluate((element) => element.click());
+    const persistentDrawer = await page.evaluate(() => ({
+      open: document.querySelector("#insight-drawer")?.classList.contains("is-open"),
+      draft: document.querySelector('[data-settings-path="general.workspaceSubtitle"]')?.value,
+      backdropPointerEvents: getComputedStyle(document.querySelector("#drawer-backdrop")).pointerEvents,
+      drawerBackdropFilter: getComputedStyle(document.querySelector("#insight-drawer")).backdropFilter,
+    }));
+    assert(
+      persistentDrawer.open && persistentDrawer.draft === "Draft preserved across Agent actions" && persistentDrawer.backdropPointerEvents === "none" && persistentDrawer.drawerBackdropFilter.includes("blur"),
+      "settings drawer did not remain as a non-modal frosted workspace",
+      persistentDrawer
+    );
+    await page.locator("#drawer-close-btn").click();
+    await page.waitForFunction(() => !document.querySelector("#insight-drawer")?.classList.contains("is-open"));
+    await openSettings(page);
+    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Draft preserved across Agent actions", "ordinary close discarded the settings draft");
     await openSection(page, "ai");
     const aiPlacement = await page.evaluate(() => ({
       cli: Boolean(document.querySelector("[data-agent-cli-path]")),
@@ -331,10 +358,14 @@ async function main() {
       moreAiControls: document.querySelectorAll('#conversation-shell-menu [data-settings-path^="ai."]').length,
     }));
     assert(
-      aiPlacement.cli && aiPlacement.workspace && aiPlacement.model && aiPlacement.reasoning && aiPlacement.approval && aiPlacement.sandbox && aiPlacement.providerControls === 0 && aiPlacement.moreAiControls === 0,
-      "Codex settings are not exclusively owned by the AI settings section",
+      !aiPlacement.cli && !aiPlacement.workspace && !aiPlacement.model && !aiPlacement.reasoning && !aiPlacement.approval && !aiPlacement.sandbox && aiPlacement.providerControls === 0 && aiPlacement.moreAiControls === 0,
+      "AI setup did not start as a focused first step or leaked workspace controls",
       aiPlacement
     );
+    assert(await page.locator(".settings-center-setup-stage").count() === 1, "AI setup rendered more than one setup step");
+    assert(await page.locator(".settings-center-setup-progress button").count() === 0, "AI setup still exposed five simultaneous step controls");
+    await page.locator('[data-settings-action="agent-setup-continue"]').click();
+    await page.waitForSelector("[data-agent-cli-path]");
     await page.locator('[data-settings-action="agent-discover"]').click();
     assert(await page.locator("[data-agent-cli-path]").isDisabled(), "CLI selection remained interactive while discovery was running");
     await page.waitForFunction(() => {
@@ -344,20 +375,33 @@ async function main() {
     });
     await page.locator("[data-agent-cli-path]").selectOption("C:\\tools\\codex.cmd");
     await page.locator('[data-settings-action="agent-bind"]').click();
-    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("连接配置"));
-    await page.locator('[data-settings-path="ai.agent.providers.codex.reasoningEffort"]').selectOption("xhigh");
-    await page.locator('[data-settings-path="ai.agent.providers.codex.sandboxMode"]').selectOption("read-only");
+    await page.waitForSelector('[data-agent-connection-field="baseUrl"]');
     await page.locator('[data-agent-connection-field="baseUrl"]').fill("https://gateway.example.test/v1");
     await page.locator('[data-agent-connection-field="apiKey"]').fill("secret-test-key");
+    await page.locator("#drawer-close-btn").click();
+    await page.waitForFunction(() => !document.querySelector("#insight-drawer")?.classList.contains("is-open"));
+    await openSettings(page);
+    await page.waitForSelector('[data-agent-connection-field="baseUrl"]');
+    assert(
+      (await page.locator('[data-agent-connection-field="baseUrl"]').inputValue()) === "https://gateway.example.test/v1" &&
+        (await page.locator('[data-agent-connection-field="apiKey"]').inputValue()) === "secret-test-key",
+      "closing and reopening the setup drawer lost its connection draft or current step"
+    );
     await page.locator('[data-settings-action="agent-save-connection"]').click();
-    await page.waitForFunction(() => document.querySelector(".settings-center-credential-state")?.textContent.includes("已保存"));
+    await page.waitForSelector("[data-agent-model-select]");
     await page.locator('[data-settings-action="agent-refresh-models"]').click();
     await page.waitForFunction(() => document.querySelector("[data-agent-model-select]")?.options.length === 3);
     await page.locator("[data-agent-model-select]").selectOption("gpt-5.5-codex");
     await page.locator('[data-settings-action="agent-select-model"]').click();
-    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("连接测试"));
+    await page.waitForFunction(() => document.querySelector('.settings-center-test-stage [data-settings-action="agent-test-connection"]'));
     await page.locator('[data-settings-action="agent-test-connection"]').click();
-    await page.waitForFunction(() => document.querySelector(".settings-center-agent-state")?.textContent.includes("配置完成"));
+    await page.waitForSelector(".settings-center-agent-summary");
+    assert(await page.locator(".settings-center-setup-progress").count() === 0, "completed AI setup kept the setup progress visible");
+    await page.locator(".settings-center-agent-policy > summary").click();
+    const codexApprovalOptions = await page.locator('[data-settings-path="ai.agent.providers.codex.approvalPolicy"] option').allTextContents();
+    assert(!codexApprovalOptions.includes("失败时询问"), "Codex settings exposed the unsupported on-failure approval policy", codexApprovalOptions);
+    await page.locator('[data-settings-path="ai.agent.providers.codex.reasoningEffort"]').selectOption("xhigh");
+    await page.locator('[data-settings-path="ai.agent.providers.codex.sandboxMode"]').selectOption("read-only");
     await openSection(page, "general");
     assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Draft preserved across Agent actions", "Agent actions discarded an unrelated unsaved draft");
     await openSection(page, "ai");
@@ -388,21 +432,74 @@ async function main() {
     await page.waitForSelector('[data-settings-path="general.workspaceSubtitle"]');
     assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === snapshot.sections.general.workspaceSubtitle, "reload did not recover the committed snapshot");
 
-    const committedTheme = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"));
+    const readThemeState = () => page.evaluate(() => ({
+      root: getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"),
+      canvasBackground: getComputedStyle(document.querySelector(".canvas-engine-stage")).backgroundColor,
+      canvasPixel: Array.from((() => {
+        const canvas = document.querySelector("#canvas-office-canvas");
+        return canvas.getContext("2d").getImageData(Math.max(0, canvas.width - 4), Math.max(0, canvas.height - 4), 1, 1).data;
+      })()).slice(0, 3),
+    }));
+    const committedTheme = await readThemeState();
+    assert(
+      committedTheme.canvasBackground === "rgb(255, 255, 255)" && committedTheme.canvasPixel.every((value) => value === 255),
+      "light theme no longer preserves the white canvas surface",
+      committedTheme
+    );
     await openSection(page, "appearance");
     await page.locator('[data-theme-preset="midnight-slate-glow"]').click();
-    const previewTheme = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"));
-    assert(previewTheme !== committedTheme, "theme preset did not preview immediately");
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const pixel = canvas.getContext("2d").getImageData(Math.max(0, canvas.width - 4), Math.max(0, canvas.height - 4), 1, 1).data;
+      return pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80;
+    });
+    const previewTheme = await readThemeState();
+    assert(
+      previewTheme.root !== committedTheme.root &&
+        previewTheme.canvasBackground !== committedTheme.canvasBackground &&
+        previewTheme.canvasBackground !== "rgb(248, 250, 248)" &&
+        previewTheme.canvasPixel.every((value) => value < 80),
+      "theme preset did not update the settings and canvas surfaces together",
+      { committedTheme, previewTheme }
+    );
     failNextSave = true;
     await saveSettings(page);
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("forced save failure"));
-    const failedTheme = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"));
-    assert(failedTheme === committedTheme, "failed save did not restore the committed theme", { committedTheme, previewTheme, failedTheme });
+    await page.waitForFunction((expected) => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const pixel = Array.from(canvas.getContext("2d").getImageData(Math.max(0, canvas.width - 4), Math.max(0, canvas.height - 4), 1, 1).data).slice(0, 3);
+      return pixel.every((value, index) => value === expected[index]);
+    }, committedTheme.canvasPixel);
+    const failedTheme = await readThemeState();
+    assert(
+      failedTheme.root === committedTheme.root &&
+        failedTheme.canvasBackground === committedTheme.canvasBackground &&
+        failedTheme.canvasPixel.every((value, index) => value === committedTheme.canvasPixel[index]),
+      "failed save did not restore the committed settings and canvas theme",
+      { committedTheme, previewTheme, failedTheme }
+    );
     assert(!(await page.locator('[data-settings-action="save"]').isDisabled()), "failed save discarded the editable draft");
+    for (const preset of ["midnight-slate-glow", "minimalist-slate", "midnight-slate-glow", "minimalist-slate"]) {
+      await page.locator(`[data-theme-preset="${preset}"]`).click();
+    }
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const pixel = canvas.getContext("2d").getImageData(Math.max(0, canvas.width - 4), Math.max(0, canvas.height - 4), 1, 1).data;
+      return pixel[0] === 255 && pixel[1] === 255 && pixel[2] === 255;
+    });
+    const rapidTheme = await readThemeState();
+    assert(
+      rapidTheme.canvasBackground === "rgb(255, 255, 255)" && rapidTheme.canvasPixel.every((value) => value === 255),
+      "rapid theme changes left a stale canvas background",
+      rapidTheme
+    );
+    await page.locator('[data-theme-preset="midnight-slate-glow"]').click();
     await page.locator('[data-settings-action="cancel"]').click();
     await page.waitForFunction(() => !document.querySelector("#insight-drawer")?.classList.contains("is-open"));
 
     await openSettings(page);
+    await openSection(page, "appearance");
+    assert(!(await page.locator('[data-theme-preset="midnight-slate-glow"]').evaluate((button) => button.classList.contains("is-active"))), "explicit discard retained the abandoned theme draft");
     await openSection(page, "permissions");
     await page.locator('#settings-center-host [data-permission-key="appControl"]').check();
     const postCountBeforeRisk = successfulPosts.length;

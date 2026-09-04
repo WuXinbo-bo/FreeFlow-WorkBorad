@@ -107,18 +107,22 @@ async function checkChromeStates(page, viewport) {
   const expectedIdleBackground = "rgba(255, 255, 255, 0.58)";
 
   const desktopUnderlays = await page.evaluate(() => {
-    const background = (selector) => getComputedStyle(document.querySelector(selector)).backgroundColor;
+    const style = (selector) => getComputedStyle(document.querySelector(selector));
     return {
-      html: background("html"),
-      body: background("body"),
-      pageShell: background(".page-shell"),
-      workspace: background(".workspace"),
-      canvasFrame: background(".desktop-clear-stage"),
-      rightFrame: background(".conversation-panel"),
+      html: style("html").backgroundColor,
+      body: style("body").backgroundColor,
+      pageShell: style(".page-shell").backgroundColor,
+      workspace: style(".workspace").backgroundColor,
+      canvasFrame: style(".desktop-clear-stage").backgroundColor,
+      rightFrame: style(".conversation-panel").backgroundColor,
+      rightFrameFilter: style(".conversation-panel").backdropFilter,
     };
   });
   assert(
-    Object.values(desktopUnderlays).every((background) => background === "rgba(0, 0, 0, 0)"),
+    [desktopUnderlays.html, desktopUnderlays.body, desktopUnderlays.pageShell, desktopUnderlays.workspace, desktopUnderlays.canvasFrame]
+      .every((background) => background === "rgba(0, 0, 0, 0)") &&
+      desktopUnderlays.rightFrame === "rgba(249, 250, 251, 0.72)" &&
+      desktopUnderlays.rightFrameFilter.includes("blur(30px)"),
     "desktop shell still contains a visible gray underlay",
     { viewport, desktopUnderlays }
   );
@@ -237,7 +241,7 @@ async function checkChromeStates(page, viewport) {
     viewport,
     statusOpen,
   });
-  assert(backdropOpen.background === "rgba(0, 0, 0, 0)" && backdropOpen.opacity === 1 && backdropOpen.pointerEvents === "auto", "settings backdrop is not an invisible outside-click target", {
+  assert(backdropOpen.background === "rgba(0, 0, 0, 0)" && backdropOpen.opacity === 0 && backdropOpen.pointerEvents === "none", "settings backdrop still obscures or intercepts the workspace", {
     viewport,
     backdropOpen,
   });
@@ -312,8 +316,8 @@ async function checkRightWorkspaceGlass(page, viewport) {
     };
   });
   assert(
-    assistantGlass.workspace.background === "rgba(0, 0, 0, 0)" && assistantGlass.workspace.backingBackground === "rgba(255, 255, 255, 0.58)" && assistantGlass.workspace.backingOpacity === 0.84 && assistantGlass.workspace.backingFilter.includes("blur(16px)"),
-    "right workspace does not use the canvas chrome glass backing",
+    assistantGlass.workspace.background === "rgba(249, 250, 251, 0.72)" && assistantGlass.workspace.backdropFilter.includes("blur(30px)"),
+    "right workspace does not use the dedicated frosted surface",
     { viewport, assistantGlass }
   );
   for (const name of ["segmented", "lock", "composer"]) {

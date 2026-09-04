@@ -90,6 +90,7 @@ function upstreamMessage(payload, fallback) {
 function createAgentConnectionService(options = {}) {
   const settingsService = options.settingsService;
   const fetchImpl = options.fetch || globalThis.fetch;
+  const validateRuntime = options.validateRuntime;
   if (!settingsService || typeof fetchImpl !== "function") throw new Error("Agent connection dependencies are unavailable");
 
   async function saveConnection(provider, input = {}) {
@@ -168,6 +169,10 @@ function createAgentConnectionService(options = {}) {
         throw lastError;
       }
       if (!payload.json) throw new Error("模型验证接口返回了无法解析的 JSON");
+      if (provider === "codex") {
+        if (typeof validateRuntime !== "function") throw new Error("Codex app-server 验证器不可用");
+        await validateRuntime(provider);
+      }
       const settings = await settingsService.markProviderValidated(provider);
       return { provider, endpoint, model: current.selectedModel, ready: true, settings };
     }

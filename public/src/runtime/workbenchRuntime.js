@@ -1531,6 +1531,9 @@ let screenSourceHeaderMenuLayoutFrame = 0;
 let conversationShellMenuLayoutFrame = 0;
 let panelTransformDependentSyncFrame = 0;
 let paneResizeTransactionSequence = 0;
+let paneGlassResumeTimer = 0;
+let paneResizeFrozenViewport = null;
+let paneResizeFrozenViewportStyles = null;
 
 function markBootMilestone(name) {
   try {
@@ -3571,6 +3574,7 @@ syncGlobalDesktopRuntimeBridge();
 
 function applyThemeAppearance() {
   applyThemeCssVariables(document.documentElement, state.uiSettings);
+  getModernCanvas2DEngine()?.refreshTheme?.();
 }
 
 function previewSettingsCenterTheme(overrides = {}) {
@@ -5534,11 +5538,9 @@ function setDrawerOpen(open) {
   state.drawerOpen = nextOpen;
   if (state.drawerOpen) {
     void setDesktopClickThrough(false);
-    markElementForWindowShape(drawerBackdropEl, { padding: 0 });
     if (!wasOpen) void settingsCenter.open();
-  } else {
-    unmarkElementForWindowShape(drawerBackdropEl);
   }
+  unmarkElementForWindowShape(drawerBackdropEl);
   insightDrawerEl?.classList.toggle("is-open", state.drawerOpen);
   drawerBackdropEl?.classList.toggle("is-open", state.drawerOpen);
   document.body.classList.toggle("drawer-open", state.drawerOpen);
@@ -6759,6 +6761,14 @@ function beginPaneResize(side, startX, startY, pointerId) {
   if (!panel) return;
   const panelElement = getStagePanelElement(side);
   const resizerEl = side === "left" ? leftPaneResizerEl : rightPaneResizerEl;
+  desktopWindowShapeScheduler.cancelPendingSync();
+  if (side === "right") {
+    if (paneGlassResumeTimer) {
+      window.clearTimeout(paneGlassResumeTimer);
+      paneGlassResumeTimer = 0;
+    }
+    panelElement?.classList.add("is-pane-glass-suspended");
+  }
   if (panel.collapsed || panel.hidden) {
     setPaneCollapsed(side, false);
   }
@@ -6805,6 +6815,7 @@ function beginPaneResize(side, startX, startY, pointerId) {
   resizeFrameElement.style.left = `${Math.round(initialResizeEdge)}px`;
   resizeFrameElement.style.top = `${Math.round(initialY)}px`;
   resizeFrameElement.style.height = `${Math.round(initialHeight)}px`;
+  if (side === "right") resizeFrameElement.style.width = `${Math.round(initialWidth)}px`;
   resizeFrameElement.style.zIndex = String(Math.max(2, Number(panel.zIndex) || 2) + 1);
   workspaceEl?.append(resizeFrameElement);
 
@@ -6828,22 +6839,26 @@ function beginPaneResize(side, startX, startY, pointerId) {
   if (resizeViewport instanceof HTMLElement) {
     freezeStyle(resizeViewport, "clip", "auto");
   }
+  if (side === "right" && resizeViewport instanceof HTMLElement && viewportRect && !paneResizeFrozenViewport) {
+    paneResizeFrozenViewport = resizeViewport;
+    paneResizeFrozenViewportStyles = ["left", "right", "width"].map((property) => ({
+      property,
+      value: resizeViewport.style.getPropertyValue(property),
+      priority: resizeViewport.style.getPropertyPriority(property),
+    }));
+    const rightInset = window.getComputedStyle(resizeViewport).right;
+    resizeViewport.style.left = "auto";
+    resizeViewport.style.right = rightInset;
+    resizeViewport.style.width = `${Math.round(viewportRect.width)}px`;
+  }
 
   const renderResizeFrame = () => {
     const resizeEdge = resizeFromLeft ? panel.x : panel.x + panel.width;
     const scaleY = Math.max(0.01, panel.height / initialHeight);
+    if (side === "right") resizeFrameElement.style.width = `${Math.round(panel.width)}px`;
     resizeFrameElement.style.transform = `translate3d(${Math.round(resizeEdge - initialResizeEdge)}px, ${Math.round(panel.y - initialY)}px, 0) scaleY(${scaleY})`;
-    // Expansion stays composited; the lighter right rail can contract with native layout.
-    const useLiveInwardLayout = side === "right" && panel.width < initialWidth;
-    if (useLiveInwardLayout && panelElement) {
-      panelElement.style.left = `${Math.round(panel.x)}px`;
-      panelElement.style.width = `${Math.round(panel.width)}px`;
-      resizeViewport?.style.setProperty("clip", "auto");
+    if (side === "right") {
       return;
-    }
-    if (side === "right" && panelElement) {
-      panelElement.style.left = `${Math.round(initialX)}px`;
-      panelElement.style.width = `${Math.round(initialWidth)}px`;
     }
     if (resizeViewport instanceof HTMLElement && viewportRect) {
       const clipTop = Math.max(0, panel.y - initialY);
@@ -6915,6 +6930,24 @@ function beginPaneResize(side, startX, startY, pointerId) {
         resizerEl?.classList.remove("is-resize-source-active");
         resizeFrameElement.remove();
         document.body.classList.remove("is-pane-resizing");
+        if (side === "right") {
+          paneGlassResumeTimer = window.setTimeout(() => {
+            paneGlassResumeTimer = 0;
+            if (paneResizeFrozenViewport && paneResizeFrozenViewportStyles) {
+              paneResizeFrozenViewportStyles.forEach(({ property, value, priority }) => {
+                if (value) {
+                  paneResizeFrozenViewport.style.setProperty(property, value, priority);
+                } else {
+                  paneResizeFrozenViewport.style.removeProperty(property);
+                }
+              });
+            }
+            paneResizeFrozenViewport = null;
+            paneResizeFrozenViewportStyles = null;
+            panelElement?.classList.remove("is-pane-glass-suspended");
+            syncPanelDependentUi("right", { syncShape: false });
+          }, 360);
+        }
         window.dispatchEvent(new CustomEvent("freeflow:workspace-panel-resize-end", {
           detail: {
             side,
@@ -6922,7 +6955,9 @@ function beginPaneResize(side, startX, startY, pointerId) {
             reason: event?.type || "end",
           },
         }));
-        syncPanelDependentUi(side, { syncShape: false });
+        if (side !== "right") {
+          syncPanelDependentUi(side, { syncShape: false });
+        }
         paneResizeFinalFrame = window.requestAnimationFrame(() => {
           paneResizeFinalFrame = 0;
           if (activePaneResizeTransactionId || document.body.classList.contains("is-pane-resizing")) {
@@ -8786,12 +8821,6 @@ drawerToggleBtn?.addEventListener("click", async () => {
 });
 
 drawerCloseBtn?.addEventListener("click", () => {
-  if (setDrawerOpen(false) !== false) {
-    resumeScreenSourceAfterDrawerClose();
-  }
-});
-
-drawerBackdropEl?.addEventListener("click", () => {
   if (setDrawerOpen(false) !== false) {
     resumeScreenSourceAfterDrawerClose();
   }

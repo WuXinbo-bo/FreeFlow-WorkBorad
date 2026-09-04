@@ -19,6 +19,66 @@ const APPROVAL_METHODS = new Set([
   "mcpServer/elicitation/request",
 ]);
 
+const APPROVAL_POLICIES = new Set(["untrusted", "on-request", "never"]);
+const SANDBOX_MODES = new Set(["read-only", "workspace-write", "danger-full-access"]);
+
+function normalizeApprovalPolicy(value, fallback = "on-request") {
+  const candidate = typeof value === "string"
+    ? value
+    : typeof value?.type === "string"
+      ? value.type
+      : "";
+  if (APPROVAL_POLICIES.has(candidate)) return candidate;
+  return APPROVAL_POLICIES.has(fallback) ? fallback : "on-request";
+}
+
+function normalizeSandboxMode(value, fallback = "workspace-write") {
+  const candidate = typeof value === "string" ? value : String(value?.type || "");
+  const aliases = {
+    readOnly: "read-only",
+    workspaceWrite: "workspace-write",
+    dangerFullAccess: "danger-full-access",
+  };
+  const normalized = aliases[candidate] || candidate;
+  if (SANDBOX_MODES.has(normalized)) return normalized;
+  return SANDBOX_MODES.has(fallback) ? fallback : "workspace-write";
+}
+
+function normalizeThreadStartResponse(result, fallback = {}) {
+  const threadId = String(result?.thread?.id || "").trim();
+  if (!threadId) {
+    throw Object.assign(new Error("Codex did not return a thread id"), {
+      code: "AGENT_PROTOCOL_RESPONSE_INVALID",
+      recoverable: true,
+    });
+  }
+  return {
+    threadId,
+    model: typeof result?.model === "string" ? result.model : String(fallback.model || ""),
+    reasoningEffort: typeof result?.reasoningEffort === "string"
+      ? result.reasoningEffort
+      : String(fallback.reasoningEffort || ""),
+    approvalPolicy: normalizeApprovalPolicy(result?.approvalPolicy, fallback.approvalPolicy),
+    sandboxMode: normalizeSandboxMode(result?.sandbox, fallback.sandboxMode),
+  };
+}
+
+function serializeAgentError(error, fallbackCode = "AGENT_TURN_FAILED") {
+  const technicalMessage = String(error?.message || error || "Unknown Agent error").slice(0, 1200);
+  const code = String(error?.code || fallbackCode);
+  const messages = {
+    AGENT_THREAD_BIND_FAILED: "AI 会话初始化失败，本地状态已安全回滚。",
+    AGENT_PROTOCOL_RESPONSE_INVALID: "AI 运行时返回了无法识别的会话数据。",
+    AGENT_PROVIDER_NOT_READY: "当前模型连接尚未就绪，请检查 AI 设置。",
+  };
+  return {
+    code,
+    message: messages[code] || "任务未能完成，可以重试。",
+    technicalMessage,
+    recoverable: error?.recoverable !== false,
+  };
+}
+
 function mapTurnStatus(value) {
   switch (String(value || "")) {
     case "inProgress": return "running";
@@ -126,5 +186,9 @@ module.exports = {
   APPROVAL_METHODS,
   buildApprovalResponse,
   mapTurnStatus,
+  normalizeApprovalPolicy,
   normalizeNotification,
+  normalizeSandboxMode,
+  normalizeThreadStartResponse,
+  serializeAgentError,
 };

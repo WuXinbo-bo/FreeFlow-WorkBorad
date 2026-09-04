@@ -45,6 +45,10 @@ class FakeRuntime extends EventEmitter {
   async restoreBackup(name) {
     return [{ name, createdAt: 1, sizeBytes: 1024 }];
   }
+
+  async retryTurn(sessionId, turnId) {
+    return { retried: true, sessionId, turn: { id: turnId, status: "running" } };
+  }
 }
 
 async function readUntil(reader, expected) {
@@ -129,6 +133,10 @@ async function main() {
     assert.equal((await backupList.json()).backups.length, 1);
     const restore = await fetch(baseUrl + "/api/agent/backups/agent-sessions-test.sqlite/restore", { method: "POST", headers: requestHeaders });
     assert.equal((await restore.json()).sessions.length, 1);
+    const retry = await fetch(baseUrl + "/api/agent/sessions/session-1/turns/turn-failed/retry", { method: "POST", headers: requestHeaders });
+    const retryPayload = await retry.json();
+    assert.equal(retry.status, 202, "failed turn retry route did not return an accepted response");
+    assert.equal(retryPayload.turn.status, "running", "failed turn retry route did not return the replacement turn");
 
     const rejectedMutation = await fetch(`${baseUrl}/api/agent/sessions`, {
       method: "POST",

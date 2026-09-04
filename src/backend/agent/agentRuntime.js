@@ -7,23 +7,36 @@ const { CodexAppServerClient } = require("./codexAppServerClient");
 const { createCliRuntimeRegistry, wrapperCommand } = require("./cliRuntimeRegistry");
 const { createClaudeCliRunner } = require("./claudeCliRunner");
 const { providerApiRoot } = require("./agentConnectionService");
-const { normalizeAgentSettings } = require("./agentSettingsModel");
-const { APPROVAL_METHODS, buildApprovalResponse, normalizeNotification } = require("./agentProtocol");
+const { isProviderValidationCurrent, normalizeAgentSettings } = require("./agentSettingsModel");
+const {
+  APPROVAL_METHODS,
+  buildApprovalResponse,
+  normalizeNotification,
+  normalizeThreadStartResponse,
+  serializeAgentError,
+} = require("./agentProtocol");
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const ACTIVE_STATUSES = new Set(["starting", "running", "waitingApproval", "interrupting"]);
+
+function isPathWithin(rootPath, targetPath, includeRoot = true) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(targetPath));
+  return (includeRoot && relative === "") || (
+    relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+  );
+}
 
 function safeName(value) {
   return String(value || "attachment").replace(/[<>:"/\\|?*\x00-\x1f]+/g, "_").slice(0, 160) || "attachment";
 }
 
-function providerReady(provider, runtime) {
+function providerConfigured(providerId, provider, runtime, options = {}) {
   return Boolean(
     runtime?.available &&
     provider?.baseUrl &&
     (provider?.apiKeyConfigured || provider?.apiKey) &&
     provider?.selectedModel &&
-    provider?.modelValidatedAt
+    (options.requireValidation === false || isProviderValidationCurrent(providerId, provider))
   );
 }
 
@@ -74,6 +87,7 @@ class AgentRuntime extends EventEmitter {
     this.attachmentsDir = path.resolve(options.attachmentsDir);
     this.profilesDir = path.resolve(options.profilesDir || path.join(this.attachmentsDir, "..", "AgentProfiles"));
     this.backupsDir = path.resolve(options.backupsDir || path.join(this.attachmentsDir, "..", "AgentBackups"));
+    this.workspacesDir = path.resolve(options.workspacesDir || path.join(this.attachmentsDir, "..", "AIWorkspaces"));
     this.appVersion = options.appVersion || "0.0.0";
     this.clientFactory = options.clientFactory || ((clientOptions) => new CodexAppServerClient(clientOptions));
     this.claudeRunner = options.claudeRunner || createClaudeCliRunner();
@@ -100,6 +114,7 @@ class AgentRuntime extends EventEmitter {
     this.runtimeState = "stopped";
     this.lastRuntimeError = "";
     this.discoveryCache = new Map();
+    this.pendingNotifications = new Map();
     this.startPromise = null;
     this.activeClaudeRuns = new Map();
     this.initialized = false;
@@ -114,6 +129,7 @@ class AgentRuntime extends EventEmitter {
       fs.mkdir(path.join(this.profilesDir, "codex"), { recursive: true }),
       fs.mkdir(path.join(this.profilesDir, "claude"), { recursive: true }),
       fs.mkdir(this.backupsDir, { recursive: true }),
+      fs.mkdir(this.workspacesDir, { recursive: true }),
     ]);
     if (this.store.getMeta("legacy-history-retired-v1") !== "done") {
       const legacySessions = this.store.listSessions().filter((session) => session.provider === "legacy");
@@ -159,7 +175,7 @@ class AgentRuntime extends EventEmitter {
     }
     const activeProvider = settings.activeProvider;
     const activeSettings = settings.providers[activeProvider];
-    if (start && activeProvider === "codex" && providerReady(activeSettings, detected.codex) && workspaceValid) {
+    if (start && activeProvider === "codex" && providerConfigured("codex", activeSettings, detected.codex) && workspaceValid) {
       try {
         await this.ensureClient();
       } catch (error) {
@@ -167,15 +183,22 @@ class AgentRuntime extends EventEmitter {
         this.runtimeState = "error";
       }
     }
-    const providers = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
-      ...detected[provider],
-      configured: Boolean(settings.providers[provider].baseUrl && settings.providers[provider].apiKeyConfigured),
-      modelSelected: Boolean(settings.providers[provider].selectedModel),
-      modelValidated: Boolean(settings.providers[provider].modelValidatedAt),
-      ready: providerReady(settings.providers[provider], detected[provider]) && workspaceValid,
-      models: settings.providers[provider].models,
-      selectedModel: settings.providers[provider].selectedModel,
-    }]));
+    const providers = Object.fromEntries(["codex", "claude"].map((provider) => {
+      const configurationReady = providerConfigured(provider, settings.providers[provider], detected[provider]);
+      const runtimeReady = provider === "claude"
+        ? configurationReady && workspaceValid
+        : configurationReady && workspaceValid && this.runtimeState === "ready" && this.client?.initialized;
+      return [provider, {
+        ...detected[provider],
+        configured: Boolean(settings.providers[provider].baseUrl && settings.providers[provider].apiKeyConfigured),
+        modelSelected: Boolean(settings.providers[provider].selectedModel),
+        modelValidated: isProviderValidationCurrent(provider, settings.providers[provider]),
+        configurationReady,
+        ready: runtimeReady,
+        models: settings.providers[provider].models,
+        selectedModel: settings.providers[provider].selectedModel,
+      }];
+    }));
     const active = providers[activeProvider];
     return {
       provider: activeProvider,
@@ -218,15 +241,17 @@ class AgentRuntime extends EventEmitter {
     return status.providers[id];
   }
 
-  async ensureClient() {
+  async ensureClient(options = {}) {
     await this.initialize();
     const settings = await this._readSettings();
     const provider = await this.settingsService.readAgentRuntimeSettings("codex");
     const discovery = await this._detectProvider("codex", settings, true);
     if (!discovery.available) throw new Error(discovery.error || "未找到 Codex CLI");
-    if (!providerReady(provider, discovery)) throw new Error("请先保存连接、刷新模型、手动选择并完成验证");
+    if (!providerConfigured("codex", provider, discovery, { requireValidation: options.allowUnvalidated !== true })) {
+      throw new Error(options.allowUnvalidated ? "请先保存连接、刷新模型并手动选择模型" : "请先保存连接、刷新模型、手动选择并完成验证");
+    }
     const workspaceRoot = await this._resolveWorkspaceRoot(settings.workspaceRoot);
-    const clientIdentity = `${discovery.path}\n${provider.baseUrl}\n${provider.selectedModel}`;
+    const clientIdentity = `${discovery.path}\n${provider.baseUrl}\n${provider.selectedModel}\n${provider.connectionRevision || 0}`;
     if (this.client?.initialized && this.clientCommand === clientIdentity) return this.client;
     if (this.startPromise) return this.startPromise;
     this.startPromise = (async () => {
@@ -249,11 +274,39 @@ class AgentRuntime extends EventEmitter {
       client.on("exit", (info) => this._handleClientExit(client, generation, info));
       await client.start();
       if (generation !== this.runtimeGeneration) throw new Error("Codex runtime was replaced while starting");
+      await this._drainRemoteThreadCleanups(client);
       this.runtimeState = "ready";
       this.lastRuntimeError = "";
       return client;
     })().finally(() => { this.startPromise = null; });
     return this.startPromise;
+  }
+
+  async validateProviderRuntime(providerId) {
+    const id = String(providerId || "").trim().toLowerCase();
+    if (id !== "codex") return { provider: id, runtimeValidated: true };
+    const settings = await this._readSettings();
+    const provider = await this.settingsService.readAgentRuntimeSettings(id);
+    const discovery = await this._detectProvider(id, settings, true);
+    if (!providerConfigured(id, provider, discovery, { requireValidation: false })) {
+      throw new Error("请先绑定 Codex CLI、保存连接、刷新模型并手动选择模型");
+    }
+    const client = await this.ensureClient({ allowUnvalidated: true });
+    const workspaceRoot = await this._resolveWorkspaceRoot(settings.workspaceRoot);
+    const result = await client.request("thread/start", {
+      cwd: workspaceRoot,
+      model: provider.selectedModel,
+      approvalPolicy: provider.approvalPolicy,
+      sandbox: provider.sandboxMode,
+      runtimeWorkspaceRoots: [workspaceRoot],
+      threadSource: "freeflow-validation",
+      ephemeral: true,
+      developerInstructions: "Validate the configured FreeFlow model connection.",
+    });
+    const normalized = normalizeThreadStartResponse(result, provider);
+    this.store.trackRemoteThread("", normalized.threadId, "connection-validation");
+    await this._cleanupRemoteThread(client, normalized.threadId);
+    return { provider: id, runtimeValidated: true };
   }
 
   async restart(options = {}) {
@@ -263,6 +316,7 @@ class AgentRuntime extends EventEmitter {
     const client = this.client;
     this.client = null;
     this.runtimeState = "stopped";
+    this.pendingNotifications.clear();
     await client?.stop().catch(() => {});
     for (const run of this.activeClaudeRuns.values()) run.controller.abort();
     return this.getRuntimeStatus({ start: options.start !== false, refresh: true });
@@ -276,6 +330,7 @@ class AgentRuntime extends EventEmitter {
     const client = this.client;
     this.client = null;
     this.runtimeState = "stopped";
+    this.pendingNotifications.clear();
     this.emit("shutdown");
     for (const run of this.activeClaudeRuns.values()) run.controller.abort();
     await client?.stop().catch(() => {});
@@ -294,8 +349,20 @@ class AgentRuntime extends EventEmitter {
   }
 
   async _resolveWorkspaceRoot(value) {
+    const requested = path.resolve(String(value || "").trim());
+    if (isPathWithin(this.workspacesDir, requested)) {
+      await fs.mkdir(requested, { recursive: true });
+      const [managedRoot, resolved] = await Promise.all([
+        fs.realpath(this.workspacesDir),
+        fs.realpath(requested),
+      ]);
+      if (!isPathWithin(managedRoot, resolved)) {
+        throw Object.assign(new Error("托管工作区路径无效"), { statusCode: 400 });
+      }
+      return resolved;
+    }
     const permissions = await this.permissionsService.readPermissionsStore();
-    const resolved = await this.permissionsService.resolveAllowedExistingPath(value, permissions.allowedRoots);
+    const resolved = await this.permissionsService.resolveAllowedExistingPath(requested, permissions.allowedRoots);
     const stat = await fs.stat(resolved);
     if (!stat.isDirectory()) throw Object.assign(new Error("工作区路径必须是目录"), { statusCode: 400 });
     return resolved;
@@ -308,11 +375,19 @@ class AgentRuntime extends EventEmitter {
     const providerId = new Set(["codex", "claude"]).has(requestedProvider) ? requestedProvider : settings.activeProvider;
     const provider = settings.providers[providerId];
     const detected = await this._detectProvider(providerId, settings, false);
-    if (!providerReady(provider, detected)) {
+    if (!providerConfigured(providerId, provider, detected)) {
       throw Object.assign(new Error("请先在 AI 模型设置中绑定 CLI、保存连接、刷新模型、选择模型并完成验证"), { statusCode: 409, code: "AGENT_PROVIDER_NOT_READY" });
     }
-    const workspaceRoot = await this._resolveWorkspaceRoot(input.workspaceRoot || settings.workspaceRoot);
+    const sessionId = String(input.id || crypto.randomUUID());
+    const requestedWorkspace = String(input.workspaceRoot || "").trim();
+    const workspaceRoot = await this._resolveWorkspaceRoot(
+      requestedWorkspace || path.join(this.workspacesDir, sessionId)
+    );
+    const workspaceKind = requestedWorkspace
+      ? (input.workspaceKind === "managed" ? "managed" : "project")
+      : "managed";
     const created = this.store.createSession({
+      id: sessionId,
       provider: providerId,
       providerThreadId: input.providerThreadId || null,
       title: input.title,
@@ -321,7 +396,13 @@ class AgentRuntime extends EventEmitter {
       reasoningEffort: input.reasoningEffort ?? provider.reasoningEffort,
       approvalPolicy: input.approvalPolicy || provider.approvalPolicy,
       sandboxMode: input.sandboxMode || provider.sandboxMode,
-      runtimeBinding: { provider: providerId, cliPath: detected.path, cliVersion: detected.version, baseUrl: provider.baseUrl },
+      runtimeBinding: {
+        provider: providerId,
+        cliPath: detected.path,
+        cliVersion: detected.version,
+        baseUrl: provider.baseUrl,
+        workspaceKind,
+      },
       status: input.status || "idle",
     });
     this._publish(created.event);
@@ -344,14 +425,25 @@ class AgentRuntime extends EventEmitter {
     const session = this.store.getSessionSummary(sessionId);
     if (!session) return false;
     if (ACTIVE_STATUSES.has(session.status)) throw Object.assign(new Error("请先停止当前任务"), { statusCode: 409 });
-    if (session.provider === "codex" && this.client?.initialized && session.providerThreadId) {
-      await this.client.request("thread/delete", { threadId: session.providerThreadId }).catch(() => {});
+    if (session.provider === "codex" && session.providerThreadId) {
+      this.store.trackRemoteThread(session.id, session.providerThreadId, "session-delete");
+      if (this.client?.initialized) await this._cleanupRemoteThread(this.client, session.providerThreadId);
     }
     const deleted = this.store.deleteSession(sessionId);
     if (deleted) {
-      await fs.rm(path.join(this.attachmentsDir, session.id), { recursive: true, force: true }).catch((error) => {
-        this.lastRuntimeError = error.message;
-      });
+      const workspaceRoot = path.resolve(session.workspaceRoot);
+      const workspaceShared = this.store.listSessions().some((item) => (
+        path.resolve(item.workspaceRoot) === workspaceRoot
+      ));
+      const managedWorkspace = session.runtimeBinding?.workspaceKind === "managed" &&
+        isPathWithin(this.workspacesDir, workspaceRoot, false) && !workspaceShared;
+      const cleanupTargets = [path.join(this.attachmentsDir, session.id)];
+      if (managedWorkspace) cleanupTargets.push(workspaceRoot);
+      await Promise.all(cleanupTargets.map((target) => (
+        fs.rm(target, { recursive: true, force: true }).catch((error) => {
+          this.lastRuntimeError = error.message;
+        })
+      )));
     }
     this.emit("event", { sessionId, revision: session.revision + 1, type: "session.deleted", payload: { sessionId }, createdAt: Date.now() });
     return deleted;
@@ -467,31 +559,53 @@ class AgentRuntime extends EventEmitter {
       ephemeral: false,
       developerInstructions: "Operate as the FreeFlow workspace assistant. Do not delegate to sub-agents or use multi-agent orchestration.",
     });
-    const threadId = String(result?.thread?.id || "");
-    if (!threadId) throw new Error("Codex did not return a thread id");
-    const event = this.store.bindThread(session.id, threadId, {
-      workspaceRoot,
-      provider: "codex",
-      model: result.model || session.model || settings.selectedModel,
-      reasoningEffort: result.reasoningEffort || session.reasoningEffort || settings.reasoningEffort,
-      approvalPolicy: result.approvalPolicy || session.approvalPolicy || settings.approvalPolicy,
-      sandboxMode: result.sandbox || session.sandboxMode || settings.sandboxMode,
-      runtimeBinding: session.runtimeBinding,
+    const normalized = normalizeThreadStartResponse(result, {
+      model: session.model || settings.selectedModel,
+      reasoningEffort: session.reasoningEffort || settings.reasoningEffort,
+      approvalPolicy: session.approvalPolicy || settings.approvalPolicy,
+      sandboxMode: session.sandboxMode || settings.sandboxMode,
     });
-    this._publish(event);
-    return threadId;
+    this.store.trackRemoteThread(session.id, normalized.threadId);
+    try {
+      const event = this.store.bindThread(session.id, normalized.threadId, {
+        workspaceRoot,
+        provider: "codex",
+        model: normalized.model,
+        reasoningEffort: normalized.reasoningEffort,
+        approvalPolicy: normalized.approvalPolicy,
+        sandboxMode: normalized.sandboxMode,
+        runtimeBinding: session.runtimeBinding,
+      });
+      this.store.resolveRemoteThreadCleanup(normalized.threadId);
+      this._publish(event);
+      this._flushPendingNotifications(normalized.threadId);
+      return normalized.threadId;
+    } catch (error) {
+      error.code = "AGENT_THREAD_BIND_FAILED";
+      error.recoverable = true;
+      await this._cleanupRemoteThread(client, normalized.threadId);
+      throw error;
+    }
   }
 
   async _startTurnNow(sessionId, input) {
     let session = this.store.getSessionSummary(sessionId);
     if (!session) throw Object.assign(new Error("会话不存在"), { statusCode: 404 });
-    const settings = await this._readSettings();
-    const provider = await this.settingsService.readAgentRuntimeSettings(session.provider);
-    const discovery = await this._detectProvider(session.provider, settings, false);
-    if (!providerReady(provider, discovery)) throw Object.assign(new Error("当前会话的模型连接尚未就绪"), { statusCode: 409, code: "AGENT_PROVIDER_NOT_READY" });
-    const created = this.store.createTurn(sessionId, { text: input.text, clientRequestId: input.clientRequestId, messageId: input.messageId });
-    this._publish(created.event);
+    let created = input.existingTurn || null;
     try {
+      const settings = await this._readSettings();
+      const provider = await this.settingsService.readAgentRuntimeSettings(session.provider);
+      const discovery = await this._detectProvider(session.provider, settings, false);
+      if (!providerConfigured(session.provider, provider, discovery)) throw Object.assign(new Error("当前会话的模型连接尚未就绪"), { statusCode: 409, code: "AGENT_PROVIDER_NOT_READY" });
+      if (!created) {
+        created = this.store.createTurn(sessionId, {
+          text: input.text,
+          clientRequestId: input.clientRequestId,
+          messageId: input.messageId,
+          attachmentIds: input.attachmentIds || [],
+        });
+        this._publish(created.event);
+      }
       if (session.provider === "claude") return this._startClaudeTurn(session, provider, discovery, created, input);
       const client = await this.ensureClient();
       const threadId = await this._ensureThread(session, provider, client);
@@ -519,10 +633,28 @@ class AgentRuntime extends EventEmitter {
       this._publish(event);
       return { queued: false, steered: false, turn: { ...created.turn, providerTurnId, status: "running" } };
     } catch (error) {
-      const event = this.store.updateTurnState(sessionId, created.turn.id, "failed", { message: error.message });
+      const event = created
+        ? this.store.updateTurnState(sessionId, created.turn.id, "failed", serializeAgentError(error))
+        : null;
       this._publish(event);
       throw error;
     }
+  }
+
+  async retryTurn(sessionId, turnId) {
+    await this.initialize();
+    if (this.store.getActiveTurn(sessionId)) {
+      throw Object.assign(new Error("当前任务仍在运行，无法重试"), { statusCode: 409 });
+    }
+    const retried = this.store.retryFailedTurn(sessionId, turnId, crypto.randomUUID());
+    if (!retried) throw Object.assign(new Error("任务不存在"), { statusCode: 404 });
+    this._publish(retried.event);
+    return this._startTurnNow(sessionId, {
+      text: retried.turn.input,
+      clientRequestId: retried.turn.clientRequestId,
+      attachmentIds: retried.turn.attachmentIds,
+      existingTurn: retried,
+    });
   }
 
   _startClaudeTurn(session, provider, discovery, created, input) {
@@ -577,7 +709,7 @@ class AgentRuntime extends EventEmitter {
       this._publish(this.store.updateTurnState(session.id, created.turn.id, "completed"));
     }).catch((error) => {
       const status = error?.name === "AbortError" ? "cancelled" : "failed";
-      this._publish(this.store.updateTurnState(session.id, created.turn.id, status, status === "failed" ? { message: error.message, recoverable: true } : null));
+      this._publish(this.store.updateTurnState(session.id, created.turn.id, status, status === "failed" ? serializeAgentError(error) : null));
     }).finally(() => {
       const active = this.activeClaudeRuns.get(session.id);
       if (active?.turnId === created.turn.id) this.activeClaudeRuns.delete(session.id);
@@ -699,7 +831,12 @@ class AgentRuntime extends EventEmitter {
     await this.initialize();
     const source = this.store.getSessionSummary(sessionId);
     if (!source) throw Object.assign(new Error("会话不存在"), { statusCode: 404 });
-    if (!source.providerThreadId || source.provider === "claude") return this.createSession({ provider: source.provider, title: input.title || `${source.title} 副本`, workspaceRoot: source.workspaceRoot });
+    if (!source.providerThreadId || source.provider === "claude") return this.createSession({
+      provider: source.provider,
+      title: input.title || `${source.title} 副本`,
+      workspaceRoot: source.workspaceRoot,
+      workspaceKind: source.runtimeBinding?.workspaceKind,
+    });
     const client = await this.ensureClient();
     const result = await client.request("thread/fork", {
       threadId: source.providerThreadId,
@@ -713,7 +850,8 @@ class AgentRuntime extends EventEmitter {
       threadSource: "freeflow",
     });
     return this.createSession({
-      provider: "codex", title: input.title || `${source.title} 分支`, workspaceRoot: source.workspaceRoot, model: source.model,
+      provider: "codex", title: input.title || `${source.title} 分支`, workspaceRoot: source.workspaceRoot,
+      workspaceKind: source.runtimeBinding?.workspaceKind, model: source.model,
       reasoningEffort: source.reasoningEffort, approvalPolicy: source.approvalPolicy,
       sandboxMode: source.sandboxMode, providerThreadId: result?.thread?.id,
     });
@@ -724,11 +862,50 @@ class AgentRuntime extends EventEmitter {
       || this.store.getActiveTurn(sessionId);
   }
 
+  async _cleanupRemoteThread(client, threadId) {
+    try {
+      await client.request("thread/delete", { threadId });
+      this.store.resolveRemoteThreadCleanup(threadId);
+      return true;
+    } catch (error) {
+      this.store.failRemoteThreadCleanup(threadId, error);
+      this.lastRuntimeError = error.message;
+      return false;
+    }
+  }
+
+  async _drainRemoteThreadCleanups(client) {
+    for (const cleanup of this.store.listRemoteThreadCleanups()) {
+      await this._cleanupRemoteThread(client, cleanup.threadId);
+    }
+  }
+
+  _bufferPendingNotification(threadId, client, generation, method, params) {
+    const current = this.pendingNotifications.get(threadId) || [];
+    current.push({ client, generation, method, params });
+    const buffered = current.slice(-50);
+    this.pendingNotifications.set(threadId, buffered);
+    setTimeout(() => {
+      if (this.pendingNotifications.get(threadId) === buffered) this.pendingNotifications.delete(threadId);
+    }, 1500).unref?.();
+  }
+
+  _flushPendingNotifications(threadId) {
+    const pending = this.pendingNotifications.get(threadId) || [];
+    this.pendingNotifications.delete(threadId);
+    for (const item of pending) {
+      queueMicrotask(() => this._handleNotification(item.client, item.generation, item.method, item.params));
+    }
+  }
+
   _handleNotification(client, generation, method, params) {
     if (client !== this.client || generation !== this.runtimeGeneration) return;
     const normalized = normalizeNotification(method, params);
     const session = normalized.threadId ? this.store.findSessionByThread(normalized.threadId) : null;
-    if (!session) return;
+    if (!session) {
+      if (normalized.threadId) this._bufferPendingNotification(normalized.threadId, client, generation, method, params);
+      return;
+    }
     const turn = this._findLocalTurn(session.id, normalized.turnId);
     let event = null;
     if (normalized.kind === "approval-resolved") {
@@ -774,7 +951,7 @@ class AgentRuntime extends EventEmitter {
     for (const session of this.store.listSessions()) {
       const active = this.store.getActiveTurn(session.id);
       if (!active) continue;
-      const event = this.store.updateTurnState(session.id, active.id, "failed", { message: this.lastRuntimeError, recoverable: true });
+      const event = this.store.updateTurnState(session.id, active.id, "failed", serializeAgentError(info.error || this.lastRuntimeError));
       this._publish(event);
     }
   }

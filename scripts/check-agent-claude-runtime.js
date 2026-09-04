@@ -4,7 +4,7 @@ const os = require("os");
 const path = require("path");
 const { AgentRuntime } = require("../src/backend/agent/agentRuntime");
 const { buildClaudeArgs, permissionMode } = require("../src/backend/agent/claudeCliRunner");
-const { getDefaultAgentSettings } = require("../src/backend/agent/agentSettingsModel");
+const { getDefaultAgentSettings, providerValidationFingerprint } = require("../src/backend/agent/agentSettingsModel");
 
 async function eventually(check, message) {
   const deadline = Date.now() + 4000;
@@ -60,6 +60,7 @@ async function main() {
     selectedModel: "claude-test",
     modelValidatedAt: Date.now(),
   };
+  settings.providers.claude.validationFingerprint = providerValidationFingerprint("claude", settings.providers.claude);
   const runtime = new AgentRuntime({
     databaseFile: path.join(tempDir, "agent.sqlite"),
     attachmentsDir: path.join(tempDir, "attachments"),

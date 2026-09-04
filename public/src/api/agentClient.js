@@ -81,6 +81,7 @@ export function createAgentClient() {
     deleteSession: (sessionId) => request(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
     forkSession: (sessionId, input = {}) => request(`/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: JSON.stringify(input) }),
     startTurn: (sessionId, input) => request(`/sessions/${encodeURIComponent(sessionId)}/turns`, { method: "POST", body: JSON.stringify(input) }),
+    retryTurn: (sessionId, turnId) => request(`/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/retry`, { method: "POST" }),
     interruptTurn: (sessionId) => request(`/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" }),
     addAttachment: (sessionId, input) => request(`/sessions/${encodeURIComponent(sessionId)}/attachments`, { method: "POST", body: JSON.stringify(input) }),
     removeAttachment: (sessionId, attachmentId) => request(`/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`, { method: "DELETE" }),

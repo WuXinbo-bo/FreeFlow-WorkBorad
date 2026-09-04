@@ -59,6 +59,7 @@ export function createWindowShapeSyncScheduler({
       scheduleSync() {},
       requestImmediateShapeSync() {},
       requestFinalShapeSync() {},
+      cancelPendingSync() {},
       dispose() {},
     };
   }
@@ -105,7 +106,7 @@ export function createWindowShapeSyncScheduler({
     }, Math.max(0, Number(delayMs) || 0));
   };
 
-  const dispose = () => {
+  const cancelPendingSync = () => {
     if (frameId) {
       window.cancelAnimationFrame(frameId);
       frameId = 0;
@@ -113,10 +114,15 @@ export function createWindowShapeSyncScheduler({
     clearFinalTimer();
   };
 
+  const dispose = () => {
+    cancelPendingSync();
+  };
+
   return {
     scheduleSync,
     requestImmediateShapeSync,
     requestFinalShapeSync,
+    cancelPendingSync,
     dispose,
   };
 }

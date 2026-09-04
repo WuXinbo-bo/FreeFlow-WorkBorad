@@ -252,20 +252,21 @@ async function checkSettingsTransaction() {
   assert.equal(memory.stores.ui.canvasAutosaveEnabled, false);
   assert.equal(memory.stores.agent.reasoningEffort, "xhigh");
 
-  await assert.rejects(
-    service.saveSettingsSnapshot({
-      revision: saved.revision,
-      sections: {
-        ...saved.sections,
-        permissions: { ...saved.sections.permissions, allowedRoots: ["D:\\Other"] },
-      },
-    }),
-    (error) => Boolean(error.fieldErrors?.["ai.agent.workspaceRoot"]),
-    "settings accepted an Agent workspace outside the effective allowed roots"
+  const permissionsChanged = await service.saveSettingsSnapshot({
+    revision: saved.revision,
+    sections: {
+      ...saved.sections,
+      permissions: { ...saved.sections.permissions, allowedRoots: ["D:\\Other"] },
+    },
+  });
+  assert.deepEqual(
+    permissionsChanged.sections.permissions.allowedRoots,
+    ["D:\\Other"],
+    "ordinary permission roots remained coupled to the managed Agent workspace"
   );
 
   await assert.rejects(
-    service.saveSettingsSnapshot({ revision: initial.revision, sections: saved.sections }),
+    service.saveSettingsSnapshot({ revision: initial.revision, sections: permissionsChanged.sections }),
     (error) => error.statusCode === 409 && error.code === "SETTINGS_REVISION_CONFLICT"
   );
 }

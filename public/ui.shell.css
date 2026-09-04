@@ -1628,8 +1628,8 @@ summary {
   border-radius: 24px !important;
   background:
     radial-gradient(circle at 50% 46%, rgb(var(--app-accent-rgb) / 0.04), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(248, 250, 252, 0.975)),
-    rgba(255, 255, 255, 0.985) !important;
+    linear-gradient(180deg, rgb(var(--theme-panel-surface-rgb) / 0.985), rgb(var(--theme-control-surface-rgb) / 0.975)),
+    rgb(var(--theme-panel-surface-rgb) / 0.985) !important;
 }
 
 .canvas-engine-surface {

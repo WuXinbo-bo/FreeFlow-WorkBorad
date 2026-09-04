@@ -146,6 +146,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       : null;
     return {
       dragEdge: panelElement.dataset.workspaceDock === "right" ? "left" : "right",
+      descendantCount: panelElement.querySelectorAll("*").length,
+      messageCount: panelElement.querySelectorAll(".agent-message").length,
       panel: { left: panel.left, right: panel.right, width: panel.width, height: panel.height },
       content: { width: content.width, height: content.height },
       surface: surface ? { width: surface.width, height: surface.height } : null,
@@ -172,6 +174,7 @@ async function measureGesture(page, { side, deltaX, label }) {
       active: document.body.classList.contains("is-pane-resizing"),
       attributeMutations: window.__freeflowPanelResizeProbe.attributeMutations,
       panelEdge: resizeFrame.left,
+      resizeFrameWidth: resizeFrame.width,
       sourcePanelWidth: panelRect.width,
       handleOpacity: Number(getComputedStyle(document.querySelector(resizerSelector)).opacity),
       panelHeight: panelRect.height,
@@ -179,7 +182,9 @@ async function measureGesture(page, { side, deltaX, label }) {
       contentHeight: contentRect.height,
       surfaceWidth: surfaceRect?.width || 0,
       surfaceHeight: surfaceRect?.height || 0,
+      panelClassName: panel.className,
       panelTransform: getComputedStyle(panel).transform,
+      panelBackdropFilter: getComputedStyle(panel).backdropFilter,
       panelTransformScale: (() => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(panel).transform);
         return { x: matrix.a, y: matrix.d };
@@ -205,30 +210,41 @@ async function measureGesture(page, { side, deltaX, label }) {
   assert(during.active, "panel resize transaction did not remain active during drag", { label, during });
   assert(during.attributeMutations === 0, "Canvas backing store changed during live panel resize", { label, during });
   assert(during.handleOpacity === 0, "stale resize handle remained visible during live resize", { label, during });
+  if (side === "right") {
+    assert(during.panelBackdropFilter === "none", "right workspace kept the expensive blur during live resize", {
+      label,
+      during,
+    });
+  }
   assert(
     Math.abs(during.panelEdge - initial.panel[initial.dragEdge] - deltaX) <= 2,
     "workspace edge fell behind the pointer",
     { label, initial, during }
   );
+  if (side === "right") {
+    assert(Math.abs(during.resizeFrameWidth - expectedPanelWidth) <= 2, "right workspace resize outline lost the target width", {
+      label,
+      expectedPanelWidth,
+      during,
+    });
+  }
   assert(
     Math.abs(during.panelTransformScale.x - 1) <= 0.001 &&
       Math.abs(during.panelTransformScale.y - 1) <= 0.001,
     "live panel resize distorted the workspace with a CSS scale",
     { label, during }
   );
-  if (side === "left" || expectedPanelWidth >= initial.panel.width) {
-    assert(
-      Math.abs(during.sourcePanelWidth - initial.panel.width) <= 1,
-      "live outward resize changed the heavy workspace layout",
-      { label, initial, during }
-    );
-    assert(
-      Math.abs(during.contentWidth - initial.content.width) <= 1 &&
-        Math.abs(during.contentHeight - initial.content.height) <= 1,
-      "workspace content reflowed during live outward resize",
-      { label, initial, during }
-    );
-  }
+  assert(
+    Math.abs(during.sourcePanelWidth - initial.panel.width) <= 1,
+    "live resize changed the heavy workspace layout",
+    { label, initial, during }
+  );
+  assert(
+    Math.abs(during.contentWidth - initial.content.width) <= 1 &&
+      Math.abs(during.contentHeight - initial.content.height) <= 1,
+    "workspace content reflowed during live resize",
+    { label, initial, during }
+  );
   if (isLeftPanel) {
     assert(
       Math.abs(during.surfaceWidth - initial.surface.width) <= 1 &&
@@ -246,17 +262,6 @@ async function measureGesture(page, { side, deltaX, label }) {
     label,
     shapeCalls: result.shapeCalls,
   });
-  assert(result.longTasks.filter((duration) => duration >= 50).length === 0, "panel resize produced a long task", {
-    label,
-    longTasks: result.longTasks,
-  });
-  assert(p95 <= frameBudget, "panel resize RAF P95 exceeded the interaction budget", {
-    label,
-    p95,
-    frameBudget,
-    samples: result.interactionFrameIntervals.length,
-    slowFrames: result.interactionFrameIntervals.filter((duration) => duration > 20).slice(0, 20),
-  });
   assert(!result.bodyResizing, "panel resize state did not recover", { label, result });
   const finalGeometry = await page.evaluate(({ side, panelSelector, contentSelector, resizerSelector }) => {
     const panelElement = document.querySelector(panelSelector);
@@ -270,6 +275,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       previewExists: Boolean(document.querySelector(`.pane-resize-frame[data-resize-side="${side}"]`)),
       panelPreviewActive: panelElement.classList.contains("is-pane-resize-preview"),
       viewportInlineClip: viewport.style.clip,
+      panelGlassSuspended: panelElement.classList.contains("is-pane-glass-suspended"),
+      panelBackdropFilter: getComputedStyle(panelElement).backdropFilter,
       handleOpacity: Number(getComputedStyle(document.querySelector(resizerSelector)).opacity),
       handleLeft: handle.left,
       handleWidth: handle.width,
@@ -289,6 +296,13 @@ async function measureGesture(page, { side, deltaX, label }) {
     "workspace geometry did not commit and restore its resize handle",
     { label, expectedPanelWidth, finalGeometry }
   );
+  if (side === "right") {
+    assert(
+      finalGeometry.panelGlassSuspended && finalGeometry.panelBackdropFilter === "none",
+      "right workspace did not retain its lightweight surface between rapid resizes",
+      { label, finalGeometry }
+    );
+  }
   assert(
     result.canvas.width === Math.round(result.canvas.cssWidth * result.canvas.dpr) &&
       result.canvas.height === Math.round(result.canvas.cssHeight * result.canvas.dpr) &&
@@ -298,7 +312,17 @@ async function measureGesture(page, { side, deltaX, label }) {
     { label, canvas: result.canvas }
   );
 
-  return { label, p95, samples: result.interactionFrameIntervals.length, mutations: result.attributeMutations };
+  return {
+    label,
+    p95,
+    frameBudget,
+    samples: result.interactionFrameIntervals.length,
+    mutations: result.attributeMutations,
+    descendantCount: initial.descendantCount,
+    messageCount: initial.messageCount,
+    longTasks: result.longTasks.filter((duration) => duration >= 50),
+    slowFrames: result.interactionFrameIntervals.filter((duration) => duration > 20).slice(0, 20),
+  };
 }
 
 async function checkRightPanelDirectionReversal(page) {
@@ -332,12 +356,16 @@ async function checkRightPanelDirectionReversal(page) {
   await page.waitForTimeout(34);
   const inward = await page.evaluate((selector) => {
     const panel = document.querySelector(selector).getBoundingClientRect();
-    return { width: panel.width };
+    const guide = document.querySelector('.pane-resize-frame[data-resize-side="right"]').getBoundingClientRect();
+    return { width: panel.width, guideLeft: guide.left };
   }, panelSelector);
-  assert(Math.abs(inward.width - (initial.width - Math.abs(inwardDelta))) <= 2, "right workspace did not shrink live", {
-    initial,
-    inward,
-  });
+  const initialEdge = resizeFromLeft ? initial.left : initial.right;
+  assert(
+    Math.abs(inward.width - initial.width) <= 1 &&
+      Math.abs(inward.guideLeft - initialEdge - inwardDelta) <= 2,
+    "right workspace did not preserve frozen geometry while previewing inward resize",
+    { initial, inward }
+  );
 
   await page.mouse.move(startX + outwardDelta, startY, { steps: 20 });
   await page.waitForTimeout(34);
@@ -358,7 +386,6 @@ async function checkRightPanelDirectionReversal(page) {
     "right workspace did not restore its frozen geometry after reversing outward",
     { initial, outward }
   );
-  const initialEdge = resizeFromLeft ? initial.left : initial.right;
   assert(Math.abs(outward.guideLeft - initialEdge - outwardDelta) <= 2, "resize guide lost the pointer after reversal", {
     initial,
     outward,
@@ -366,18 +393,23 @@ async function checkRightPanelDirectionReversal(page) {
 
   await page.mouse.up();
   await page.waitForFunction(() => !document.body.classList.contains("is-pane-resizing"));
+  await page.waitForFunction(() => getComputedStyle(document.querySelector(".conversation-panel")).backdropFilter.includes("blur"));
   const finalState = await page.evaluate(({ selector, side }) => {
     const panel = document.querySelector(selector);
     return {
       width: panel.getBoundingClientRect().width,
       previewExists: Boolean(document.querySelector(`.pane-resize-frame[data-resize-side="${side}"]`)),
       previewActive: panel.classList.contains("is-pane-resize-preview"),
+      glassSuspended: panel.classList.contains("is-pane-glass-suspended"),
+      backdropFilter: getComputedStyle(panel).backdropFilter,
     };
   }, { selector: panelSelector, side: "right" });
   assert(
     Math.abs(finalState.width - (initial.width + Math.abs(outwardDelta))) <= 2 &&
       !finalState.previewExists &&
-      !finalState.previewActive,
+      !finalState.previewActive &&
+      !finalState.glassSuspended &&
+      finalState.backdropFilter.includes("blur"),
     "right workspace did not commit cleanly after direction reversal",
     { initial, finalState }
   );
@@ -416,12 +448,25 @@ async function main() {
       label: "conversation-inward",
     });
     await checkRightPanelDirectionReversal(page);
-    console.log(`[panel-resize-performance] ${JSON.stringify({
-      canvasOutward,
-      canvasInward,
-      conversationOutward,
-      conversationInward,
-    })}`);
+    const metrics = { canvasOutward, canvasInward, conversationOutward, conversationInward };
+    console.log(`[panel-resize-performance:metrics] ${JSON.stringify(metrics)}`);
+    const longTaskFailures = [canvasOutward, canvasInward, conversationOutward, conversationInward]
+      .filter((result) => result.longTasks.length > 0)
+      .map(({ label, longTasks }) => ({ label, longTasks }));
+    assert(longTaskFailures.length === 0, "panel resize produced a long task", longTaskFailures);
+    const frameBudgetFailures = [canvasOutward, canvasInward, conversationOutward, conversationInward]
+      .filter((result) => result.p95 > result.frameBudget)
+      .map(({ label, p95, frameBudget, samples, slowFrames, descendantCount, messageCount }) => ({
+        label,
+        p95,
+        frameBudget,
+        samples,
+        slowFrames,
+        descendantCount,
+        messageCount,
+      }));
+    assert(frameBudgetFailures.length === 0, "panel resize RAF P95 exceeded the interaction budget", frameBudgetFailures);
+    console.log(`[panel-resize-performance] ${JSON.stringify(metrics)}`);
   } finally {
     await context.close();
     await browser.close();

@@ -145,6 +145,7 @@ export function mountSettingsCenter(host, options = {}) {
   let agentRuntime = null;
   let agentAction = "";
   let agentConnectionDrafts = { codex: { baseUrl: "", apiKey: "" }, claude: { baseUrl: "", apiKey: "" } };
+  let agentSetupSteps = { codex: 1, claude: 1 };
   let agentBackups = [];
   let agentBackupError = "";
   let backupAction = "";
@@ -154,6 +155,27 @@ export function mountSettingsCenter(host, options = {}) {
     if (!snapshot || !draft) return false;
     return stableStringify(snapshot.sections) !== stableStringify(draft) ||
       shortcutSnapshot.clickThroughAccelerator !== shortcutDraft.clickThroughAccelerator;
+  }
+
+  function hasTransientAgentDraft() {
+    if (!draft?.ai?.agent) return false;
+    return ["codex", "claude"].some((provider) => {
+      const connection = agentConnectionDrafts[provider] || {};
+      const savedBaseUrl = draft.ai.agent.providers?.[provider]?.baseUrl || "";
+      return Boolean(connection.apiKey) || String(connection.baseUrl || "") !== String(savedBaseUrl);
+    });
+  }
+
+  function hasDiscardableChanges() {
+    return isDirty() || hasTransientAgentDraft();
+  }
+
+  function resolveAgentSetupStep(provider, providerRuntime = {}) {
+    if (providerRuntime.ready && provider.baseUrl && provider.apiKeyConfigured && provider.selectedModel && providerRuntime.modelValidated) return 0;
+    if (!providerRuntime.available) return 1;
+    if (!provider.baseUrl || !provider.apiKeyConfigured) return 3;
+    if (!provider.selectedModel) return 4;
+    return 5;
   }
 
   function renderNavigation() {
@@ -204,86 +226,96 @@ export function mountSettingsCenter(host, options = {}) {
     const candidates = Array.isArray(providerRuntime.candidates) ? providerRuntime.candidates : [];
     const providerName = providerId === "claude" ? "Claude Code" : "Codex CLI";
     const selectedCli = provider.cliPath || providerRuntime.path || "";
-    const statusText = providerRuntime.ready
-      ? "可开始对话"
-      : !providerRuntime.available
-        ? candidates.length ? "等待选择 CLI" : `未找到 ${providerName}`
-        : !provider.baseUrl || !provider.apiKeyConfigured
-          ? "等待连接配置"
-          : !models.length
-            ? "等待刷新模型"
-            : !provider.selectedModel
-              ? "等待选择模型"
-              : !provider.modelValidatedAt
-                ? "等待连接测试"
-                : "配置完成";
     const busy = Boolean(agentAction);
-    const readiness = [
-      [providerRuntime.available, "CLI 已绑定"],
-      [provider.baseUrl && provider.apiKeyConfigured, "连接已保存"],
-      [models.length, "模型已刷新"],
-      [provider.selectedModel, "模型已选择"],
-      [provider.modelValidatedAt, "连接已验证"],
-    ];
-    return `
-      <div class="settings-center-section-heading">
-        <div><p>AI Runtime</p><h4>AI 模型调用</h4></div>
-        <span>本机官方 CLI 与独立连接</span>
-      </div>
-      <div class="settings-center-provider-tabs" role="tablist" aria-label="AI Provider">
-        ${[["codex", "Codex"], ["claude", "Claude"]].map(([id, label]) => `<button type="button" role="tab" data-agent-provider="${id}" aria-selected="${providerId === id}" class="${providerId === id ? "is-active" : ""}"><strong>${label}</strong><small>${runtime.providers?.[id]?.ready ? "已就绪" : "待配置"}</small></button>`).join("")}
-      </div>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>${providerName}</h5><p>仅调用本机已有的官方 CLI；发现多个版本时必须手动绑定。</p></div><span class="settings-center-agent-state${providerRuntime.ready ? " is-ready" : providerRuntime.available ? "" : " is-error"}">${escapeHtml(statusText)}</span></div>
-        <div class="settings-center-readiness" aria-label="配置进度">
-          ${readiness.map(([ready, label], index) => `<span class="${ready ? "is-ready" : ""}"><b>${ready ? "✓" : index + 1}</b>${label}</span>`).join("")}
-        </div>
-        <label class="settings-center-field settings-center-field-wide"><span>CLI 运行文件</span><select data-agent-cli-path${busy ? " disabled" : ""}>
-          <option value=""${selectedCli ? "" : " selected"}>${candidates.length ? "请选择检测到的 CLI" : "尚未检测到 CLI"}</option>
-          ${candidates.map((item) => `<option value="${escapeHtml(item.path)}"${item.path === selectedCli ? " selected" : ""}>${escapeHtml(item.label || "本机")} · ${escapeHtml(item.version || item.path)}</option>`).join("")}
-          ${selectedCli && !candidates.some((item) => item.path === selectedCli) ? `<option value="${escapeHtml(selectedCli)}" selected>${escapeHtml(provider.cliVersion || selectedCli)}</option>` : ""}
-        </select><small>${providerRuntime.error ? escapeHtml(providerRuntime.error) : selectedCli ? escapeHtml(selectedCli) : "点击检测后选择一个结果。"}</small></label>
-        <div class="settings-center-inline-actions">
-          <button type="button" data-settings-action="agent-discover"${busy ? " disabled" : ""}>${agentAction === "discover" ? "正在检测" : "检测 CLI"}</button>
-          <button type="button" data-settings-action="agent-bind"${(!candidates.length && !selectedCli) || busy ? " disabled" : ""}>绑定所选 CLI</button>
-        </div>
-      </section>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>第三方中转连接</h5><p>凭据写入系统安全存储，不进入设置文件、会话数据库或前端快照。</p></div><span class="settings-center-credential-state${provider.apiKeyConfigured ? " is-ready" : ""}">${provider.apiKeyConfigured ? "凭据已保存" : "尚未保存凭据"}</span></div>
-        <div class="settings-center-form-grid">
-          <label class="settings-center-field"><span>Base URL</span><input type="url" data-agent-connection-field="baseUrl" value="${escapeHtml(connectionDraft.baseUrl || provider.baseUrl || "")}" placeholder="${providerId === "claude" ? "https://api.anthropic.com" : "https://api.openai.com"}" /></label>
-          <label class="settings-center-field"><span>API Key</span><input type="password" data-agent-connection-field="apiKey" value="${escapeHtml(connectionDraft.apiKey || "")}" placeholder="${provider.apiKeyConfigured ? "留空则保留已保存凭据" : "输入中转站提供的 API Key"}" autocomplete="new-password" /></label>
-        </div>
-        <div class="settings-center-inline-actions">
-          <button type="button" data-settings-action="agent-save-connection"${busy ? " disabled" : ""}>保存连接</button>
-          <button type="button" data-settings-action="agent-clear-connection"${!provider.apiKeyConfigured || busy ? " disabled" : ""}>清除凭据</button>
-        </div>
-      </section>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>模型目录与验证</h5><p>模型不会自动选择；连接变化后需要重新刷新、选择并验证。</p></div>
-        <div class="settings-center-form-grid">
+    const configured = Boolean(provider.baseUrl && provider.apiKeyConfigured);
+    const setupComplete = Boolean(providerRuntime.ready && configured && provider.selectedModel && providerRuntime.modelValidated);
+    const currentStep = setupComplete && agentSetupSteps[providerId] === 0
+      ? 0
+      : Math.min(5, Math.max(1, Number(agentSetupSteps[providerId]) || 1));
+    const setupLabels = ["选择服务", "绑定 CLI", "配置连接", "选择模型", "验证连接"];
+    const renderProgress = () => currentStep > 0 ? `<div class="settings-center-setup-progress" role="progressbar" aria-label="AI 配置进度" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${currentStep}">
+      <div><span>设置进度</span><strong>${escapeHtml(setupLabels[currentStep - 1])}</strong></div>
+      <b>${currentStep} / 5</b>
+      <i aria-hidden="true"><span style="width:${currentStep * 20}%"></span></i>
+    </div>` : "";
+    let setupContent = "";
+    if (currentStep === 0) {
+      setupContent = `
+        <section class="settings-center-agent-summary">
+          <div class="settings-center-agent-summary-head"><div><span>配置完成</span><h5>${providerName}</h5></div><strong>已就绪</strong></div>
+          <dl>
+            <div><dt>CLI</dt><dd>${escapeHtml(provider.cliVersion || providerRuntime.version || "已绑定")}</dd></div>
+            <div><dt>连接</dt><dd>${escapeHtml(provider.baseUrl || "已保存")}</dd></div>
+            <div><dt>模型</dt><dd>${escapeHtml(provider.selectedModel)}</dd></div>
+            <div><dt>工作空间</dt><dd>FreeFlow 独立空间</dd></div>
+          </dl>
+          <div class="settings-center-inline-actions"><button type="button" data-settings-action="agent-edit-setup">重新配置</button><button type="button" data-settings-action="agent-test-connection"${busy ? " disabled" : ""}>${agentAction === "test" ? "正在验证" : "重新测试"}</button></div>
+        </section>`;
+    } else if (currentStep === 1) {
+      setupContent = `
+        <section class="settings-center-setup-stage">
+          <div class="settings-center-group-heading"><h5>选择 AI 服务</h5><p>每个会话会固定所选 Provider 与模型，已有历史不会被后续设置改写。</p></div>
+          <div class="settings-center-provider-tabs" role="tablist" aria-label="AI Provider">
+            ${[["codex", "Codex", "OpenAI 官方 CLI"], ["claude", "Claude", "Anthropic 官方 CLI"]].map(([id, label, description]) => `<button type="button" role="tab" data-agent-provider="${id}" aria-selected="${providerId === id}" class="${providerId === id ? "is-active" : ""}"><strong>${label}</strong><small>${description}</small></button>`).join("")}
+          </div>
+          <div class="settings-center-setup-actions"><span>当前选择：${providerName}</span><button class="is-primary" type="button" data-settings-action="agent-setup-continue">下一步</button></div>
+        </section>`;
+    } else if (currentStep === 2) {
+      setupContent = `
+        <section class="settings-center-setup-stage">
+          <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>检测并绑定 ${providerName}</h5><p>仅使用本机已有的官方 CLI；检测到多个版本时由你选择。</p></div><span class="settings-center-agent-state${providerRuntime.available ? " is-ready" : ""}">${providerRuntime.available ? "已绑定" : candidates.length ? "等待选择" : "尚未检测"}</span></div>
+          <label class="settings-center-field settings-center-field-wide"><span>检测结果</span><select data-agent-cli-path${busy ? " disabled" : ""}>
+            <option value=""${selectedCli ? "" : " selected"}>${candidates.length ? "请选择检测到的 CLI" : "尚未检测到 CLI"}</option>
+            ${candidates.map((item) => `<option value="${escapeHtml(item.path)}"${item.path === selectedCli ? " selected" : ""}>${escapeHtml(item.label || "本机")} · ${escapeHtml(item.version || item.path)}</option>`).join("")}
+            ${selectedCli && !candidates.some((item) => item.path === selectedCli) ? `<option value="${escapeHtml(selectedCli)}" selected>${escapeHtml(provider.cliVersion || selectedCli)}</option>` : ""}
+          </select><small>${providerRuntime.error ? escapeHtml(providerRuntime.error) : selectedCli ? `已选择 ${escapeHtml(provider.cliVersion || providerRuntime.version || providerName)}` : "点击检测后选择运行版本。"}</small></label>
+          <div class="settings-center-inline-actions"><button type="button" data-settings-action="agent-discover"${busy ? " disabled" : ""}>${agentAction === "discover" ? "正在检测" : "检测 CLI"}</button><button class="is-primary" type="button" data-settings-action="agent-bind"${(!candidates.length && !selectedCli) || busy ? " disabled" : ""}>绑定并继续</button></div>
+        </section>`;
+    } else if (currentStep === 3) {
+      setupContent = `
+        <section class="settings-center-setup-stage">
+          <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>配置模型连接</h5><p>凭据写入系统安全存储，不进入设置文件、会话数据库或前端快照。</p></div><span class="settings-center-credential-state${provider.apiKeyConfigured ? " is-ready" : ""}">${provider.apiKeyConfigured ? "凭据已保存" : "等待配置"}</span></div>
+          <div class="settings-center-form-grid">
+            <label class="settings-center-field"><span>Base URL</span><input type="url" data-agent-connection-field="baseUrl" value="${escapeHtml(connectionDraft.baseUrl || provider.baseUrl || "")}" placeholder="${providerId === "claude" ? "https://api.anthropic.com" : "https://api.openai.com"}" /></label>
+            <label class="settings-center-field"><span>API Key</span><input type="password" data-agent-connection-field="apiKey" value="${escapeHtml(connectionDraft.apiKey || "")}" placeholder="${provider.apiKeyConfigured ? "留空则保留已保存凭据" : "输入服务提供方的 API Key"}" autocomplete="new-password" /></label>
+          </div>
+          <div class="settings-center-inline-actions"><button type="button" data-settings-action="agent-clear-connection"${!provider.apiKeyConfigured || busy ? " disabled" : ""}>清除凭据</button><button class="is-primary" type="button" data-settings-action="agent-save-connection"${busy ? " disabled" : ""}>保存并继续</button></div>
+        </section>`;
+    } else if (currentStep === 4) {
+      setupContent = `
+        <section class="settings-center-setup-stage">
+          <div class="settings-center-group-heading"><h5>刷新并选择模型</h5><p>FreeFlow 不会自动替你选择模型；连接变化后需重新刷新。</p></div>
           <label class="settings-center-field settings-center-field-wide"><span>可用模型</span><select data-agent-model-select${!models.length ? " disabled" : ""}>
             <option value=""${provider.selectedModel ? "" : " selected"}>请选择模型</option>
             ${models.map((model) => `<option value="${escapeHtml(model.id)}"${model.id === provider.selectedModel ? " selected" : ""}>${escapeHtml(model.displayName || model.id)}</option>`).join("")}
-          </select><small>${models.length ? `最近刷新到 ${models.length} 个模型；当前${provider.selectedModel ? `为 ${escapeHtml(provider.selectedModel)}` : "尚未选择"}。` : "保存连接后手动刷新模型目录。"}</small></label>
-        </div>
-        <div class="settings-center-inline-actions">
-          <button type="button" data-settings-action="agent-refresh-models"${!provider.apiKeyConfigured || busy ? " disabled" : ""}>刷新模型</button>
-          <button type="button" data-settings-action="agent-select-model"${!models.length || busy ? " disabled" : ""}>使用所选模型</button>
-          <button type="button" data-settings-action="agent-test-connection"${!provider.selectedModel || busy ? " disabled" : ""}>${agentAction === "test" ? "正在验证" : "测试连接"}</button>
-        </div>
-      </section>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>新会话策略</h5><p>会话创建时固定 Provider、模型与安全边界，之后修改不会篡改既有历史。</p></div>
+          </select><small>${models.length ? `已刷新 ${models.length} 个模型，请明确选择一个。` : "先刷新模型目录。"}</small></label>
+          <div class="settings-center-inline-actions"><button type="button" data-settings-action="agent-refresh-models"${!configured || busy ? " disabled" : ""}>${agentAction === "refresh-models" ? "正在刷新" : "刷新模型"}</button><button class="is-primary" type="button" data-settings-action="agent-select-model"${!models.length || busy ? " disabled" : ""}>使用所选模型</button></div>
+        </section>`;
+    } else {
+      setupContent = `
+        <section class="settings-center-setup-stage settings-center-test-stage">
+          <div class="settings-center-group-heading"><h5>验证连接</h5><p>将使用 ${escapeHtml(provider.selectedModel || "所选模型")} 完成一次最小请求，确认 CLI、连接和模型均可用。</p></div>
+          <div class="settings-center-test-summary"><span>${providerName}</span><strong>${escapeHtml(provider.selectedModel || "尚未选择模型")}</strong><small>新会话将自动使用 FreeFlow 独立空间，无需填写目录。</small></div>
+          <div class="settings-center-inline-actions"><button class="is-primary" type="button" data-settings-action="agent-test-connection"${!provider.selectedModel || busy ? " disabled" : ""}>${agentAction === "test" ? "正在验证" : "测试并完成"}</button></div>
+        </section>`;
+    }
+    return `
+      <div class="settings-center-section-heading">
+        <div><p>AI Runtime</p><h4>AI 模型调用</h4></div>
+        <span>${setupComplete ? "配置已就绪" : `第 ${currentStep} 步，共 5 步`}</span>
+      </div>
+      ${renderProgress()}
+      ${setupContent}
+      ${setupComplete ? `<details class="settings-center-disclosure settings-center-agent-policy">
+        <summary><span><strong>高级会话设置</strong><small>推理、审批与执行边界</small></span><span>展开</span></summary>
         <div class="settings-center-form-grid">
-          ${renderField({ path: "ai.agent.workspaceRoot", label: "默认工作区", value: agent.workspaceRoot || "", maxlength: 1000, placeholder: "选择 AI 默认工作目录", note: "新会话从此目录开始，并受权限页授权根目录约束。" })}
           <label class="settings-center-field"><span>推理等级</span><select data-settings-path="ai.agent.providers.${providerId}.reasoningEffort">
             ${(providerId === "claude" ? [["low","低"],["medium","中"],["high","高"],["xhigh","极高"],["max","最大"]] : [["minimal","最小"],["low","低"],["medium","中"],["high","高"],["xhigh","极高"]]).map(([value, label]) => `<option value="${value}"${provider.reasoningEffort === value ? " selected" : ""}>${label}</option>`).join("")}
           </select></label>
           <label class="settings-center-field"><span>审批策略</span><select data-settings-path="ai.agent.providers.${providerId}.approvalPolicy">
             <option value="untrusted"${provider.approvalPolicy === "untrusted" ? " selected" : ""}>仅信任操作免审批</option>
             <option value="on-request"${provider.approvalPolicy === "on-request" ? " selected" : ""}>按需审批</option>
-            <option value="on-failure"${provider.approvalPolicy === "on-failure" ? " selected" : ""}>失败时询问</option>
+            ${providerId === "claude" ? `<option value="on-failure"${provider.approvalPolicy === "on-failure" ? " selected" : ""}>失败时询问</option>` : ""}
             <option value="never"${provider.approvalPolicy === "never" ? " selected" : ""}>从不询问</option>
           </select><small>“从不询问”不会扩大沙箱权限，只会拒绝无法自动执行的操作。</small></label>
           <label class="settings-center-field"><span>沙箱范围</span><select data-settings-path="ai.agent.providers.${providerId}.sandboxMode">
@@ -292,12 +324,11 @@ export function mountSettingsCenter(host, options = {}) {
             <option value="danger-full-access"${provider.sandboxMode === "danger-full-access" ? " selected" : ""}>完全访问</option>
           </select></label>
         </div>
-        <div class="settings-center-inline-actions">${isDesktop ? `<button type="button" data-settings-action="pick-directory" data-path-target="ai.agent.workspaceRoot">选择工作区</button>` : ""}</div>
         <div class="settings-center-toggle-stack">
           ${renderToggle("ai.agent.queueWhileRunning", "运行时允许排队", agent.queueWhileRunning !== false, "任务执行期间发送普通消息时进入队列，完成后自动继续。")}
           ${renderToggle("ai.agent.showReasoning", "显示推理活动", agent.showReasoning !== false, "只展示 CLI 提供的摘要与活动，不展示内部隐藏推理。")}
         </div>
-      </section>
+      </details>` : ""}
     `;
   }
 
@@ -492,7 +523,7 @@ export function mountSettingsCenter(host, options = {}) {
         <div class="settings-center-footer-actions">
           ${conflictPending ? `<button type="button" data-settings-action="reload">重新载入最新设置</button>` : ""}
           <button type="button" data-settings-action="reset-section"${phase === "saving" ? " disabled" : ""}>恢复本页</button>
-          <button type="button" data-settings-action="cancel"${phase === "saving" ? " disabled" : ""}>取消</button>
+          <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
           <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
         </div>
       </footer>
@@ -538,7 +569,6 @@ export function mountSettingsCenter(host, options = {}) {
     if (!String(general.workspaceName || "").trim()) errors["general.workspaceName"] = "请输入工作区名称";
     if (!String(general.workspaceSubtitle || "").trim()) errors["general.workspaceSubtitle"] = "请输入工作区副标题";
     if (!String(general.assistantName || "").trim()) errors["general.assistantName"] = "请输入 AI 助手名称";
-    if (!String(draft.ai.agent?.workspaceRoot || "").trim()) errors["ai.agent.workspaceRoot"] = "请选择默认工作区目录";
     if (!String(shortcutDraft.clickThroughAccelerator || shortcutDraft.clickThroughDisplay || "").trim()) errors["workbench.clickThroughShortcut"] = "请输入快捷键";
     return errors;
   }
@@ -580,6 +610,10 @@ export function mountSettingsCenter(host, options = {}) {
       shortcutSnapshot = clone(shortcutResult?.settings || DEFAULT_SHORTCUT);
       shortcutDraft = clone(shortcutSnapshot);
       agentRuntime = runtimeResult?.runtime || null;
+      agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [
+        provider,
+        resolveAgentSetupStep(data.sections.ai?.agent?.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {}),
+      ]));
       agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
       agentBackupError = String(backupsResult?.error || "");
       backupAction = "";
@@ -685,6 +719,16 @@ export function mountSettingsCenter(host, options = {}) {
     if (!snapshot || !draft || activeSection === "diagnostics") return;
     if (activeSection === "workbench") shortcutDraft = clone(shortcutSnapshot);
     draft[activeSection] = clone(snapshot.sections[activeSection]);
+    if (activeSection === "ai") {
+      agentConnectionDrafts = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
+        baseUrl: String(snapshot.sections.ai?.agent?.providers?.[provider]?.baseUrl || ""),
+        apiKey: "",
+      }]));
+      agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [
+        provider,
+        resolveAgentSetupStep(draft.ai?.agent?.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {}),
+      ]));
+    }
     if (activeSection === "appearance") restoreThemePreview();
     fieldErrors = {};
     riskConfirmationPending = false;
@@ -740,6 +784,7 @@ export function mountSettingsCenter(host, options = {}) {
       } else if (action === "bind") {
         agentRuntime = (await agentClient.bindProviderRuntime(provider, payload.path)).runtime;
         await refreshAgentSnapshotPreservingDraft();
+        agentSetupSteps[provider] = 3;
         setMessage("CLI 已绑定", "success");
       } else if (action === "save-connection" || action === "clear-connection") {
         await agentClient.saveProviderConnection(provider, {
@@ -749,6 +794,7 @@ export function mountSettingsCenter(host, options = {}) {
         });
         await refreshAgentSnapshotPreservingDraft({ resetConnectionProvider: provider });
         agentRuntime = (await agentClient.getRuntime({ refresh: true })).runtime;
+        agentSetupSteps[provider] = action === "clear-connection" ? 3 : 4;
         setMessage(action === "clear-connection" ? "连接凭据已清除" : "连接已保存，请刷新模型", "success");
       } else if (action === "refresh-models") {
         await agentClient.refreshProviderModels(provider);
@@ -759,12 +805,14 @@ export function mountSettingsCenter(host, options = {}) {
         await agentClient.selectProviderModel(provider, payload.model);
         await refreshAgentSnapshotPreservingDraft();
         agentRuntime = (await agentClient.getRuntime({ refresh: true })).runtime;
+        agentSetupSteps[provider] = 5;
         setMessage("模型已选择，请执行连接测试", "success");
       } else if (action === "test") {
         await agentClient.testProviderConnection(provider);
         await refreshAgentSnapshotPreservingDraft();
         agentRuntime = (await agentClient.getRuntime({ start: true, refresh: true })).runtime;
-        setMessage(agentRuntime?.ready ? "连接验证通过，可以开始新会话" : "连接验证通过，请保存设置并完成工作区授权", "success");
+        agentSetupSteps[provider] = 0;
+        setMessage("连接验证通过，可以开始新会话", "success");
       }
     } catch (error) {
       setMessage(error.message || "Agent 操作失败", "error");
@@ -823,6 +871,8 @@ export function mountSettingsCenter(host, options = {}) {
     const providerButton = target?.closest("[data-agent-provider]");
     if (providerButton) {
       draft.ai.agent.activeProvider = providerButton.dataset.agentProvider === "claude" ? "claude" : "codex";
+      const provider = draft.ai.agent.activeProvider;
+      agentSetupSteps[provider] = resolveAgentSetupStep(draft.ai.agent.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {});
       markDraftChanged();
       render();
       return;
@@ -860,8 +910,10 @@ export function mountSettingsCenter(host, options = {}) {
     if (action === "confirm-risk") await save({ confirmedRisk: true });
     if (action === "cancel-risk") { riskConfirmationPending = false; setMessage("", ""); render(); }
     if (action === "reset-section") resetActiveSection();
-    if (action === "cancel") { close(); onRequestClose(); }
+    if (action === "cancel") { discardChanges(); onRequestClose(); return; }
     const provider = draft.ai.agent?.activeProvider === "claude" ? "claude" : "codex";
+    if (action === "agent-setup-continue") { agentSetupSteps[provider] = 2; setMessage("", ""); render(); }
+    if (action === "agent-edit-setup") { agentSetupSteps[provider] = 2; setMessage("", ""); render(); }
     if (action === "agent-refresh") await runAgentAction("refresh");
     if (action === "agent-restart") await runAgentAction("restart");
     if (action === "agent-discover") await runAgentAction("discover", { provider });
@@ -905,6 +957,8 @@ export function mountSettingsCenter(host, options = {}) {
     if (target.dataset.agentConnectionField) {
       const provider = draft.ai.agent?.activeProvider === "claude" ? "claude" : "codex";
       agentConnectionDrafts[provider][target.dataset.agentConnectionField] = target.value;
+      const discardButton = host.querySelector('[data-settings-action="cancel"]');
+      if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || Boolean(agentAction);
       return;
     }
     if (target.matches("[data-settings-shortcut]")) {
@@ -948,33 +1002,48 @@ export function mountSettingsCenter(host, options = {}) {
     if (!path || target.disabled) return;
     setPathValue(draft, path, target.type === "checkbox" ? target.checked : target.value);
     markDraftChanged();
-    if (target.tagName === "SELECT" || target.type === "radio") render();
+    if ((target.tagName === "SELECT" || target.type === "radio") && !target.closest(".settings-center-agent-policy")) render();
   });
 
   function close() {
     if (phase === "saving") return false;
-    ++requestSequence;
     if (themePreviewActive || snapshot?.sections?.appearance) restoreThemePreview();
-    if (snapshot) {
-      draft = clone(snapshot.sections);
-      shortcutDraft = clone(shortcutSnapshot);
-    }
+    return true;
+  }
+
+  function discardChanges() {
+    if (!snapshot || phase === "saving") return false;
+    ++requestSequence;
+    if (themePreviewActive || snapshot.sections?.appearance) restoreThemePreview();
+    draft = clone(snapshot.sections);
+    shortcutDraft = clone(shortcutSnapshot);
+    agentConnectionDrafts = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
+      baseUrl: String(snapshot.sections.ai?.agent?.providers?.[provider]?.baseUrl || ""),
+      apiKey: "",
+    }]));
+    agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [
+      provider,
+      resolveAgentSetupStep(draft.ai?.agent?.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {}),
+    ]));
     phase = "idle";
-    agentAction = "";
-    agentConnectionDrafts = { codex: { baseUrl: "", apiKey: "" }, claude: { baseUrl: "", apiKey: "" } };
-    agentBackups = [];
-    agentBackupError = "";
-    backupAction = "";
-    restoreCandidate = "";
     fieldErrors = {};
     riskConfirmationPending = false;
+    conflictPending = false;
+    restoreCandidate = "";
     setMessage("", "");
+    render();
     return true;
+  }
+
+  function open() {
+    if (!draft || phase === "load-error") return load();
+    render();
+    return Promise.resolve();
   }
 
   render();
   return {
-    open: load,
+    open,
     openSection(section) {
       if (SECTION_DEFS.some((item) => item.key === section)) activeSection = section;
       render();

@@ -1279,9 +1279,8 @@ body.is-resizing * {
   user-select: none;
 }
 
-body.is-pane-resizing .desktop-clear-stage,
-body.is-pane-resizing .conversation-panel {
-  contain: layout paint;
+body.is-pane-resizing .is-pane-resize-preview {
+  contain: strict;
   pointer-events: none !important;
   box-shadow: none !important;
 }
@@ -1294,10 +1293,7 @@ body.is-pane-resizing .pane-resizer.is-resize-source-active {
   opacity: 0 !important;
 }
 
-body.is-pane-resizing .is-pane-resize-preview,
-body.is-pane-resizing .is-pane-resize-preview *,
-body.is-pane-resizing .is-pane-resize-preview *::before,
-body.is-pane-resizing .is-pane-resize-preview *::after {
+body.is-pane-resizing .is-pane-resize-preview {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   transition: none !important;
@@ -1347,6 +1343,12 @@ body.is-pane-resizing .pane-resize-viewport * {
   -webkit-backdrop-filter: none !important;
   transform-origin: top center;
   will-change: transform;
+}
+
+.pane-resize-frame.is-right {
+  border: 1px solid rgb(var(--app-pattern-rgb) / 0.42);
+  border-radius: 8px;
+  background: transparent;
 }
 
 .conversation-panel {

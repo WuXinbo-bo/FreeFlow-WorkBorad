@@ -3211,6 +3211,11 @@ export function createCanvas2DEngine(options = {}) {
 
   const getAllowLocalFileAccess = () => state.board?.preferences?.allowLocalFileAccess !== false;
   const getBoardBackgroundPattern = () => normalizeBoardBackgroundPattern(state.board?.preferences?.backgroundPattern);
+  const readCanvasThemeBackgroundFill = () => {
+    if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return "#ffffff";
+    return window.getComputedStyle(document.documentElement).getPropertyValue("--air-canvas-surface").trim() || "#ffffff";
+  };
+  let canvasThemeBackgroundFill = readCanvasThemeBackgroundFill();
   const sceneRegistry = createSceneRegistry({
     getSceneIndex: () => getSceneIndexRuntime(),
     getSelectedIds: () => state.board.selectedIds,
@@ -5434,7 +5439,7 @@ let tablePointerSelectionState = {
       onImageNaturalSize: syncImageNaturalSize,
       onImageResourceStateChange: handleImageResourceStateChange,
       backgroundStyle: {
-        fill: "#ffffff",
+        fill: canvasThemeBackgroundFill,
         pattern: getBoardBackgroundPattern(),
       },
       renderTextInCanvas: true,
@@ -27724,6 +27729,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     setTool,
     setMode,
     setStatus,
+    refreshTheme() {
+      canvasThemeBackgroundFill = readCanvasThemeBackgroundFill();
+      scheduleRender({ reason: "theme-change", backgroundDirty: true, interactionDirty: false });
+    },
     setLocalFileAccess,
     toggleLocalFileAccess,
     undo,

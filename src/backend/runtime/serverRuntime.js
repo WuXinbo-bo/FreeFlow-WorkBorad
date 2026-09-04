@@ -38,6 +38,7 @@ const {
   AGENT_ATTACHMENTS_DIR,
   AGENT_PROFILES_DIR,
   AGENT_BACKUPS_DIR,
+  AGENT_WORKSPACES_DIR,
 } = paths;
 const {
   PORT,
@@ -117,12 +118,16 @@ const agentRuntime = new AgentRuntime({
   attachmentsDir: AGENT_ATTACHMENTS_DIR,
   profilesDir: AGENT_PROFILES_DIR,
   backupsDir: AGENT_BACKUPS_DIR,
+  workspacesDir: AGENT_WORKSPACES_DIR,
   appVersion: packageInfo.version,
   settingsService: agentSettingsService,
   permissionsService,
   legacySessionService: sessionService,
 });
-const agentConnectionService = createAgentConnectionService({ settingsService: agentSettingsService });
+const agentConnectionService = createAgentConnectionService({
+  settingsService: agentSettingsService,
+  validateRuntime: (provider) => agentRuntime.validateProviderRuntime(provider),
+});
 
 let desktopBridge = {
   chatWithDoubao: null,

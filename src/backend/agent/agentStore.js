@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
-const AGENT_STORE_SCHEMA_VERSION = 2;
+const AGENT_STORE_SCHEMA_VERSION = 3;
 
 function now() {
   return Date.now();
@@ -73,6 +73,7 @@ class AgentStore {
         client_request_id TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL,
         input_text TEXT NOT NULL,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
         error_json TEXT,
         created_at INTEGER NOT NULL,
         started_at INTEGER,
@@ -140,8 +141,20 @@ class AgentStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_remote_cleanups (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        resource_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL DEFAULT '',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
     this._ensureColumn("agent_sessions", "runtime_binding_json", "TEXT NOT NULL DEFAULT '{}'");
+    this._ensureColumn("agent_turns", "attachments_json", "TEXT NOT NULL DEFAULT '[]'");
     this._ensureColumn("agent_pending_inputs", "mode", "TEXT NOT NULL DEFAULT 'queue'");
     this._ensureColumn("agent_pending_inputs", "status", "TEXT NOT NULL DEFAULT 'queued'");
     this._ensureColumn("agent_pending_inputs", "revision", "INTEGER NOT NULL DEFAULT 0");
@@ -376,6 +389,7 @@ class AgentStore {
     const turns = this.db.prepare("SELECT * FROM agent_turns WHERE session_id = ? ORDER BY created_at").all(sessionId).map((row) => ({
       id: row.id, providerTurnId: row.provider_turn_id || "", clientRequestId: row.client_request_id,
       status: row.status, input: row.input_text, error: parseJson(row.error_json, null), createdAt: Number(row.created_at),
+      attachmentIds: parseJson(row.attachments_json, []),
       startedAt: Number(row.started_at || 0), completedAt: Number(row.completed_at || 0),
     }));
     const approvals = this.db.prepare("SELECT * FROM agent_approvals WHERE session_id = ? AND status = 'pending' ORDER BY created_at").all(sessionId).map((row) => ({
@@ -440,14 +454,14 @@ class AgentStore {
     const title = currentTitle === "新会话" ? titleFromInput(input.text) : currentTitle;
     const payload = { turnId: id, messageId, input: input.text, clientRequestId: input.clientRequestId, title };
     const event = this.commit(sessionId, "turn.created", payload, (db) => {
-      db.prepare(`INSERT INTO agent_turns(id, session_id, client_request_id, status, input_text, created_at) VALUES (?, ?, ?, 'starting', ?, ?)`)
-        .run(id, sessionId, input.clientRequestId, input.text, createdAt);
+      db.prepare(`INSERT INTO agent_turns(id, session_id, client_request_id, status, input_text, attachments_json, created_at) VALUES (?, ?, ?, 'starting', ?, ?, ?)`)
+        .run(id, sessionId, input.clientRequestId, input.text, JSON.stringify(input.attachmentIds || []), createdAt);
       db.prepare(`INSERT INTO agent_messages(id, session_id, turn_id, role, content, created_at, updated_at) VALUES (?, ?, ?, 'user', ?, ?, ?)`)
         .run(messageId, sessionId, id, input.text, createdAt, createdAt);
       db.prepare("UPDATE agent_sessions SET status = 'starting' WHERE id = ?").run(sessionId);
       if (currentTitle === "新会话") db.prepare("UPDATE agent_sessions SET title = ? WHERE id = ?").run(title, sessionId);
     });
-    return { turn: { id, sessionId, clientRequestId: input.clientRequestId, status: "starting", input: input.text, createdAt }, event };
+    return { turn: { id, sessionId, clientRequestId: input.clientRequestId, status: "starting", input: input.text, attachmentIds: input.attachmentIds || [], createdAt }, event };
   }
 
   findTurnByClientRequestId(sessionId, clientRequestId) {
@@ -460,11 +474,70 @@ class AgentStore {
       clientRequestId: row.client_request_id,
       status: row.status,
       input: row.input_text,
+      attachmentIds: parseJson(row.attachments_json, []),
       error: parseJson(row.error_json, null),
       createdAt: Number(row.created_at),
       startedAt: Number(row.started_at || 0),
       completedAt: Number(row.completed_at || 0),
     };
+  }
+
+  retryFailedTurn(sessionId, turnId, clientRequestId) {
+    const row = this.db.prepare("SELECT * FROM agent_turns WHERE id = ? AND session_id = ?").get(turnId, sessionId);
+    if (!row) return null;
+    if (row.status !== "failed") throw new Error("只有失败的任务可以重试");
+    const event = this.commit(sessionId, "turn.retrying", { turnId, clientRequestId }, (db) => {
+      db.prepare(`
+        UPDATE agent_turns SET client_request_id = ?, provider_turn_id = NULL, status = 'starting',
+          error_json = NULL, started_at = NULL, completed_at = NULL
+        WHERE id = ? AND session_id = ?
+      `).run(clientRequestId, turnId, sessionId);
+      db.prepare("UPDATE agent_sessions SET status = 'starting' WHERE id = ?").run(sessionId);
+    });
+    return {
+      turn: {
+        id: row.id,
+        sessionId,
+        providerTurnId: "",
+        clientRequestId,
+        status: "starting",
+        input: row.input_text,
+        attachmentIds: parseJson(row.attachments_json, []),
+        createdAt: Number(row.created_at),
+      },
+      event,
+    };
+  }
+
+  trackRemoteThread(sessionId, threadId, reason = "provisioning") {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO agent_remote_cleanups(id, provider, resource_id, session_id, reason, created_at, updated_at)
+      VALUES (?, 'codex', ?, ?, ?, ?, ?)
+      ON CONFLICT(resource_id) DO UPDATE SET session_id = excluded.session_id, reason = excluded.reason, updated_at = excluded.updated_at
+    `).run(crypto.randomUUID(), String(threadId), String(sessionId || ""), String(reason || ""), timestamp, timestamp);
+  }
+
+  listRemoteThreadCleanups() {
+    return this.db.prepare("SELECT * FROM agent_remote_cleanups WHERE provider = 'codex' ORDER BY created_at").all().map((row) => ({
+      id: row.id,
+      threadId: row.resource_id,
+      sessionId: row.session_id,
+      reason: row.reason,
+      attempts: Number(row.attempts || 0),
+      lastError: row.last_error,
+    }));
+  }
+
+  resolveRemoteThreadCleanup(threadId) {
+    this.db.prepare("DELETE FROM agent_remote_cleanups WHERE provider = 'codex' AND resource_id = ?").run(String(threadId));
+  }
+
+  failRemoteThreadCleanup(threadId, error) {
+    this.db.prepare(`
+      UPDATE agent_remote_cleanups SET attempts = attempts + 1, last_error = ?, updated_at = ?
+      WHERE provider = 'codex' AND resource_id = ?
+    `).run(String(error?.message || error || "cleanup failed").slice(0, 1200), now(), String(threadId));
   }
 
   findPendingInputByClientRequestId(sessionId, clientRequestId) {

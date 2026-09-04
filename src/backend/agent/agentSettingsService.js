@@ -1,4 +1,4 @@
-const { AGENT_SETTINGS_FILE, WORKSPACE_DIR } = require("../config/paths");
+const { AGENT_SETTINGS_FILE, AGENT_WORKSPACES_DIR, WORKSPACE_DIR } = require("../config/paths");
 const { writeJsonFile } = require("../utils/jsonStore");
 const { readVersionedJsonFile } = require("../utils/versionedStore");
 const secretStorageService = require("../services/secretStorageService");
@@ -8,6 +8,7 @@ const {
   getDefaultAgentSettings,
   normalizeAgentSettings,
   normalizeModels,
+  providerValidationFingerprint,
 } = require("./agentSettingsModel");
 
 let writeQueue = Promise.resolve();
@@ -24,8 +25,11 @@ function assertProvider(provider) {
 
 async function readPersistedSettings() {
   const result = await readVersionedJsonFile(AGENT_SETTINGS_FILE, {
-    defaultValue: getDefaultAgentSettings(WORKSPACE_DIR),
-    normalize: (payload) => normalizeAgentSettings(payload, { workspaceRoot: WORKSPACE_DIR }),
+    defaultValue: getDefaultAgentSettings(AGENT_WORKSPACES_DIR),
+    normalize: (payload) => normalizeAgentSettings(payload, {
+      workspaceRoot: AGENT_WORKSPACES_DIR,
+      legacyWorkspaceRoot: WORKSPACE_DIR,
+    }),
     currentVersion: AGENT_SETTINGS_SCHEMA_VERSION,
   });
   return result.data;
@@ -59,7 +63,7 @@ function mutateSettings(mutator) {
     const draft = structuredClone(current);
     await mutator(draft, current);
     draft.updatedAt = Math.max(Date.now(), Number(current.updatedAt || 0) + 1);
-    const next = normalizeAgentSettings(draft, { workspaceRoot: WORKSPACE_DIR });
+    const next = normalizeAgentSettings(draft, { workspaceRoot: AGENT_WORKSPACES_DIR });
     await writeJsonFile(AGENT_SETTINGS_FILE, next);
     return readAgentSettings();
   });
@@ -80,7 +84,6 @@ function writeAgentSettings(payload = {}) {
         }
       }
     }
-    if (Object.prototype.hasOwnProperty.call(payload, "workspaceRoot")) draft.workspaceRoot = payload.workspaceRoot;
     if (Object.prototype.hasOwnProperty.call(payload, "queueWhileRunning")) draft.queueWhileRunning = payload.queueWhileRunning;
     if (Object.prototype.hasOwnProperty.call(payload, "showReasoning")) draft.showReasoning = payload.showReasoning;
 
@@ -124,10 +127,17 @@ function updateProviderConnection(provider, input = {}) {
     draft.providers[id] = {
       ...draft.providers[id],
       baseUrl: nextBaseUrl,
-      ...(connectionChanged ? { models: [], modelsFetchedAt: 0, selectedModel: "", modelValidatedAt: 0 } : {}),
+      ...(connectionChanged ? {
+        models: [],
+        modelsFetchedAt: 0,
+        selectedModel: "",
+        modelValidatedAt: 0,
+        validationFingerprint: "",
+        connectionRevision: Math.max(0, Number(current.providers[id].connectionRevision) || 0) + 1,
+      } : {}),
     };
     draft.updatedAt = Math.max(Date.now(), Number(current.updatedAt || 0) + 1);
-    const next = normalizeAgentSettings(draft, { workspaceRoot: WORKSPACE_DIR });
+    const next = normalizeAgentSettings(draft, { workspaceRoot: AGENT_WORKSPACES_DIR });
     try {
       if (action === "replace") await secretStorageService.writeSecret(secretId(id), incomingKey);
       if (action === "clear") await secretStorageService.clearSecret(secretId(id));
@@ -156,6 +166,7 @@ function updateProviderModels(provider, models) {
       modelsFetchedAt: Date.now(),
       selectedModel: selectedStillExists ? current.selectedModel : "",
       modelValidatedAt: 0,
+      validationFingerprint: "",
     };
   });
 }
@@ -166,7 +177,7 @@ function selectProviderModel(provider, model) {
   if (!selectedModel) throw new Error("请选择模型");
   return mutateSettings((draft) => {
     if (!draft.providers[id].models.some((item) => item.id === selectedModel)) throw new Error("所选模型不在最新目录中，请重新刷新");
-    draft.providers[id] = { ...draft.providers[id], selectedModel, modelValidatedAt: 0 };
+    draft.providers[id] = { ...draft.providers[id], selectedModel, modelValidatedAt: 0, validationFingerprint: "" };
   });
 }
 
@@ -174,7 +185,9 @@ function markProviderValidated(provider) {
   const id = assertProvider(provider);
   return mutateSettings((draft) => {
     if (!draft.providers[id].selectedModel) throw new Error("请先选择模型");
-    draft.providers[id] = { ...draft.providers[id], modelValidatedAt: Date.now() };
+    const next = { ...draft.providers[id], modelValidatedAt: Date.now() };
+    next.validationFingerprint = providerValidationFingerprint(id, next);
+    draft.providers[id] = next;
   });
 }
 

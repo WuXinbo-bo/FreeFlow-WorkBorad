@@ -7,6 +7,7 @@ const path = require("path");
 const {
   getDefaultAgentSettings,
   normalizeAgentSettings,
+  providerValidationFingerprint,
 } = require("../src/backend/agent/agentSettingsModel");
 const {
   createCliRuntimeRegistry,
@@ -40,6 +41,23 @@ async function main() {
   assert.equal(migrated.providers.codex.cliPath, "D:\\Tools\\codex.exe");
   assert.equal(migrated.providers.codex.selectedModel, "", "legacy automatic defaults must not bypass manual selection");
   assert.equal(migrated.providers.codex.legacyModelHint, "gpt-old");
+  assert.equal(normalizeAgentSettings({
+    ...defaults,
+    providers: {
+      ...defaults.providers,
+      codex: { ...defaults.providers.codex, approvalPolicy: "on-failure" },
+    },
+  }).providers.codex.approvalPolicy, "on-request", "legacy Codex on-failure policy was not migrated");
+  const legacySourceRoot = "D:\\FreeFlow-WorkBoard";
+  const managedWorkspaceRoot = "C:\\Users\\test\\FreeFlow\\AIWorkspaces";
+  const migratedWorkspace = normalizeAgentSettings({
+    ...getDefaultAgentSettings(legacySourceRoot),
+    schemaVersion: 2,
+  }, {
+    workspaceRoot: managedWorkspaceRoot,
+    legacyWorkspaceRoot: legacySourceRoot,
+  });
+  assert.equal(migratedWorkspace.workspaceRoot, managedWorkspaceRoot, "legacy source workspace did not migrate to the managed workspace");
   assert.throws(() => providerApiRoot("codex", "file:///tmp/models"), /HTTP 或 HTTPS/, "non-HTTP provider URL was accepted");
   assert.throws(() => providerApiRoot("codex", "https://user:secret@example.test"), /账号或密码/, "credentials embedded in a provider URL were accepted");
 
@@ -83,6 +101,8 @@ async function main() {
           models: changed ? [] : current.models,
           selectedModel: changed ? "" : current.selectedModel,
           modelValidatedAt: changed ? 0 : current.modelValidatedAt,
+          validationFingerprint: changed ? "" : current.validationFingerprint,
+          connectionRevision: changed ? (current.connectionRevision || 0) + 1 : current.connectionRevision,
         };
         return structuredClone(settings);
       },
@@ -96,11 +116,13 @@ async function main() {
       },
       async selectProviderModel(provider, model) {
         assert(settings.providers[provider].models.some((item) => item.id === model));
-        settings.providers[provider] = { ...settings.providers[provider], selectedModel: model, modelValidatedAt: 0 };
+        settings.providers[provider] = { ...settings.providers[provider], selectedModel: model, modelValidatedAt: 0, validationFingerprint: "" };
         return structuredClone(settings);
       },
       async markProviderValidated(provider) {
-        settings.providers[provider] = { ...settings.providers[provider], modelValidatedAt: Date.now() };
+        const next = { ...settings.providers[provider], modelValidatedAt: Date.now() };
+        next.validationFingerprint = providerValidationFingerprint(provider, next);
+        settings.providers[provider] = next;
         return structuredClone(settings);
       },
     };
@@ -121,7 +143,14 @@ async function main() {
     const baseUrl = await listen(server);
     assert.equal(providerApiRoot("codex", `${baseUrl}/v1/models`), `${baseUrl}/v1`);
     try {
-      const connections = createAgentConnectionService({ settingsService });
+      let runtimeValidations = 0;
+      const connections = createAgentConnectionService({
+        settingsService,
+        validateRuntime: async (provider) => {
+          assert.equal(provider, "codex");
+          runtimeValidations += 1;
+        },
+      });
       await connections.saveConnection("codex", { baseUrl, apiKey: "secret", apiKeyAction: "replace" });
       const refreshed = await connections.refreshModels("codex");
       assert.deepEqual(refreshed.models.map((item) => item.id), ["gpt-second", "gpt-test"]);
@@ -129,6 +158,12 @@ async function main() {
       await connections.selectModel("codex", "gpt-test");
       const validated = await connections.testConnection("codex");
       assert.equal(validated.ready, true);
+      assert.equal(runtimeValidations, 1, "connection test bypassed the Codex app-server validator");
+      assert.equal(
+        validated.settings.providers.codex.validationFingerprint,
+        providerValidationFingerprint("codex", validated.settings.providers.codex),
+        "successful validation did not bind to the active configuration"
+      );
       const changed = await connections.saveConnection("codex", { baseUrl: `${baseUrl}/gateway`, apiKeyAction: "keep" });
       assert.equal(changed.providers.codex.models.length, 0);
       assert.equal(changed.providers.codex.selectedModel, "");
@@ -146,7 +181,18 @@ async function main() {
       "../src/backend/services/secretStorageService",
       "../src/backend/agent/agentSettingsService",
     ]) delete require.cache[require.resolve(modulePath)];
+    const actualPaths = require("../src/backend/config/paths");
+    await fs.mkdir(path.dirname(actualPaths.AGENT_SETTINGS_FILE), { recursive: true });
+    await fs.writeFile(actualPaths.AGENT_SETTINGS_FILE, JSON.stringify({
+      ...getDefaultAgentSettings(actualPaths.WORKSPACE_DIR),
+      schemaVersion: 2,
+    }));
     const actualService = require("../src/backend/agent/agentSettingsService");
+    const migratedSettings = await actualService.readAgentSettings();
+    const persistedSettings = JSON.parse(await fs.readFile(actualPaths.AGENT_SETTINGS_FILE, "utf8"));
+    assert.equal(migratedSettings.workspaceRoot, actualPaths.AGENT_WORKSPACES_DIR, "settings service kept the source directory as the default workspace");
+    assert.equal(persistedSettings.schemaVersion, 3, "settings service did not persist the workspace schema migration");
+    assert.equal(persistedSettings.workspaceRoot, actualPaths.AGENT_WORKSPACES_DIR, "settings service did not persist the managed workspace root");
     await actualService.updateProviderConnection("codex", {
       baseUrl,
       apiKey: "stored-secret",

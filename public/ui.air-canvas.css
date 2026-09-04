@@ -1,6 +1,7 @@
 :root {
   color-scheme: light;
   --air-canvas: #f8faf8;
+  --air-canvas-surface: #ffffff;
   --air-canvas-strong: #ffffff;
   --air-workspace: #f1f3f2;
   --air-ink: #20252b;
@@ -154,7 +155,7 @@ body:not(.desktop-mode) .workspace.right-collapsed .desktop-clear-stage {
 .canvas-engine-stage {
   border: 0 !important;
   border-radius: calc(var(--air-radius-window) - 1px) !important;
-  background: var(--air-canvas) !important;
+  background: var(--air-canvas-surface) !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

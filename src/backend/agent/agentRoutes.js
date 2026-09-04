@@ -160,6 +160,14 @@ function createAgentRouter({ runtime, security, connections }) {
     }
   });
 
+  router.post("/sessions/:sessionId/turns/:turnId/retry", async (req, res) => {
+    try {
+      res.status(202).json({ ok: true, ...(await runtime.retryTurn(req.params.sessionId, req.params.turnId)) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   router.post("/sessions/:sessionId/interrupt", async (req, res) => {
     try {
       res.json({ ok: true, ...(await runtime.interruptTurn(req.params.sessionId)) });
