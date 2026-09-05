@@ -15,6 +15,7 @@ const CHECKS = [
   "scripts/check-agent-claude-runtime.js",
   "scripts/check-agent-http.js",
   "scripts/check-desktop-atomic-save.js",
+  "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
   "scripts/check-window-bounds-lifecycle.js",
   "scripts/check-canvas-lod-scale.js",

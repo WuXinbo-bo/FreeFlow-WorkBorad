@@ -7906,31 +7906,42 @@ let tablePointerSelectionState = {
       return { ok: false, error: "当前环境不支持教程画布" };
     }
     const previousBoardPath = String(state.boardFilePath || "").trim();
-    const result = await globalThis.desktopShell.ensureTutorialBoard();
-    if (!result?.ok || !result?.filePath) {
-      setStatus(result?.error || "无法准备教程画布", "warning");
+    stopAutosaveTimer();
+    try {
+      // Finish writes before replacing the tutorial file, then reload before autosave resumes.
+      if (boardSaveInFlight) await boardSaveInFlight;
+      if (previousBoardPath && !(await saveBoard({ silent: true, exactPath: true }))) {
+        setStatus("当前画布保存失败，未切换教程", "warning");
+        return { ok: false, error: "当前画布保存失败", previousBoardPath };
+      }
+      const result = await globalThis.desktopShell.ensureTutorialBoard();
+      if (!result?.ok || !result?.filePath) {
+        setStatus(result?.error || "无法准备教程画布", "warning");
+        return {
+          ok: false,
+          error: result?.error || "无法准备教程画布",
+          previousBoardPath,
+        };
+      }
+      const loaded = await openBoardAtPath(result.filePath, { silent: true, updateSettings: false });
+      if (!loaded) {
+        setStatus("教程画布打开失败", "warning");
+        return {
+          ok: false,
+          error: "教程画布打开失败",
+          filePath: result.filePath,
+          previousBoardPath,
+        };
+      }
+      setStatus("教程画布已打开");
       return {
-        ok: false,
-        error: result?.error || "无法准备教程画布",
+        ok: true,
+        filePath: String(result.filePath || "").trim(),
         previousBoardPath,
       };
+    } finally {
+      if (state.boardAutosaveEnabled) startAutosaveTimer();
     }
-    const loaded = await openBoardAtPath(result.filePath, { silent: true, updateSettings: false });
-    if (!loaded) {
-      setStatus("教程画布打开失败", "warning");
-      return {
-        ok: false,
-        error: "教程画布打开失败",
-        filePath: result.filePath,
-        previousBoardPath,
-      };
-    }
-    setStatus("教程画布已打开");
-    return {
-      ok: true,
-      filePath: String(result.filePath || "").trim(),
-      previousBoardPath,
-    };
   }
 
   async function saveBoardAs() {

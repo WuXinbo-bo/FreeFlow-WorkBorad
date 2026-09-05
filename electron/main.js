@@ -19,6 +19,7 @@ const {
 } = electron;
 const { execFile } = require("child_process");
 const fs = require("fs");
+const { createHash } = require("crypto");
 const os = require("os");
 const sharp = require("sharp");
 const HTMLtoDOCX = require("html-to-docx");
@@ -120,6 +121,7 @@ let desktopEmbedCleanupPromise = Promise.resolve();
 let mainWindowCloseInFlight = false;
 let desktopShortcutSettings = { ...DEFAULT_SHORTCUT_SETTINGS };
 let startupContextCache = null;
+let tutorialBoardPreparation = null;
 let backgroundExportWindow = null;
 let backgroundExportReady = false;
 let backgroundExportTaskSequence = 0;
@@ -937,19 +939,22 @@ async function readTutorialBoardVersionMarker() {
     return {
       version: String(parsed?.version || "").trim(),
       filePath: String(parsed?.filePath || "").trim(),
+      templateHash: String(parsed?.templateHash || "").trim(),
     };
   } catch {
     return {
       version: "",
       filePath: "",
+      templateHash: "",
     };
   }
 }
 
-async function writeTutorialBoardVersionMarker(filePath = "") {
+async function writeTutorialBoardVersionMarker(filePath = "", templateHash = "") {
   const payload = {
     version: TUTORIAL_BOARD_TEMPLATE_VERSION,
     filePath: String(filePath || "").trim(),
+    templateHash,
     updatedAt: Date.now(),
   };
   await fs.promises.mkdir(DATA_DIR, { recursive: true });
@@ -1087,16 +1092,35 @@ async function rewriteTutorialBoardAssetPaths(boardPath, assetTargets = {}) {
     return;
   }
 
-  await fs.promises.writeFile(targetPath, JSON.stringify(document, null, 2), "utf8");
+  await atomicBoardFileWriter.write(targetPath, JSON.stringify(document, null, 2));
 }
 
 async function ensureTutorialBoardFile() {
+  if (!tutorialBoardPreparation) {
+    tutorialBoardPreparation = prepareTutorialBoardFile().finally(() => {
+      tutorialBoardPreparation = null;
+    });
+  }
+  return tutorialBoardPreparation;
+}
+
+async function prepareTutorialBoardFile() {
   const templatePath = resolveTutorialBoardTemplatePath();
-  const targetDir = CANVAS_BOARD_DIR;
+  const settings = await readUiSettingsStore();
+  const configuredPath = String(settings?.canvasBoardSavePath || "").trim();
+  const targetDir = configuredPath
+    ? (isCanvasBoardFileName(path.basename(configuredPath)) ? path.dirname(configuredPath) : configuredPath)
+    : CANVAS_BOARD_DIR;
   const legacyTargetPath = path.join(targetDir, DEFAULT_TUTORIAL_BOARD_NAME);
   const targetPath = path.join(targetDir, TUTORIAL_BOARD_RUNTIME_NAME);
+  const templateRaw = await fs.promises.readFile(templatePath, "utf8");
+  const templateDocument = parseTutorialBoardTemplateDocument(templateRaw, targetPath);
+  const templateHash = createHash("sha256")
+    .update(JSON.stringify(resolveTutorialBoardRoot(templateDocument)))
+    .digest("hex");
   let created = false;
   let updated = false;
+  let backupPath = "";
 
   await fs.promises.mkdir(targetDir, { recursive: true });
   const marker = await readTutorialBoardVersionMarker();
@@ -1123,19 +1147,23 @@ async function ensureTutorialBoardFile() {
   const shouldRefreshTutorialBoard =
     !tutorialBoardExists ||
     marker.version !== TUTORIAL_BOARD_TEMPLATE_VERSION ||
+    marker.templateHash !== templateHash ||
+    marker.filePath !== targetPath ||
     runtimeBoardMissingDocxCard;
 
   if (shouldRefreshTutorialBoard) {
     created = !tutorialBoardExists && !legacyTutorialBoardExists;
     updated = tutorialBoardExists || legacyTutorialBoardExists;
-    const templateRaw = await fs.promises.readFile(templatePath, "utf8");
-    const templateDocument = parseTutorialBoardTemplateDocument(templateRaw, targetPath);
-    await fs.promises.writeFile(targetPath, JSON.stringify(templateDocument, null, 2), "utf8");
+    if (tutorialBoardExists) {
+      backupPath = `${targetPath}.template-backup-${Date.now()}.bak`;
+      await fs.promises.copyFile(targetPath, backupPath, fs.constants.COPYFILE_EXCL);
+    }
+    await atomicBoardFileWriter.write(targetPath, JSON.stringify(templateDocument, null, 2));
   }
 
   const assetTargets = await ensureTutorialAssetTargets(targetDir);
   await rewriteTutorialBoardAssetPaths(targetPath, assetTargets);
-  await writeTutorialBoardVersionMarker(targetPath);
+  await writeTutorialBoardVersionMarker(targetPath, templateHash);
 
   return {
     ok: true,
@@ -1143,6 +1171,7 @@ async function ensureTutorialBoardFile() {
     filePath: targetPath,
     created,
     updated,
+    backupPath,
     version: TUTORIAL_BOARD_TEMPLATE_VERSION,
   };
 }
