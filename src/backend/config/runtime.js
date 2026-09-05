@@ -1,6 +1,7 @@
 const os = require("os");
+const { resolveServerPort } = require("./serverPort");
 
-const PORT = process.env.PORT || 3000;
+const PORT = resolveServerPort({ desktop: Boolean(process.versions.electron) });
 const AI_PROVIDER = String(process.env.AI_PROVIDER || "ollama").trim().toLowerCase();
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 const OPENAI_COMPAT_BASE_URL = process.env.OPENAI_COMPAT_BASE_URL || "http://127.0.0.1:1234/v1";

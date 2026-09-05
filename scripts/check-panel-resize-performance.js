@@ -2,7 +2,7 @@
 
 const { chromium } = require("playwright");
 
-const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:3000/?desktop=1";
+const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const VIEWPORT = { width: 1600, height: 1000 };
 
 function assert(condition, message, detail) {
@@ -151,6 +151,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       panel: { left: panel.left, right: panel.right, width: panel.width, height: panel.height },
       content: { width: content.width, height: content.height },
       surface: surface ? { width: surface.width, height: surface.height } : null,
+      toolbarFilter: getComputedStyle(document.querySelector(".canvas2d-engine-toolbar")).backdropFilter,
+      neighborFilter: getComputedStyle(document.querySelector(".conversation-panel")).backdropFilter,
     };
   }, { panelSelector, contentSelector, measureCanvasSurface: isLeftPanel });
 
@@ -198,6 +200,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       panelClassName: panel.className,
       panelTransform: getComputedStyle(panel).transform,
       panelBackdropFilter: getComputedStyle(panel).backdropFilter,
+      toolbarFilter: getComputedStyle(document.querySelector(".canvas2d-engine-toolbar")).backdropFilter,
+      neighborFilter: getComputedStyle(document.querySelector(".conversation-panel")).backdropFilter,
       panelTransformScale: (() => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(panel).transform);
         return { x: matrix.a, y: matrix.d };
@@ -226,6 +230,8 @@ async function measureGesture(page, { side, deltaX, label }) {
   const expectedPanelWidth = initial.panel.width + (initial.dragEdge === "right" ? deltaX : -deltaX);
   const frameBudget = side === "right" && expectedPanelWidth < initial.panel.width ? 50.5 : 34.5;
   assert(during.active, "panel resize transaction did not remain active during drag", { label, during });
+  if (isLeftPanel) assert(during.toolbarFilter === "none", "canvas toolbar blur remained active during resize");
+  if (isLeftPanel) assert(during.neighborFilter === "none", "neighboring workspace blur remained active during canvas resize");
   assert(during.attributeMutations === 0, "Canvas backing store changed during live panel resize", { label, during });
   assert(during.handleOpacity === 0, "stale resize handle remained visible during live resize", { label, during });
   if (side === "right") {
@@ -292,6 +298,8 @@ async function measureGesture(page, { side, deltaX, label }) {
     const handle = document.querySelector(resizerSelector).getBoundingClientRect();
     return {
       panelWidth: panel.width,
+      toolbarFilter: getComputedStyle(document.querySelector(".canvas2d-engine-toolbar")).backdropFilter,
+      neighborFilter: getComputedStyle(document.querySelector(".conversation-panel")).backdropFilter,
       contentWidth: content.getBoundingClientRect().width,
       previewExists: Boolean(document.querySelector(`.pane-resize-frame[data-resize-side="${side}"]`)),
       panelPreviewActive: panelElement.classList.contains("is-pane-resize-preview"),
@@ -328,6 +336,8 @@ async function measureGesture(page, { side, deltaX, label }) {
       { label, finalGeometry }
     );
   }
+  if (isLeftPanel) assert(finalGeometry.toolbarFilter === initial.toolbarFilter, "canvas toolbar blur did not recover after resize");
+  if (isLeftPanel) assert(finalGeometry.neighborFilter === initial.neighborFilter, "neighboring workspace blur did not recover after canvas resize");
   assert(
     result.canvas.width === Math.round(result.canvas.cssWidth * result.canvas.dpr) &&
       result.canvas.height === Math.round(result.canvas.cssHeight * result.canvas.dpr) &&
@@ -505,6 +515,12 @@ async function main() {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   const page = await context.newPage();
   try {
+    await page.route("**/api/ui-settings", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const version = require("../package.json").version;
+      await route.fulfill({ response, json: { ...await response.json(), hasShownStartupTutorial: true, lastTutorialIntroVersion: version, dismissedTutorialIntroVersion: version } });
+    });
     await installDesktopBridge(page);
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15_000 });

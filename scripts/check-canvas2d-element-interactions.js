@@ -2,7 +2,7 @@
 
 const { chromium } = require("playwright");
 
-const CURRENT_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
+const CURRENT_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:53127/canvas-office.html";
 const BASELINE_URL = String(process.env.CANVAS_BASELINE_URL || "").trim();
 const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
 const CANVAS_SELECTOR = "#canvas-office-canvas";

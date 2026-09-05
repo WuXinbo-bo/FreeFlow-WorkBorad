@@ -1,7 +1,7 @@
 const { chromium } = require("playwright");
 const sharp = require("sharp");
 
-const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
+const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:53127/canvas-office.html";
 const STORAGE_KEY = "ai_worker_canvas_office_board_v3";
 
 function now() {

@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { chromium } = require("playwright");
-const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:3001/?desktop=1";
+const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const only = process.env.CANVAS_FIX_CASE;
 
 async function settle(page) {
@@ -206,7 +206,8 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   const failures = [];
   try {
-    await page.route("**/api/ui-settings", (route) => route.fulfill({ json: { ok: true, hasShownStartupTutorial: true, lastTutorialIntroVersion: "1.2.0", dismissedTutorialIntroVersion: "1.2.0" } }));
+    const version = require("../package.json").version;
+    await page.route("**/api/ui-settings", (route) => route.fulfill({ json: { ok: true, hasShownStartupTutorial: true, lastTutorialIntroVersion: version, dismissedTutorialIntroVersion: version } }));
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__canvas2dEngine && !document.body.classList.contains("app-booting"));
     for (const [name, check] of Object.entries({ navigator: checkNavigator, lines: checkLines, mind: checkMind })) {

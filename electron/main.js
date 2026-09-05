@@ -32,6 +32,7 @@ const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbe
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
+const { resolveServerPort } = require("../src/backend/config/serverPort");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
 const { readUiSettingsStore, writeUiSettingsStore } = require("../src/backend/services/uiSettingsService");
 const {
@@ -60,7 +61,7 @@ const WINDOW_CONFIG = {
   skipTaskbar: false,
 };
 
-const SERVER_PORT = Number(process.env.PORT || 3000);
+let SERVER_PORT = resolveServerPort({ desktop: true });
 const PRODUCT_NAME = "FreeFlow";
 const APP_USER_MODEL_ID = "com.wuxinbo.freeflow";
 const DEFAULT_TUTORIAL_BOARD_NAME = "FreeFlow教程画布.json";
@@ -73,11 +74,11 @@ function isCanvasBoardFileName(fileName = "") {
   const value = String(fileName || "").trim().toLowerCase();
   return value.endsWith(FREEFLOW_BOARD_EXTENSION) || value.endsWith(LEGACY_BOARD_EXTENSION);
 }
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "1.2.0";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "2.0.0";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
-const APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
+let APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
 const PIN_LEVEL = "screen-saver";
 const PIN_RELATIVE_LEVEL = 1;
 const WORD_PREVIEW_TIMEOUT_MS = 45000;
@@ -136,7 +137,7 @@ const BACKGROUND_EXPORT_IPC_CHANNELS = new Set([
   "desktop-shell:save-tile-composite-pdf",
 ]);
 const assertTrustedIpcEvent = createIpcEventValidator({
-  expectedOrigin: APP_URL,
+  expectedOrigin: () => APP_URL,
   getAllowedWebContents(channel) {
     const window = BACKGROUND_EXPORT_IPC_CHANNELS.has(channel) ? backgroundExportWindow : mainWindow;
     return window && !window.isDestroyed() ? [window.webContents] : [];
@@ -2563,7 +2564,9 @@ async function bootstrapDesktopApp() {
   await ensureDesktopStartupContext({ force: true }).catch((error) => {
     console.warn(`[desktop-shell] Failed to initialize startup context: ${error.message}`);
   });
-  await startServer(SERVER_PORT);
+  const server = await startServer(SERVER_PORT);
+  SERVER_PORT = server.address().port;
+  APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
   mainWindow = createMainWindow();
   await mainWindow.loadURL(APP_URL);
   if (EXPORT_SELF_TEST_INPUT && EXPORT_SELF_TEST_OUTPUT) {

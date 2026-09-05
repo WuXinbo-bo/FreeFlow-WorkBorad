@@ -1,7 +1,7 @@
 const assert = require("assert");
 const { chromium } = require("playwright");
 
-const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
+const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:53127/canvas-office.html";
 
 function createMixedItems({ lockedText = true } = {}) {
   return [

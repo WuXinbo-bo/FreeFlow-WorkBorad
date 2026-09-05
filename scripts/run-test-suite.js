@@ -17,6 +17,8 @@ const CHECKS = [
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
+  "scripts/check-server-port.js",
+  "scripts/check-update-service.js",
   "scripts/check-window-bounds-lifecycle.js",
   "scripts/check-canvas-lod-scale.js",
   "scripts/check-overlay-budget.js",

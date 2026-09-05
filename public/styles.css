@@ -1303,6 +1303,16 @@ body.is-pane-resizing .is-pane-resize-preview {
   transform: translateZ(0);
 }
 
+body.is-pane-resizing .desktop-clear-stage.is-pane-resize-preview *,
+body.is-pane-resizing .desktop-clear-stage.is-pane-resize-preview *::before,
+body.is-pane-resizing .desktop-clear-stage.is-pane-resize-preview *::after {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
 .pane-resize-viewport {
   position: absolute;
   min-width: 0;

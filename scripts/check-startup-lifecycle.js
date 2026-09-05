@@ -5,7 +5,7 @@ const http = require("http");
 const path = require("path");
 const { chromium } = require("playwright");
 
-const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:3000/?desktop=1";
+const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const VIEWPORT = { width: 1440, height: 900 };
 const ROOT_DIR = path.resolve(__dirname, "..");
 

@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");
+const { listenOnLoopback } = require("../utils/loopbackServer");
 const { requireLoopbackRequest } = require("../utils/networkBoundary");
 const fsSync = require("fs");
 const fs = require("fs/promises");
@@ -2494,6 +2496,7 @@ app.get(/.*/, (_req, res) => {
 });
 
 let serverInstance = null;
+let serverStartup = null;
 
 function logStartup(port) {
   console.log(`FreeFlow UI running at http://localhost:${port}`);
@@ -2518,26 +2521,21 @@ function startServer(port = PORT) {
     return Promise.resolve(serverInstance);
   }
 
-  return Promise.all([ensureModelProviderSettingsLoaded(), agentRuntime.initialize()]).then(
-    () =>
-      new Promise((resolve, reject) => {
-        const nextServer = app.listen(port, "127.0.0.1", () => {
-          serverInstance = nextServer;
-          logStartup(port);
-          resolve(nextServer);
-        });
-
-        nextServer.once("error", (error) => {
-          if (serverInstance === nextServer) {
-            serverInstance = null;
-          }
-          reject(error);
-        });
+  if (!serverStartup) {
+    serverStartup = Promise.all([ensureModelProviderSettingsLoaded(), agentRuntime.initialize()])
+      .then(() => listenOnLoopback(http.createServer(app), Number(port)))
+      .then((server) => {
+        serverInstance = server;
+        logStartup(server.address().port);
+        return server;
       })
-  );
+      .finally(() => { serverStartup = null; });
+  }
+  return serverStartup;
 }
 
 async function stopServer() {
+  if (serverStartup) await serverStartup.catch(() => {});
   const closePromise = serverInstance ? new Promise((resolve, reject) => {
     const activeServer = serverInstance;
     serverInstance = null;

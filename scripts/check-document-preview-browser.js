@@ -3,7 +3,7 @@ const { chromium } = require("playwright");
 const { Document, Packer, Paragraph, TextRun } = require("docx");
 const { PDFDocument, StandardFonts } = require("pdf-lib");
 
-const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:3000/canvas-office.html";
+const BASE_URL = process.env.CANVAS_TEST_URL || "http://127.0.0.1:53127/canvas-office.html";
 
 async function createPdfBase64(pageCount = 12) {
   const document = await PDFDocument.create();

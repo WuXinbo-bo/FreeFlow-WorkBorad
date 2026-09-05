@@ -27,7 +27,8 @@ body.desktop-mode .conversation-panel.ui-chrome-workspace {
 }
 
 .conversation-panel.ui-chrome-workspace.is-pane-glass-suspended,
-body.desktop-mode .conversation-panel.ui-chrome-workspace.is-pane-glass-suspended {
+body.desktop-mode .conversation-panel.ui-chrome-workspace.is-pane-glass-suspended,
+body.is-pane-resizing .conversation-panel.ui-chrome-workspace {
   background:
     linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.04)),
     rgb(var(--theme-panel-surface-rgb) / 0.92) !important;
@@ -35,17 +36,17 @@ body.desktop-mode .conversation-panel.ui-chrome-workspace.is-pane-glass-suspende
   -webkit-backdrop-filter: none !important;
 }
 
-body.is-pane-resizing .conversation-panel.is-pane-resize-preview::before,
-body.is-pane-resizing .conversation-panel.is-pane-resize-preview::after {
+body.is-pane-resizing .conversation-panel::before,
+body.is-pane-resizing .conversation-panel::after {
   display: none !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-body.is-pane-resizing .conversation-panel.is-pane-resize-preview *,
-body.is-pane-resizing .conversation-panel.is-pane-resize-preview *::before,
-body.is-pane-resizing .conversation-panel.is-pane-resize-preview *::after {
+body.is-pane-resizing .conversation-panel *,
+body.is-pane-resizing .conversation-panel *::before,
+body.is-pane-resizing .conversation-panel *::after {
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

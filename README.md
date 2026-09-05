@@ -1,256 +1,112 @@
-# FreeFlow
+# FreeFlow 2.0
 
 <p align="center">
-  <img src="./public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow Logo" width="96" />
+  <img src="public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow" width="88" />
 </p>
 
-<h3 align="center">本地桌面型结构化内容工作画布</h3>
+**把资料、思路和交付放在同一张画布上。**
 
-<p align="center">
-  把外部内容接入、画布结构化编辑、本地文件管理和办公文档输出连接成一条完整工作流。
-</p>
+FreeFlow 是一款面向 Windows 的本地桌面工作画布。你可以把文字、图片、文件、表格、代码和思维导图放在一起，结合 AI 工作区整理内容，再保存为可继续编辑的画布或导出为办公文档。
 
-<p align="center">
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&logoColor=white" />
-  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-Runtime-339933?logo=node.js&logoColor=white" />
-  <img alt="Canvas" src="https://img.shields.io/badge/Canvas2D-Core-2563EB" />
-  <img alt="License" src="https://img.shields.io/badge/License-Non--Commercial-orange" />
-</p>
+[下载 v2.0.0](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v2.0.0) · [所有版本](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases) · [反馈问题](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/issues)
 
-<p align="center">
-  <a href="https://wuxinbo-bo.github.io/"><strong>Live Demo / 演示网站</strong></a>
-  ·
-  <a href="https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases"><strong>Download / 安装包下载</strong></a>
-</p>
+![FreeFlow 2.0 工作区](screenshots/freeflow-v2-workspace.png)
 
-## FreeFlow 是什么
+## 2.0 更新
 
-FreeFlow 是一个以本地桌面端为核心的知识工作画布。它不是单纯的白板，也不是只用于截图和摆放素材的视觉容器，而是面向知识整理、资料归档、结构化编辑和正式交付的内容工作台。
+- **新的工作区体验**：画布与 AI 工作区支持切换、拖动和调整尺寸，工具、搜索和导出入口集中在画布周围。
+- **重做欢迎与教程**：新版欢迎界面、可编辑的示例画布和分步教程。模板更新会保留旧教程备份，并使用你配置的画布保存目录。
+- **画布编辑与呈现改进**：文本、思维导图、导航和多种结构化元素的编辑、缩放与恢复行为经过回归检查。
+- **主题与设置中心**：集中管理外观、工作区、模型连接、权限、快捷键与更新设置。
+- **启动端口自动避让**：默认本机端口为 53127；端口被其他程序占用时自动选择空闲端口，桌面窗口和导出功能跟随实际地址。
+- **面板拖动性能**：调整画布尺寸时暂停相邻工作区的模糊效果，结束后恢复，减少拖动期间的重复绘制。
 
-它的核心目标是打通这条主链路：
+![新版欢迎界面](screenshots/freeflow-v2-welcome.png)
 
-```text
-外部内容接入 -> 画布结构化编辑 -> 本地工作区沉淀 -> 多格式办公输出
-```
+## 可以做什么
 
-在 FreeFlow 中，文本、图片、文件、表格、代码、公式、链接和节点对象可以被放入同一张画布中组织；这些对象不只是可见元素，还可以参与搜索、复制、导出、保存和后续回流。
-
-## 界面展示
-
-<p align="center">
-  <img src="./image.png" alt="FreeFlow 界面展示" width="100%" />
-</p>
-
-## 为什么是 FreeFlow
-
-很多知识工作并不是从空白文档开始的，而是从网页、截图、Markdown、表格、代码片段、文件资料和临时想法开始。传统工具常见的问题是：
-
-- 白板适合发散，但导出后很难继续编辑。
-- 文档适合交付，但不适合承接碎片化素材。
-- 网页、文件和截图容易散落在不同目录和应用中。
-- 从画布整理到 Word、PDF、Markdown、Excel 往往需要大量手工重排版。
-
-FreeFlow 的设计重点不是“再做一个无限画布”，而是让画布成为结构化内容进入、组织、沉淀和交付的中间工作台。
-
-## 核心特性
-
-### Structured Content Intake：结构化内容接入
-
-FreeFlow 使用统一输入链路处理粘贴、拖放、文件导入和内部复制。外部内容进入系统后，会先转换为可诊断的输入描述，再进入解析和渲染流程。
-
-支持的内容方向包括：
-
-- 文本、富文本和 HTML 片段
-- Markdown 内容
-- 图片和本地文件
-- 代码块、表格、公式
-- 内部画布对象复制与回流
-
-### Native Canvas Objects：原生画布对象
-
-画布对象不是简单贴图。FreeFlow 为多类元素提供统一运行时能力：
-
-- 对象身份和几何边界
-- 拖拽、缩放、选中和组合操作
-- 对象级搜索字段抽取
-- 结构化复制与外部兼容复制
-- 导出前预处理和格式降级
-
-### Local-First Workspace：本地优先工作区
-
-FreeFlow 强调本地文件边界。画布、资源、最近记录和工作区设置都围绕本机目录组织，适合长期资料整理和个人知识资产沉淀。
-
-核心本地能力包括：
-
-- `.freeflow` 画布文件
-- 本地工作区目录
-- 图片与附件资源管理
-- 最近画布恢复
-- 启动状态迁移与兼容
-
-### Office-Ready Export：面向办公交付的导出
-
-FreeFlow 的输出目标不是简单截图，而是让画布内容尽可能进入后续办公流程。
-
-当前核心输出方向包括：
-
-- Word / DOCX
-- Excel / XLSX
-- Markdown
-- CSV / Text
-- PNG / PDF
-- `.freeflow` 本地画布文件
-
-### Large Canvas Runtime：大画布运行时能力
-
-FreeFlow 内置面向大画布的运行机制，用于降低复杂画布下的交互和渲染成本。
-
-相关机制包括：
-
-- Scene Index 场景索引
-- Render Scheduler 渲染调度
-- Dirty Region 局部失效
-- Tile Cache 瓦片缓存
-- LOD 与编辑态覆盖层虚拟化
-
-### Desktop Shell And AI Workspace：桌面壳层与 AI 工作区
-
-项目基于 Electron 构建桌面壳层，提供本地文件访问、窗口控制、系统桥接和外部 AI 工作区嵌入能力。AI 能力不是替代画布，而是作为内容整理和思路生成过程中的辅助工作区。
-
-## 系统架构
-
-```mermaid
-flowchart LR
-  A[Input Gateway] --> B[Parser Registry]
-  B --> C[Canonical Document]
-  C --> D[Renderer Pipeline]
-  D --> E[Canvas Objects]
-  E --> F[Search / Copy / Export]
-  E --> G[Local Workspace]
-  F --> H[Word / Excel / Markdown / PNG / PDF]
-  G --> I[.freeflow Files]
-```
-
-核心分层：
-
-| 层级 | 职责 |
+| 工作内容 | FreeFlow 中的操作 |
 | --- | --- |
-| Electron Shell | 桌面窗口、本地文件访问、系统桥接、AI 工作区集成 |
-| Backend Services | 工作区、持久化、设置、会话、模型配置 |
-| Canvas Host | 画布状态、命令入口、历史记录、选择态、对象生命周期 |
-| Structured Content Pipeline | 输入描述、解析器注册、规范化文档、渲染管线 |
-| Canvas Engine | 原生对象、场景索引、命中测试、渲染调度、瓦片缓存 |
-| Output Layer | 结构化导出、办公格式输出、图片/PDF 导出、`.freeflow` 文件 |
+| 整理资料 | 粘贴文字、Markdown 和图片，拖入本地文件，放入同一画布 |
+| 组织思路 | 使用文本、连线、分组和思维导图表达关系 |
+| 编辑结构化内容 | 编辑表格、代码块、公式和文档预览等元素 |
+| 查找与管理 | 搜索画布内容，切换本地画布与目录，管理图片和附件 |
+| AI 辅助 | 配置模型连接，在 AI 工作区中辅助整理和生成内容 |
+| 交付成果 | 按内容类型导出 Word、Excel、Markdown、PNG、PDF 等格式 |
 
-## 适用场景与产品定位
+画布以 `.freeflow` 文件保存。导出可用格式取决于所选内容；AI 功能需要自行配置支持的模型服务或本地工具。
 
-FreeFlow 主要面向以下场景：
+![2.0 设置中心](screenshots/freeflow-v2-settings.png)
 
-- 产品经理整理需求、流程、竞品资料和交付文档。
-- 研究者整理论文、网页摘录、图表、公式和笔记。
-- 教师组织课件素材、讲义内容和可视化知识结构。
-- 开发者整理代码片段、接口说明、架构草图和技术文档。
-- 个人用户沉淀长期知识库、资料夹和创作过程。
+![关于画布 v2.0.0](screenshots/freeflow-v2-about.png)
 
-## 在线演示与下载
+## 安装与升级
 
-- 演示网站：<https://wuxinbo-bo.github.io/>
-- Windows 安装包：请前往 [GitHub Releases](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases) 下载已打包版本。
+支持 Windows 10/11 x64。
 
-如果你只是想体验产品，建议优先下载 Releases 中的安装包或便携版；如果你需要二次开发，再按下面的快速开始从源码启动。
+1. 在 [Releases](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/latest) 下载 `FreeFlow-v2.0.0-x64.exe`。
+2. 运行安装程序。已有旧版时，关闭旧版后覆盖安装到原目录。
+3. 启动 FreeFlow，选择画布目录，并按需配置 AI 连接。
 
-## 快速开始
+免安装体验可使用 `FreeFlow-v2.0.0-x64-portable.exe`。免安装版仍会在本机保存设置和业务数据。
 
-### 环境要求
+默认业务数据位于 `%USERPROFILE%\FreeFlow`，自定义画布目录按设置使用。升级和卸载不会主动删除业务数据；重要画布建议单独备份。发布页同时提供 `SHA256SUMS.txt`，可用于核对下载文件。
 
-- Windows 10 / Windows 11
-- Node.js 20 或更高版本
-- npm
+### 检查更新
 
-### 安装依赖
+应用内“检查更新”从本仓库的 GitHub Releases 获取最新正式版本，比较当前版本后提供安装包下载入口。升级通过运行新版安装包完成。
 
-```powershell
-npm install
-```
+发布标签采用 `v2.0.0` 形式，安装包必须保持 `FreeFlow-v<版本>-x64.exe` 命名。便携版不能替代这个安装包文件。网络不可用或 GitHub 接口限流时可以稍后重试。
 
-`.env` 中的 AI 配置是可选项；即使暂时不配置模型服务，也可以先启动主程序并使用画布、本地文件和导出能力。
+## 从源码运行
 
-### 启动桌面版
+建议使用 Node.js 24 LTS 与 npm。Windows 桌面能力以 Electron 运行结果为准。
 
 ```powershell
+git clone https://github.com/WuXinbo-bo/FreeFlow-WorkBorad.git
+cd FreeFlow-WorkBorad
+npm ci
 npm run start:desktop
 ```
 
-### 启动 Web 调试服务
+仅启动网页开发服务：
 
 ```powershell
 npm start
 ```
 
-桌面版是主要运行形态。Web 服务主要用于本地开发和调试，不作为正式使用入口。
+默认地址为 `http://127.0.0.1:53127`。若端口被占用，请使用终端打印的实际地址。网页模式不具备全部桌面文件与窗口能力。
 
-## 构建与打包
-
-构建 Canvas2D UI 资源：
+需要指定端口时，设置 `FREEFLOW_PORT`；设置为 `0` 可始终由系统分配。桌面端不再继承其他开发项目设置的通用 `PORT` 环境变量。
 
 ```powershell
-npm run build:canvas2d-ui
+$env:FREEFLOW_PORT = "53128"
+npm run start:desktop
 ```
 
-准备桌面打包资源：
+模型服务配置可参考 `.env.example` 或应用设置中心。不要将真实令牌、账号配置和个人业务数据提交到仓库。
+
+## 测试与打包
 
 ```powershell
+npm ci
+npx playwright install chromium
 npm run prepare:desktop-build
-```
-
-构建 Windows 安装包：
-
-```powershell
+npm test
+npm run check:release-version
+npm run check:desktop-upgrade
+npm run check:desktop-packaging
 npm run dist:win
 ```
 
-## 常用命令
+`npm test` 包含后端、桌面通信、画布编辑、启动恢复、设置、教程及浏览器交互检查。正式打包会重新生成资源并执行版本、打包与升级检查，产物位于 `release/`。
 
-| 命令 | 说明 |
-| --- | --- |
-| `npm start` | 启动本地后端 / Web 服务 |
-| `npm run start:desktop` | 启动 Electron 桌面版 |
-| `npm run build:canvas2d-ui` | 构建主画布 UI 资源 |
-| `npm run build:canvas-office` | 构建办公导出相关前端资源 |
-| `npm run check:canvas2d-regression` | 运行 Canvas2D 回归检查 |
-| `npm run check:desktop-packaging` | 检查桌面打包前置条件 |
-| `npm run dist:win` | 生成 Windows 安装版和便携版 |
+发布流程和产物命名见 [打包说明](build/README.md)。2.0 发布前的远程 `main` 保存在 [备份分支](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/backup/main-before-v2.0.0-20260905)。
 
-## 项目结构
+## 反馈与许可
 
-```text
-electron/                 Electron 主进程、preload、系统桥接
-src/backend/              后端服务、持久化、工作区逻辑
-public/                   应用壳层、Canvas2D runtime、静态资源、前端代码
-public/src/engines/       画布引擎与结构化内容管线
-scripts/                  构建、打包、验证与辅助脚本
-build/                    桌面打包资源与预置文件
-data/                     公开教程画布预置资源
-server.js                 本地服务入口
-package.json              依赖与 npm 脚本
-```
+提交 Issue 时请提供软件版本、复现步骤和必要截图，并移除个人文件、账号和密钥信息。
 
+本项目允许非商业使用；商业使用需要作者授权。具体范围以 [LICENSE.md](LICENSE.md) 为准。
 
-## 许可说明
-
-FreeFlow 当前以非商业用途可见源码许可方式发布。
-
-你可以将本项目用于个人学习、研究、教育和非营利项目，也可以在非商业前提下复制、修改和分发。任何商业使用都必须事先获得书面授权。
-
-详细条款见 [LICENSE.md](./LICENSE.md)。
-
-## 联系方式
-
-项目联系：
-
-- 1806598228@qq.com
-
-
-## 说明与致谢
-
-感谢参与 FreeFlow 内测与试用反馈的同学和朋友。正是这些真实使用过程中的问题反馈、体验建议和稳定性观察，帮助项目持续修正交互细节、完善本地工作流，并推动版本迭代走向更可用的正式形态。
+作者：Wu Xinbo · 联系邮箱：180695828@qq.com

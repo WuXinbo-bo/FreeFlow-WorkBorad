@@ -4,7 +4,7 @@ const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 
-const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:3000/?desktop=1";
+const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const TUTORIAL_EVENT = "freeflow:tutorial-ui-event";
 const ARTIFACT_DIR = path.resolve(__dirname, "../tmp/welcome-check");
 

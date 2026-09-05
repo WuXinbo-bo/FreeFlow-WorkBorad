@@ -1,7 +1,9 @@
 "use strict";
 
 function createIpcEventValidator({ expectedOrigin, getAllowedWebContents }) {
-  const normalizedOrigin = new URL(expectedOrigin).origin;
+  const getExpectedOrigin = typeof expectedOrigin === "function"
+    ? expectedOrigin
+    : () => expectedOrigin;
   if (typeof getAllowedWebContents !== "function") {
     throw new TypeError("getAllowedWebContents must be a function");
   }
@@ -28,7 +30,7 @@ function createIpcEventValidator({ expectedOrigin, getAllowedWebContents }) {
     } catch {
       throw new Error(`Rejected IPC ${channel}: sender URL is invalid`);
     }
-    if (senderOrigin !== normalizedOrigin) {
+    if (senderOrigin !== new URL(getExpectedOrigin()).origin) {
       throw new Error(`Rejected IPC ${channel}: sender origin is not allowed`);
     }
   };
