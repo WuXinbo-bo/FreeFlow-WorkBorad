@@ -1,4 +1,6 @@
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
 const { spawn } = require("child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -43,7 +45,6 @@ const CHECKS = [
   "scripts/check-element-runtime-architecture.js",
   "scripts/check-builtin-element-registry.js",
   "scripts/check-canvas-ui-runtime.js",
-  "scripts/check-canvas-command-integration.js",
   "scripts/check-document-preview-runtime.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
@@ -105,13 +106,32 @@ async function main() {
     await runNodeScript(scriptPath);
   }
 
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-suite-"));
+  const testData = path.join(testHome, "AppData");
+  fs.mkdirSync(testData);
+  const version = require("../package.json").version;
+  fs.writeFileSync(path.join(testData, "ui-settings.json"), JSON.stringify({
+    hasShownStartupTutorial: true,
+    lastTutorialIntroVersion: version,
+    dismissedTutorialIntroVersion: version,
+  }));
   const server = spawn(process.execPath, ["server.js"], {
     cwd: ROOT_DIR,
-    env: { ...process.env, PORT: String(TEST_PORT) },
+    env: {
+      ...process.env,
+      FREEFLOW_PORT: String(TEST_PORT),
+      FREEFLOW_HOME_DIR: testHome,
+      FREEFLOW_USER_DATA_DIR: testData,
+      FREEFLOW_CANVAS_BOARD_DIR: path.join(testHome, "Boards"),
+      FREEFLOW_LEGACY_PROJECT_DATA_DIR: path.join(testHome, "Legacy"),
+    },
     stdio: "inherit",
   });
   try {
     await waitForServer(server);
+    await runNodeScript("scripts/check-canvas-command-integration.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-canvas-compact-presentation.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
@@ -156,6 +176,7 @@ async function main() {
     });
   } finally {
     await stopServer(server);
+    fs.rmSync(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
   console.log("[test] all checks passed");
 }
