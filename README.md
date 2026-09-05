@@ -1,14 +1,41 @@
-# FreeFlow 2.0
+# FreeFlow
 
 <p align="center">
-  <img src="public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow" width="88" />
+  <img src="public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow Logo" width="96" />
 </p>
 
-**把资料、思路和交付放在同一张画布上。**
+<h3 align="center">本地桌面型结构化内容工作画布</h3>
 
-FreeFlow 是一款面向 Windows 的本地桌面工作画布。你可以把文字、图片、文件、表格、代码和思维导图放在一起，结合 AI 工作区整理内容，再保存为可继续编辑的画布或导出为办公文档。
+<p align="center">
+  把外部内容接入、画布结构化编辑、本地文件管理和办公文档输出连接成一条完整工作流。
+</p>
 
-[下载 v2.0.0](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v2.0.0) · [所有版本](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases) · [反馈问题](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/issues)
+<p align="center">
+  <img alt="Electron Desktop" src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&amp;logoColor=white" />
+  <img alt="Node.js Runtime" src="https://img.shields.io/badge/Node.js-Runtime-339933?logo=node.js&amp;logoColor=white" />
+  <img alt="Canvas2D Core" src="https://img.shields.io/badge/Canvas2D-Core-2563EB" />
+  <img alt="License Non-Commercial" src="https://img.shields.io/badge/License-Non--Commercial-orange" />
+</p>
+
+<p align="center">
+  <a href="https://wuxinbo-bo.github.io/"><strong>Live Demo / 演示网站</strong></a>
+  ·
+  <a href="https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v2.0.0"><strong>Download / 安装包下载</strong></a>
+</p>
+
+## FreeFlow 是什么
+
+FreeFlow 是一个以 Windows 本地桌面端为核心的知识工作画布，面向知识整理、资料归档、结构化编辑和正式交付。你可以在同一工作区整理素材、组织思路，并结合 AI 助手完成内容加工。
+
+它的核心目标是打通这条主链路：
+
+```text
+外部内容接入 -> 画布结构化编辑 -> 本地工作区沉淀 -> 多格式办公输出
+```
+
+在 FreeFlow 中，文本、图片、文件、表格、代码、公式、链接和节点对象可以被放入同一张画布中组织，并参与搜索、复制、导出、保存和后续编辑。
+
+## 界面展示
 
 ![FreeFlow 2.0 工作区](screenshots/freeflow-v2-workspace.png)
 

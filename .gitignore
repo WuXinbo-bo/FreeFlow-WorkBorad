@@ -27,9 +27,7 @@ data/permissions.json
 data/sessions.json
 data/ui-settings.json
 
-public/assets/vendor/docx-preview/
 public/assets/vendor/html-to-docx/
-public/assets/vendor/jszip/
 public/assets/vendor/pdfjs-dist/
 
 *.log
