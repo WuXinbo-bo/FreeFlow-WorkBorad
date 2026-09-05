@@ -2,6 +2,7 @@ import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../tutoria
 import { TUTORIAL_EVENT_TYPES, TUTORIAL_IDS } from "../../tutorial-core/tutorialTypes.js";
 import { createGlobalTutorialEntryItems } from "./globalTutorialEntry.js";
 import { createGlobalTutorialRuntime } from "./globalTutorialRuntime.js";
+import { mountWelcomeIntro, renderWelcomeIntro } from "./welcomeIntro.js";
 
 const TUTORIAL_FLOATING_OBSTACLE_SELECTORS = Object.freeze([
   "#insight-drawer.is-open",
@@ -284,42 +285,7 @@ function createCenterMarkup(snapshot) {
     `;
   }
   if (centerView === "intro") {
-    return `
-      <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
-        <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
-        <div class="canvas2d-tutorial-center global-tutorial-center is-intro" role="dialog" aria-modal="true" aria-label="欢迎使用 FreeFlow" data-shape-include="true" data-shape-padding="8">
-          <div class="tutorial-intro-brand">
-            <img class="tutorial-intro-logo" src="./assets/brand/FreeFlow_app_icon.png" alt="" />
-            <span><strong>FreeFlow</strong><small>Air Canvas</small></span>
-          </div>
-          <div class="tutorial-intro-copy">
-            <span class="tutorial-eyebrow">快速了解</span>
-            <h2>欢迎使用 FreeFlow</h2>
-            <p>在左侧组织想法，在右侧与 AI 协作，让内容始终留在同一个工作空间。</p>
-          </div>
-          <div class="tutorial-workflow" aria-label="FreeFlow 工作流示意">
-            <section class="tutorial-workflow-panel is-canvas">
-              <header><span>${renderTutorialIcon("canvas")}</span><strong>画布</strong></header>
-              <div class="tutorial-workflow-canvas"><i></i><i></i><i></i><b></b></div>
-            </section>
-            <span class="tutorial-workflow-link">${renderTutorialIcon("arrow")}</span>
-            <section class="tutorial-workflow-panel is-assistant">
-              <header><span>${renderTutorialIcon("screen")}</span><strong>AI 工作台</strong></header>
-              <div class="tutorial-workflow-chat"><i></i><i></i><b></b></div>
-            </section>
-          </div>
-          <div class="tutorial-intro-steps">
-            <div class="tutorial-intro-step"><span>01</span><strong>创建内容</strong><small>文字、文件与节点</small></div>
-            <div class="tutorial-intro-step"><span>02</span><strong>组织画布</strong><small>排布、连接与聚焦</small></div>
-            <div class="tutorial-intro-step"><span>03</span><strong>交给 AI</strong><small>基于当前工作区协作</small></div>
-          </div>
-          <div class="tutorial-intro-actions">
-            <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-open-center>${renderTutorialIcon("play")}<span>开始快速了解</span></button>
-            <button type="button" class="canvas2d-tutorial-overlay-btn is-secondary" data-global-tutorial-dismiss-intro>稍后再看</button>
-          </div>
-        </div>
-      </div>
-    `;
+    return renderWelcomeIntro(renderTutorialIcon, renderCloseButton);
   }
   if (centerView === "shortcut-guide") {
     return `
@@ -420,6 +386,9 @@ export function mountGlobalTutorialHost({
   let unsubscribeBus = () => {};
   let unsubscribeStore = () => {};
   let measureFrame = 0;
+  let cleanupWelcome = () => {};
+  let welcomePlayed = false;
+  let returnFocus = null;
 
   function stopMeasureLoop() {
     if (measureFrame) {
@@ -614,6 +583,13 @@ export function mountGlobalTutorialHost({
       return;
     }
     const snapshot = runtime.getSnapshot();
+    const isIntro = snapshot.centerOpen && snapshot.centerView === "intro";
+    if (isIntro && host.querySelector(".is-intro")) return;
+    if ((snapshot.centerOpen || snapshot.overlayOpen) && !host.firstElementChild) {
+      returnFocus = document.activeElement;
+    }
+    cleanupWelcome();
+    cleanupWelcome = () => {};
     host.innerHTML = snapshot.centerOpen
       ? createCenterMarkup(snapshot)
       : snapshot.overlayOpen
@@ -622,9 +598,20 @@ export function mountGlobalTutorialHost({
     if (!snapshot.centerOpen && !snapshot.overlayOpen) {
       stopMeasureLoop();
       requestShapeSync();
+      requestFinalShapeSync();
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+      returnFocus = null;
       return;
     }
     bindInteractions(snapshot);
+    if (isIntro) {
+      cleanupWelcome = mountWelcomeIntro(host.querySelector(".is-intro"), {
+        play: !welcomePlayed,
+        onComplete: () => { welcomePlayed = true; },
+      });
+    } else if (snapshot.centerOpen) {
+      host.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
+    }
     if (snapshot.overlayOpen) {
       updateOverlayPosition();
       startMeasureLoop();
@@ -660,6 +647,7 @@ export function mountGlobalTutorialHost({
       runtime.openCenter();
     },
     destroy() {
+      cleanupWelcome();
       stopMeasureLoop();
       unsubscribeBus();
       unsubscribeStore();

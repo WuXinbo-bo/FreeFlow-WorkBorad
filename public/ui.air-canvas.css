@@ -1247,7 +1247,7 @@ body:has(.canvas2d-word-export-overlay) .stage-panel-controls {
   background: transparent !important;
 }
 
-.canvas2d-tutorial-center,
+.canvas2d-tutorial-center:not(.is-intro),
 .canvas2d-tutorial-overlay-panel {
   gap: 14px !important;
   padding: 18px !important;
