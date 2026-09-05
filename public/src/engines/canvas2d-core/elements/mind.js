@@ -101,6 +101,8 @@ export function createMindNodeElement(point, title = "") {
     collapsed: false,
     childrenIds: [],
     links: [],
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    textResizeMode: TEXT_RESIZE_MODE_WRAP,
     createdAt: Date.now(),
   });
 }
@@ -135,6 +137,8 @@ export function normalizeMindNodeElement(element = {}) {
     collapsed: Boolean(element.collapsed),
     childrenIds: normalizeMindChildrenIds(element.childrenIds || base.childrenIds),
     links: normalizeMindNodeLinks(element.links || base.links),
+    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
+    textResizeMode: TEXT_RESIZE_MODE_WRAP,
     createdAt: Number(element.createdAt) || base.createdAt,
   };
   normalized.title = buildTextTitle(normalized.plainText || normalized.title || "");

@@ -263,6 +263,18 @@ export function createTransientMinimap({
   let lastCanvasHeight = DEFAULT_HEIGHT;
   let snapshotRenderCount = 0;
   let viewportRenderCount = 0;
+  let placementObserver = null;
+  let sizeObserver = null;
+  let observedAnchor = null;
+  let placementFrame = 0;
+
+  function schedulePlacement() {
+    if (!mounted || placementFrame) return;
+    placementFrame = requestAnimationFrame(() => {
+      placementFrame = 0;
+      if (mounted) syncPlacement();
+    });
+  }
 
   function syncDebugStats() {
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -386,16 +398,24 @@ export function createTransientMinimap({
       return;
     }
     const anchor = resolveAnchorRect(host);
+    const anchorElement = host.closest(".canvas-engine-stage")?.querySelector(".canvas2d-floating-card-info");
+    if (sizeObserver && anchorElement !== observedAnchor) {
+      if (observedAnchor) sizeObserver.unobserve(observedAnchor);
+      observedAnchor = anchorElement || null;
+      if (observedAnchor) sizeObserver.observe(observedAnchor);
+    }
     const hostRect = host.getBoundingClientRect();
     const navigator = host.closest(".canvas-engine-stage")?.querySelector(".canvas2d-navigator-panel");
     const navigatorRect = navigator instanceof HTMLElement && getComputedStyle(navigator).display !== "none"
       ? navigator.getBoundingClientRect()
       : null;
-    const navigatorSafeLeft = navigatorRect ? navigatorRect.right - hostRect.left + 12 : DEFAULT_MARGIN;
+    const top = anchor ? anchor.bottom + 10 : DEFAULT_MARGIN + 84;
+    const overlapsNavigator = navigatorRect && navigatorRect.top < hostRect.top + top + shell.offsetHeight && navigatorRect.bottom > hostRect.top + top;
+    const navigatorSafeLeft = overlapsNavigator ? navigatorRect.right - hostRect.left + 12 : DEFAULT_MARGIN;
     const desiredLeft = anchor ? Math.max(anchor.left, navigatorSafeLeft) : navigatorSafeLeft;
     const maxLeft = Math.max(DEFAULT_MARGIN, host.clientWidth - shell.offsetWidth - DEFAULT_MARGIN);
     shell.style.left = `${Math.round(Math.min(desiredLeft, maxLeft))}px`;
-    shell.style.top = `${Math.round(anchor ? anchor.bottom + 10 : DEFAULT_MARGIN + 84)}px`;
+    shell.style.top = `${Math.round(top)}px`;
     shell.style.right = "auto";
     shell.style.bottom = "auto";
   }
@@ -459,6 +479,20 @@ export function createTransientMinimap({
         return false;
       }
       mounted = true;
+      sizeObserver = new ResizeObserver(schedulePlacement);
+      sizeObserver.observe(host);
+      sizeObserver.observe(shell);
+      const stage = host.closest(".canvas-engine-stage") || host.parentElement;
+      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-engine-corner-top-left, .canvas2d-floating-card-info";
+      // React replaces directory DOM after the board update; measure that committed layout.
+      placementObserver = new MutationObserver((records) => {
+        if (records.some((record) => record.type === "attributes"
+          ? record.target.matches?.(placementSelector)
+          : [...record.addedNodes, ...record.removedNodes].some((node) => node.matches?.(placementSelector) || node.querySelector?.(placementSelector)))) {
+          schedulePlacement();
+        }
+      });
+      if (stage) placementObserver.observe(stage, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
       lastSceneRevision = -1;
       snapshotRenderCount = 0;
       viewportRenderCount = 0;
@@ -469,6 +503,13 @@ export function createTransientMinimap({
     },
     unmount() {
       mounted = false;
+      placementObserver?.disconnect();
+      sizeObserver?.disconnect();
+      placementObserver = null;
+      sizeObserver = null;
+      observedAnchor = null;
+      if (placementFrame) cancelAnimationFrame(placementFrame);
+      placementFrame = 0;
       lastSceneRevision = -1;
       lastLayout = null;
       lastBoardBounds = null;

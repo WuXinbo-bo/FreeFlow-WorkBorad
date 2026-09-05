@@ -1,4 +1,5 @@
 import { getTextMinSize, TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT, TEXT_RESIZE_MODE_WRAP } from "./text.js";
+import { MIND_NODE_PADDING, getMindNodeFooterHeight } from "./mindStyle.js";
 
 export const MIND_LAYOUT_MODE_HORIZONTAL = "horizontal";
 export const MIND_BRANCH_AUTO = "auto";
@@ -48,6 +49,7 @@ export function normalizeMindChildrenIds(value = []) {
 
 export function syncMindNodeTextMetrics(item = {}) {
   const next = { ...item };
+  const width = Math.max(180, Number(next.width) || 220);
   const metrics = getTextMinSize(
     {
       ...next,
@@ -59,12 +61,13 @@ export function syncMindNodeTextMetrics(item = {}) {
       textResizeMode: TEXT_RESIZE_MODE_WRAP,
     },
     {
-      widthHint: Math.max(180, Number(next.width || 0) || 220),
+      widthHint: width - MIND_NODE_PADDING.x * 2,
+      heightHint: 40,
       fontSize: Math.max(12, Number(next.fontSize || 18) || 18),
     }
   );
-  next.width = Math.max(180, Number(metrics.width || next.width || 220) || 220);
-  next.height = Math.max(72, Number(metrics.height || next.height || 96) || 96);
+  next.width = width;
+  next.height = Math.max(72, Number(metrics.height || 40) + MIND_NODE_PADDING.y * 2 + getMindNodeFooterHeight(next));
   return next;
 }
 
@@ -180,7 +183,7 @@ function layoutBranch(parent, children, side, index, patchById) {
     cursorY += subtreeHeight + MIND_NODE_VERTICAL_GAP;
     if (!child.collapsed) {
       const grandChildren = index.childrenByParent.get(String(child.id || "")) || [];
-      layoutBranch(child, grandChildren, side, index, patchById);
+      layoutBranch({ ...child, ...patchById.get(String(child.id || "")) }, grandChildren, side, index, patchById);
     }
   });
 }
@@ -221,6 +224,9 @@ export function applyMindMapAutoLayout(items = [], rootId = "", options = {}) {
     }
     const patch = patchById.get(String(item.id || ""));
     if (!patch) {
+      return item;
+    }
+    if (Object.entries(patch).every(([key, value]) => item[key] === value)) {
       return item;
     }
     return {
@@ -273,7 +279,7 @@ export function collectMindMapVisibleConnections(items = []) {
       return;
     }
     const parent = index.byId.get(parentId);
-    if (!parent || hasCollapsedAncestor(node)) {
+    if (!parent || hasCollapsedAncestor(index, node)) {
       return;
     }
     const side = normalizeMindBranchSide(node.branchSide, MIND_BRANCH_RIGHT);
@@ -303,11 +309,11 @@ export function collectMindMapVisibleSummaries(items = []) {
   });
 }
 
-export function isMindMapItemVisible(item = {}, items = []) {
+export function isMindMapItemVisible(item = {}, items = [], index = null) {
   if (!item || typeof item !== "object") {
     return true;
   }
-  const index = buildMindMapIndex(items);
+  index = index || buildMindMapIndex(items);
   if (isMindMapNode(item)) {
     return !hasCollapsedAncestor(index, item);
   }

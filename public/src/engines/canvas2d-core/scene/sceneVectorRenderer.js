@@ -7,6 +7,7 @@ import {
   MIND_BRANCH_LEFT,
 } from "../elements/mindMap.js";
 import { getMindRelationshipGeometry, isMindRelationshipItem } from "../elements/mindRelationship.js";
+import { getMindNodeStyle, MIND_CONNECTION_STYLE, getMindCollapsedBadgeBounds } from "../elements/mindStyle.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -346,14 +347,13 @@ function createMindNodeNode() {
   const node = createSvgElement("g", "canvas2d-scene-vector-item canvas2d-scene-mind-node-item");
   node.append(
     createSvgElement("rect", "canvas2d-scene-mind-node-body"),
-    createSvgElement("rect", "canvas2d-scene-mind-node-accent"),
     createSvgElement("g", "canvas2d-scene-mind-node-link"),
     createSvgElement("g", "canvas2d-scene-mind-node-collapsed")
   );
   return node;
 }
 
-function syncMindNodeLink(node, item, bounds, selected, scale) {
+function syncMindNodeLink(node, item, bounds, selected) {
   const links = Array.isArray(item.links) ? item.links : [];
   node.style.display = links.length && !selected ? "block" : "none";
   if (!links.length || selected) {
@@ -367,8 +367,8 @@ function syncMindNodeLink(node, item, bounds, selected, scale) {
       createSvgElement("text", "is-count")
     );
   }
-  const size = Math.max(8 / scale, Math.min(18 / scale, 14));
-  const inset = Math.max(2 / scale, Math.min(10 / scale, 6));
+  const size = 14;
+  const inset = 6;
   const centerX = bounds.right - inset - size / 2;
   const centerY = bounds.bottom - inset - size / 2;
   const first = node.querySelector(".is-first");
@@ -381,11 +381,11 @@ function syncMindNodeLink(node, item, bounds, selected, scale) {
     setAttribute(entry, "transform", `rotate(-35 ${centerX} ${centerY})`);
     setAttribute(entry, "fill", "none");
     setAttribute(entry, "stroke", "rgba(29, 78, 216, 0.96)");
-    setAttribute(entry, "stroke-width", Math.max(1 / scale, Math.min(2.2 / scale, size * 0.12)));
+    setAttribute(entry, "stroke-width", size * 0.12);
   });
   const badge = node.querySelector(".is-badge");
   const count = node.querySelector(".is-count");
-  const badgeSize = Math.max(8 / scale, Math.min(14 / scale, 10));
+  const badgeSize = 10;
   const showBadge = links.length > 1;
   badge.style.display = showBadge ? "block" : "none";
   count.style.display = showBadge ? "block" : "none";
@@ -399,7 +399,7 @@ function syncMindNodeLink(node, item, bounds, selected, scale) {
     setAttribute(count, "x", badgeX);
     setAttribute(count, "y", badgeY);
     setAttribute(count, "fill", "#ffffff");
-    setAttribute(count, "font-size", Math.max(6 / scale, badgeSize * 0.58));
+    setAttribute(count, "font-size", 6);
     setAttribute(count, "font-weight", 700);
     setAttribute(count, "text-anchor", "middle");
     setAttribute(count, "dominant-baseline", "central");
@@ -407,7 +407,7 @@ function syncMindNodeLink(node, item, bounds, selected, scale) {
   }
 }
 
-function syncMindCollapsedBadge(node, item, bounds, scale) {
+function syncMindCollapsedBadge(node, item) {
   const childCount = Math.max(0, Array.isArray(item.childrenIds) ? item.childrenIds.length : 0);
   node.style.display = item.collapsed && childCount ? "block" : "none";
   if (!item.collapsed || !childCount) {
@@ -421,33 +421,31 @@ function syncMindCollapsedBadge(node, item, bounds, scale) {
       createSvgElement("text", "is-count")
     );
   }
-  const height = 20 / scale;
-  const width = (30 + String(childCount).length * 7) / scale;
-  const x = bounds.right - width - 10 / scale;
-  const y = bounds.top + 10 / scale;
+  const { x, y, width, height } = getMindCollapsedBadgeBounds(item);
   const body = node.querySelector(".is-body");
   setAttribute(body, "x", x);
   setAttribute(body, "y", y);
   setAttribute(body, "width", width);
   setAttribute(body, "height", height);
-  setAttribute(body, "rx", height / 2);
-  setAttribute(body, "fill", "rgba(37, 99, 235, 0.96)");
-  const centerX = x + 10 / scale;
+  setAttribute(body, "rx", 4);
+  setAttribute(body, "fill", "#e4eeea");
+  const centerX = x + 10;
   const centerY = y + height / 2;
-  const arm = 4 / scale;
+  const arm = 4;
   [node.querySelector(".is-plus-x"), node.querySelector(".is-plus-y")].forEach((entry, index) => {
     setAttribute(entry, "x1", centerX - (index ? 0 : arm));
     setAttribute(entry, "y1", centerY - (index ? arm : 0));
     setAttribute(entry, "x2", centerX + (index ? 0 : arm));
     setAttribute(entry, "y2", centerY + (index ? arm : 0));
-    setAttribute(entry, "stroke", "#ffffff");
-    setAttribute(entry, "stroke-width", 2 / scale);
+    setAttribute(entry, "stroke", "#3f6b60");
+    setAttribute(entry, "stroke-width", 1.5);
   });
   const count = node.querySelector(".is-count");
-  setAttribute(count, "x", x + 18 / scale);
+  setAttribute(count, "x", x + 18);
   setAttribute(count, "y", centerY);
-  setAttribute(count, "fill", "#ffffff");
-  setAttribute(count, "font-size", 11 / scale);
+  setAttribute(count, "fill", "#3f6b60");
+  setAttribute(count, "font-family", "Segoe UI, sans-serif");
+  setAttribute(count, "font-size", 11);
   setAttribute(count, "font-weight", 700);
   setAttribute(count, "dominant-baseline", "central");
   count.textContent = String(childCount);
@@ -455,39 +453,25 @@ function syncMindCollapsedBadge(node, item, bounds, scale) {
 
 function syncMindNodeNode(node, item, selectedIds, view) {
   const body = node.querySelector(".canvas2d-scene-mind-node-body");
-  const accent = node.querySelector(".canvas2d-scene-mind-node-accent");
   const link = node.querySelector(".canvas2d-scene-mind-node-link");
   const collapsed = node.querySelector(".canvas2d-scene-mind-node-collapsed");
-  if (!(body instanceof SVGElement) || !(accent instanceof SVGElement) || !(link instanceof SVGElement) || !(collapsed instanceof SVGElement)) {
+  if (!(body instanceof SVGElement) || !(link instanceof SVGElement) || !(collapsed instanceof SVGElement)) {
     return false;
   }
   const bounds = getElementBounds(item);
-  const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
-  const depth = Math.max(0, Number(item.depth || 0) || 0);
-  const summary = item.type === "mindSummary";
-  const radius = (summary ? 20 : depth === 0 ? 22 : depth === 1 ? 20 : 18) / scale;
+  const style = getMindNodeStyle(item);
   setAttribute(body, "x", bounds.left);
   setAttribute(body, "y", bounds.top);
   setAttribute(body, "width", bounds.width);
   setAttribute(body, "height", bounds.height);
-  setAttribute(body, "rx", radius);
-  setAttribute(body, "fill", summary ? "rgba(255, 247, 237, 0.98)" : depth === 0 ? "rgba(221, 235, 255, 0.98)" : "rgba(255, 255, 255, 0.995)");
-  setAttribute(body, "stroke", summary ? "rgba(249, 115, 22, 0.72)" : "rgba(37, 99, 235, 0.9)");
-  setAttribute(body, "stroke-width", (summary ? 1.8 : 1.2) / scale);
-  setOptionalAttribute(body, "stroke-dasharray", summary ? `${10 / scale} ${6 / scale}` : "");
-  const accentHeight = depth === 1 && !summary ? 12 / scale : 0;
-  accent.style.display = accentHeight ? "block" : "none";
-  if (accentHeight) {
-    setAttribute(accent, "x", bounds.left);
-    setAttribute(accent, "y", bounds.bottom - accentHeight);
-    setAttribute(accent, "width", bounds.width);
-    setAttribute(accent, "height", accentHeight);
-    setAttribute(accent, "rx", Math.min(radius, accentHeight / 2));
-    setAttribute(accent, "fill", "rgba(37, 99, 235, 0.96)");
-  }
+  setAttribute(body, "rx", style.radius);
+  setAttribute(body, "fill", style.fill);
+  setAttribute(body, "stroke", style.stroke);
+  setAttribute(body, "stroke-width", style.strokeWidth);
+  setOptionalAttribute(body, "stroke-dasharray", style.dash.join(" "));
   const selected = selectedIds.has(String(item.id || ""));
-  syncMindNodeLink(link, item, bounds, selected, scale);
-  syncMindCollapsedBadge(collapsed, item, bounds, scale);
+  syncMindNodeLink(link, item, bounds, selected);
+  syncMindCollapsedBadge(collapsed, item);
   return true;
 }
 
@@ -566,8 +550,8 @@ export function createSceneVectorRenderer({ host = null } = {}) {
       const direction = leftBranch ? -1 : 1;
       const elbowX = fromX + direction * Math.max(18, Math.abs(toX - fromX) * 0.38);
       setAttribute(node, "d", `M ${fromX} ${fromY} C ${elbowX} ${fromY}, ${toX - direction * 12} ${toY}, ${toX} ${toY}`);
-      setAttribute(node, "stroke", "rgba(14, 116, 144, 0.34)");
-      setAttribute(node, "stroke-width", 1.1);
+      setAttribute(node, "stroke", MIND_CONNECTION_STYLE.color);
+      setAttribute(node, "stroke-width", MIND_CONNECTION_STYLE.width);
       activeKeys.add(key);
       orderedKeys.push(key);
       nextConnectionCount += 1;

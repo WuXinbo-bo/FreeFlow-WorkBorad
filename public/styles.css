@@ -7521,14 +7521,12 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     justify-content: center;
     gap: 4px;
     padding: 6px;
-    border-radius: 18px;
+    border: 1px solid #d9dfe3;
+    border-radius: 8px;
     white-space: normal;
     max-width: none;
     background: rgba(255, 255, 255, 0.96);
-    box-shadow:
-      0 10px 28px rgba(15, 23, 42, 0.14),
-      inset 0 0 0 1px rgba(186, 230, 253, 0.98);
-    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 18px rgba(32, 37, 43, 0.1);
     position: absolute;
     left: 50%;
     top: 0;
@@ -7541,7 +7539,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   }
 
   .canvas-mind-node-chrome.is-hover-active .canvas-mind-node-chrome-group {
-    transform: translate(-50%, calc(-100% - 14px));
+    transform: translate(-50%, calc(-100% - 10px));
   }
 
   .canvas-mind-node-side-control {
@@ -7594,15 +7592,12 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     justify-content: center;
     width: var(--mind-side-btn-size);
     height: var(--mind-side-btn-size);
-    border: none;
-    border-radius: 999px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.96));
-    color: #0f172a;
+    border: 1px solid #c8d3d0;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #354d47;
     cursor: pointer;
-    box-shadow:
-      0 12px 24px rgba(15, 23, 42, 0.14),
-      inset 0 0 0 1px rgba(148, 163, 184, 0.24);
+    box-shadow: 0 2px 6px rgba(32, 37, 43, 0.08);
     line-height: 0;
     vertical-align: middle;
     transition:
@@ -7613,9 +7608,7 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   }
 
   .canvas-mind-node-side-btn:hover:not(:disabled) {
-    transform: translateY(-1px) scale(1.03);
-    background:
-      linear-gradient(180deg, rgba(236, 254, 255, 0.98), rgba(207, 250, 254, 0.94));
+    background: #edf5f2;
   }
 
   .canvas-mind-node-side-btn:disabled {
@@ -7894,14 +7887,12 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
     width: 26px;
     height: 26px;
     border: none;
-    border-radius: 999px;
-    background: rgba(248, 250, 252, 0.98);
-    color: #0f172a;
+    border-radius: 5px;
+    background: transparent;
+    color: #354047;
     cursor: pointer;
     outline: none;
-    box-shadow:
-      inset 0 0 0 1px rgba(203, 213, 225, 0.88),
-      0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: none;
     line-height: 0;
     vertical-align: middle;
     transition:
@@ -7912,8 +7903,13 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   }
 
   .canvas-mind-node-tool:hover {
-    background: rgba(236, 254, 255, 0.98);
-    transform: translateY(-1px);
+    background: #edf2f0;
+  }
+
+  .canvas-mind-node-tool:focus-visible,
+  .canvas-mind-node-side-btn:focus-visible {
+    outline: 2px solid #659d8c;
+    outline-offset: 2px;
   }
 
   .canvas-mind-node-tool::before,
@@ -9702,6 +9698,20 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.canvas-rich-editor.is-mind-node :is(h1, h2, h3, h4, h5, h6),
+.canvas2d-rich-item.is-mind-node :is(h1, h2, h3, h4, h5, h6) {
+  font-size: inherit !important;
+  font-weight: inherit;
+  line-height: inherit !important;
+}
+
+.canvas-rich-editor.is-mind-node :is(div, p, h1, h2, h3, h4, h5, h6),
+.canvas2d-rich-item.is-mind-node :is(div, p, h1, h2, h3, h4, h5, h6) {
+  font-family: inherit;
+  margin: 0 !important;
+  padding: 0;
 }
 
 .canvas2d-rich-item mark,

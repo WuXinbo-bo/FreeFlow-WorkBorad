@@ -2,6 +2,7 @@ import { sceneToScreen } from "./camera.js";
 import { canvasElementRegistry, getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import {
+  buildMindMapIndex,
   collectMindMapVisibleConnections,
   collectMindMapVisibleSummaries,
   isMindMapItemVisible,
@@ -9,6 +10,7 @@ import {
 } from "./elements/mindMap.js";
 import { getMindRelationshipGeometry, isMindRelationshipItem } from "./elements/mindRelationship.js";
 import { drawTextElement } from "./rendererText.js";
+import { getMindNodeStyle, MIND_NODE_PADDING, MIND_CONNECTION_STYLE, getMindNodeFooterHeight, getMindCollapsedBadgeBounds } from "./elements/mindStyle.js";
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
@@ -63,9 +65,9 @@ export function getMindNodeLinkAnchorScreenBounds(element, view, bounds = null) 
   }
   const rect = bounds || getElementScreenBounds(view, element);
   const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const size = Math.max(8, Math.min(18, 14 * scale));
-  const inset = Math.max(2, Math.min(10, 6 * scale));
-  const badgeSize = linkCount > 1 ? Math.max(8, Math.min(14, 10 * scale)) : 0;
+  const size = 14 * scale;
+  const inset = 6 * scale;
+  const badgeSize = linkCount > 1 ? 10 * scale : 0;
   return {
     left: rect.right - inset - size,
     top: rect.bottom - inset - size,
@@ -92,7 +94,7 @@ function drawMindNodeLinkAnchor(ctx, element, view, bounds = null, options = {})
   const centerY = anchor.top + anchor.height / 2;
   const loopWidth = anchor.width * 0.34;
   const loopHeight = anchor.height * 0.2;
-  const stroke = Math.max(1, Math.min(2.2, anchor.width * 0.12));
+  const stroke = anchor.width * 0.12;
 
   ctx.save();
   ctx.strokeStyle = "rgba(29, 78, 216, 0.96)";
@@ -113,7 +115,7 @@ function drawMindNodeLinkAnchor(ctx, element, view, bounds = null, options = {})
     ctx.fillStyle = "rgba(29, 78, 216, 0.96)";
     ctx.fill();
     ctx.fillStyle = "#ffffff";
-    ctx.font = `700 ${Math.max(6, badgeSize * 0.58)}px "Segoe UI", "PingFang SC", sans-serif`;
+    ctx.font = `700 ${badgeSize * 0.6}px "Segoe UI", "PingFang SC", sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(anchor.linkCount), badgeX + badgeSize / 2, badgeY + badgeSize / 2 + 0.25);
@@ -121,102 +123,27 @@ function drawMindNodeLinkAnchor(ctx, element, view, bounds = null, options = {})
   ctx.restore();
 }
 
-function drawMindCollapsedBadge(ctx, element, view, bounds = null) {
-  if (!element?.collapsed) {
-    return;
-  }
-  const childCount = Math.max(0, Array.isArray(element?.childrenIds) ? element.childrenIds.length : 0);
-  if (!childCount) {
-    return;
-  }
-  const rect = bounds || getElementScreenBounds(view, element);
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const badgeHeight = Math.max(3, Math.min(24, 20 * scale));
-  const badgePadX = Math.max(1, 7 * scale);
-  const plusSize = Math.max(2, 9 * scale);
-  const plusStroke = Math.max(0.75, 2 * scale);
-  const gap = Math.max(1, 4 * scale);
-  const fontSize = Math.max(2.5, Math.min(12, 11 * scale));
-  const label = String(childCount);
+function drawMindCollapsedBadge(ctx, element, view) {
+  const badge = getMindCollapsedBadgeBounds(element);
+  if (!badge) return;
+  const rect = getElementScreenBounds(view, badge);
+  const scale = getViewScale(view);
   ctx.save();
-  ctx.font = `700 ${fontSize}px "Segoe UI", "PingFang SC", sans-serif`;
-  const labelWidth = Math.ceil(ctx.measureText(label).width);
-  const badgeWidth = badgePadX * 2 + plusSize + gap + labelWidth;
-  const badgeInset = Math.max(1, 10 * scale);
-  const badgeX = rect.right - badgeWidth - badgeInset;
-  const badgeY = rect.top + badgeInset;
-  drawRoundedRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight / 2);
-  ctx.fillStyle = "rgba(37, 99, 235, 0.96)";
+  drawStableRoundedRectPath(ctx, rect.left, rect.top, rect.width, rect.height, 4 * scale, { maxRadiusPx: Infinity });
+  ctx.fillStyle = "#e4eeea";
   ctx.fill();
-  ctx.fillStyle = "#ffffff";
-  const plusCenterX = badgeX + badgePadX + plusSize / 2;
-  const plusCenterY = badgeY + badgeHeight / 2;
+  ctx.fillStyle = "#3f6b60";
+  ctx.font = `700 ${11 * scale}px "Segoe UI", "PingFang SC", sans-serif`;
+  const plusCenterX = rect.left + 10 * scale;
+  const plusCenterY = rect.top + rect.height / 2;
+  const plusSize = 8 * scale;
+  const plusStroke = 1.5 * scale;
   ctx.fillRect(plusCenterX - plusSize / 2, plusCenterY - plusStroke / 2, plusSize, plusStroke);
   ctx.fillRect(plusCenterX - plusStroke / 2, plusCenterY - plusSize / 2, plusStroke, plusSize);
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText(label, badgeX + badgePadX + plusSize + gap, plusCenterY + 0.5);
+  ctx.fillText(String(badge.count), rect.left + 18 * scale, plusCenterY);
   ctx.restore();
-}
-
-function resolveMindNodeVisualStyle(element = {}, view = null) {
-  const depth = Math.max(0, Number(element?.depth || 0) || 0);
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
-  const secondaryBorder = Math.max(0.75, Math.min(1.8, scale * 1.15));
-  const accentBarHeight = Math.max(2, Math.min(14, 12 * scale));
-  const secondaryRadius = Math.max(4, Math.min(20, 20 * scale));
-  const secondaryPaddingTop = Math.max(0, 2 * scale);
-  const secondaryPaddingBottom = accentBarHeight + Math.max(1, 8 * scale);
-  const unifiedStroke = "rgba(37, 99, 235, 0.92)";
-  const unifiedStrokeSoft = "rgba(37, 99, 235, 0.88)";
-  const unifiedText = "#1d4ed8";
-  if (depth <= 0) {
-    return {
-      radius: 22,
-      fill: "rgba(221, 235, 255, 0.98)",
-      stroke: unifiedStrokeSoft,
-      strokeWidth: 1.2,
-      shadowColor: "transparent",
-      shadowBlur: 0,
-      shadowOffsetY: 0,
-      textColor: unifiedText,
-      paddingTop: 0,
-      paddingBottom: 0,
-      bottomBarHeight: 0,
-      borderMode: "full",
-    };
-  }
-  if (depth === 1) {
-    return {
-      radius: secondaryRadius,
-      fill: "rgba(255, 255, 255, 0.995)",
-      stroke: unifiedStroke,
-      strokeWidth: secondaryBorder,
-      shadowColor: "transparent",
-      shadowBlur: 0,
-      shadowOffsetY: 0,
-      textColor: unifiedText,
-      paddingTop: secondaryPaddingTop,
-      paddingBottom: secondaryPaddingBottom,
-      bottomBarHeight: accentBarHeight,
-      bottomBarColor: "rgba(37, 99, 235, 0.96)",
-      borderMode: "top-shell",
-    };
-  }
-  return {
-    radius: 18,
-    fill: "rgba(255, 255, 255, 0.995)",
-    stroke: unifiedStrokeSoft,
-    strokeWidth: Math.max(1, Math.min(1.5, scale * 1.02)),
-    shadowColor: "transparent",
-    shadowBlur: 0,
-    shadowOffsetY: 0,
-    textColor: unifiedText,
-    paddingTop: 0,
-    paddingBottom: 0,
-    bottomBarHeight: 0,
-    borderMode: "full",
-  };
 }
 
 function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
@@ -514,8 +441,8 @@ function drawMindMapConnections(ctx, items = [], view) {
   const itemById = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ""), item]));
   let drawnCount = 0;
   ctx.save();
-  ctx.strokeStyle = "rgba(14, 116, 144, 0.34)";
-  ctx.lineWidth = Math.max(1.2, getViewScale(view) * 1.1);
+  ctx.strokeStyle = MIND_CONNECTION_STYLE.color;
+  ctx.lineWidth = getViewScale(view) * MIND_CONNECTION_STYLE.width;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   connections.forEach((connection) => {
@@ -534,10 +461,10 @@ function drawMindMapConnections(ctx, items = [], view) {
     const toX = connection.side === MIND_BRANCH_LEFT ? childBounds.right : childBounds.left;
     const toY = childBounds.top + childBounds.height / 2;
     const direction = connection.side === MIND_BRANCH_LEFT ? -1 : 1;
-    const elbowX = fromX + direction * Math.max(18, Math.abs(toX - fromX) * 0.38);
+    const elbowX = fromX + direction * Math.max(18 * getViewScale(view), Math.abs(toX - fromX) * 0.38);
     ctx.beginPath();
     ctx.moveTo(fromX, fromY);
-    ctx.bezierCurveTo(elbowX, fromY, toX - direction * 12, toY, toX, toY);
+    ctx.bezierCurveTo(elbowX, fromY, toX - direction * 12 * getViewScale(view), toY, toX, toY);
     ctx.stroke();
     drawnCount += 1;
   });
@@ -704,60 +631,18 @@ function drawMindNode(ctx, element, view, selected, hover) {
   const y = bounds.top;
   const width = bounds.width;
   const height = bounds.height;
-  const logicalWidth = Math.max(1, Number(element.width) || 1);
-  const style = resolveMindNodeVisualStyle(element, view);
+  const style = getMindNodeStyle(element);
+  const scale = getViewScale(view);
 
   ctx.save();
-  drawRoundedRect(ctx, x, y, width, height, style.radius);
+  drawStableRoundedRectPath(ctx, x, y, width, height, style.radius * scale, { maxRadiusPx: Infinity, maxCornerRatio: 0.5 });
   ctx.fillStyle = style.fill;
   ctx.strokeStyle = style.stroke;
-  ctx.lineWidth = style.strokeWidth;
-  ctx.shadowColor = style.shadowColor;
-  ctx.shadowBlur = style.shadowBlur;
-  ctx.shadowOffsetY = style.shadowOffsetY;
+  ctx.lineWidth = style.strokeWidth * scale;
+  ctx.setLineDash(style.dash.map((value) => value * scale));
   ctx.fill();
-  ctx.shadowColor = "transparent";
-  if (style.borderMode === "full") {
-    ctx.stroke();
-  } else if (style.borderMode === "top-shell") {
-    ctx.save();
-    const inset = style.strokeWidth / 2;
-    const bottomEdge = y + height - Math.max(1, Number(style.bottomBarHeight || 0));
-    const shellRadius = Math.max(8, style.radius);
-    ctx.beginPath();
-    ctx.moveTo(x + inset, bottomEdge);
-    ctx.lineTo(x + inset, y + shellRadius);
-    ctx.quadraticCurveTo(x + inset, y + inset, x + shellRadius, y + inset);
-    ctx.lineTo(x + width - shellRadius, y + inset);
-    ctx.quadraticCurveTo(x + width - inset, y + inset, x + width - inset, y + shellRadius);
-    ctx.lineTo(x + width - inset, bottomEdge);
-    ctx.stroke();
-    ctx.restore();
-  } else {
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(x + style.radius * 0.72, y + style.strokeWidth / 2);
-    ctx.lineTo(x + width - style.radius * 0.72, y + style.strokeWidth / 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x + style.strokeWidth / 2, y + height - 1);
-    ctx.lineTo(x + style.strokeWidth / 2, y + style.radius);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x + width - style.strokeWidth / 2, y + height - 1);
-    ctx.lineTo(x + width - style.strokeWidth / 2, y + style.radius);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  if (style.bottomBarHeight > 0) {
-    ctx.save();
-    drawRoundedRect(ctx, x, y, width, height, style.radius);
-    ctx.clip();
-    ctx.fillStyle = style.bottomBarColor;
-    ctx.fillRect(x, y + height - style.bottomBarHeight, width, style.bottomBarHeight + 2);
-    ctx.restore();
-  }
+  ctx.stroke();
+  ctx.setLineDash([]);
 
   drawMindNodeLinkAnchor(ctx, element, view, bounds, {
     selected,
@@ -772,41 +657,25 @@ function drawMindNode(ctx, element, view, selected, hover) {
 }
 
 function drawMindSummaryNode(ctx, element, view, selected, hover) {
-  const bounds = getElementScreenBounds(view, element);
-  const x = bounds.left;
-  const y = bounds.top;
-  const width = bounds.width;
-  const height = bounds.height;
-  ctx.save();
-  ctx.setLineDash([10, 6]);
-  ctx.strokeStyle = "rgba(249, 115, 22, 0.72)";
-  ctx.lineWidth = 1.8;
-  drawRoundedRect(ctx, x, y, width, height, 20);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = "rgba(255, 247, 237, 0.98)";
-  drawRoundedRect(ctx, x + 6, y + 6, Math.max(1, width - 12), Math.max(1, height - 12), 16);
-  ctx.fill();
-  drawMindCollapsedBadge(ctx, element, view, bounds);
-  drawSelectionFrame(ctx, x, y, width, height, selected, false);
-  if (selected) {
-    drawHandles(ctx, element, view);
-  }
-  ctx.restore();
+  drawMindNode(ctx, element, view, selected, hover);
 }
 
 function drawMindNodeCompact(ctx, element, view, selected, hover) {
   drawMindNode(ctx, element, view, selected, hover);
-  drawTextElement(ctx, element, view, false, false, false, () => {}, () => {}, {
+  const textElement = {
+    ...element,
+    x: element.x + MIND_NODE_PADDING.x,
+    y: element.y + MIND_NODE_PADDING.y,
+    width: element.width - MIND_NODE_PADDING.x * 2,
+    height: element.height - MIND_NODE_PADDING.y * 2 - getMindNodeFooterHeight(element),
+  };
+  drawTextElement(ctx, textElement, view, false, false, false, () => {}, () => {}, {
     renderText: true,
   });
 }
 
 function drawMindSummaryCompact(ctx, element, view, selected, hover) {
-  drawMindSummaryNode(ctx, element, view, selected, hover);
-  drawTextElement(ctx, element, view, false, false, false, () => {}, () => {}, {
-    renderText: true,
-  });
+  drawMindNodeCompact(ctx, element, view, selected, hover);
 }
 
 function resolveCanvasLodMode(item, view, { presentationPlan = null } = {}) {
@@ -987,15 +856,17 @@ function createBuiltinElementRenderers() {
       drawFileCard(ctx, item, view, selected, hover, helpers);
       return true;
     }),
-    create("mindNode", function renderMindNodeElement({ ctx, item, view, selected, hover }) {
-      drawMindNode(ctx, item, view, selected, hover);
+    create("mindNode", function renderMindNodeElement({ ctx, item, view, selected, hover, helpers }) {
+      if (helpers.renderTextInCanvas) drawMindNodeCompact(ctx, item, view, selected, hover);
+      else drawMindNode(ctx, item, view, selected, hover);
       return true;
     }, function renderMindNodeSemanticCompact({ ctx, item, view, selected, hover }) {
       drawMindNodeCompact(ctx, item, view, selected, hover);
       return true;
     }),
-    create("mindSummary", function renderMindSummaryElement({ ctx, item, view, selected, hover }) {
-      drawMindSummaryNode(ctx, item, view, selected, hover);
+    create("mindSummary", function renderMindSummaryElement({ ctx, item, view, selected, hover, helpers }) {
+      if (helpers.renderTextInCanvas) drawMindSummaryCompact(ctx, item, view, selected, hover);
+      else drawMindSummaryNode(ctx, item, view, selected, hover);
       return true;
     }, function renderMindSummarySemanticCompact({ ctx, item, view, selected, hover }) {
       drawMindSummaryCompact(ctx, item, view, selected, hover);
@@ -1071,6 +942,7 @@ function createRendererDispatch() {
 function drawVisibleItemsToContext({
   ctx,
   items = [],
+  allItems = items,
   view,
   selectedIds,
   hoverId,
@@ -1100,7 +972,7 @@ function drawVisibleItemsToContext({
   let lodSimplifiedCount = 0;
   (Array.isArray(items) ? items : []).forEach((item) => {
     const definition = canvasElementRegistry.resolveElement(item);
-    if (definition?.capabilities?.visibility === "mind-map" && !isMindMapItemVisible(item, items)) {
+    if (definition?.capabilities?.visibility === "mind-map" && !isMindMapItemVisible(item, allItems)) {
       return;
     }
     if (definition?.capabilities?.layer === "mind-connections") {
@@ -1841,7 +1713,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
         : new Set(sceneVectorOwnedIds || []);
       const sceneVectorOwnershipSignature = Array.from(sceneVectorOwned).sort().join("|");
       const sceneOwned = new Set([...sceneContentOwned, ...sceneVectorOwned]);
-      const canvasOwnedItems = frameVisibleItems.filter((item) => !sceneOwned.has(String(item?.id || "")));
+      const mindIndex = buildMindMapIndex(allItems);
+      const hiddenMindIds = new Set([...mindIndex.nodes, ...mindIndex.summaries]
+        .filter((item) => !isMindMapItemVisible(item, allItems, mindIndex))
+        .map((item) => String(item.id)));
+      const canvasOwnedItems = frameVisibleItems.filter((item) => !sceneOwned.has(String(item?.id || "")) && !hiddenMindIds.has(String(item?.id || "")));
       const hoveredItem = frameVisibleItems.find((item) => String(item?.id || "") === String(hoverId || "")) || null;
       const mindMapDropTarget =
         frameVisibleItems.find((item) => String(item?.id || "") === String(mindMapDropTargetId || "")) ||
@@ -1857,7 +1733,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           .map((item) => String(item?.id || "").trim())
           .filter(Boolean)
       );
-      const staticRenderExclusionIds = new Set([...dynamicRenderIdSet, ...sceneOwned]);
+      const staticRenderExclusionIds = new Set([...dynamicRenderIdSet, ...sceneOwned, ...hiddenMindIds]);
       const staticExclusionSignature = Array.from(staticRenderExclusionIds).sort().join("|");
       const dynamicVisualSignature = getDynamicVisualSignature({
         dynamicItems,

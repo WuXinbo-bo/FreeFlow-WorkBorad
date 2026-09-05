@@ -38,6 +38,7 @@ import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds 
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
+import { getMindNodeStyle, MIND_NODE_PADDING, getMindNodeFooterHeight } from "./elements/mindStyle.js";
 import {
   createMindNodeElement,
   createMindSummaryElement,
@@ -1821,7 +1822,9 @@ function resolveRichTextSurfaceLayout(item, viewOrScale = 1, { mode = "display",
   const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(scale) || 1);
   const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(scale) || 1);
   const detailLike = mode === "edit" || overlayMode === "detail";
-  const padding = detailLike && isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
+  const padding = isMindNode
+    ? { x: MIND_NODE_PADDING.x * scale, y: MIND_NODE_PADDING.y * scale }
+    : detailLike && isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
   const boxStyles = getRichOverlayBoxStyles(item, scale);
   return {
     scale,
@@ -1831,11 +1834,11 @@ function resolveRichTextSurfaceLayout(item, viewOrScale = 1, { mode = "display",
     height,
     fontSize: Math.max(1, Number(item.fontSize || DEFAULT_TEXT_FONT_SIZE) * scale),
     padding,
-    paddingCss: `${padding.y}px ${padding.x}px`,
+    paddingCss: `${padding.y}px ${padding.x}px ${padding.y + (isMindNode ? getMindNodeFooterHeight(item) * scale : 0)}px`,
     lineHeightRatio: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.lineHeightRatio : TEXT_LINE_HEIGHT_RATIO,
     fontFamily: TEXT_FONT_FAMILY,
-    fontWeight: isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT,
-    color: item.color || "#0f172a",
+    fontWeight: isMindNode ? getMindNodeStyle(item).fontWeight : isFlowNode ? FLOW_NODE_TEXT_LAYOUT.fontWeight : TEXT_FONT_WEIGHT,
+    color: isMindNode ? getMindNodeStyle(item).textColor : item.color || "#0f172a",
     boxStyles,
     classToggles: {
       "is-flow-node": isFlowNode,
@@ -2776,6 +2779,12 @@ function getRichOverlayBoxStyles(item, scale = 1) {
   const layoutMode = getTextBoxLayoutMode(item);
   const currentWidth = Math.max(1, Number(item?.width || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
   const currentHeight = Math.max(1, Number(item?.height || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
+  if (item.type === "mindNode" || item.type === "mindSummary") {
+    return {
+      display: "block", widthCss: `${currentWidth}px`, heightCss: "auto", minHeightCss: `${currentHeight}px`,
+      maxWidthCss: `${currentWidth}px`, whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", overflow: "visible",
+    };
+  }
   if (layoutMode === TEXT_BOX_LAYOUT_MODE_AUTO_WIDTH) {
     return {
       display: "inline-block",
@@ -10271,17 +10280,6 @@ let tablePointerSelectionState = {
     return depth;
   }
 
-  function resolveMindNodeDefaultBlockType(item = null) {
-    const depth = getMindNodeDepth(item);
-    if (depth <= 0) {
-      return "heading-1";
-    }
-    if (depth === 1) {
-      return "heading-3";
-    }
-    return "paragraph";
-  }
-
   function resolveMindNodeFixedFontSize(item = null) {
     const depth = getMindNodeDepth(item);
     if (depth <= 0) {
@@ -10293,22 +10291,11 @@ let tablePointerSelectionState = {
     return 14;
   }
 
-  function buildEmptyMindNodeEditorHtml(item = null) {
-    const targetBlockType = resolveMindNodeDefaultBlockType(item);
-    if (targetBlockType === "heading-1") {
-      return "<h1><br></h1>";
-    }
-    if (targetBlockType === "heading-3") {
-      return "<h3><br></h3>";
-    }
-    return "<p><br></p>";
-  }
-
   function ensureMindNodeRichTextSemanticDefaults(item = null) {
     if (!item || !richTextSession.isActive()) {
       return;
     }
-    const targetBlockType = resolveMindNodeDefaultBlockType(item);
+    const targetBlockType = "paragraph";
     const formatState = richTextSession.getFormatState?.() || {};
     const currentBlockType = String(formatState.blockType || "").trim().toLowerCase();
     if (currentBlockType !== targetBlockType) {
@@ -10322,8 +10309,6 @@ let tablePointerSelectionState = {
   }
 
   function normalizeMindNodeRichTextDocumentForLevel(documentValue = null, item = null) {
-    const targetBlockType = resolveMindNodeDefaultBlockType(item);
-    const targetHeadingLevel = targetBlockType === "heading-1" ? 1 : targetBlockType === "heading-3" ? 3 : 0;
     const sourceBlocks = Array.isArray(documentValue?.blocks) ? documentValue.blocks : [];
     const normalizedBlocks = sourceBlocks
       .map((block) => {
@@ -10331,15 +10316,6 @@ let tablePointerSelectionState = {
           return null;
         }
         const inlineContent = Array.isArray(block.content) ? block.content.filter(Boolean) : [];
-        if (targetHeadingLevel > 0) {
-          return {
-            type: "heading",
-            attrs: {
-              level: targetHeadingLevel,
-            },
-            content: inlineContent,
-          };
-        }
         return {
           type: "paragraph",
           content: inlineContent,
@@ -10347,11 +10323,7 @@ let tablePointerSelectionState = {
       })
       .filter((block) => Array.isArray(block?.content) && block.content.length);
     if (!normalizedBlocks.length) {
-      normalizedBlocks.push(
-        targetHeadingLevel > 0
-          ? { type: "heading", attrs: { level: targetHeadingLevel }, content: [] }
-          : { type: "paragraph", content: [] }
-      );
+      normalizedBlocks.push({ type: "paragraph", content: [] });
     }
     return {
       ...(documentValue && typeof documentValue === "object" ? documentValue : {}),
@@ -10397,7 +10369,7 @@ let tablePointerSelectionState = {
     const richTextDocument = normalizeMindNodeRichTextDocumentForLevel(content.richTextDocument, item);
     const serializedHtml = serializeRichTextDocumentToHtml(richTextDocument, content.html || "");
     const html = normalizeRichHtmlInlineFontSizes(
-      serializedHtml.trim() ? serializedHtml : buildEmptyMindNodeEditorHtml(item),
+      serializedHtml.trim() ? serializedHtml : "<p><br></p>",
       fixedFontSize
     );
     const plainText = serializeRichTextDocumentToPlainText(richTextDocument, content.plainText || fallbackPlainText);
@@ -20413,7 +20385,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function getMindNodeById(itemId) {
-    return sceneRegistry.getItemById(itemId, "mindNode");
+    return state.board.items.find((item) => item.type === "mindNode" && item.id === itemId) || null;
   }
 
   function getMindNodeLinks(node = null) {
@@ -20477,6 +20449,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     ];
     state.board.selectedIds = [node.id];
     mindNodeLinkPanelPinnedNodeId = node.id;
+    Object.assign(node, syncMindNodeTextMetrics(node));
     commitItemPatchHistory(before, node.id, node, "添加节点链接", "mind-node-link-edit");
     setStatus("已创建节点链接");
     refs.canvas?.focus?.();
@@ -20495,6 +20468,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const before = takeItemsHistorySnapshot([node.id]);
     node.links = nextLinks;
+    Object.assign(node, syncMindNodeTextMetrics(node));
     state.board.selectedIds = [node.id];
     commitItemPatchHistory(before, node.id, node, "删除节点链接", "mind-node-link-edit");
     setStatus("已删除节点链接");
@@ -20509,6 +20483,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const before = takeItemsHistorySnapshot([node.id]);
     node.links = [];
+    Object.assign(node, syncMindNodeTextMetrics(node));
     state.board.selectedIds = [node.id];
     commitItemPatchHistory(before, node.id, node, "清空节点链接", "mind-node-link-edit");
     setStatus("已清空节点链接");
@@ -20723,6 +20698,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const before = takeHistorySnapshot(state);
     node.collapsed = !node.collapsed;
+    Object.assign(node, syncMindNodeTextMetrics(node));
     relayoutMindMapFromNode(node);
     commitHistory(before, node.collapsed ? "折叠思维节点" : "展开思维节点");
     setStatus(node.collapsed ? "已折叠分支" : "已展开分支");
@@ -21860,6 +21836,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           return resizeImageWithAspect(pointer.baseItem, pointer.handle, scenePoint);
         }
         const resizedItem = resizeElement(pointer.baseItem, pointer.handle, scenePoint);
+        if (pointer.baseItem.type === "shape" && isLinearShape(pointer.baseItem.shapeType)) {
+          clearAlignmentSnap("resize-line-endpoint");
+          return resizedItem;
+        }
         const snappedBounds = applyHorizontalResizeSnap({
           activeItem: resizedItem,
           rawBounds: getElementBounds(resizedItem),

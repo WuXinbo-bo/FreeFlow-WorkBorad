@@ -15,8 +15,8 @@ function normalizeBoxFromPoints(startX, startY, endX, endY) {
 export function createShapeElement(shapeType = "rect", startPoint, endPoint = startPoint) {
   const startX = Number(startPoint?.x) || 0;
   const startY = Number(startPoint?.y) || 0;
-  const endX = Number(endPoint?.x) || startX;
-  const endY = Number(endPoint?.y) || startY;
+  const endX = Number(endPoint?.x ?? startX);
+  const endY = Number(endPoint?.y ?? startY);
   const box = normalizeBoxFromPoints(startX, startY, endX, endY);
   const linear = isLinearShape(shapeType);
   const isHighlight = shapeType === "highlight";
@@ -74,10 +74,10 @@ export function moveShapeElement(element, dx, dy) {
     ...element,
     x: Number(element.x || 0) + offsetX,
     y: Number(element.y || 0) + offsetY,
-    startX: Number(element.startX || element.x || 0) + offsetX,
-    startY: Number(element.startY || element.y || 0) + offsetY,
-    endX: Number(element.endX || element.x || 0) + offsetX,
-    endY: Number(element.endY || element.y || 0) + offsetY,
+    startX: Number(element.startX ?? element.x ?? 0) + offsetX,
+    startY: Number(element.startY ?? element.y ?? 0) + offsetY,
+    endX: Number(element.endX ?? element.x ?? 0) + offsetX,
+    endY: Number(element.endY ?? element.y ?? 0) + offsetY,
   };
 }
 
