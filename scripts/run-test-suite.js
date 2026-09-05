@@ -105,6 +105,7 @@ async function main() {
   for (const scriptPath of CHECKS) {
     await runNodeScript(scriptPath);
   }
+  await runNodeScript("scripts/prepare-desktop-build.js");
 
   const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-suite-"));
   const testData = path.join(testHome, "AppData");

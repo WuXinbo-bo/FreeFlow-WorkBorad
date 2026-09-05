@@ -66,6 +66,7 @@ FreeFlow 是一款面向 Windows 的本地桌面工作画布。你可以把文�
 git clone https://github.com/WuXinbo-bo/FreeFlow-WorkBorad.git
 cd FreeFlow-WorkBorad
 npm ci
+npm run prepare:desktop-build
 npm run start:desktop
 ```
 
