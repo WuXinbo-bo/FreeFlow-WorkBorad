@@ -16,7 +16,7 @@ async function main() {
       id: "code-1",
       type: "codeBlock",
       language: "js",
-      plainText: "console.log(1);",
+      plainText: "console.log(1);\n```nested fence",
     },
     {
       id: "table-1",
@@ -55,11 +55,26 @@ async function main() {
         },
       },
     },
+    {
+      id: "image-1",
+      type: "image",
+      name: "diagram (final).png",
+      sourcePath: "https://example.test/diagram (final).png?view=(full)",
+    },
+    {
+      id: "table-no-header",
+      type: "table",
+      table: {
+        hasHeader: false,
+        rows: [{ cells: [{ plainText: "first" }, { plainText: "second" }] }],
+      },
+    },
   ];
 
   const codeEntry = downgradeItemForCopy(items[0], 0);
   assert(codeEntry.text.includes("console.log(1);"), "code downgrade text mismatch");
   assert(codeEntry.html.includes("<pre"), "code downgrade html mismatch");
+  assert(codeEntry.markdown.startsWith("````js"), "code fence did not expand around nested fence");
 
   const payload = buildDowngradedCopyPayloadFromItems(items, {
     source: "canvas",
@@ -68,13 +83,15 @@ async function main() {
 
   assert(payload.version === COPY_DOWNGRADE_RULES_VERSION, "downgrade rules version mismatch");
   assert(payload.createdAt === 456, "downgrade createdAt mismatch");
-  assert(payload.entries.length === 4, "downgrade entry count mismatch");
+  assert(payload.entries.length === 6, "downgrade entry count mismatch");
   assert(payload.text.includes("Name\tValue"), "table downgrade text mismatch");
   assert(payload.html.includes("<table"), "table downgrade html mismatch");
   assert(payload.markdown.includes("| Name | Value |"), "table downgrade markdown mismatch");
-  assert(payload.markdown.includes("```js"), "code downgrade markdown mismatch");
+  assert(payload.markdown.includes("````js"), "code downgrade markdown mismatch");
   assert(payload.html.includes("$$\\frac{a}{b}$$"), "math downgrade html mismatch");
   assert(payload.text.includes("[文件] report.pdf"), "fileCard downgrade text mismatch");
+  assert(payload.markdown.includes("<https://example.test/diagram (final).png?view=(full)>") , "image URL was not Markdown safe");
+  assert(!payload.markdown.includes("| --- | --- |\n| first | second |"), "headerless table invented a header");
 
   console.log("[copy-downgrade-rules] ok: 1 scenario validated");
 }

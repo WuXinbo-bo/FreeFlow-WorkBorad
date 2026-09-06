@@ -295,6 +295,11 @@ import {
   resolveCopyExportAction,
 } from "./export/copyExportProtocol.js";
 import { resolveSelectionDependencyClosure } from "./selection/selectionDependencyClosure.js";
+import {
+  INTERNAL_DRAG_PAYLOAD_MIME,
+  parseInternalDragPayload,
+  stringifyInternalDragPayload,
+} from "./brokers/internalDragPayload.js";
 import { buildSelectionWordExportPlan } from "./export/word/buildWordExportAst.js";
 import { buildWordExportPreviewModel } from "./export/word/buildWordExportPreviewModel.js";
 import { createStructuredExportRuntime } from "./export/runtime/createStructuredExportRuntime.js";
@@ -666,8 +671,12 @@ function getCodeBlockContent(item) {
 function serializeCodeBlockToMarkdown(item) {
   const code = getCodeBlockContent(item);
   const language = normalizeCodeBlockLanguageTag(item?.language || "");
-  const fence = language || "";
-  return `\`\`\`${fence}\n${code}\n\`\`\``;
+  const longestFence = Math.max(
+    0,
+    ...(String(code || "").match(/`+/g) || []).map((entry) => entry.length)
+  );
+  const fence = "`".repeat(Math.max(3, longestFence + 1));
+  return `${fence}${language}\n${code}\n${fence}`;
 }
 
 function getCodeBlockItemTitle(item) {
@@ -3513,6 +3522,8 @@ export function createCanvas2DEngine(options = {}) {
   const structuredImportControllers = new Map();
   const importedBatchStabilizationTokens = new Map();
   let clipboardProcessingStatusToken = 0;
+  let clipboardCopyRequestToken = 0;
+  let clipboardCopyWritePromise = Promise.resolve();
   let deferredImportedAssetPersistPromise = Promise.resolve();
   let linkSemanticEnabled = true;
   let lastEditorItemId = null;
@@ -18673,7 +18684,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return {
       matrix,
       plain: serializeTableMatrixToPlainText(matrix, { hasHeader: item.table?.hasHeader !== false }),
-      markdown: serializeTableMatrixToMarkdown(matrix),
+      markdown: serializeTableMatrixToMarkdown(matrix, { hasHeader: item.table?.hasHeader !== false }),
       tsv: serializeTableMatrixToTsv(matrix),
       html: String(directCopyPayload?.html || "").trim(),
       directPlainText: String(directCopyPayload?.text || "").trim(),
@@ -18686,9 +18697,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return null;
     }
     const baseClipboardPayload = clipboardBroker.buildPayloadFromItems(normalizedItems);
-    const flowback = shouldBuildStructuredFlowback(normalizedItems)
-      ? structuredImportRuntime.buildFlowbackPayload(normalizedItems)
-      : null;
+    const flowback = structuredImportRuntime.buildFlowbackPayload(normalizedItems);
     const externalOutput = flowback?.externalOutput || {};
     return {
       ...baseClipboardPayload,
@@ -19443,6 +19452,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function copySelection() {
+    const requestToken = ++clipboardCopyRequestToken;
     const items = resolveSelectionDependencyClosure(
       collectCardLinkedItems(sceneRegistry.getSelectedItems()),
       state.board.items
@@ -19456,6 +19466,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const fileBacked = items.filter((item) => item.type === "fileCard" || item.type === "image");
     if (fileBacked.length) {
       const changed = await resolveFileCardSourcesForItems(fileBacked);
+      if (requestToken !== clipboardCopyRequestToken) {
+        return null;
+      }
       if (changed) {
         syncBoard({
           persist: true,
@@ -19469,8 +19482,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const nextClipboard = buildDirectClipboardPayloadForItems(items);
     const copyResult = nextClipboard
-      ? await clipboardBroker.copyPayloadToClipboard(nextClipboard)
+      ? await queueClipboardCopyWrite(nextClipboard)
       : null;
+    if (requestToken !== clipboardCopyRequestToken) {
+      return null;
+    }
     if (items.length >= 24) {
       await yieldToNextFrame();
     }
@@ -19495,22 +19511,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return state.clipboard;
   }
 
-  function shouldBuildStructuredFlowback(items = []) {
-    return (Array.isArray(items) ? items : []).some((item) => {
-      if (!item || typeof item !== "object") {
-        return false;
-      }
-      if (item.structuredImport && typeof item.structuredImport === "object") {
-        return true;
-      }
-      return (
-        item.type === "flowNode" ||
-        item.type === "codeBlock" ||
-        item.type === "table" ||
-        item.type === "mathBlock" ||
-        item.type === "mathInline"
-      );
-    });
+  async function queueClipboardCopyWrite(payload) {
+    const write = clipboardCopyWritePromise.then(() => clipboardBroker.copyPayloadToClipboard(payload));
+    clipboardCopyWritePromise = write.catch(() => null);
+    return write;
   }
 
   function finalizeDuplicatedElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
@@ -19634,6 +19638,32 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  async function pasteDragPayload(payload, anchorPoint = getCenterScenePoint(), options = {}) {
+    if (!payload?.items?.length) {
+      return false;
+    }
+    const before = takeHistoryMetadataSnapshot(state);
+    const bounds = getBoardBounds(payload.items);
+    const deltaX = Number(anchorPoint?.x || 0) - Number(bounds?.left || 0);
+    const deltaY = Number(anchorPoint?.y || 0) - Number(bounds?.top || 0);
+    const pasted = normalizeImportedPasteFrameItems(
+      await duplicateElementsWithDeltaAsync(payload.items, deltaX, deltaY, {
+        forceWrapText: options?.forceWrapText === true,
+      })
+    );
+    if (!pasted.length) {
+      return false;
+    }
+    state.board.items.push(...pasted);
+    state.board.selectedIds = pasted.map((item) => item.id);
+    void hydrateFileCardIds(pasted);
+    commitInsertedItemsPatchHistory(before, pasted, String(options?.historyReason || "拖拽复制"), "item-insert-batch", {
+      fullOverlayRescan: true,
+    });
+    setStatus(`${String(options?.statusPrefix || "已拖拽复制")} ${pasted.length} 个元素`);
+    return true;
+  }
+
   function clearInternalClipboard() {
     state.clipboard = null;
     clipboardBroker.clearPayload?.();
@@ -19665,6 +19695,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return matchesInternalClipboardMarker(parsed, state.clipboard);
     } catch {
       return false;
+    }
+  }
+
+  function readInternalDragPayload(dataTransfer) {
+    if (!dataTransfer?.types) {
+      return null;
+    }
+    try {
+      return parseInternalDragPayload(dataTransfer.getData(INTERNAL_DRAG_PAYLOAD_MIME));
+    } catch {
+      return null;
     }
   }
 
@@ -24601,13 +24642,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function writeClipboardDataWithProtocols(
     dataTransfer,
-    { marker = "", html = "", text = "", richTextPayload = null } = {}
+    { marker = "", html = "", text = "", markdown = "", richTextPayload = null } = {}
   ) {
     if (!dataTransfer) {
       return false;
     }
     const cleanHtml = String(html || "").trim();
     const plainText = sanitizeText(String(text || ""));
+    const markdownText = sanitizeText(String(markdown || ""));
     const cleanText = plainText || (cleanHtml ? sanitizeText(htmlToPlainText(cleanHtml)) : "");
     if (!cleanHtml && !cleanText) {
       return false;
@@ -24623,6 +24665,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (cleanText) {
       dataTransfer.setData("text/plain", cleanText);
+    }
+    if (markdownText) {
+      dataTransfer.setData("text/markdown", markdownText);
     }
     return true;
   }
@@ -25998,26 +26043,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       event.preventDefault();
       return;
     }
-    const selected = sceneRegistry.getSelectedItems();
+    const selected = resolveSelectionDependencyClosure(sceneRegistry.getSelectedItems(), state.board.items);
     const hoverItem = state.hoverId ? sceneRegistry.getItemById(state.hoverId) : null;
-    const textItems = selected.filter((item) => item.type === "text");
-    const fallbackItems = !textItems.length && hoverItem?.type === "text" ? [hoverItem] : [];
-    if (!textItems.length) {
-      if (!fallbackItems.length) {
-        event.preventDefault();
-        return;
-      }
-    }
-    const dragItems = textItems.length ? textItems : fallbackItems;
-    const text = dragItems
-      .map((item) => sanitizeText(item.plainText || item.text || ""))
-      .join("\n")
-      .trim();
-    if (!text) {
+    const fallbackItems = hoverItem
+      ? resolveSelectionDependencyClosure([hoverItem], state.board.items)
+      : [];
+    const dragItems = selected.length ? selected : fallbackItems;
+    if (!dragItems.length) {
       event.preventDefault();
       return;
     }
-    const dragPayload = clipboardBroker.buildPayloadFromItems(dragItems);
+    const dragPayload = buildDirectClipboardPayloadForItems(dragItems);
+    const text = sanitizeText(dragPayload?.text || "");
     const copiedAt = Number(dragPayload?.copiedAt) || Date.now();
     const marker = buildInternalClipboardMarker({
       clipboardId: String(dragPayload?.clipboardId || ""),
@@ -26030,6 +26067,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.clipboard = dragPayload ? { ...dragPayload, pasteCount: 0 } : null;
     event.dataTransfer.clearData();
     event.dataTransfer.setData(CANVAS_CLIPBOARD_MIME, marker);
+    const serializedPayload = stringifyInternalDragPayload({ marker, payload: dragPayload });
+    if (serializedPayload) {
+      event.dataTransfer.setData(INTERNAL_DRAG_PAYLOAD_MIME, serializedPayload);
+    }
     event.dataTransfer.setData(
       "text/html",
       buildInternalDragHtmlPayload({
@@ -26038,6 +26079,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       })
     );
     event.dataTransfer.setData("text/plain", text);
+    if (dragPayload?.markdown) {
+      event.dataTransfer.setData("text/markdown", String(dragPayload.markdown));
+    }
     event.dataTransfer.effectAllowed = "copy";
   }
 
@@ -26051,6 +26095,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (matchesInternalClipboardByMarker(event.dataTransfer)) {
       pasteInternalClipboard(scenePoint, {
         stagger: false,
+        forceWrapText: true,
+        historyReason: "拖拽复制",
+        statusPrefix: "已拖拽复制",
+      });
+      return;
+    }
+    const externalDragPayload = readInternalDragPayload(event.dataTransfer);
+    if (externalDragPayload?.payload) {
+      await pasteDragPayload(externalDragPayload.payload, scenePoint, {
         forceWrapText: true,
         historyReason: "拖拽复制",
         statusPrefix: "已拖拽复制",
@@ -26119,6 +26172,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         }),
         text: immediatePayload.text,
         html: immediatePayload.html,
+        markdown: immediatePayload.markdown,
       });
     }
     await runClipboardOperationWithStatus("复制处理中…", async () => {
@@ -26138,6 +26192,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const snapshot = {
       text: String(dataTransfer?.getData?.("text/plain") || dataTransfer?.getData?.("text") || ""),
       html: String(dataTransfer?.getData?.("text/html") || ""),
+      markdown: String(dataTransfer?.getData?.("text/markdown") || dataTransfer?.getData?.("text/x-markdown") || ""),
       uriList: String(dataTransfer?.getData?.("text/uri-list") || ""),
       types: Array.from(dataTransfer?.types || []).map((type) => String(type || "")).filter(Boolean),
       files: Array.from(dataTransfer?.files || []),
@@ -26149,6 +26204,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const typeValueMap = new Map();
     const text = String(snapshot?.text || "");
     const html = String(snapshot?.html || "");
+    const markdown = String(snapshot?.markdown || "");
     const uriList = String(snapshot?.uriList || "");
     const types = Array.isArray(snapshot?.types) ? snapshot.types.slice() : [];
     if (text) {
@@ -26157,6 +26213,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (html) {
       typeValueMap.set("text/html", html);
+    }
+    if (markdown) {
+      typeValueMap.set("text/markdown", markdown);
+      typeValueMap.set("text/x-markdown", markdown);
     }
     if (uriList) {
       typeValueMap.set("text/uri-list", uriList);
@@ -26177,10 +26237,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const textLength = String(snapshot?.text || "").length;
     const htmlLength = String(snapshot?.html || "").length;
+    const markdownLength = String(snapshot?.markdown || "").length;
     const uriLength = String(snapshot?.uriList || "").length;
     return (
       textLength >= PASTE_NON_BLOCKING_TEXT_THRESHOLD ||
       htmlLength >= PASTE_NON_BLOCKING_HTML_THRESHOLD ||
+      markdownLength >= PASTE_NON_BLOCKING_TEXT_THRESHOLD ||
       uriLength >= PASTE_NON_BLOCKING_TEXT_THRESHOLD
     );
   }

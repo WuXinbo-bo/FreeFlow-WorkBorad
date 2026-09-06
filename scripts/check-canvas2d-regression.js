@@ -453,8 +453,8 @@ async function createPage(browser, { board, useDesktopShellStub = false, viewpor
   };
 }
 
-async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } = {}) {
-  await page.evaluate(async ({ textValue, htmlValue, uriValue }) => {
+async function dispatchCanvasPaste(page, { text = "", html = "", markdown = "", uriList = "" } = {}) {
+  await page.evaluate(async ({ textValue, htmlValue, markdownValue, uriValue }) => {
     const canvas = document.querySelector("#canvas-office-canvas");
     if (!canvas || !window.__canvas2dEngine) {
       throw new Error("canvas engine is not ready");
@@ -466,6 +466,9 @@ async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } 
     }
     if (htmlValue) {
       types.push("text/html");
+    }
+    if (markdownValue) {
+      types.push("text/markdown");
     }
     if (uriValue) {
       types.push("text/uri-list");
@@ -481,6 +484,9 @@ async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } 
         if (normalized === "text/html") {
           return htmlValue;
         }
+        if (normalized === "text/markdown" || normalized === "text/x-markdown") {
+          return markdownValue;
+        }
         if (normalized === "text/uri-list") {
           return uriValue;
         }
@@ -495,12 +501,12 @@ async function dispatchCanvasPaste(page, { text = "", html = "", uriList = "" } 
     });
     canvas.dispatchEvent(event);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }, { textValue: text, htmlValue: html, uriValue: uriList });
+  }, { textValue: text, htmlValue: html, markdownValue: markdown, uriValue: uriList });
   await page.waitForTimeout(240);
 }
 
 async function dispatchSyntheticCopyPasteRoundTrip(page) {
-  await page.evaluate(async () => {
+  const copied = await page.evaluate(async () => {
     const canvas = document.querySelector("#canvas-office-canvas");
     if (!canvas || !window.__canvas2dEngine) {
       throw new Error("canvas engine is not ready");
@@ -527,6 +533,10 @@ async function dispatchSyntheticCopyPasteRoundTrip(page) {
     });
     canvas.dispatchEvent(copyEvent);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const snapshot = {
+      types: copyData.types.slice(),
+      markdown: copyData.getData("text/markdown"),
+    };
 
     const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(pasteEvent, "clipboardData", {
@@ -542,8 +552,59 @@ async function dispatchSyntheticCopyPasteRoundTrip(page) {
     });
     canvas.dispatchEvent(pasteEvent);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return snapshot;
   });
   await page.waitForTimeout(240);
+  return copied;
+}
+
+async function dispatchSyntheticDragCopy(page) {
+  const drag = await page.evaluate(async () => {
+    const canvas = document.querySelector("#canvas-office-canvas");
+    if (!canvas || !window.__canvas2dEngine) {
+      throw new Error("canvas engine is not ready");
+    }
+    const entries = new Map();
+    const dataTransfer = {
+      files: [],
+      effectAllowed: "none",
+      get types() {
+        return Array.from(entries.keys());
+      },
+      clearData(type) {
+        if (type) {
+          entries.delete(String(type));
+          return;
+        }
+        entries.clear();
+      },
+      setData(type, value) {
+        entries.set(String(type), String(value || ""));
+      },
+      getData(type) {
+        return entries.get(String(type)) || "";
+      },
+    };
+    const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(dragStart, "dataTransfer", { configurable: true, value: dataTransfer });
+    canvas.dispatchEvent(dragStart);
+    const rect = canvas.getBoundingClientRect();
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperties(drop, {
+      clientX: { configurable: true, value: rect.left + Math.max(80, rect.width - 160) },
+      clientY: { configurable: true, value: rect.top + Math.max(80, rect.height - 140) },
+      dataTransfer: { configurable: true, value: dataTransfer },
+    });
+    canvas.dispatchEvent(drop);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      effectAllowed: dataTransfer.effectAllowed,
+      types: dataTransfer.types,
+      markdown: dataTransfer.getData("text/markdown"),
+    };
+  });
+  await page.waitForTimeout(360);
+  return drag;
 }
 
 async function rightClickCanvasItem(page, itemId) {
@@ -2678,6 +2739,15 @@ async function runPasteSemanticChecks(browser) {
       },
     },
     {
+      key: "markdownMimeCodeFence",
+      markdown: "```typescript\nconst transport = 'markdown';\n```",
+      verify: (items) => {
+        const target = items.find((item) => item.type === "codeBlock");
+        assert(Boolean(target), "text/markdown paste regressed into a plain text item", items);
+        assert(target.language === "typescript", "text/markdown paste lost code language", target);
+      },
+    },
+    {
       key: "inlineMath",
       text: "基础运算：$a_n + x^{k+1}$",
       verify: (items) => {
@@ -2708,7 +2778,11 @@ async function runPasteSemanticChecks(browser) {
   for (const scenario of cases) {
     const session = await createPage(browser, { board: createBoard([], [], { scale: 1, offsetX: 0, offsetY: 0 }) });
     try {
-      await dispatchCanvasPaste(session.page, { text: scenario.text, html: scenario.html || "" });
+      await dispatchCanvasPaste(session.page, {
+        text: scenario.text,
+        html: scenario.html || "",
+        markdown: scenario.markdown || "",
+      });
       const snapshotItems = await session.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);
       scenario.verify(snapshotItems);
       assert(session.getErrors().length === 0, `paste semantic check ${scenario.key} produced page errors`, session.getErrors());
@@ -2720,6 +2794,111 @@ async function runPasteSemanticChecks(browser) {
       await session.page.close();
     }
   }
+  return result;
+}
+
+async function runCanvasCopyTransportCheck(browser) {
+  const result = {};
+  const dragItems = [
+    createTextItem("drag-copy-text", 160, 140, "Drag all content"),
+    createCodeBlockItem("drag-copy-code", 420, 140, "const complete = true;"),
+    createTableItem("drag-copy-table", 160, 380),
+    createFlowNodeItem("drag-copy-flow-a", 780, 140, "Source"),
+    createFlowNodeItem("drag-copy-flow-b", 1080, 140, "Target"),
+    createFlowEdgeItem("drag-copy-flow-edge", "drag-copy-flow-a", "drag-copy-flow-b"),
+  ];
+  const dragSession = await createPage(browser, {
+    board: createBoard(dragItems, dragItems.map((item) => item.id)),
+  });
+  try {
+    const drag = await dispatchSyntheticDragCopy(dragSession.page);
+    const items = await dragSession.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);
+    const typeCounts = items.reduce((counts, item) => {
+      counts[item.type] = (counts[item.type] || 0) + 1;
+      return counts;
+    }, {});
+    const copiedEdge = items.find(
+      (item) => item.type === "flowEdge" && item.id !== "drag-copy-flow-edge"
+    );
+    assert(drag.types.includes("application/x-freeflow-canvas2d-drag"), "drag copy omitted its complete internal payload", drag);
+    assert(drag.markdown.includes("const complete = true;"), "drag copy omitted Markdown content", drag);
+    assert(drag.effectAllowed === "copy", "drag copy did not advertise a copy operation", drag);
+    ["text", "codeBlock", "table", "flowNode", "flowEdge"].forEach((type) => {
+      assert(typeCounts[type] === (type === "flowNode" ? 4 : 2), `drag copy lost ${type} elements`, { drag, items });
+    });
+    assert(
+      copiedEdge &&
+        copiedEdge.fromId !== "drag-copy-flow-a" &&
+        copiedEdge.toId !== "drag-copy-flow-b" &&
+        items.some((item) => item.id === copiedEdge.fromId && item.type === "flowNode") &&
+        items.some((item) => item.id === copiedEdge.toId && item.type === "flowNode"),
+      "drag copy did not remap the copied flow edge endpoints",
+      { copiedEdge, items }
+    );
+    assert(dragSession.getErrors().length === 0, "drag copy transport produced page errors", dragSession.getErrors());
+    result.drag = { drag, typeCounts };
+  } finally {
+    await dragSession.page.close();
+  }
+
+  const serialSession = await createPage(browser, {
+    board: createBoard(
+      [
+        createTextItem("copy-first", 180, 180, "First copy"),
+        createTextItem("copy-second", 480, 180, "Second copy"),
+      ],
+      ["copy-first"]
+    ),
+  });
+  try {
+    const clipboard = await serialSession.page.evaluate(async () => {
+      const canvas = document.querySelector("#canvas-office-canvas");
+      const engine = window.__canvas2dEngine;
+      const nativeWrite = navigator.clipboard.write.bind(navigator.clipboard);
+      let writeCount = 0;
+      navigator.clipboard.write = async (items) => {
+        const delay = writeCount++ === 0 ? 160 : 0;
+        if (delay) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        return nativeWrite(items);
+      };
+      const dispatchCopy = () => {
+        const data = new Map();
+        const event = new Event("copy", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "clipboardData", {
+          configurable: true,
+          value: {
+            types: [],
+            setData(type, value) {
+              const normalized = String(type || "");
+              if (!this.types.includes(normalized)) this.types.push(normalized);
+              data.set(normalized, String(value || ""));
+            },
+            getData(type) {
+              return data.get(String(type || "")) || "";
+            },
+          },
+        });
+        canvas.dispatchEvent(event);
+      };
+      dispatchCopy();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const nextBoard = engine.getSnapshot().board;
+      engine.loadStructuredBoardForExport({ ...nextBoard, selectedIds: ["copy-second"] });
+      dispatchCopy();
+      await new Promise((resolve) => setTimeout(resolve, 260));
+      return navigator.clipboard.__snapshot();
+    });
+    assert(clipboard.text.includes("Second copy"), "rapid repeated copy left stale content in the system clipboard", clipboard);
+    assert(!clipboard.text.includes("First copy"), "rapid repeated copy merged stale content into the final clipboard payload", clipboard);
+    assert(clipboard.types.includes("text/markdown"), "rapid repeated copy lost its Markdown format", clipboard);
+    assert(serialSession.getErrors().length === 0, "serial clipboard copy produced page errors", serialSession.getErrors());
+    result.serialCopy = clipboard;
+  } finally {
+    await serialSession.page.close();
+  }
+
   return result;
 }
 
@@ -2779,12 +2958,14 @@ async function runElementContextMenuClipboardCheck(browser) {
     board: createBoard([createTableItem("table-copy", 220, 180)], ["table-copy"]),
   });
   try {
-    await dispatchSyntheticCopyPasteRoundTrip(tableSession.page);
+    const nativeCopy = await dispatchSyntheticCopyPasteRoundTrip(tableSession.page);
     const clipboardSnapshot = await tableSession.page.evaluate(() => navigator.clipboard.__snapshot());
     const items = await tableSession.page.evaluate(() => window.__canvas2dEngine?.getSnapshot?.()?.board?.items || []);
     const tables = items.filter((item) => item.type === "table");
     const plainTexts = items.filter((item) => item.type === "text");
     assert(clipboardSnapshot?.itemCount >= 1, "table copy did not populate clipboard items", clipboardSnapshot);
+    assert(nativeCopy.types.includes("text/markdown"), "native table copy omitted text/markdown", nativeCopy);
+    assert(nativeCopy.markdown.includes("| Name |"), "native table copy lost Markdown table content", nativeCopy);
     assert(tables.length === 2, "table copy/paste did not duplicate table element", items);
     assert(plainTexts.length === 0, "table paste regressed into plain text item", items);
     assert(tableSession.getErrors().length === 0, "table clipboard check produced page errors", tableSession.getErrors());
@@ -3040,6 +3221,7 @@ async function main() {
     report.checks.overlayBudgetReconciliation = await runOverlayBudgetReconciliationCheck(browser);
     report.checks.fileCardLodThreshold = await runFileCardLodThresholdCheck(browser);
     report.checks.pasteSemantic = await runPasteSemanticChecks(browser);
+    report.checks.copyTransport = await runCanvasCopyTransportCheck(browser);
     report.checks.elementContextMenuClipboard = await runElementContextMenuClipboardCheck(browser);
     report.checks.unifiedFrameLifecycle = await runUnifiedFrameLifecycleCheck(browser);
     console.log(JSON.stringify({ ok: true, ...report }, null, 2));

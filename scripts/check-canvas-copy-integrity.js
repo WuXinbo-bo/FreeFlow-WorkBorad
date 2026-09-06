@@ -8,6 +8,9 @@ async function main() {
     matchesInternalClipboardMarker,
     resolveInternalClipboardFreshness,
   } = await import("../public/src/engines/canvas2d-core/brokers/internalClipboardFreshness.js");
+  const { resolveSelectionDependencyClosure } = await import(
+    "../public/src/engines/canvas2d-core/selection/selectionDependencyClosure.js"
+  );
 
   let idSeed = 0;
   const createId = (prefix) => `${prefix}-copy-${++idSeed}`;
@@ -43,6 +46,16 @@ async function main() {
   assert.match(target.html, new RegExp(encodeURIComponent(child.id)), "rich text canvas link was not remapped");
   assert.equal(source[0].groupId, "group-a", "source items were mutated");
   assert.equal(source[1].parentId, "root", "source mind references were mutated");
+
+  const grandchild = { id: "grandchild", type: "mindNode", parentId: "child", childrenIds: [], links: [] };
+  source[0].links = [{ id: "root-link", targetId: "target" }];
+  source[1].childrenIds = [grandchild.id];
+  const closure = resolveSelectionDependencyClosure([source[0]], [...source, grandchild]);
+  assert.deepEqual(
+    closure.map((item) => item.id).sort(),
+    ["child", "edge", "grandchild", "relation", "root", "target"].sort(),
+    "mind map copy did not include its subtree, links, and internal relations"
+  );
 
   const second = prepareElementDuplicateBatch(source, { createId });
   assert.notEqual(second.items[0].id, first.items[0].id, "repeated duplicate batches reused element ids");

@@ -69,7 +69,7 @@ export function serializeTableMatrixToPlainText(matrix = [], { hasHeader = true 
   return lines.join("\n");
 }
 
-export function serializeTableMatrixToMarkdown(matrix = []) {
+export function serializeTableMatrixToMarkdown(matrix = [], { hasHeader = true } = {}) {
   const safeMatrix = mapTableMatrixToPlainTextRows(matrix).map((row) =>
     row.map((cell) => escapeMarkdownTableCell(cell))
   );
@@ -79,6 +79,9 @@ export function serializeTableMatrixToMarkdown(matrix = []) {
   const columnCount = safeMatrix.reduce((max, row) => Math.max(max, row.length), 0);
   const normalizeRow = (row = []) => Array.from({ length: columnCount }, (_, index) => String(row[index] || ""));
   const header = normalizeRow(safeMatrix[0]);
+  if (!hasHeader) {
+    return safeMatrix.map((row) => `| ${normalizeRow(row).join(" | ")} |`).join("\n");
+  }
   const separator = Array.from({ length: columnCount }, () => "---");
   const body = safeMatrix.slice(1).map((row) => normalizeRow(row));
   return [

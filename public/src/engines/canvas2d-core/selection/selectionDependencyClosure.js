@@ -46,6 +46,14 @@ export function resolveSelectionDependencyClosure(selectedItems = [], boardItems
     }
 
     selectedSnapshot.forEach((item) => {
+      if (item.type === "mindNode") {
+        (Array.isArray(item.childrenIds) ? item.childrenIds : []).forEach((id) => {
+          changed = addById(id, selectedIds, itemById) || changed;
+        });
+        (Array.isArray(item.links) ? item.links : []).forEach((link) => {
+          changed = addById(link?.targetId, selectedIds, itemById) || changed;
+        });
+      }
       if (RELATION_TYPES.has(item.type)) {
         changed = addById(item.fromId, selectedIds, itemById) || changed;
         changed = addById(item.toId, selectedIds, itemById) || changed;

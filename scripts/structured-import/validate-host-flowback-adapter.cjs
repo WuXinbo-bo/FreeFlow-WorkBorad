@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 
 async function main() {
-  const { buildHostFlowbackPayload } = await import(
+  const { buildHostFlowbackPayload, buildHostPasteBackDescriptor } = await import(
     "../../public/src/engines/canvas2d-core/import/host/hostFlowbackAdapter.js"
   );
 
@@ -13,6 +13,19 @@ async function main() {
   assert.equal(payload.externalOutput.stats.itemCount, 2);
   assert.equal(payload.pasteDescriptor.entries.length >= 2, true);
   assert.equal(payload.dragDescriptor.channel, "drag-drop");
+  assert.equal(
+    payload.pasteDescriptor.entries.some((entry) => entry.kind === "markdown" && entry.raw.markdown.includes("hello")),
+    true,
+    "flowback paste descriptor omitted Markdown"
+  );
+
+  const markdownDescriptor = buildHostPasteBackDescriptor({
+    text: "",
+    html: "",
+    markdown: "```javascript\nconst value = 1;\n```",
+    filePaths: [],
+  });
+  assert.equal(markdownDescriptor.sourceKind, "markdown", "Markdown-only flowback used the wrong source kind");
 
   console.log("[host-flowback-adapter] ok: 1 scenario validated");
 }

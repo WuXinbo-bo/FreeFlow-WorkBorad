@@ -81,7 +81,7 @@ function downgradeCodeBlockItem(item, index) {
     downgradedFrom: "codeBlock",
     text: buildCodeText(code, language),
     html: `<pre data-copy-role="code-block"${language ? ` data-language="${escapeAttribute(language)}"` : ""}><code>${escapeHtml(code)}</code></pre>`,
-    markdown: `\`\`\`${language}\n${code}\n\`\`\``,
+    markdown: serializeCodeBlockMarkdown(code, language),
   };
 }
 
@@ -119,7 +119,9 @@ function downgradeTableItem(item, index) {
     downgradedFrom: "table",
     text,
     html,
-    markdown: serializeTableMatrixToMarkdown(flattenTableStructureToMatrix(table)) || text,
+    markdown: serializeTableMatrixToMarkdown(flattenTableStructureToMatrix(table), {
+      hasHeader: table.hasHeader !== false,
+    }) || text,
   };
 }
 
@@ -167,7 +169,7 @@ function downgradeImageItem(item, index) {
     html: src
       ? `<img data-copy-role="image" src="${escapeAttribute(String(src))}" alt="${escapeAttribute(label)}">`
       : `<span data-copy-role="image">${escapeHtml(`[图片] ${label}`)}</span>`,
-    markdown: src ? `![${escapeMarkdownLabel(label)}](${String(src)})` : `[图片] ${label}`.trim(),
+    markdown: src ? `![${escapeMarkdownLabel(label)}](${formatMarkdownDestination(src)})` : `[图片] ${label}`.trim(),
   };
 }
 
@@ -265,4 +267,15 @@ function escapeAttribute(value = "") {
 
 function escapeMarkdownLabel(value = "") {
   return String(value || "").replace(/([\\\[\]])/g, "\\$1");
+}
+
+function serializeCodeBlockMarkdown(code = "", language = "") {
+  const longestFence = Math.max(0, ...(String(code || "").match(/`+/g) || []).map((entry) => entry.length));
+  const fence = "`".repeat(Math.max(3, longestFence + 1));
+  return `${fence}${language}\n${code}\n${fence}`;
+}
+
+function formatMarkdownDestination(value = "") {
+  const destination = String(value || "").trim();
+  return /[\s()<>]/.test(destination) ? `<${destination.replace(/>/g, "%3E")}>` : destination;
 }

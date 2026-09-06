@@ -52,6 +52,14 @@ function buildEntriesFromOutput(output = {}) {
       raw: { html: String(output.html || "") },
     });
   }
+  if (output.markdown) {
+    entries.push({
+      entryId: "flowback-markdown",
+      kind: INPUT_ENTRY_KINDS.MARKDOWN,
+      status: "ready",
+      raw: { markdown: String(output.markdown || "") },
+    });
+  }
   for (const [index, filePath] of (Array.isArray(output.filePaths) ? output.filePaths : []).entries()) {
     entries.push({
       entryId: `flowback-file-${index}`,
@@ -69,6 +77,9 @@ function inferOutputSourceKind(output = {}) {
   }
   if (String(output.html || "").trim()) {
     return INPUT_SOURCE_KINDS.HTML;
+  }
+  if (String(output.markdown || "").trim()) {
+    return INPUT_SOURCE_KINDS.MARKDOWN;
   }
   return INPUT_SOURCE_KINDS.PLAIN_TEXT;
 }
