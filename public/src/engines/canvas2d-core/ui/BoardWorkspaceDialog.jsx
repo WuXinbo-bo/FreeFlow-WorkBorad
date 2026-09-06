@@ -439,13 +439,14 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
   const isSavingSelected = busyAction === "save";
   const isSavedSelected =
     !isSavingSelected &&
+    !boardDirty &&
     Boolean(selectedFilePath) &&
     (selectedFilePath === currentPath || selectedFilePath === saveResultPath);
   const saveButtonLabel = isSavingSelected ? "保存中" : isSavedSelected ? "已保存" : "保存";
 
   return (
     <div className="canvas2d-board-workspace-overlay" role="dialog" aria-modal="true" aria-label="画布工作区">
-      <div className="canvas2d-board-workspace-dialog">
+      <div className="canvas2d-board-workspace-dialog is-refined">
         <section className="canvas2d-board-workspace-main">
           <header className="canvas2d-board-workspace-header">
             <div className="canvas2d-board-workspace-title-block">
@@ -629,7 +630,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={(busy && busyAction !== "save") || !selectedFilePath}
+              disabled={busy || !isSelectedActive}
               className={isSavedSelected ? "canvas2d-board-workspace-save-action is-saved" : ""}
             >
               {saveButtonLabel}
@@ -728,7 +729,7 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
               type="button"
               onClick={() => handleOpenSelected()}
               disabled={(busy && busyAction !== "open") || !selectedFilePath || isOpenedSelected}
-              className={isOpenedSelected ? "canvas2d-board-workspace-open-action is-opened" : ""}
+              className={isOpenedSelected ? "canvas2d-board-workspace-open-action is-opened" : "is-primary"}
             >
               {openButtonLabel}
             </button>

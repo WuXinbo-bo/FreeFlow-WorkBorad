@@ -16006,3 +16006,125 @@ body.desktop-mode .workspace.left-collapsed.right-collapsed {
   display: none;
 }
 
+/* Keep the existing workspace layout and theme; tighten its content density. */
+.canvas2d-board-workspace-dialog.is-refined * {
+  letter-spacing: 0;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-main,
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-side {
+  padding: 18px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-title-block {
+  gap: 5px !important;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-path-card {
+  min-height: 58px !important;
+  padding: 10px 0 !important;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-toolbar {
+  padding: 14px 0 10px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-stat-strip {
+  margin-bottom: 10px;
+  gap: 16px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-stat {
+  padding: 6px 0 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-list {
+  gap: 6px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item {
+  grid-template-columns: 36px minmax(0, 1fr) minmax(72px, 94px);
+  min-height: 60px;
+  padding: 9px 12px;
+  gap: 12px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-file-icon {
+  width: 36px;
+  height: 38px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item-main strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item-meta strong,
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item-meta small {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-current {
+  padding: 0 0 16px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0 !important;
+  box-shadow: none;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-side {
+  gap: 12px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-action-stack {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-action-stack > button:first-child {
+  grid-column: 1 / -1;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-action-stack button,
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-bottom-actions button {
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-feedback,
+.canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-error span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 860px) {
+  .canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-list {
+    max-height: 300px;
+  }
+
+  .canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-bottom-actions {
+    margin-top: 12px;
+  }
+}
+
+@media (max-width: 440px) {
+  .canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .canvas2d-board-workspace-dialog.is-refined .canvas2d-board-workspace-item-meta {
+    grid-column: 2;
+    justify-items: start;
+  }
+}
+
