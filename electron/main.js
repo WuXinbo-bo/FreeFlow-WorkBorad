@@ -74,7 +74,7 @@ function isCanvasBoardFileName(fileName = "") {
   const value = String(fileName || "").trim().toLowerCase();
   return value.endsWith(FREEFLOW_BOARD_EXTENSION) || value.endsWith(LEGACY_BOARD_EXTENSION);
 }
-const TUTORIAL_BOARD_TEMPLATE_VERSION = "2.0.0";
+const TUTORIAL_BOARD_TEMPLATE_VERSION = "2.0.1";
 const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });

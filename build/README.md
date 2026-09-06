@@ -1,13 +1,13 @@
-# FreeFlow v2.0.0 发布说明
+# FreeFlow v2.0.1 发布说明
 
 ## 版本与更新检测
 
-- 当前正式版本：`v2.0.0`。
+- 当前正式版本：`v2.0.1`。
 - GitHub 仓库：`WuXinbo-bo/FreeFlow-WorkBorad`。
-- 正式标签：`v2.0.0`，Release 不标记为草稿或预发布后才进入最新正式版本检测。
+- 正式标签：`v2.0.1`，Release 不标记为草稿或预发布后才进入最新正式版本检测。
 - 检测接口：`https://api.github.com/repos/WuXinbo-bo/FreeFlow-WorkBorad/releases/latest`。
-- 安装包：`FreeFlow-v2.0.0-x64.exe`。
-- 便携版：`FreeFlow-v2.0.0-x64-portable.exe`。
+- 安装包：`FreeFlow-v2.0.1-x64.exe`。
+- 便携版：`FreeFlow-v2.0.1-x64-portable.exe`。
 - 校验文件：`SHA256SUMS.txt`。
 
 更新检测优先匹配安装包的准确名称。必须在发布 Release 前上传安装包，不能只上传便携版或源码。应用提供下载入口，用户运行新版安装程序完成覆盖升级。
