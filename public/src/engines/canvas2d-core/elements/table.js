@@ -1,4 +1,5 @@
 import { buildTextTitle, createId, sanitizeText } from "../utils.js";
+import { getTableColumnCount } from "./tableGrid.js";
 
 export const TABLE_MIN_WIDTH = 260;
 export const TABLE_MIN_HEIGHT = 84;
@@ -145,7 +146,7 @@ export function normalizeTableStructure(structure = {}) {
   const columns = Math.max(
     1,
     Number(structure?.columns) || 0,
-    normalizedRows.reduce((max, row) => Math.max(max, row.cells.reduce((sum, cell) => sum + cell.colSpan, 0)), 0)
+    getTableColumnCount(normalizedRows)
   );
   const title = String(structure?.title || inferTableTitle(normalizedRows) || "表格");
   return {

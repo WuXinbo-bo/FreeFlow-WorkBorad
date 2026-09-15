@@ -138,6 +138,7 @@ function normalizeContext(context) {
   const safeContext = context || {};
   return {
     origin: ensureString(safeContext.origin),
+    importIntent: safeContext.importIntent === "web-page" ? "web-page" : "selection",
     boardId: ensureString(safeContext.boardId),
     targetElementId: ensureString(safeContext.targetElementId),
     targetMode: ensureString(safeContext.targetMode),

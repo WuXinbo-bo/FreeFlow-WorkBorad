@@ -162,6 +162,9 @@ function collectSnapshotEntries(snapshot, { internalClipboardMime }) {
       createInternalPayloadEntry(snapshot.internalPayload, `snapshot-${entryIndex++}`, internalClipboardMime)
     );
   }
+  for (const file of snapshot.files || []) {
+    entries.push(createFileEntry(file, `snapshot-file-${entryIndex++}`));
+  }
   const filePaths = Array.isArray(snapshot.filePaths) ? snapshot.filePaths : [];
   for (const filePath of filePaths) {
     entries.push(

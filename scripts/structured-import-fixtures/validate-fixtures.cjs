@@ -1,8 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const root = path.resolve(__dirname, "..", "..");
-const fixtureRoot = path.join(root, "docs", "test", "structured-import-fixtures");
+const fixtureRoot = __dirname;
 const indexPath = path.join(fixtureRoot, "fixture-index.json");
 
 function fail(message) {

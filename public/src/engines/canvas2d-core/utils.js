@@ -4,7 +4,6 @@ export const CANVAS_TEXT_LINE_HEIGHT_RATIO = 1.3;
 export const INLINE_FONT_SIZE_ATTR = "data-ff-font-size";
 const RICH_TEXT_INLINE_FONT_SIZE_ATTR = "data-ff-font-size";
 const CANVAS_RICH_TEXT_BODY_FONT_SIZE = 20;
-const CANVAS_RICH_TEXT_FONT_SIZE_TOKENS = Object.freeze([12, 14, 16, 18, 20, 22, 26, 30, 36, 40, 48]);
 const RICH_TEXT_CLEANUP_STYLE_PROPERTIES = [
   "lineHeight",
   "margin",
@@ -164,41 +163,6 @@ function normalizeRichFontSizeValue(value, fallback = 0) {
   return numericValue;
 }
 
-function findNearestRichTextFontSizeToken(value, fallback = CANVAS_RICH_TEXT_BODY_FONT_SIZE) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return fallback;
-  }
-  return CANVAS_RICH_TEXT_FONT_SIZE_TOKENS.reduce((best, token) => {
-    const bestDistance = Math.abs(best - numeric);
-    const tokenDistance = Math.abs(token - numeric);
-    if (tokenDistance < bestDistance) {
-      return token;
-    }
-    if (tokenDistance === bestDistance && token === fallback) {
-      return token;
-    }
-    return best;
-  }, CANVAS_RICH_TEXT_BODY_FONT_SIZE);
-}
-
-function normalizeExternalRichTextFontSize(value, baseFontSize = CANVAS_RICH_TEXT_BODY_FONT_SIZE) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return 0;
-  }
-  const logicalBase = Math.max(8, Number(baseFontSize || CANVAS_RICH_TEXT_BODY_FONT_SIZE) || CANVAS_RICH_TEXT_BODY_FONT_SIZE);
-  const bodyHigh = logicalBase * 1.15;
-  if (numeric <= bodyHigh) {
-    return 0;
-  }
-  return findNearestRichTextFontSizeToken(numeric, logicalBase);
-}
-
-function isInsideRichTextHeading(element) {
-  return Boolean(element?.closest?.("h1,h2,h3,h4,h5,h6"));
-}
-
 function normalizeRichHtmlElement(element) {
   if (!(element instanceof HTMLElement)) {
     return;
@@ -273,20 +237,6 @@ export function normalizeRichHtmlInlineFontSizes(value = "", baseFontSize = 20) 
     if (!(node instanceof HTMLElement)) {
       return;
     }
-    if (isInsideRichTextHeading(node)) {
-      node.removeAttribute(INLINE_FONT_SIZE_ATTR);
-      if (node.style.fontSize) {
-        node.style.fontSize = "";
-      }
-      if (node.style.lineHeight) {
-        node.style.lineHeight = "";
-      }
-      if (!node.getAttribute("style")) {
-        node.removeAttribute("style");
-      }
-      return;
-    }
-    const hasLogicalInlineSize = node.hasAttribute(INLINE_FONT_SIZE_ATTR);
     let logicalSize = Number.parseFloat(String(node.getAttribute(INLINE_FONT_SIZE_ATTR) || ""));
     const rawFontSize = String(node.style.fontSize || "").trim().toLowerCase();
     if (!Number.isFinite(logicalSize) || logicalSize <= 0) {
@@ -295,6 +245,10 @@ export function normalizeRichHtmlInlineFontSizes(value = "", baseFontSize = 20) 
         if (Number.isFinite(ratio) && ratio > 0) {
           logicalSize = logicalBase * ratio;
         }
+      } else if (rawFontSize.endsWith("pt")) {
+        logicalSize = Number.parseFloat(rawFontSize) * 4 / 3;
+      } else if (rawFontSize.endsWith("%")) {
+        logicalSize = logicalBase * Number.parseFloat(rawFontSize) / 100;
       } else if (rawFontSize.endsWith("px")) {
         const numeric = Number.parseFloat(rawFontSize);
         if (Number.isFinite(numeric) && numeric > 0) {
@@ -303,9 +257,7 @@ export function normalizeRichHtmlInlineFontSizes(value = "", baseFontSize = 20) 
       }
     }
     if (Number.isFinite(logicalSize) && logicalSize > 0) {
-      const normalizedSize = hasLogicalInlineSize
-        ? findNearestRichTextFontSizeToken(logicalSize, logicalBase)
-        : normalizeExternalRichTextFontSize(logicalSize, logicalBase);
+      const normalizedSize = Math.max(8, Math.min(144, logicalSize));
       if (Number.isFinite(normalizedSize) && normalizedSize > 0) {
         node.setAttribute(INLINE_FONT_SIZE_ATTR, String(Math.round(normalizedSize * 100) / 100));
       } else {

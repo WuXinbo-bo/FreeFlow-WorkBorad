@@ -69,11 +69,11 @@ export function createWebContentParser(options = {}) {
       if (!htmlEntries.length) {
         return { matched: false, score: -1, reason: "no-html-entry" };
       }
-      if (isDragHtmlFragmentDescriptor(descriptor)) {
+      if (descriptor?.context?.importIntent !== "web-page" && [INPUT_CHANNELS.PASTE_NATIVE, INPUT_CHANNELS.PASTE_CONTEXT_MENU, INPUT_CHANNELS.DRAG_DROP].includes(descriptor?.channel)) {
         return {
           matched: false,
           score: -1,
-          reason: "drag-html-fragment-prefers-generic-html-parser",
+          reason: "selection-fragment-prefers-generic-html-parser",
         };
       }
       const sourceUrl = String(descriptor?.sourceUrl || "");
@@ -140,19 +140,6 @@ export function createWebContentParser(options = {}) {
       };
     },
   };
-}
-
-function isDragHtmlFragmentDescriptor(descriptor) {
-  const channel = String(descriptor?.channel || "").trim();
-  if (channel !== INPUT_CHANNELS.DRAG_DROP) {
-    return false;
-  }
-  const tags = new Set((Array.isArray(descriptor?.tags) ? descriptor.tags : []).map((tag) => String(tag || "").trim()));
-  if (tags.has("rich-html") || tags.has("contains-html")) {
-    return true;
-  }
-  const origin = String(descriptor?.context?.origin || "").trim();
-  return origin === "engine-drop-html";
 }
 
 function collectHtmlEntries(descriptor) {

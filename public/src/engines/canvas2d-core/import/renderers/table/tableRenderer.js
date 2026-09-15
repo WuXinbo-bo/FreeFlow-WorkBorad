@@ -1,4 +1,5 @@
 import { buildTextTitle, createId, sanitizeText } from "../../../utils.js";
+import { getTableColumnCount } from "../../../elements/tableGrid.js";
 import { RENDER_PAYLOAD_KINDS } from "../rendererPipeline.js";
 import {
   inlineNodesToHtml,
@@ -141,7 +142,7 @@ function normalizeTableStructure(tableNode = {}) {
 
   const columns = Math.max(
     Number(tableNode?.attrs?.columns) || 0,
-    rows.reduce((max, row) => Math.max(max, row.columnSpanWidth), 0)
+    getTableColumnCount(rows)
   );
   const hasHeader = rows.some((row) => row.cells.some((cell) => cell.header));
   const firstMeaningfulCell = rows

@@ -1,3 +1,4 @@
+import { createClipboardDataTransferSnapshot, createClipboardDataTransferFacade } from "./brokers/clipboardSnapshot.js";
 import {
   createView,
   getViewportCenterScenePoint,
@@ -62,6 +63,7 @@ import {
 import {
   applyTableCellContentEdit,
   createEditableTableElement,
+  createTableElement,
   createTableStructureFromMatrix,
   flattenTableStructureToMatrix,
   getTableMatrixAnchor,
@@ -228,7 +230,6 @@ import {
 import {
   buildFileCardContextMenuHtml,
   getFileCardHit,
-  pasteFileCardsFromClipboard,
   removeFileCardById as removeFileCardEntry,
   toggleFileCardMark as toggleFileCardMarkEntry,
 } from "./fileCardModule.js";
@@ -1113,10 +1114,10 @@ function parseInternalClipboardMarker(rawValue = "") {
   }
 }
 
-function buildInternalDragHtmlPayload({ marker = "", text = "" } = {}) {
+function buildInternalDragHtmlPayload({ marker = "", text = "", html = "" } = {}) {
   const markerValue = encodeURIComponent(String(marker || "").trim());
   const safeText = escapeRichTextHtml(String(text || "").trim()).replace(/\n/g, "<br>");
-  return `<div ${INTERNAL_DRAG_MARKER_ATTR}="${markerValue}">${safeText || "&nbsp;"}</div>`;
+  return `<div ${INTERNAL_DRAG_MARKER_ATTR}="${markerValue}">${html || safeText || "&nbsp;"}</div>`;
 }
 
 function parseInternalClipboardMarkerFromHtml(html = "") {
@@ -3520,6 +3521,8 @@ export function createCanvas2DEngine(options = {}) {
   let cancelPendingHydrationSync = null;
   const deferredTextSemanticUpgradeTasks = new Map();
   const structuredImportControllers = new Map();
+  let clipboardImportEpoch = 0;
+  let clipboardImportQueue = Promise.resolve();
   const importedBatchStabilizationTokens = new Map();
   let clipboardProcessingStatusToken = 0;
   let clipboardCopyRequestToken = 0;
@@ -4224,7 +4227,7 @@ let tablePointerSelectionState = {
     readClipboardText: () => clipboardBroker.readSystemClipboardText(),
     readClipboardFiles: () => clipboardBroker.readSystemClipboardFiles(),
     readClipboardSnapshot: () => clipboardBroker.readSystemClipboardSnapshot(),
-    getInternalPayload: async () => ((await shouldUseInternalClipboard()) ? clipboardBroker.getPayload() : null),
+    getInternalPayload: (snapshot) => (shouldUseInternalClipboard(snapshot) ? clipboardBroker.getPayload() : null),
   });
   const exportAssetAdapter = createHostExportAssetAdapter({
     allowLocalFileAccess: () => getAllowLocalFileAccess(),
@@ -6318,6 +6321,31 @@ let tablePointerSelectionState = {
     }
   }
 
+  function cancelClipboardImports() {
+    clipboardImportEpoch += 1;
+    clipboardImportQueue = Promise.resolve();
+    structuredImportControllers.forEach((controller) => controller.abort());
+    structuredImportControllers.clear();
+    importedBatchStabilizationTokens.clear();
+    deferredTextSemanticUpgradeTasks.clear();
+    if (["粘贴处理中…", "拖拽导入中…"].includes(state.statusText)) setStatus("已取消导入");
+  }
+
+  function runClipboardImportWithStatus(statusText, operation) {
+    const board = state.board;
+    const epoch = clipboardImportEpoch;
+    const isCurrent = () => mounted && state.board === board && clipboardImportEpoch === epoch;
+    const task = clipboardImportQueue.then(() => {
+      if (!isCurrent()) return false;
+      return runClipboardOperationWithStatus(statusText, () => isCurrent() ? operation(isCurrent) : false);
+    });
+    clipboardImportQueue = task.catch(() => null);
+    return task.catch(() => {
+      if (isCurrent()) setStatus("导入失败，请重新复制后重试", "warning");
+      return false;
+    });
+  }
+
   function openExternalUrl(url = "") {
     const rawUrl = String(url || "").trim();
     if (!rawUrl) {
@@ -7674,6 +7702,7 @@ let tablePointerSelectionState = {
         const restoredBoard = structuredImportRuntime.deserializeBoard(boardPayload).board;
         loadMetrics.mark("deserialize-board");
         clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
+        cancelClipboardImports();
         state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
         loadMetrics.mark("repair-board");
         state.board.selectedIds = [];
@@ -7833,6 +7862,7 @@ let tablePointerSelectionState = {
     const nextPath = await resolveUniqueBoardFilePath(folderPath);
     suppressDirtyTracking = true;
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
+    cancelClipboardImports();
     state.board = createEmptyBoard();
     state.board.selectedIds = [];
     state.history = createHistoryState();
@@ -14643,21 +14673,29 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function buildTableSelectionClipboardPayload(selectedMatrix) {
+    const table = createTableStructureFromMatrix(selectedMatrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false });
+    return {
+      text: serializeTableMatrixToTsv(selectedMatrix),
+      html: buildDirectClipboardPayloadForItems([{ type: "table", table }])?.html || "",
+    };
+  }
+
   async function copyTableSelectionToClipboard({ cut = false } = {}) {
+    const item = getTableEditItem();
     const matrix = buildTableMatrixFromEditor();
     const selectedMatrix = getTableSelectionMatrix(matrix);
     const text = serializeTableMatrixToTsv(selectedMatrix);
     if (!text.trim()) {
       return false;
     }
-    if (navigator?.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // ignore clipboard permission failures
-      }
+    const result = await writeClipboardTextAndHtml(buildTableSelectionClipboardPayload(selectedMatrix));
+    if (!result.ok) {
+      setStatus("表格选区复制失败", "warning");
+      return false;
     }
-    if (cut) {
+    clearInternalClipboard();
+    if (cut && getTableEditItem() === item) {
       mutateTableEditor((draftMatrix) =>
         clearTableSelectionContent(draftMatrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
       );
@@ -15460,13 +15498,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("代码块为空");
       return false;
     }
-    const result = await writeClipboardTextAndHtml({ text: content });
+    const result = await writeClipboardTextAndHtml({
+      text: content,
+      html: buildDirectClipboardPayloadForItems([item])?.html || "",
+    });
     if (!result.ok) {
       setStatus("代码复制失败", "warning");
       return false;
     }
     flashCodeBlockCopyFeedback(item.id);
-    setStatus("代码已复制");
+    setStatus(result.status === CANVAS_OPERATION_STATUS.DEGRADED ? "代码已复制（仅纯文本）" : "代码已复制", result.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success");
     return result;
   }
 
@@ -18413,6 +18454,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         recordFailure("clipboard-item", error);
       }
     }
+    if (richHtml && markdownText && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([richHtml], { type: "text/html" }),
+          "text/plain": new Blob([plainText || markdownText || htmlToPlainText(richHtml)], { type: "text/plain" }),
+        })]);
+        attempts.push({ id: "html", type: "clipboard-write", status: "written" });
+        return resultFor(["text/html", "text/plain"], true);
+      } catch (error) {
+        recordFailure("html", error);
+      }
+    }
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(plainText || markdownText || htmlToPlainText(richHtml));
@@ -19576,40 +19629,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return duplicatedItems;
   }
 
-  function pasteInternalClipboard(anchorPoint = getCenterScenePoint(), options = {}) {
-    const payload = state.clipboard;
-    if (!payload?.items?.length) {
-      return false;
-    }
-    const stagger = options?.stagger !== false;
-    const historyReason = String(options?.historyReason || "粘贴元素");
-    const statusPrefix = String(options?.statusPrefix || "已粘贴");
-    const before = takeHistoryMetadataSnapshot(state);
-    const beforeOrderIds = state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean);
-    const bounds = getBoardBounds(payload.items);
-    const pasteCount = Math.max(0, Number(payload.pasteCount) || 0);
-    const groupOffset = stagger ? 28 + pasteCount * 20 : 0;
-    const anchorX = Number(anchorPoint?.x || 0) + groupOffset;
-    const anchorY = Number(anchorPoint?.y || 0) + groupOffset;
-    const deltaX = anchorX - Number(bounds?.left || 0);
-    const deltaY = anchorY - Number(bounds?.top || 0);
-    const pasted = normalizeImportedPasteFrameItems(duplicateElementsWithDelta(payload.items, deltaX, deltaY, {
-      forceWrapText: options?.forceWrapText === true,
-    }));
-    payload.pasteCount = stagger ? pasteCount + 1 : pasteCount;
-    state.board.items.push(...pasted);
-    state.board.selectedIds = pasted.map((item) => item.id);
-    void hydrateFileCardIds(pasted);
-    commitItemsPatchHistory(before, pasted.map((item) => item.id), historyReason, "item-insert-batch", {
-      beforeOrderIds,
-      afterOrderIds: state.board.items.map((item) => String(item?.id || "").trim()).filter(Boolean),
-    });
-    setStatus(`${statusPrefix} ${pasted.length} 个元素`);
-    return true;
-  }
-
   async function pasteInternalClipboardAsync(anchorPoint = getCenterScenePoint(), options = {}) {
-    const payload = state.clipboard;
+    const board = state.board;
+    const epoch = clipboardImportEpoch;
+    const payload = options.payload || state.clipboard;
     if (!payload?.items?.length) {
       return false;
     }
@@ -19627,6 +19650,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const pasted = normalizeImportedPasteFrameItems(await duplicateElementsWithDeltaAsync(payload.items, deltaX, deltaY, {
       forceWrapText: options?.forceWrapText === true,
     }));
+    if (board !== state.board || epoch !== clipboardImportEpoch) return false;
     payload.pasteCount = stagger ? pasteCount + 1 : pasteCount;
     state.board.items.push(...pasted);
     state.board.selectedIds = pasted.map((item) => item.id);
@@ -19639,6 +19663,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function pasteDragPayload(payload, anchorPoint = getCenterScenePoint(), options = {}) {
+    const board = state.board;
+    const epoch = clipboardImportEpoch;
     if (!payload?.items?.length) {
       return false;
     }
@@ -19651,7 +19677,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         forceWrapText: options?.forceWrapText === true,
       })
     );
-    if (!pasted.length) {
+    if (!pasted.length || board !== state.board || epoch !== clipboardImportEpoch) {
       return false;
     }
     state.board.items.push(...pasted);
@@ -19667,18 +19693,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function clearInternalClipboard() {
     state.clipboard = null;
     clipboardBroker.clearPayload?.();
-  }
-
-  function normalizeClipboardPathValue(value = "") {
-    return String(value || "").trim().replace(/\//g, "\\").toLowerCase();
-  }
-
-  function normalizeClipboardTextValue(value = "") {
-    return String(value || "")
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n")
-      .replace(/\u00a0/g, " ")
-      .trim();
   }
 
   function matchesInternalClipboardByMarker(dataTransfer) {
@@ -19709,63 +19723,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  async function readSystemClipboardInternalMarker() {
-    const clipboardItems = await clipboardBroker.readSystemClipboardItems();
-    for (const clipboardItem of clipboardItems) {
-      const types = Array.isArray(clipboardItem?.types) ? clipboardItem.types : [];
-      if (types.includes(CANVAS_CLIPBOARD_MIME) && typeof clipboardItem.getType === "function") {
-        try {
-          const blob = await clipboardItem.getType(CANVAS_CLIPBOARD_MIME);
-          const marker = parseInternalClipboardMarker(await blob.text());
-          if (marker) {
-            return marker;
-          }
-        } catch {
-          // Ignore unreadable custom clipboard payloads and continue fallback probes.
-        }
-      }
-      if (types.includes("text/html") && typeof clipboardItem.getType === "function") {
-        try {
-          const blob = await clipboardItem.getType("text/html");
-          const marker = parseInternalClipboardMarkerFromHtml(await blob.text());
-          if (marker) {
-            return marker;
-          }
-        } catch {
-          // Ignore unreadable HTML clipboard payloads and continue scanning.
-        }
-      }
-    }
-    return null;
-  }
-
-  async function shouldUseInternalClipboard() {
-    const payload = state.clipboard;
-    if (!payload?.items?.length) {
-      return false;
-    }
-
-    const marker = await readSystemClipboardInternalMarker();
-    const payloadPaths = Array.isArray(payload.filePaths)
-      ? payload.filePaths.map((entry) => normalizeClipboardPathValue(entry)).filter(Boolean)
-      : [];
-    const clipboardPaths = (await clipboardBroker.readSystemClipboardFiles())
-      .map((entry) => normalizeClipboardPathValue(entry))
-      .filter(Boolean);
-
-    const payloadText = normalizeClipboardTextValue(payload.text || "");
-    const clipboardText = normalizeClipboardTextValue(await clipboardBroker.readSystemClipboardText());
-    const fresh = resolveInternalClipboardFreshness({
-      payload,
-      marker,
-      payloadPaths,
-      clipboardPaths,
-      payloadText,
-      clipboardText,
-    });
-    if (!fresh) {
-      clearInternalClipboard();
-    }
+  function shouldUseInternalClipboard(snapshot) {
+    const marker = parseInternalClipboardMarker(snapshot?.data?.[CANVAS_CLIPBOARD_MIME] || "")
+      || parseInternalClipboardMarkerFromHtml(snapshot?.html || "");
+    const fresh = resolveInternalClipboardFreshness({ payload: state.clipboard, marker });
+    if (!fresh) clearInternalClipboard();
     return fresh;
   }
 
@@ -20119,6 +20081,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!descriptor || descriptor.status === "error" || descriptor.status === "unsupported") {
       return false;
     }
+    const board = state.board;
+    const epoch = clipboardImportEpoch;
     const operationId = String(descriptor.descriptorId || createId("structured-import"));
     structuredImportControllers.get(operationId)?.abort?.();
     const controller = new AbortController();
@@ -20136,6 +20100,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           yieldControl: shouldYieldDuringCommit ? () => yieldToNextFrame() : null,
         }),
       });
+      if (controller.signal.aborted || state.board !== board || epoch !== clipboardImportEpoch) return true;
       if (result?.pipeline === "structured" && result?.commitResult?.ok) {
         return applyStructuredCommitResult(result.commitResult, { reason, statusText });
       }
@@ -23484,6 +23449,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       toggleNodeText();
       hideContextMenu();
     }
+    if (action === "text-convert-code" || action === "text-convert-table") {
+      runCommand(action === "text-convert-code" ? "text.convert-code" : "text.convert-table");
+      return;
+    }
     if (action === "connect-node" || action === "text-connect-mind-node") {
       beginMindRelationshipConnection();
       hideContextMenu();
@@ -24346,6 +24315,27 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
 
+  function convertSelectedTextContent(type) {
+    const source = getSingleSelectedItemFast();
+    if (!source || source.type !== "text" || isLockedText(source) || state.editingId) return false;
+    const text = String(source.plainText || source.text || "");
+    if (!text.trim()) return false;
+    if (type === "table" && !text.includes("\t")) {
+      setStatus("请使用制表符分列、换行分行的文本", "warning");
+      return false;
+    }
+    const before = takeItemsHistorySnapshot([source.id]);
+    const point = { x: source.x, y: source.y };
+    const item = type === "codeBlock" ? createCodeBlockElement(point, text, "")
+      : createTableElement(point, createTableStructureFromMatrix(text.split(/\r?\n/).map((line) => line.split("\t")), { hasHeader: false }));
+    item.id = source.id;
+    if (source.groupId) item.groupId = source.groupId;
+    state.board.items = state.board.items.map((entry) => entry.id === source.id ? item : entry);
+    commitItemPatchHistory(before, item.id, item, "转换文本", "item-convert");
+    setStatus(type === "codeBlock" ? "已转为代码块" : "已转为表格");
+    return true;
+  }
+
   function convertTextToFlowNode() {
     if (state.board.selectedIds.length !== 1) {
       return false;
@@ -24708,6 +24698,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       parseRichTextClipboardPayload(dataTransfer.getData(RICH_TEXT_CLIPBOARD_MIME));
     let html = String(richPayload?.html || dataTransfer.getData("text/html") || "");
     let text = String(richPayload?.plainText || dataTransfer.getData("text/plain") || "");
+    if (!html && !text && shouldUseInternalClipboard(createClipboardDataTransferSnapshot(dataTransfer))) {
+      html = sanitizeHtml(
+        normalizeRichHtmlInlineFontSizes(normalizeRichHtml(String(state.clipboard?.html || "")), baseFontSize)
+      ).trim();
+      text = sanitizeText(state.clipboard?.text || "") || sanitizeText(htmlToPlainText(html));
+    }
     if (html) {
       html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(html), baseFontSize)).trim();
     }
@@ -24720,12 +24716,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (!html && text) {
       html = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
-    }
-    if (!html && !text && marker?.source === CLIPBOARD_SOURCE_CANVAS && state.clipboard?.items?.length) {
-      html = sanitizeHtml(
-        normalizeRichHtmlInlineFontSizes(normalizeRichHtml(String(state.clipboard?.html || "")), baseFontSize)
-      ).trim();
-      text = sanitizeText(state.clipboard?.text || "") || sanitizeText(htmlToPlainText(html));
     }
     if (!html && !text) {
       return null;
@@ -24805,6 +24795,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       source: CLIPBOARD_SOURCE_RICH_EDITOR,
       kind: CLIPBOARD_KIND_RICH_TEXT,
     });
+    const sessionRevision = richTextSession.getRevision();
     clearInternalClipboard();
     let copied = false;
     let usedNativeCut = false;
@@ -24825,21 +24816,29 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         copied = false;
       }
     }
+    if (!copied && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([payload.html], { type: "text/html" }),
+          "text/plain": new Blob([payload.text], { type: "text/plain" }),
+        })]);
+        copied = true;
+      } catch { copied = false; }
+    }
     if (!copied && navigator.clipboard?.writeText && payload.text) {
       try {
         await navigator.clipboard.writeText(payload.text);
         copied = true;
-      } catch {
-        copied = false;
-      }
+      } catch { copied = false; }
     }
-    if (!copied && typeof document?.execCommand === "function") {
+    const isSameSession = () => getActiveRichEditingItem() === item && sessionRevision === richTextSession.getRevision();
+    if (!copied && isSameSession() && typeof document?.execCommand === "function") {
       refs.richEditor?.focus();
       richTextSession.captureSelection();
       copied = document.execCommand(cut ? "cut" : "copy");
       usedNativeCut = cut && copied;
     }
-    if (cut) {
+    if (cut && copied && isSameSession()) {
       if (!usedNativeCut) {
         richTextSession.deleteSelection();
       }
@@ -24852,50 +24851,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function readSystemClipboardRichPayload(item) {
-    const baseFontSize = item?.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE;
-    let html = "";
-    let text = "";
-    if (navigator.clipboard?.read) {
-      try {
-        const entries = await navigator.clipboard.read();
-        for (const entry of entries) {
-          if (!html && entry.types.includes("text/html")) {
-            const blob = await entry.getType("text/html");
-            html = await blob.text();
-          }
-          if (!text && entry.types.includes("text/plain")) {
-            const blob = await entry.getType("text/plain");
-            text = await blob.text();
-          }
-          if (html || text) {
-            break;
-          }
-        }
-      } catch {
-        html = "";
-        text = "";
-      }
-    }
-    if (!text) {
-      text = await clipboardBroker.readSystemClipboardText();
-    }
-    if (html) {
-      html = sanitizeHtml(normalizeRichHtmlInlineFontSizes(normalizeRichHtml(html), baseFontSize)).trim();
-    }
-    text = sanitizeText(text || "") || sanitizeText(htmlToPlainText(html));
-    if (text && hasMarkdownMathSyntax(text) && !htmlContainsRenderableMath(html)) {
-      const semanticMathHtml = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
-      if (semanticMathHtml) {
-        html = semanticMathHtml;
-      }
-    }
-    if (!html && text) {
-      html = await convertPlainClipboardTextToSemanticHtmlAsync(text, baseFontSize);
-    }
-    if (!html && !text) {
-      return null;
-    }
-    return { html, text };
+    const snapshot = await clipboardBroker.readSystemClipboardSnapshot();
+    return getRichEditorPasteClipboardPayload(createClipboardDataTransferFacade(snapshot), item);
   }
 
   async function pasteIntoActiveRichEditorFromClipboard() {
@@ -24903,7 +24860,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!item) {
       return false;
     }
+    const epoch = clipboardImportEpoch;
+    const sessionRevision = richTextSession.getRevision();
     const payload = await readSystemClipboardRichPayload(item);
+    if (getActiveRichEditingItem() !== item || epoch !== clipboardImportEpoch || sessionRevision !== richTextSession.getRevision()) return false;
     if (!payload) {
       return false;
     }
@@ -24975,6 +24935,36 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return true;
     }
     return false;
+  }
+
+  function onEditorSelectionDragStart(event) {
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) return;
+    const richItem = getActiveRichEditingItem();
+    const payload = getCodeEditorSelectionPayload(event.target)
+      || (richItem ? getRichEditorSelectionClipboardPayload(richItem) : null);
+    if (!payload?.text) return;
+    event.stopPropagation();
+    dataTransfer.clearData();
+    writeClipboardDataWithProtocols(dataTransfer, payload);
+    dataTransfer.effectAllowed = "copy";
+  }
+
+  function getCodeEditorSelectionPayload(target) {
+    if (!(target instanceof HTMLTextAreaElement) || !refs.codeBlockEditor?.contains(target)) return null;
+    const text = target.value.slice(target.selectionStart, target.selectionEnd);
+    if (!text) return null;
+    const language = getCodeBlockEditItem()?.language || "";
+    return { text, html: `<pre data-language="${escapeRichTextHtml(language)}"><code>${escapeRichTextHtml(text)}</code></pre>` };
+  }
+
+  function onCodeEditorCopy(event) {
+    const payload = getCodeEditorSelectionPayload(event.target);
+    if (!payload || !event.clipboardData) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearInternalClipboard();
+    writeClipboardDataWithProtocols(event.clipboardData, payload);
   }
 
   function onRichEditorCopy(event) {
@@ -25262,7 +25252,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
-    const payload = await getRichEditorPasteClipboardPayload(event.clipboardData, item);
+    const epoch = clipboardImportEpoch;
+    const sessionRevision = richTextSession.getRevision();
+    const snapshot = createClipboardDataTransferSnapshot(event.clipboardData);
+    const payload = await getRichEditorPasteClipboardPayload(createClipboardDataTransferFacade(snapshot), item);
+    if (getActiveRichEditingItem() !== item || epoch !== clipboardImportEpoch || sessionRevision !== richTextSession.getRevision()) return;
     if (!payload) {
       return;
     }
@@ -25844,18 +25838,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     event.preventDefault();
-    const text = serializeTableMatrixToTsv(getTableSelectionMatrix(buildTableMatrixFromEditor()));
+    const selectedMatrix = getTableSelectionMatrix(buildTableMatrixFromEditor());
+    const text = serializeTableMatrixToTsv(selectedMatrix);
     if (!text.trim()) {
       return;
     }
-    event.clipboardData?.setData?.("text/plain", text);
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {});
-    }
+    clearInternalClipboard();
+    writeClipboardDataWithProtocols(event.clipboardData, buildTableSelectionClipboardPayload(selectedMatrix));
     setStatus("已复制表格选区");
   }
 
   function onTableEditorCut(event) {
+    if (!event.clipboardData) return;
     if (tableCellEditState.active && refs.tableCellRichEditor?.contains?.(event.target)) {
       return;
     }
@@ -25864,12 +25858,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     event.preventDefault();
-    const text = serializeTableMatrixToTsv(getTableSelectionMatrix(buildTableMatrixFromEditor()));
+    const selectedMatrix = getTableSelectionMatrix(buildTableMatrixFromEditor());
+    const text = serializeTableMatrixToTsv(selectedMatrix);
     if (text.trim()) {
-      event.clipboardData?.setData?.("text/plain", text);
-      if (navigator?.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).catch(() => {});
-      }
+      clearInternalClipboard();
+      writeClipboardDataWithProtocols(event.clipboardData, buildTableSelectionClipboardPayload(selectedMatrix));
     }
     mutateTableEditor((matrix) =>
       clearTableSelectionContent(matrix, { hasHeader: getTableEditItem()?.table?.hasHeader !== false })
@@ -26063,8 +26056,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       source: CLIPBOARD_SOURCE_CANVAS,
       kind: CLIPBOARD_KIND_ITEMS,
     });
-    clipboardBroker.setPayload(dragPayload);
-    state.clipboard = dragPayload ? { ...dragPayload, pasteCount: 0 } : null;
     event.dataTransfer.clearData();
     event.dataTransfer.setData(CANVAS_CLIPBOARD_MIME, marker);
     const serializedPayload = stringifyInternalDragPayload({ marker, payload: dragPayload });
@@ -26076,6 +26067,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       buildInternalDragHtmlPayload({
         marker,
         text,
+        html: dragPayload?.html || "",
       })
     );
     event.dataTransfer.setData("text/plain", text);
@@ -26085,74 +26077,74 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     event.dataTransfer.effectAllowed = "copy";
   }
 
-  async function onDrop(event) {
-    if (!isInteractiveMode()) {
-      return;
-    }
+  function onDrop(event) {
+    if (!isInteractiveMode()) return;
     event.preventDefault();
     drawToolModule.hidePreview();
-    const scenePoint = toScenePoint(event.clientX, event.clientY);
-    if (matchesInternalClipboardByMarker(event.dataTransfer)) {
-      pasteInternalClipboard(scenePoint, {
-        stagger: false,
-        forceWrapText: true,
-        historyReason: "拖拽复制",
-        statusPrefix: "已拖拽复制",
-      });
-      return;
-    }
-    const externalDragPayload = readInternalDragPayload(event.dataTransfer);
-    if (externalDragPayload?.payload) {
-      await pasteDragPayload(externalDragPayload.payload, scenePoint, {
-        forceWrapText: true,
-        historyReason: "拖拽复制",
-        statusPrefix: "已拖拽复制",
-      });
-      return;
-    }
-    const structuredHandled = await tryStructuredImportDescriptor(
-      buildUnifiedDropDescriptor(event.dataTransfer, scenePoint),
-      scenePoint,
-      {
-        reason: "拖拽导入",
-        statusText: "已通过新导入链路导入内容",
-        context: {
-          origin: "engine-drop",
-        },
+    const snapshot = createClipboardDataTransferSnapshot(event.dataTransfer);
+    const facade = createClipboardDataTransferFacade(snapshot);
+    const anchor = toScenePoint(event.clientX, event.clientY);
+    const internalPayload = matchesInternalClipboardByMarker(facade)
+      ? state.clipboard : readInternalDragPayload(facade)?.payload;
+    if (state.editingId && !commitRichEdit()) return;
+    focusCanvasSurface();
+    void runClipboardImportWithStatus("拖拽导入中…", async (isCurrent) => {
+      if (internalPayload) {
+        return pasteDragPayload(internalPayload, anchor, {
+          forceWrapText: true, historyReason: "拖拽复制", statusPrefix: "已拖拽复制",
+        });
       }
-    );
-    if (structuredHandled) {
-      return;
-    }
-    for (const handler of dragHandlers) {
-      const result = await handler?.({
-        event,
-        dataTransfer: event.dataTransfer,
-        anchor: scenePoint,
-        state,
-      });
-      if (result?.handled) {
-        if (Array.isArray(result.items) && result.items.length) {
-          try {
-            await persistImportedImages(result.items);
-          } catch {
-            // ignore import persistence failures
-          }
-          pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
-        }
-        return;
+      return importClipboardSnapshot(snapshot, anchor, { channel: "drop", isCurrent });
+    });
+  }
+
+  async function importClipboardSnapshot(snapshot, anchor, { channel = "paste", isCurrent = () => true } = {}) {
+    const facade = createClipboardDataTransferFacade(snapshot);
+    const dropping = channel === "drop";
+    const reason = dropping ? "拖拽导入" : "粘贴内容";
+    const origin = dropping ? "engine-drop" : channel === "menu" ? "engine-context-menu-paste" : "engine-paste";
+    const descriptor = dropping ? buildUnifiedDropDescriptor(facade, anchor)
+      : channel === "menu" ? structuredImportRuntime.pasteGateway.fromSystemClipboardSnapshot(snapshot, { origin, anchor })
+      : structuredImportRuntime.pasteGateway.fromClipboardData(facade, { origin, anchor });
+    const applyResult = (result, degraded = false) => {
+      if (!isCurrent()) return true;
+      if (!result?.handled) return false;
+      if (result.items?.length) {
+        pushItems(result.items, { reason, statusText: `已导入 ${result.items.length} 个内容` });
+        scheduleDeferredImportedAssetPersistence(result.items, { reason: "clipboard-asset-persist" });
+        if (degraded) setStatus("已导入内容，部分结构或格式已简化", "warning");
       }
-    }
-    const result = await dragBroker.importFromDataTransfer(event.dataTransfer, scenePoint);
-    if (result?.handled && result.items?.length) {
-      try {
-        await persistImportedImages(result.items);
-      } catch {
-        // ignore import persistence failures
+      return true;
+    };
+    const runHandlers = async (handlers) => {
+      for (const handler of handlers) {
+        const result = await handler?.({
+          event: { dataTransfer: facade, clipboardData: facade },
+          dataTransfer: facade, clipboardSnapshot: snapshot, anchor, state,
+        });
+        if (applyResult(result)) return true;
       }
-      pushItems(result.items, { reason: "拖拽导入", statusText: `已导入 ${result.items.length} 个内容` });
-      return;
+      return false;
+    };
+    if (shouldPreferNonBlockingClipboardImport(snapshot)) await yieldToNextFrame();
+    if (!isCurrent()) return false;
+    if (!dropping && await runHandlers(pasteHandlers)) return true;
+    if (!isCurrent()) return false;
+    const handled = await tryStructuredImportDescriptor(descriptor, anchor, {
+      reason, statusText: "已导入内容", context: { origin },
+    });
+    if (handled || !isCurrent()) return handled;
+    if (dropping && await runHandlers(dragHandlers)) return true;
+    if (!isCurrent()) return false;
+    const result = await dragBroker.importFromDataTransfer(facade, anchor);
+    if (applyResult(result, Boolean(snapshot.html || snapshot.markdown))) return true;
+    if (!isCurrent()) return false;
+    if (snapshot.filePaths?.length) {
+      const items = await dragBroker.createFileCardsFromPaths(snapshot.filePaths, anchor);
+      return applyResult({ handled: Boolean(items.length), items });
     }
+    setStatus("未读取到可导入的内容，请重新复制后重试", "warning");
+    return false;
   }
 
   async function onCopy(event) {
@@ -26186,48 +26178,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     event.preventDefault();
     await cutSelection();
-  }
-
-  function createClipboardDataTransferSnapshot(dataTransfer) {
-    const snapshot = {
-      text: String(dataTransfer?.getData?.("text/plain") || dataTransfer?.getData?.("text") || ""),
-      html: String(dataTransfer?.getData?.("text/html") || ""),
-      markdown: String(dataTransfer?.getData?.("text/markdown") || dataTransfer?.getData?.("text/x-markdown") || ""),
-      uriList: String(dataTransfer?.getData?.("text/uri-list") || ""),
-      types: Array.from(dataTransfer?.types || []).map((type) => String(type || "")).filter(Boolean),
-      files: Array.from(dataTransfer?.files || []),
-    };
-    return snapshot;
-  }
-
-  function createClipboardDataTransferFacade(snapshot = {}) {
-    const typeValueMap = new Map();
-    const text = String(snapshot?.text || "");
-    const html = String(snapshot?.html || "");
-    const markdown = String(snapshot?.markdown || "");
-    const uriList = String(snapshot?.uriList || "");
-    const types = Array.isArray(snapshot?.types) ? snapshot.types.slice() : [];
-    if (text) {
-      typeValueMap.set("text/plain", text);
-      typeValueMap.set("text", text);
-    }
-    if (html) {
-      typeValueMap.set("text/html", html);
-    }
-    if (markdown) {
-      typeValueMap.set("text/markdown", markdown);
-      typeValueMap.set("text/x-markdown", markdown);
-    }
-    if (uriList) {
-      typeValueMap.set("text/uri-list", uriList);
-    }
-    return {
-      files: Array.isArray(snapshot?.files) ? snapshot.files.slice() : [],
-      types,
-      getData(type) {
-        return typeValueMap.get(String(type || "").trim()) || "";
-      },
-    };
   }
 
   function shouldPreferNonBlockingClipboardImport(snapshot = {}) {
@@ -26265,138 +26215,27 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return false;
   }
 
-  async function onPaste(event) {
-    if (!isInteractiveMode() || state.editingId) {
-      return;
-    }
-    const markerMatched = matchesInternalClipboardByMarker(event.clipboardData);
-    const clipboardSnapshot = markerMatched ? null : createClipboardDataTransferSnapshot(event.clipboardData);
-    const clipboardFacade = clipboardSnapshot ? createClipboardDataTransferFacade(clipboardSnapshot) : null;
-    const preferNonBlockingImport = shouldPreferNonBlockingClipboardImport(clipboardSnapshot || {});
+  function onPaste(event) {
+    if (!isInteractiveMode() || state.editingId) return;
+    const snapshot = createClipboardDataTransferSnapshot(event.clipboardData);
+    const anchor = { ...(state.lastPointerScenePoint || getCenterScenePoint()) };
     event.preventDefault();
-    void runClipboardOperationWithStatus("粘贴处理中…", async () => {
-      const anchor = state.lastPointerScenePoint || getCenterScenePoint();
-      if (markerMatched || (await shouldUseInternalClipboard())) {
-        await pasteInternalClipboardAsync(anchor);
-        return true;
-      }
-      if (preferNonBlockingImport) {
-        await yieldToNextFrame();
-      }
-      for (const handler of pasteHandlers) {
-        const result = await handler?.({
-          event,
-          dataTransfer: clipboardFacade || event.clipboardData,
-          clipboardSnapshot,
-          anchor,
-          state,
-        });
-        if (result?.handled) {
-          if (Array.isArray(result.items) && result.items.length) {
-            pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
-            scheduleDeferredImportedAssetPersistence(result.items, {
-              reason: "paste-handler-asset-persist",
-            });
-          }
-          return true;
-        }
-      }
-      const structuredDescriptor =
-        !markerMatched && (clipboardFacade || event.clipboardData)
-          ? structuredImportRuntime.pasteGateway.fromClipboardData(clipboardFacade || event.clipboardData, {
-              origin: "engine-paste",
-              anchor,
-            })
-          : null;
-      if (structuredDescriptor) {
-        if (preferNonBlockingImport) {
-          await yieldToNextFrame();
-        }
-        const structuredHandled = await tryStructuredImportDescriptor(structuredDescriptor, anchor, {
-          reason: "粘贴内容",
-          statusText: "已通过新导入链路粘贴内容",
-          context: {
-            origin: "engine-paste",
-          },
-        });
-        if (structuredHandled) {
-          return true;
-        }
-      }
-      const result = await dragBroker.importFromDataTransfer(clipboardFacade || event.clipboardData, anchor);
-      if (result?.handled && result.items?.length) {
-        pushItems(result.items, { reason: "粘贴内容", statusText: `已粘贴 ${result.items.length} 个内容` });
-        scheduleDeferredImportedAssetPersistence(result.items, {
-          reason: "paste-drag-broker-asset-persist",
-        });
-        return true;
-      }
-      const filePaths = await clipboardBroker.readSystemClipboardFiles();
-      if (filePaths.length) {
-        const items = await dragBroker.createFileCardsFromPaths(filePaths, anchor);
-        pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
-        scheduleDeferredImportedAssetPersistence(items, {
-          reason: "paste-file-path-asset-persist",
-        });
-        return true;
-      }
-
-      const text = await clipboardBroker.readSystemClipboardText();
-      if (text.trim()) {
-        const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
-        await insertClipboardTextAt(anchor, text, {
-          deferSemanticUpgrade,
-          origin: "engine-paste-system-text-fallback",
-          reason: "粘贴内容",
-          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已粘贴内容",
-        });
-      }
-      return true;
+    const internalPayload = shouldUseInternalClipboard(snapshot) ? state.clipboard : null;
+    void runClipboardImportWithStatus("粘贴处理中…", async (isCurrent) => {
+      if (internalPayload) return pasteInternalClipboardAsync(anchor, { payload: internalPayload });
+      return importClipboardSnapshot(snapshot, anchor, { isCurrent });
     });
   }
 
-  async function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
-    return runClipboardOperationWithStatus("粘贴处理中…", async () => {
-      if (await shouldUseInternalClipboard()) {
-        return pasteInternalClipboardAsync(anchorPoint);
-      }
-      const textHint = await clipboardBroker.readSystemClipboardText();
-      const structuredHandled = await tryStructuredImportDescriptor(
-        await structuredImportRuntime.contextMenuPasteAdapter.createDescriptor({
-          origin: "engine-context-menu-paste",
-          anchor: anchorPoint,
-        }),
-        anchorPoint,
-        {
-          reason: "粘贴内容",
-          statusText: "已通过新导入链路粘贴内容",
-          context: {
-            origin: "engine-context-menu-paste",
-          },
-        }
-      );
-      if (structuredHandled) {
-        return true;
-      }
-      const { items } = await pasteFileCardsFromClipboard({ clipboardBroker, dragBroker, anchor: anchorPoint });
-      if (items.length) {
-        const pushed = pushItems(items, { reason: "粘贴文件", statusText: `已粘贴 ${items.length} 个文件` });
-        scheduleDeferredImportedAssetPersistence(items, {
-          reason: "context-menu-paste-file-asset-persist",
-        });
-        return pushed;
-      }
-      const text = textHint;
-      if (text.trim()) {
-        const deferSemanticUpgrade = shouldDeferSemanticUpgradeForText(text);
-        return insertClipboardTextAt(anchorPoint, text, {
-          deferSemanticUpgrade,
-          origin: "engine-context-menu-paste-text-fallback",
-          reason: "粘贴内容",
-          statusText: deferSemanticUpgrade ? "已粘贴文本，后台结构化处理中" : "已粘贴内容",
-        });
-      }
-      return false;
+  function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
+    // Start the read during the user gesture, before queued imports or painting.
+    const snapshotPromise = clipboardBroker.readSystemClipboardSnapshot();
+    const anchor = { ...anchorPoint };
+    return runClipboardImportWithStatus("粘贴处理中…", async (isCurrent) => {
+      const snapshot = await snapshotPromise;
+      if (!isCurrent()) return false;
+      if (shouldUseInternalClipboard(snapshot)) return pasteInternalClipboardAsync(anchor);
+      return importClipboardSnapshot(snapshot, anchor, { channel: "menu", isCurrent });
     });
   }
 
@@ -26517,6 +26356,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     const target = event.target instanceof Element ? event.target : null;
+    const selection = document.getSelection?.();
+    if ((key === "c" || key === "x") && selection && !selection.isCollapsed && selection.anchorNode && !refs.surface?.contains(selection.anchorNode)) return;
     const withinCanvas =
       refs.surface?.contains(target) ||
       refs.surface?.contains(document.activeElement) ||
@@ -26544,7 +26385,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!command) return;
     const editingTarget = state.editingId && keyboardFocusScope === "editor";
     if ((editingTarget || typingTarget || isCanvasUiControlTarget(target)) && command.scope !== "global") return;
-    if (command.id === "selection.paste" && document.activeElement === refs.canvas) return;
+    if (command.id === "selection.paste" && document.activeElement === refs.canvas) {
+      // Chromium targets native paste at a lingering DOM selection even after canvas.focus().
+      if (selection && !selection.isCollapsed && !refs.surface?.contains(selection.anchorNode)) selection.removeAllRanges();
+      return;
+    }
     event.preventDefault();
     canvasUiRuntime.commands.run(command.id, shortcutContext);
   }
@@ -26589,6 +26434,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.richEditor, "input", onRichEditorInput);
     bind(refs.richEditor, "pointerdown", onRichEditorPointerDown, true);
     bind(refs.richEditor, "copy", onRichEditorCopy);
+    bind(refs.richEditor, "dragstart", onEditorSelectionDragStart);
     bind(refs.richEditor, "cut", onRichEditorCut);
     bind(refs.richEditor, "dblclick", onRichEditorDoubleClick);
     bind(refs.richEditor, "paste", onRichEditorPaste);
@@ -26633,6 +26479,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.mindNodeLinkPanel, "click", onMindNodeLinkPanelClick);
     bind(refs.codeBlockEditor, "pointerdown", onCodeBlockEditorPointerDown, true);
     bind(refs.codeBlockEditor, "keydown", onCodeBlockEditorKeyDown);
+    bind(refs.codeBlockEditor, "copy", onCodeEditorCopy);
+    bind(refs.codeBlockEditor, "dragstart", onEditorSelectionDragStart);
     bind(refs.codeBlockToolbar, "pointerdown", onCodeBlockToolbarPointerDown, true);
     bind(refs.codeBlockToolbar, "click", onCodeBlockToolbarClick);
     bind(refs.codeBlockToolbar, "input", onCodeBlockToolbarInput);
@@ -26753,8 +26601,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function unmount() {
     finishPendingWheelSession({ persist: true });
-    structuredImportControllers.forEach((controller) => controller.abort?.());
-    structuredImportControllers.clear();
+    cancelClipboardImports();
     importedBatchStabilizationTokens.clear();
     deferredTextSemanticUpgradeTasks.clear();
     if (interactionRecoveryTimer) {
@@ -26842,6 +26689,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function undo() {
+    cancelClipboardImports();
     const pendingEntry = state.history.undo[state.history.undo.length - 1] || null;
     const currentSnapshot = pendingEntry?.kind === "patch"
       ? takeHistoryMetadataSnapshot(state)
@@ -26860,6 +26708,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function redo() {
+    cancelClipboardImports();
     const pendingEntry = state.history.redo[state.history.redo.length - 1] || null;
     const currentSnapshot = pendingEntry?.kind === "patch"
       ? takeHistoryMetadataSnapshot(state)
@@ -26990,6 +26839,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: true, emit: false });
     const before = takeHistorySnapshot(state);
+    cancelClipboardImports();
     state.board = createEmptyBoard();
     pushHistory(state.history, before, takeHistorySnapshot(state), "清空白板");
     syncBoard({ persist: true, emit: true });
@@ -27725,6 +27575,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "selection.nudge-left", label: "向左微移", category: "arrange", shortcuts: ["ArrowLeft", "Shift+ArrowLeft"], when: hasMutableSelection }, (context) => nudgeSelection(-getNudgeStep(context), 0));
     register({ id: "selection.nudge-right", label: "向右微移", category: "arrange", shortcuts: ["ArrowRight", "Shift+ArrowRight"], when: hasMutableSelection }, (context) => nudgeSelection(getNudgeStep(context), 0));
     register({ id: "element.edit", label: "编辑", category: "element", shortcuts: ["Enter"], when: hasEditableSelection }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
+    register({ id: "text.convert-code", label: "转为代码块", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("codeBlock"));
+    register({ id: "text.convert-table", label: "转为表格", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("table"));
     register({ id: "shape.reverse", label: "反向箭头", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => reverseArrowSelection());
     register({ id: "shape.toggle-dash", label: "切换虚线", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleLineDash());
     register({ id: "shape.toggle-fill", label: "切换填充", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleShapeFill());
@@ -27985,6 +27837,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     loadStructuredBoardForExport(board = {}, options = {}) {
       const nextBoard = repairMisclassifiedCodeBlocksOnBoard(board, DEFAULT_TEXT_FONT_SIZE);
       clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
+      cancelClipboardImports();
       store.replaceBoard(nextBoard);
       state.board.selectedIds = Array.isArray(nextBoard?.selectedIds) ? [...nextBoard.selectedIds] : [];
       if (options?.resetView === true) {

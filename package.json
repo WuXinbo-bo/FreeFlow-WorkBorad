@@ -34,6 +34,8 @@
     "test:canvas-state-history": "node scripts/check-canvas-state-history.js",
     "test:canvas-operation-results": "node scripts/check-canvas-operation-results.js",
     "test:canvas-semantic-transfer": "node scripts/check-canvas-semantic-transfer.js",
+    "test:clipboard-fidelity": "node scripts/structured-import/validate-clipboard-fidelity.cjs && node scripts/check-clipboard-fidelity-browser.cjs",
+    "test:clipboard-native": "node scripts/check-clipboard-native-browser.cjs",
     "test:canvas-presentation-performance": "node scripts/check-canvas-presentation-performance.js",
     "test:canvas-large-scene": "node scripts/check-canvas-large-scene-runtime.js",
     "test:presentation-snapshots": "node scripts/check-presentation-snapshot-controller.js",

@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 
 async function main() {
-  const { buildCanvasSearchResults } = await import(
+  const { buildCanvasSearchIndex, buildCanvasSearchResults } = await import(
     "../../public/src/engines/canvas2d-core/search/canvasSearchIndex.js"
   );
 
@@ -36,19 +36,22 @@ async function main() {
     },
   ];
 
-  const domainResults = buildCanvasSearchResults(items, "example.com", 10);
+  const index = buildCanvasSearchIndex(items);
+  const domainResults = buildCanvasSearchResults(index, "example.com", { limit: 10 });
   assert.equal(domainResults[0].id, "text-1");
   assert.equal(domainResults[0].matchLabel, "链接");
 
-  const titleResults = buildCanvasSearchResults(items, "Example Docs", 10);
+  const titleResults = buildCanvasSearchResults(index, "Example Docs", { limit: 10 });
   assert.equal(titleResults[0].id, "text-1");
-  assert.equal(titleResults[0].matchLabel, "链接元数据");
+  assert.equal(titleResults[0].matchLabel, "链接");
+  assert(titleResults[0].summary.includes("Example Docs"));
 
-  const descriptionResults = buildCanvasSearchResults(items, "Structured import guide", 10);
+  const descriptionResults = buildCanvasSearchResults(index, "Structured import guide", { limit: 10 });
   assert.equal(descriptionResults[0].id, "text-1");
-  assert.equal(descriptionResults[0].matchLabel, "链接元数据");
+  assert.equal(descriptionResults[0].matchLabel, "链接");
+  assert(descriptionResults[0].summary.includes("Structured import guide"));
 
-  const siteResults = buildCanvasSearchResults(items, "example", 10);
+  const siteResults = buildCanvasSearchResults(index, "example", { limit: 10 });
   assert.equal(siteResults[0].id, "text-1");
 
   console.log("[canvas-search-index] ok: 4 scenarios validated");

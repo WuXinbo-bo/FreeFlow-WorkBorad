@@ -1,3 +1,4 @@
+import { createClipboardDataTransferSnapshot } from "./clipboardSnapshot.js";
 import { clone } from "../utils.js";
 import {
   CANVAS_OPERATION_STATUS,
@@ -317,38 +318,29 @@ export function createClipboardBroker({
   }
 
   async function readSystemClipboardSnapshot() {
-    const [text, filePaths, clipboardItems] = await Promise.all([
-      readSystemClipboardText(),
-      readSystemClipboardFiles(),
-      readSystemClipboardItems(),
+    const [clipboardItems, filePaths] = await Promise.all([
+      readSystemClipboardItems(), readSystemClipboardFiles(),
     ]);
-    const richFormats = {
-      html: "",
-      markdown: "",
-      uriList: "",
-    };
-    const mimeTargets = {
-      "text/html": "html",
-      "text/markdown": "markdown",
-      "text/uri-list": "uriList",
-    };
+    const data = {};
+    const files = [];
     for (const item of clipboardItems) {
-      const types = Array.isArray(item?.types) ? item.types : [];
-      for (const [mimeType, target] of Object.entries(mimeTargets)) {
-        if (richFormats[target] || !types.includes(mimeType) || typeof item?.getType !== "function") {
-          continue;
-        }
+      for (const type of item.types || []) {
         try {
-          richFormats[target] = String(await (await item.getType(mimeType)).text()) || "";
+          const blob = await item.getType(type);
+          if (type.startsWith("image/")) files.push(new File([blob], "clipboard-image", { type }));
+          else if (!(type in data)) data[type] = await blob.text();
         } catch {
-          // Keep the remaining clipboard formats available when one MIME read fails.
+          // Preserve other formats when a MIME representation is unavailable.
         }
       }
     }
+    // read() provides one snapshot. Only use readText() when it provided no data.
+    if (!Object.keys(data).length && !files.length && !filePaths.length) {
+      data["text/plain"] = await readSystemClipboardText();
+    }
     return {
-      text,
+      ...createClipboardDataTransferSnapshot({ types: Object.keys(data), files, getData: (type) => data[type] || "" }),
       filePaths,
-      ...richFormats,
     };
   }
 

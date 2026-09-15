@@ -33,6 +33,7 @@ async function main() {
 
   const descriptor = createInputDescriptor({
     descriptorId: "descriptor-web-1",
+    context: { importIntent: "web-page" },
     channel: INPUT_CHANNELS.PASTE_NATIVE,
     sourceKind: INPUT_SOURCE_KINDS.HTML,
     sourceUrl: "https://example.com/article/1",
@@ -66,6 +67,7 @@ async function main() {
 
   const weakDescriptor = createInputDescriptor({
     descriptorId: "descriptor-web-2",
+    context: { importIntent: "web-page" },
     channel: INPUT_CHANNELS.DRAG_DROP,
     sourceKind: INPUT_SOURCE_KINDS.HTML,
     entries: [

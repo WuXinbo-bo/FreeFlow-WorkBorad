@@ -81,8 +81,8 @@ async function main() {
   );
   assert.equal(
     resolveInternalClipboardFreshness({ payload, payloadText: "table", clipboardText: "table" }),
-    true,
-    "matching system text did not recover internal clipboard fallback"
+    false,
+    "matching plain text must not identify an internal clipboard copy"
   );
   assert.equal(
     resolveInternalClipboardFreshness({ payload, payloadPaths: ["c:\\a.txt"], clipboardPaths: ["c:\\b.txt"] }),

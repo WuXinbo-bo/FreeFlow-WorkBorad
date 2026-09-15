@@ -2768,8 +2768,9 @@ async function runPasteSemanticChecks(browser) {
         assert(textItems.length >= 1, "rich html typography paste did not create text items", items);
         const html = textItems.map((item) => String(item.html || "")).join("\n");
         assert(/<h1[\s>]/i.test(html), "rich html typography paste lost heading semantics", textItems);
-        assert(!/<h1\b[^>]*>[\s\S]*?data-ff-font-size[\s\S]*?<\/h1>/i.test(html), "heading kept imported inline font-size", html);
-        assert(!/data-ff-font-size=/i.test(html), "body text kept imported webpage body font-size", html);
+        for (const size of [48, 16, 13]) {
+          assert(new RegExp(`data-ff-font-size=["']${size}["']`).test(html), `imported font size ${size} was lost`, html);
+        }
       },
     },
   ];

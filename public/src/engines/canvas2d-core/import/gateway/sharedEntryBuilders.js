@@ -97,7 +97,10 @@ export function createEntryFromMimeType({
     }
   }
   if (safeMimeType === internalClipboardMime) {
-    return createInternalPayloadEntry(parseJsonSafely(safeValue), entryId, safeMimeType);
+    const payload = parseJsonSafely(safeValue);
+    return Array.isArray(payload?.items) && payload.items.length
+      ? createInternalPayloadEntry(payload, entryId, safeMimeType)
+      : null;
   }
   if (safeMimeType === "text/html") {
     const htmlText = htmlToPlainText(safeValue);
@@ -264,6 +267,7 @@ export function safeGetData(dataTransfer, mimeType) {
 export function buildContext(context = {}) {
   return {
     origin: stringOrEmpty(context.origin),
+    importIntent: context.importIntent === "web-page" ? "web-page" : "selection",
     boardId: stringOrEmpty(context.boardId),
     targetElementId: stringOrEmpty(context.targetElementId),
     targetMode: stringOrEmpty(context.targetMode),

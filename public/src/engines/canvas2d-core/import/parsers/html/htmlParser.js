@@ -5,6 +5,7 @@ import {
 } from "../../protocols/inputDescriptor.js";
 import { createCanonicalDocument, createCanonicalNode } from "../../canonical/canonicalDocument.js";
 import { htmlToPlainText, sanitizeHtml } from "../../../utils.js";
+import { getTableColumnCount } from "../../../elements/tableGrid.js";
 import { detectTextContentType, DETECTED_TEXT_TYPES } from "../../gateway/contentTypeDetector.js";
 
 export const HTML_PARSER_ID = "html-parser";
@@ -16,6 +17,7 @@ const SAFE_HTML_ATTRS = new Set([
   "checked",
   "class",
   "colspan",
+  "rowspan",
   "data-ff-code-block",
   "data-ff-highlight",
   "data-ff-rich-math",
@@ -23,6 +25,7 @@ const SAFE_HTML_ATTRS = new Set([
   "data-ff-task-list",
   "data-ff-task-state",
   "data-language",
+  "data-lang",
   "data-role",
   "height",
   "href",
@@ -35,6 +38,10 @@ const SAFE_HTML_ATTRS = new Set([
   "width",
 ]);
 const SAFE_STYLE_PROPERTIES = new Set([
+  "color",
+  "background-color",
+  "font-size",
+  "font-family",
   "font-style",
   "font-weight",
   "text-align",
@@ -42,6 +49,13 @@ const SAFE_STYLE_PROPERTIES = new Set([
   "text-decoration-line",
 ]);
 const BLOCK_TAGS = new Set([
+  "main",
+  "header",
+  "footer",
+  "aside",
+  "nav",
+  "figure",
+  "figcaption",
   "p",
   "div",
   "section",
@@ -133,6 +147,7 @@ export function parseHtmlEntriesToCanonical({
       return;
     }
     const rawRoot = parseHtmlToTree(html);
+    normalizeFragmentTree(rawRoot);
     const nextBlocks = convertChildrenToBlocks(rawRoot.children, {
       descriptor,
       parserId,
@@ -171,6 +186,46 @@ function createHtmlParseStats(sourceEntryCount) {
     imageCount: 0,
     tableCount: 0,
   };
+}
+
+function normalizeFragmentTree(node) {
+  if (node.type !== "element" || ["pre", "code"].includes(node.tagName)) return;
+  const children = node.children || [];
+  children.forEach(normalizeFragmentTree);
+  const meaningful = children.filter((child) => child.type !== "text" || child.text.trim());
+  const isCodeToken = (child) => child.type === "element" && /(?:\btoken\s+(?:keyword|number|string|operator|punctuation)\b|\bhljs-|\blanguage-)/i.test(child.attrs?.class || "");
+  if (meaningful.some(isCodeToken) && meaningful.every((child) => isCodeToken(child) || (child.type === "text" && /^[\s\d()[\]{};,.=+*/:<>!-]*$/.test(child.text)))) {
+    node.children = [{ type: "element", tagName: "pre", attrs: { "data-ff-code-block": "true" }, children }];
+    return;
+  }
+  if (["table", "thead", "tbody", "tfoot", "tr"].includes(node.tagName)) return;
+  const result = [];
+  let table = null;
+  let row = null;
+  for (const child of children) {
+    const tag = child.tagName;
+    if (["thead", "tbody", "tfoot", "tr", "td", "th"].includes(tag)) {
+      if (!table) {
+        table = { type: "element", tagName: "table", attrs: {}, children: [] };
+        result.push(table);
+      }
+      if (tag === "td" || tag === "th") {
+        if (!row) {
+          row = { type: "element", tagName: "tr", attrs: {}, children: [] };
+          table.children.push(row);
+        }
+        row.children.push(child);
+      } else {
+        row = null;
+        table.children.push(child);
+      }
+    } else if (!(table && child.type === "text" && !child.text.trim())) {
+      table = null;
+      row = null;
+      result.push(child);
+    }
+  }
+  node.children = result;
 }
 
 function collectHtmlEntries(descriptor) {
@@ -501,7 +556,7 @@ function convertBlockNode(node, context) {
     ];
   }
   if ((tag === "div" || tag === "section" || tag === "article") && containsDirectBlockNode(node)) {
-    const inheritedMarks = deriveMarksFromElement(node);
+    const inheritedMarks = mergeMarks(context?.inheritedMarks || [], deriveMarksFromElement(node));
     const childBlocks = convertChildrenToBlocks(node.children, {
       ...context,
       inheritedMarks,
@@ -561,7 +616,10 @@ function convertBlockNode(node, context) {
       }),
     ];
   }
-  return convertChildrenToBlocks(node.children, context);
+  return convertChildrenToBlocks(node.children, {
+    ...context,
+    inheritedMarks: mergeMarks(context?.inheritedMarks || [], deriveMarksFromElement(node)),
+  });
 }
 
 function convertParagraphBlock(node, context, legacyType) {
@@ -683,7 +741,7 @@ function convertListItemContent(children, context) {
 
 function convertCodeBlock(node, context) {
   const codeNode = findPrimaryCodeDescendant(node);
-  const language = readCodeLanguage(codeNode || node);
+  const language = readCodeLanguage(codeNode) || readCodeLanguage(node);
   const text = extractTextContent(codeNode || node, { preserveWhitespace: true });
   return createCanonicalNode({
     type: "codeBlock",
@@ -735,7 +793,7 @@ function convertImageElement(node, context) {
 function convertTable(node, context) {
   const rawRows = findTableRows(node);
   const rowNodes = rawRows.map((row, rowIndex) => convertTableRow(row, context, rowIndex));
-  const columns = rowNodes.reduce((max, row) => Math.max(max, Array.isArray(row.content) ? row.content.length : 0), 0);
+  const columns = getTableColumnCount(rowNodes);
   return createCanonicalNode({
     type: "table",
     attrs: { columns },
@@ -785,11 +843,13 @@ function convertTableCell(cell, context, rowIndex, cellIndex) {
 
 function findTableRows(node) {
   const rows = [];
-  walkRawTree(node, (child) => {
+  for (const child of node.children || []) {
     if (child?.type === "element" && child.tagName === "tr") {
       rows.push(child);
+    } else if (["thead", "tbody", "tfoot"].includes(child?.tagName)) {
+      rows.push(...findTableRows(child));
     }
-  });
+  }
   return rows;
 }
 
@@ -906,6 +966,7 @@ function deriveMarksFromElement(node) {
   const marks = [];
   const tag = String(node?.tagName || "").toLowerCase();
   const styleMap = readStyleMap(node?.attrs?.style);
+  const decoration = styleMap.textDecorationLine || styleMap.textDecoration;
 
   if (tag === "strong" || tag === "b" || isBoldStyle(styleMap)) {
     marks.push({ type: "bold" });
@@ -913,10 +974,10 @@ function deriveMarksFromElement(node) {
   if (tag === "em" || tag === "i" || styleMap.fontStyle === "italic") {
     marks.push({ type: "italic" });
   }
-  if (tag === "u" || hasTextDecoration(styleMap.textDecoration, "underline")) {
+  if (tag === "u" || hasTextDecoration(decoration, "underline")) {
     marks.push({ type: "underline" });
   }
-  if (tag === "s" || tag === "strike" || tag === "del" || hasTextDecoration(styleMap.textDecoration, "line-through")) {
+  if (tag === "s" || tag === "strike" || tag === "del" || hasTextDecoration(decoration, "line-through")) {
     marks.push({ type: "strike" });
   }
   if (tag === "mark") {
@@ -959,14 +1020,7 @@ function readStyleMap(styleValue) {
 }
 
 function mergeMarks(baseMarks, nextMarks) {
-  const merged = [];
-  [...(Array.isArray(baseMarks) ? baseMarks : []), ...(Array.isArray(nextMarks) ? nextMarks : [])].forEach((mark) => {
-    const key = JSON.stringify(mark || {});
-    if (!merged.some((item) => JSON.stringify(item) === key)) {
-      merged.push(mark);
-    }
-  });
-  return merged;
+  return Array.from(new Map([...baseMarks, ...nextMarks].map((mark) => [mark.type, mark])).values());
 }
 
 function normalizeInlineText(text, preserveWhitespace = false) {
@@ -1268,6 +1322,9 @@ function normalizeFontSizeValue(value = "") {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
     return "";
+  }
+  if (/^\d+(?:\.\d+)?pt$/.test(raw)) {
+    return normalizeFontSizeValue(`${Number.parseFloat(raw) * 4 / 3}px`);
   }
   if (/^\d+(?:\.\d+)?px$/.test(raw)) {
     const numeric = Number.parseFloat(raw);

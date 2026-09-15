@@ -186,14 +186,16 @@ function wrapParagraphHtml(html = "") {
 
 function wrapBlockHtml(block, html = "") {
   const clean = String(html || "").trim() || "<br>";
+  const align = block?.node?.attrs?.align;
+  const attrs = ["left", "right", "center", "justify"].includes(align) ? ` style="text-align:${align}"` : "";
   if (block?.sourceNodeType === "heading") {
     const level = Math.min(6, Math.max(1, Number(block?.node?.attrs?.level) || 1));
-    return `<h${level}>${clean}</h${level}>`;
+    return `<h${level}${attrs}>${clean}</h${level}>`;
   }
   if (block?.blockRole === "blockquote") {
-    return `<blockquote><div>${clean}</div></blockquote>`;
+    return `<blockquote><div${attrs}>${clean}</div></blockquote>`;
   }
-  return wrapParagraphHtml(clean);
+  return attrs ? `<div${attrs}>${clean}</div>` : wrapParagraphHtml(clean);
 }
 
 function buildTextOperation(block, index, renderInput, options = {}) {

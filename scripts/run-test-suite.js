@@ -148,6 +148,9 @@ async function main() {
     await runNodeScript("scripts/check-canvas2d-paste-optimization.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
+    await runNodeScript("scripts/check-clipboard-fidelity-browser.cjs", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-canvas2d-regression.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });

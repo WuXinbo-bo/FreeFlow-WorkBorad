@@ -796,7 +796,7 @@ export function createRichTextAdapter(
       return false;
     }
     const tag = node.tagName.toLowerCase();
-    if (["span", "mark", "strong", "b", "em", "i", "u", "s", "del", "a"].includes(tag)) {
+    if (["span", "mark", "strong", "b", "em", "i", "u", "s", "del", "a", "pre", "code", "table", "thead", "tbody", "tfoot", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
       return true;
     }
     return Boolean(node.getAttribute("style") || node.getAttribute("data-ff-font-size") || node.getAttribute("data-ff-highlight"));

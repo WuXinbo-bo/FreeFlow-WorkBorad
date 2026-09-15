@@ -115,6 +115,10 @@ export function createRichTextItemContextMenuSchema({ isNode = false } = {}) {
   return [
     ...transferActions.slice(0, 4),
     ...(!isNode ? [action("连接节点", "connect-node")] : []),
+    ...(!isNode ? [submenu("转换为", "转换文本", [
+      action("代码块", "text-convert-code"),
+      action("表格（制表符分列）", "text-convert-table"),
+    ])] : []),
     ...transferActions.slice(4),
     baseElementActionsSchema()[3],
   ];

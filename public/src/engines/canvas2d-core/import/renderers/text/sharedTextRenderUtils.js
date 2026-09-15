@@ -167,7 +167,7 @@ function normalizeInlineNodeForCanvasText(node) {
   if (Array.isArray(node.marks)) {
     next.marks = node.marks.filter((mark) => {
       const type = String(mark?.type || "");
-      return type !== "fontSize" && type !== "lineHeight";
+      return type !== "lineHeight";
     });
   }
   if (Array.isArray(node.content)) {

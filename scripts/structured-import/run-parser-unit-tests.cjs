@@ -4,6 +4,7 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..", "..");
 
 const VALIDATORS = [
+  "validate-clipboard-fidelity.cjs",
   "validate-plain-text-parser.cjs",
   "validate-html-parser.cjs",
   "validate-web-content-parser.cjs",

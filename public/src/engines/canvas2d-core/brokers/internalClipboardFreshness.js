@@ -13,10 +13,6 @@ export function matchesInternalClipboardMarker(marker = null, payload = null) {
 export function resolveInternalClipboardFreshness({
   payload = null,
   marker = null,
-  payloadPaths = [],
-  clipboardPaths = [],
-  payloadText = "",
-  clipboardText = "",
 } = {}) {
   if (!payload?.items?.length) {
     return false;
@@ -24,12 +20,5 @@ export function resolveInternalClipboardFreshness({
   if (marker) {
     return matchesInternalClipboardMarker(marker, payload);
   }
-  if (payloadPaths.length || clipboardPaths.length) {
-    return arraysEqual(payloadPaths, clipboardPaths);
-  }
-  return Boolean(payloadText && clipboardText && payloadText === clipboardText);
-}
-
-function arraysEqual(left, right) {
-  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+  return false;
 }

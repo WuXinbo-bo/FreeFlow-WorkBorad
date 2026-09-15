@@ -15,10 +15,8 @@ export function createContextMenuPasteAdapter(options = {}) {
 
   async function readSnapshot(context = {}) {
     if (readClipboardSnapshot) {
-      const [snapshot, internalPayload] = await Promise.all([
-        readClipboardSnapshot(),
-        getInternalPayload(),
-      ]);
+      const snapshot = await readClipboardSnapshot();
+      const internalPayload = await getInternalPayload(snapshot);
       return normalizeSnapshot(snapshot, internalPayload, context);
     }
     const [
@@ -62,6 +60,7 @@ export function createContextMenuPasteAdapter(options = {}) {
 
 function normalizeSnapshot(snapshot = {}, internalPayload = null, context = {}) {
   return {
+    ...snapshot,
     text: stringOrEmpty(snapshot?.text),
     html: stringOrEmpty(snapshot?.html),
     markdown: stringOrEmpty(snapshot?.markdown),
@@ -76,7 +75,7 @@ function normalizeSnapshot(snapshot = {}, internalPayload = null, context = {}) 
 
 function asAsyncFunction(value) {
   if (typeof value === "function") {
-    return async () => value();
+    return async (...args) => value(...args);
   }
   return async () => null;
 }

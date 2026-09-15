@@ -16,7 +16,7 @@ async function main() {
     createClipboardDataMock({
       "text/plain": "const answer = 42;",
       "text/html": "<pre><code>const answer = 42;</code></pre>",
-      [DEFAULT_INTERNAL_CLIPBOARD_MIME]: JSON.stringify({ type: "canvas2d", itemCount: 2 }),
+      [DEFAULT_INTERNAL_CLIPBOARD_MIME]: JSON.stringify({ type: "canvas2d", items: [{ type: "text", text: "one" }, { type: "text", text: "two" }] }),
     }),
     {
       origin: "canvas",

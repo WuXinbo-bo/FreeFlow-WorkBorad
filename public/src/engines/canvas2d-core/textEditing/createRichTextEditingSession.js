@@ -25,6 +25,7 @@ export function createRichTextEditingSession({
   let host = editorElement instanceof HTMLDivElement ? editorElement : null;
   let adapter = null;
   let session = null;
+  let revision = 0;
 
   function ensureAdapter() {
     if (!host) {
@@ -42,6 +43,7 @@ export function createRichTextEditingSession({
   }
 
   function setSession(nextSession = null) {
+    revision += 1;
     session = nextSession
       ? {
           itemId: String(nextSession.itemId || ""),
@@ -108,6 +110,9 @@ export function createRichTextEditingSession({
     },
     isActive() {
       return Boolean(session?.itemId);
+    },
+    getRevision() {
+      return revision;
     },
     isEditingType(type) {
       return Boolean(session?.itemId) && session?.itemType === type;
