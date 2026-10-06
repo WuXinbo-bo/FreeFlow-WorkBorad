@@ -32,6 +32,7 @@ const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbe
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
+const { shouldIgnoreMacOSMouseEvents } = require("./macosWindowInteraction");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
 const { resolveServerPort } = require("../src/backend/config/serverPort");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
@@ -108,6 +109,8 @@ let mainWindowRendererDocumentId = "";
 let mainWindowNavigationGeneration = 0;
 let mainWindowReloadInFlight = false;
 let mainWindowCrashReloadAttempts = 0;
+let macOSShapeInteractionTimer = null;
+let macOSShapeInteractionIgnoreState = null;
 let desktopKeyboardFocusOwner = "";
 let desktopKeyboardFocusSourceId = "";
 let desktopKeyboardFocusTargetId = "";
@@ -1351,12 +1354,28 @@ async function findPathByFileId(fileId = "") {
 }
 
 function applyWindowShape(rects = windowShapeRects) {
-  if (!mainWindow || mainWindow.isDestroyed() || typeof mainWindow.setShape !== "function") {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (process.platform !== "darwin" && typeof mainWindow.setShape !== "function") {
     return;
   }
 
   const nextRects = normalizeShapeRects(rects);
   windowShapeRects = nextRects;
+
+  // Electron's native window shape is unavailable on macOS. The same rects
+  // are consumed by the cursor hit-test loop below to pass empty regions to
+  // the application behind the transparent window.
+  if (process.platform === "darwin") {
+    if (mainWindowBootShapeLocked || mainWindowInteractionShapeLockId) {
+      pendingWindowShapeRects = nextRects;
+    } else {
+      pendingWindowShapeRects = [];
+    }
+    syncMacOSShapeInteraction();
+    return;
+  }
 
   if (mainWindowBootShapeLocked || mainWindowInteractionShapeLockId) {
     pendingWindowShapeRects = nextRects;
@@ -1375,6 +1394,56 @@ function applyWindowShape(rects = windowShapeRects) {
   mainWindow.setShape(windowShapeRects);
 }
 
+function stopMacOSShapeInteractionTracking() {
+  if (macOSShapeInteractionTimer) {
+    clearInterval(macOSShapeInteractionTimer);
+    macOSShapeInteractionTimer = null;
+  }
+  macOSShapeInteractionIgnoreState = null;
+}
+
+function syncMacOSShapeInteraction() {
+  if (process.platform !== "darwin" || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  let shouldIgnore = clickThroughEnabled;
+  if (!shouldIgnore) {
+    try {
+      const contentBounds = mainWindow.getContentBounds?.() || mainWindow.getBounds?.() || {};
+      const cursorScreenPoint = screen.getCursorScreenPoint?.();
+      shouldIgnore = shouldIgnoreMacOSMouseEvents({
+        clickThrough: false,
+        rendererReady: Boolean(mainWindow.__freeflowRendererReady),
+        bootShapeLocked: mainWindowBootShapeLocked,
+        interactionShapeLocked: Boolean(mainWindowInteractionShapeLockId),
+        shapeRects: windowShapeRects,
+        cursorScreenPoint,
+        contentBounds,
+      });
+    } catch {
+      // Keep the transparent surface interactive if cursor sampling is
+      // temporarily unavailable (for example during display transitions).
+      shouldIgnore = false;
+    }
+  }
+
+  if (macOSShapeInteractionIgnoreState === shouldIgnore) {
+    return;
+  }
+  macOSShapeInteractionIgnoreState = shouldIgnore;
+  mainWindow.setIgnoreMouseEvents(shouldIgnore, { forward: true });
+}
+
+function startMacOSShapeInteractionTracking() {
+  if (process.platform !== "darwin" || macOSShapeInteractionTimer) {
+    return;
+  }
+  macOSShapeInteractionTimer = setInterval(syncMacOSShapeInteraction, 32);
+  macOSShapeInteractionTimer.unref?.();
+  syncMacOSShapeInteraction();
+}
+
 function clearMainWindowRendererReadyTimer() {
   if (!mainWindowRendererReadyTimer) {
     return;
@@ -1384,7 +1453,7 @@ function clearMainWindowRendererReadyTimer() {
 }
 
 function applyFullMainWindowShape(window) {
-  if (!window || window.isDestroyed() || typeof window.setShape !== "function") {
+  if (process.platform === "darwin" || !window || window.isDestroyed() || typeof window.setShape !== "function") {
     return;
   }
   const [width, height] = window.getContentSize();
@@ -1705,11 +1774,21 @@ function applyClickThrough(enabled) {
     return clickThroughEnabled;
   }
 
-  mainWindow.setIgnoreMouseEvents(clickThroughEnabled, { forward: true });
+  if (process.platform === "darwin") {
+    syncMacOSShapeInteraction();
+  } else {
+    mainWindow.setIgnoreMouseEvents(clickThroughEnabled, { forward: true });
+  }
 
   if (!clickThroughEnabled) {
-    applyWindowShape();
-    mainWindow.focus();
+    if (process.platform !== "darwin") {
+      applyWindowShape();
+      mainWindow.focus();
+    } else if (macOSShapeInteractionIgnoreState === false) {
+      // Only activate FreeFlow when the pointer is over one of its
+      // interactive surfaces; otherwise leave the app underneath focused.
+      mainWindow.focus();
+    }
   }
 
   broadcastDesktopShellState();
@@ -2101,6 +2180,7 @@ function createMainWindow() {
 
   window.on("closed", () => {
     mainWindowCloseInFlight = false;
+    stopMacOSShapeInteractionTracking();
     cleanupDesktopEmbeddedSurfaces("main-window-closed");
     if (mainWindow === window) {
       mainWindow = null;
@@ -2748,6 +2828,7 @@ async function bootstrapDesktopApp() {
   SERVER_PORT = server.address().port;
   APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
   mainWindow = createMainWindow();
+  startMacOSShapeInteractionTracking();
   await mainWindow.loadURL(APP_URL);
   if (EXPORT_SELF_TEST_INPUT && EXPORT_SELF_TEST_OUTPUT) {
     setTimeout(() => {
@@ -4255,6 +4336,7 @@ app.on("window-all-closed", async () => {
 
 app.on("before-quit", async () => {
   appQuitInProgress = true;
+  stopMacOSShapeInteractionTracking();
   if (desktopShellBoundsTransitionTimer) {
     clearTimeout(desktopShellBoundsTransitionTimer);
   }

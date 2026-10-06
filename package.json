@@ -10,6 +10,7 @@
     "start:desktop": "node scripts/start-desktop.js",
     "test:macos-clipboard": "node scripts/check-macos-clipboard.js",
     "test:macos-click-through-shortcut": "node scripts/check-macos-click-through-shortcut.js",
+    "test:macos-window-interaction": "node scripts/check-macos-window-interaction.js",
     "test:macos-paths": "node scripts/check-macos-paths.js",
     "test:macos-desktop-runtime": "node scripts/check-macos-desktop-runtime.js",
     "test:macos-backend": "node scripts/check-macos-backend-runtime.js",
