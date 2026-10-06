@@ -4,6 +4,8 @@ import { normalizeTextElement } from "../elements/text.js";
 const PASTED_TEXT_INITIAL_WIDTH = 760;
 const PASTED_TEXT_MIN_WIDTH = 520;
 const PASTED_TEXT_MAX_WIDTH = 860;
+const IMAGE_SYNC_MAX_BYTES = 5 * 1024 * 1024;
+const FILE_SYNC_MAX_BYTES = 10 * 1024 * 1024;
 
 function isImagePath(path = "") {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || "").trim());
@@ -13,6 +15,28 @@ function normalizeAnchorPoint(point) {
   return {
     x: Number(point?.x || 0),
     y: Number(point?.y || 0),
+  };
+}
+
+function attachmentSyncReason(file = {}) {
+  const mime = String(file?.type || file?.mime || "").trim().toLowerCase();
+  const name = String(file?.name || file?.path || "").trim();
+  const size = Math.max(0, Number(file?.size) || 0);
+  if (mime.startsWith("video/") || /\.(mp4|mov|mkv|avi|webm|wmv)$/i.test(name)) return "video-disabled";
+  if (mime.startsWith("image/") || isImagePath(name)) return size > IMAGE_SYNC_MAX_BYTES ? "too-large" : "";
+  return size > FILE_SYNC_MAX_BYTES ? "too-large" : "";
+}
+
+function applyAttachmentSyncMetadata(item, file, reason = "") {
+  if (!item || !reason) return item;
+  return {
+    ...item,
+    resourceStatus: "placeholder",
+    syncable: false,
+    syncReason: reason,
+    attachmentName: getFileName(file?.name || file?.path || "附件"),
+    attachmentMime: String(file?.type || "application/octet-stream"),
+    attachmentSizeBytes: Math.max(0, Number(file?.size) || 0),
   };
 }
 
@@ -55,12 +79,17 @@ export function createDragBroker({
           // Ignore file id resolution failures.
         }
       }
+      const syncReason = attachmentSyncReason(file);
       if (typeof isImageFile === "function" && isImageFile(file)) {
-        const dataUrl = file.path ? "" : await readFileAsDataUrl(file);
-        const dimensions = await readImageDimensions(dataUrl, file.path);
-        items.push(createImageElement(file, point, dataUrl, dimensions));
+        if (syncReason) {
+          items.push(applyAttachmentSyncMetadata(createFileCardElement(file, point), file, syncReason));
+        } else {
+          const dataUrl = file.path ? "" : await readFileAsDataUrl(file);
+          const dimensions = await readImageDimensions(dataUrl, file.path);
+          items.push(createImageElement(file, point, dataUrl, dimensions));
+        }
       } else {
-        items.push(createFileCardElement(file, point));
+        items.push(applyAttachmentSyncMetadata(createFileCardElement(file, point), file, syncReason));
       }
       offset += 28;
     }
