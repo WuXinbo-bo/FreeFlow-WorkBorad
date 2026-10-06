@@ -3994,6 +3994,34 @@ ipcMain.handle("desktop-shell:prepare-doubao-prompt", async (_event, payload) =>
   });
 });
 
+async function githubSyncRequest(pathname, options = {}) {
+  const response = await fetch(`${APP_URL}/api/github-sync${pathname}`, {
+    method: options.method || "GET",
+    headers: { "Content-Type": "application/json" },
+    body: options.body == null ? undefined : JSON.stringify(options.body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) {
+    const error = new Error(data?.error || `GitHub 同步请求失败 (${response.status})`);
+    error.status = response.status;
+    error.code = data?.code || "";
+    throw error;
+  }
+  return data;
+}
+
+ipcMain.handle("desktop-shell:github-sync-status", () => githubSyncRequest("/status"));
+ipcMain.handle("desktop-shell:github-sync-device-flow-start", () => githubSyncRequest("/device-flow/start", { method: "POST", body: {} }));
+ipcMain.handle("desktop-shell:github-sync-device-flow-poll", (_event, payload) => githubSyncRequest("/device-flow/poll", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-disconnect", () => githubSyncRequest("/disconnect", { method: "POST", body: {} }));
+ipcMain.handle("desktop-shell:github-sync-user", () => githubSyncRequest("/user"));
+ipcMain.handle("desktop-shell:github-sync-repositories", () => githubSyncRequest("/repositories"));
+ipcMain.handle("desktop-shell:github-sync-repository", (_event, payload) => githubSyncRequest("/repository", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) => githubSyncRequest("/repository/create", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequest("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequest("/sync", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequest("/download", { method: "POST", body: payload || {} }));
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 app.setName(PRODUCT_NAME);
@@ -4053,4 +4081,3 @@ app.on("before-quit", async () => {
   globalShortcut.unregisterAll();
   await stopServer().catch(() => {});
 });
-

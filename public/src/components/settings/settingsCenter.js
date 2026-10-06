@@ -160,6 +160,15 @@ export function mountSettingsCenter(host, options = {}) {
   let agentBackupError = "";
   let backupAction = "";
   let restoreCandidate = "";
+  let githubSyncStatus = null;
+  let githubSyncAction = "";
+  let githubDeviceFlow = null;
+  let githubSyncError = "";
+  let githubRepositories = [];
+
+  function getGithubSyncClient() {
+    return isDesktop && desktopShell?.githubSync ? desktopShell.githubSync : null;
+  }
 
   function isDirty() {
     if (!snapshot || !draft) return false;
@@ -492,6 +501,7 @@ export function mountSettingsCenter(host, options = {}) {
       <section class="settings-center-group">
         <div class="settings-center-group-heading"><h5>状态说明</h5><p>CLI、连接和模型状态独立检测；重新载入会丢弃未保存修改并恢复主题预览。</p></div>
       </section>
+      ${renderGithubSyncPanel()}
       <section class="settings-center-group">
         <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>AI 会话备份</h5><p>备份只包含新版 AI 会话数据。恢复前必须停止全部任务，当前数据会自动再留一份备份。</p></div><button type="button" data-settings-action="agent-create-backup"${backupAction ? " disabled" : ""}>${backupAction === "create" ? "正在备份" : "立即备份"}</button></div>
         ${agentBackupError ? `<div class="settings-center-runtime-error">${escapeHtml(agentBackupError)}</div>` : ""}
@@ -501,6 +511,30 @@ export function mountSettingsCenter(host, options = {}) {
       </section>
       ${restoreCandidate ? `<section class="settings-center-risk-confirm" role="alert"><strong>恢复 AI 会话备份？</strong><p>当前会话数据会先自动备份，然后替换为 ${escapeHtml(formatDateTime(agentBackups.find((item) => item.name === restoreCandidate)?.createdAt))} 的版本。运行中的任务不会被强制中断。</p><div><button type="button" data-settings-action="agent-cancel-restore"${backupAction ? " disabled" : ""}>取消</button><button type="button" data-settings-action="agent-confirm-restore"${backupAction ? " disabled" : ""}>${backupAction === "restore" ? "正在恢复" : "确认恢复"}</button></div></section>` : ""}
     `;
+  }
+
+  function renderGithubSyncPanel() {
+    const client = getGithubSyncClient();
+    const status = githubSyncStatus || {};
+    const repository = status.repository || {};
+    const connected = Boolean(status.connected);
+    const flow = githubDeviceFlow || {};
+    return `<section class="settings-center-group">
+      <div class="settings-center-group-heading"><h5>GitHub 画布同步</h5><p>使用你自己的 GitHub 私有仓库同步画布。大图片、视频和超限附件只保存为占位框。</p></div>
+      ${!client ? `<div class="settings-center-empty-inline">仅桌面版支持 GitHub 同步。</div>` : `
+        <div class="settings-center-diagnostic-grid">
+          <div><span>授权</span><strong>${connected ? "已连接" : "未连接"}</strong></div>
+          <div><span>仓库</span><strong>${escapeHtml(repository.owner && repository.repo ? `${repository.owner}/${repository.repo}` : "尚未选择")}</strong></div>
+          <div><span>画布状态</span><strong>${escapeHtml(Object.values(status.ledger?.boards || {}).map((item) => item.syncState).filter(Boolean)[0] || "未同步")}</strong></div>
+        </div>
+        ${githubSyncError ? `<div class="settings-center-runtime-error">${escapeHtml(githubSyncError)}</div>` : ""}
+        ${flow.user_code ? `<div class="settings-center-inline-actions"><code>${escapeHtml(flow.user_code)}</code><button type="button" data-settings-action="github-open-device">打开 GitHub 授权页</button><button type="button" data-settings-action="github-poll">检查授权结果</button></div>` : ""}
+        ${connected ? `<div class="settings-center-form-grid"><label class="settings-center-field"><span>私有仓库</span><select data-github-repository><option value="">请选择仓库</option>${githubRepositories.map((repo) => `<option value="${escapeHtml(`${repo.owner?.login || repo.owner?.name || ""}/${repo.name || ""}`)}"${repo.owner?.login === repository.owner && repo.name === repository.repo ? " selected" : ""}>${escapeHtml(`${repo.owner?.login || ""}/${repo.name || ""}`)}</option>`).join("")}</select></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-repositories">加载仓库</button><button type="button" data-settings-action="github-repository-create">创建私有仓库</button><button type="button" data-settings-action="github-repository-save">使用所选仓库</button></div></div>` : ""}
+        <div class="settings-center-inline-actions">
+          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>立即同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : `<button class="is-primary" type="button" data-settings-action="github-connect"${githubSyncAction ? " disabled" : ""}>连接 GitHub</button>`}
+        </div>
+      `}
+    </section>`;
   }
 
   function renderActiveSection() {
@@ -598,7 +632,7 @@ export function mountSettingsCenter(host, options = {}) {
     setMessage("", "");
     render();
     try {
-      const [response, shortcutResult, runtimeResult, backupsResult] = await Promise.all([
+      const [response, shortcutResult, runtimeResult, backupsResult, githubResult] = await Promise.all([
         fetch(apiRoutes.settingsCenter, { cache: "no-store" }),
         isDesktop && desktopShell?.getShortcutSettings
           ? desktopShell.getShortcutSettings().catch(() => null)
@@ -609,6 +643,9 @@ export function mountSettingsCenter(host, options = {}) {
         agentClient?.listBackups
           ? agentClient.listBackups().catch((error) => ({ backups: [], error: error.message }))
           : Promise.resolve({ backups: [], error: "Agent API 不可用" }),
+        getGithubSyncClient()?.getStatus
+          ? getGithubSyncClient().getStatus().catch((error) => ({ connected: false, error: error.message }))
+          : Promise.resolve(null),
       ]);
       const data = await readJsonResponse(response, "系统设置");
       if (!response.ok || !data.ok) throw new Error(data.error || "无法读取系统设置");
@@ -629,6 +666,9 @@ export function mountSettingsCenter(host, options = {}) {
       ]));
       agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
       agentBackupError = String(backupsResult?.error || "");
+      githubSyncStatus = githubResult;
+      githubSyncError = String(githubResult?.error || "");
+      githubDeviceFlow = null;
       backupAction = "";
       restoreCandidate = "";
       phase = "idle";
@@ -872,6 +912,60 @@ export function mountSettingsCenter(host, options = {}) {
     render();
   }
 
+  async function runGithubAction(action) {
+    const client = getGithubSyncClient();
+    if (!client || githubSyncAction) return;
+    githubSyncAction = action;
+    githubSyncError = "";
+    render();
+    try {
+      if (action === "connect") {
+        githubDeviceFlow = await client.startDeviceFlow();
+        setMessage("请在 GitHub 页面完成授权，然后点击检查授权结果", "warning");
+      } else if (action === "poll") {
+        const result = await client.pollDeviceFlow({ deviceCode: githubDeviceFlow?.device_code, interval: githubDeviceFlow?.interval });
+        if (result.pending) setMessage("GitHub 仍在等待授权", "warning");
+        else { githubDeviceFlow = null; githubSyncStatus = await client.getStatus(); setMessage("GitHub 已连接", "success"); }
+      } else if (action === "refresh") {
+        githubSyncStatus = await client.getStatus();
+        setMessage("GitHub 同步状态已刷新", "success");
+      } else if (action === "repositories") {
+        const result = await client.listRepositories();
+        githubRepositories = Array.isArray(result) ? result : (Array.isArray(result?.repositories) ? result.repositories : []);
+        setMessage(`已读取 ${githubRepositories.length} 个仓库`, "success");
+      } else if (action === "repository-save") {
+        const value = host.querySelector("[data-github-repository]")?.value || "";
+        const separator = value.indexOf("/");
+        if (separator <= 0) throw new Error("请选择一个 GitHub 仓库");
+        await client.setRepository({ owner: value.slice(0, separator), repo: value.slice(separator + 1), branch: "main" });
+        githubSyncStatus = await client.getStatus();
+        setMessage("GitHub 仓库已绑定", "success");
+      } else if (action === "repository-create") {
+        const created = await client.createRepository({ name: "freeflow-workspace", description: "FreeFlow personal workspace" });
+        const repositoryResult = await client.listRepositories();
+        githubRepositories = Array.isArray(repositoryResult) ? repositoryResult : (Array.isArray(repositoryResult?.repositories) ? repositoryResult.repositories : []);
+        const owner = created?.repository?.owner?.login || "";
+        if (owner && created?.repository?.name) await client.setRepository({ owner, repo: created.repository.name, branch: created.repository.default_branch || "main" });
+        githubSyncStatus = await client.getStatus();
+        setMessage("已创建并绑定私有仓库", "success");
+      } else if (action === "sync") {
+        await client.sync({});
+        githubSyncStatus = await client.getStatus();
+        setMessage("当前画布已同步到 GitHub", "success");
+      } else if (action === "disconnect") {
+        await client.disconnect();
+        githubSyncStatus = await client.getStatus();
+        setMessage("已断开 GitHub，画布仍保留在本机", "success");
+      }
+    } catch (error) {
+      githubSyncError = error?.message || "GitHub 同步失败";
+      setMessage(githubSyncError, "error");
+    } finally {
+      githubSyncAction = "";
+      render();
+    }
+  }
+
   host.addEventListener("click", async (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const sectionButton = target?.closest("[data-settings-section]");
@@ -920,6 +1014,19 @@ export function mountSettingsCenter(host, options = {}) {
     const actionButton = target?.closest("[data-settings-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.settingsAction;
+    if (action === "github-connect") { await runGithubAction("connect"); return; }
+    if (action === "github-poll") { await runGithubAction("poll"); return; }
+    if (action === "github-refresh") { await runGithubAction("refresh"); return; }
+    if (action === "github-repositories") { await runGithubAction("repositories"); return; }
+    if (action === "github-repository-create") { await runGithubAction("repository-create"); return; }
+    if (action === "github-repository-save") { await runGithubAction("repository-save"); return; }
+    if (action === "github-sync") { await runGithubAction("sync"); return; }
+    if (action === "github-disconnect") { await runGithubAction("disconnect"); return; }
+    if (action === "github-open-device") {
+      const url = githubDeviceFlow?.verification_uri || githubDeviceFlow?.verification_uri_complete;
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (action === "reload") await load();
     if (action === "save") await save();
     if (action === "confirm-risk") await save({ confirmedRisk: true });
