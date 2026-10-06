@@ -13,7 +13,7 @@
 也可在终端执行：
 
 ```bash
-cd /Users/wxbbo/Documents/FreeFlow-WorkBorad
+cd /Users/wxbbo/.codex/worktrees/mac/FreeFlow-WorkBorad
 ./Start-FreeFlow.command
 ```
 
