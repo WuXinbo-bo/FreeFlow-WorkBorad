@@ -1,6 +1,8 @@
 body {
   color: var(--ui-text);
   font-family:
+    -apple-system,
+    BlinkMacSystemFont,
     "Inter",
     "PingFang SC",
     "Hiragino Sans GB",
@@ -355,6 +357,8 @@ body.desktop-mode .desktop-clear-stage > * {
 .drawer-header h3,
 .canvas-heading h2 {
   font-family:
+    -apple-system,
+    BlinkMacSystemFont,
     "Manrope",
     "PingFang SC",
     "Hiragino Sans GB",

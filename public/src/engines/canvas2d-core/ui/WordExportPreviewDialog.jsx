@@ -168,7 +168,7 @@ function WordDocxPreviewPane({ request }) {
         useBase64URL: true,
       });
       const handleWheel = (event) => {
-        if (!event.ctrlKey) {
+        if (!event.ctrlKey && !event.metaKey) {
           return;
         }
         event.preventDefault();

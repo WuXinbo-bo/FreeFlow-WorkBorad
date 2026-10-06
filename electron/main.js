@@ -21,6 +21,7 @@ const { execFile } = require("child_process");
 const fs = require("fs");
 const { createHash } = require("crypto");
 const os = require("os");
+const { writeMacClipboardFiles, readMacClipboardFiles } = require("./macosClipboard");
 const sharp = require("sharp");
 const HTMLtoDOCX = require("html-to-docx");
 const { compileWordExportAstToDocxBuffer } = require("./wordDocxCompiler");
@@ -120,8 +121,11 @@ const webContentsViewEmbedManager = createWebContentsViewEmbedManager(() => main
 let everythingCliPath = null;
 let desktopEmbedCleanupPromise = Promise.resolve();
 let mainWindowCloseInFlight = false;
+let appQuitInProgress = false;
 let desktopShortcutSettings = { ...DEFAULT_SHORTCUT_SETTINGS };
 let startupContextCache = null;
+const pendingOpenBoardPaths = [];
+let desktopBootstrapPromise = null;
 let tutorialBoardPreparation = null;
 let backgroundExportWindow = null;
 let backgroundExportReady = false;
@@ -129,6 +133,50 @@ let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
 const atomicBoardFileWriter = createAtomicBoardFileWriter();
+
+function normalizeOpenBoardPath(filePath = "") {
+  const normalizedPath = String(filePath || "").trim();
+  if (!normalizedPath || !/\.(?:freeflow|json)$/i.test(normalizedPath)) {
+    return "";
+  }
+  try {
+    return fs.existsSync(normalizedPath) ? path.resolve(normalizedPath) : "";
+  } catch {
+    return "";
+  }
+}
+
+function queueOpenBoardPath(filePath = "") {
+  const normalizedPath = normalizeOpenBoardPath(filePath);
+  if (!normalizedPath) {
+    return false;
+  }
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.__freeflowRendererReady) {
+    if (!pendingOpenBoardPaths.includes(normalizedPath)) {
+      pendingOpenBoardPaths.push(normalizedPath);
+    }
+    return true;
+  }
+  if (clickThroughEnabled) {
+    applyClickThrough(false);
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send("desktop-shell:open-board-path", normalizedPath);
+  return true;
+}
+
+function flushPendingOpenBoardPath() {
+  if (!pendingOpenBoardPaths.length) {
+    return;
+  }
+  const pendingPaths = pendingOpenBoardPaths.splice(0);
+  for (const nextPath of pendingPaths) {
+    if (!queueOpenBoardPath(nextPath)) {
+      pendingOpenBoardPaths.push(nextPath);
+    }
+  }
+}
 const BACKGROUND_EXPORT_IPC_CHANNELS = new Set([
   "desktop-shell:background-export-ready",
   "desktop-shell:background-export-result",
@@ -214,7 +262,13 @@ process.on("uncaughtException", (error) => {
 });
 
 function resolveAppIconPath() {
-  const candidatePaths = [path.join(app.getAppPath(), "build", "icon.ico")];
+  const candidatePaths = process.platform === "darwin"
+    ? [
+        path.join(app.getAppPath(), "build", "icon.icns"),
+        path.join(process.resourcesPath || "", "icon.icns"),
+        path.join(app.getAppPath(), "build", "icon.ico"),
+      ]
+    : [path.join(app.getAppPath(), "build", "icon.ico")];
   for (const candidatePath of candidatePaths) {
     if (candidatePath && fs.existsSync(candidatePath)) {
       return candidatePath;
@@ -254,6 +308,7 @@ function getLibreOfficeCandidates() {
     envCandidate,
     "soffice",
     "libreoffice",
+    ...(process.platform === "darwin" ? ["/Applications/LibreOffice.app/Contents/MacOS/soffice"] : []),
     "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
     "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
   ].filter(Boolean);
@@ -742,6 +797,15 @@ function normalizeAccelerator(value = "", fallback = DEFAULT_SHORTCUT_SETTINGS.c
   }
 
   return [...modifiers, key].join("+");
+}
+
+// Use the native modifier explicitly for macOS globalShortcut registration.
+function getNativeAccelerator(accelerator = "") {
+  const normalized = normalizeAccelerator(accelerator);
+  if (process.platform === "darwin") {
+    return normalized.replace(/\bCommandOrControl\b/g, "Command");
+  }
+  return normalized.replace(/\bCommandOrControl\b/g, "Control");
 }
 
 function formatAcceleratorForDisplay(accelerator = "") {
@@ -1551,6 +1615,31 @@ function broadcastDesktopShellState() {
   mainWindow.webContents.send("desktop-shell:state-changed", getDesktopShellState());
 }
 
+function closeBackgroundExportWindow(reason = "unknown") {
+  if (!backgroundExportWindow || backgroundExportWindow.isDestroyed()) {
+    backgroundExportWindow = null;
+    backgroundExportReady = false;
+    return;
+  }
+  const window = backgroundExportWindow;
+  backgroundExportWindow = null;
+  backgroundExportReady = false;
+  const pendingEntries = Array.from(pendingBackgroundExportTasks.entries());
+  pendingBackgroundExportTasks.clear();
+  pendingEntries.forEach(([, task]) => {
+    try {
+      task.reject(new Error(`后台导出窗口已关闭（${reason}）`));
+    } catch {
+      // ignore
+    }
+  });
+  try {
+    window.destroy();
+  } catch {
+    // ignore
+  }
+}
+
 function cleanupDesktopEmbeddedSurfaces(reason = "unknown") {
   desktopEmbedCleanupPromise = desktopEmbedCleanupPromise
     .catch(() => {})
@@ -1577,6 +1666,9 @@ function cleanupDesktopEmbeddedSurfaces(reason = "unknown") {
         webContentsViewEmbedManager.clearTarget();
       } catch {
         // Ignore view destroy failures during shutdown.
+      }
+      if (/before-quit|main-window-close|main-window-closed/.test(String(reason || ""))) {
+        closeBackgroundExportWindow(reason);
       }
       setDesktopKeyboardFocusOwner("", {
         sourceId: desktopKeyboardFocusSourceId,
@@ -1740,7 +1832,8 @@ function restoreMainWindowFromDesktopWorkspace() {
 function registerDesktopShortcuts() {
   globalShortcut.unregisterAll();
 
-  const accelerators = [normalizeAccelerator(desktopShortcutSettings.clickThroughAccelerator)];
+  const configuredAccelerator = normalizeAccelerator(desktopShortcutSettings.clickThroughAccelerator);
+  const accelerators = [getNativeAccelerator(configuredAccelerator)];
   let registered = false;
   for (const accelerator of accelerators) {
     const ok = globalShortcut.register(accelerator, () => {
@@ -1753,7 +1846,7 @@ function registerDesktopShortcuts() {
   }
 
   if (registered) {
-    console.log(`[desktop-shell] Global shortcut ready: ${formatAcceleratorForDisplay(accelerators[0])}`);
+    console.log(`[desktop-shell] Global shortcut ready: ${formatAcceleratorForDisplay(configuredAccelerator)}`);
   } else {
     console.warn("[desktop-shell] Global shortcut unavailable, using window-level fallback only");
   }
@@ -1959,6 +2052,9 @@ function createMainWindow() {
   });
 
   window.on("close", (event) => {
+    if (appQuitInProgress) {
+      return;
+    }
     if (mainWindowCloseInFlight) {
       return;
     }
@@ -2325,12 +2421,23 @@ function cancelBackgroundExportTask(taskId = "") {
 
 function copyFilesToClipboard(paths = []) {
   const entries = Array.isArray(paths)
-    ? [...new Set(paths.map((item) => path.resolve(String(item || "").trim())).filter(Boolean))]
+    ? [
+        ...new Set(
+          paths
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .map((item) => path.resolve(item))
+        ),
+      ]
     : [];
 
   const existingEntries = entries.filter((item) => fs.existsSync(item));
   if (!existingEntries.length) {
     throw new Error("没有可写入剪贴板的有效文件路径");
+  }
+
+  if (process.platform === "darwin") {
+    return Promise.resolve(writeMacClipboardFiles(clipboard, existingEntries));
   }
 
   return new Promise((resolve, reject) => {
@@ -2368,7 +2475,14 @@ function createTransparentDragIcon() {
 
 function startFileDrag(event, paths = []) {
   const entries = Array.isArray(paths)
-    ? [...new Set(paths.map((item) => path.resolve(String(item || "").trim())).filter(Boolean))]
+    ? [
+        ...new Set(
+          paths
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .map((item) => path.resolve(item))
+        ),
+      ]
     : [];
 
   const existingEntries = entries.filter((item) => fs.existsSync(item));
@@ -2423,6 +2537,9 @@ function getMimeFromExtension(targetPath = "") {
 }
 
 function readClipboardFiles() {
+  if (process.platform === "darwin") {
+    return Promise.resolve(readMacClipboardFiles(clipboard));
+  }
   return new Promise((resolve) => {
     const command = `
 try {
@@ -2489,14 +2606,39 @@ function getClipboardImageDataUrl() {
 
 function triggerSystemScreenshot() {
   if (process.platform === "darwin") {
-    execFile("screencapture", ["-i"], { windowsHide: true }, () => {});
-    return;
+    // `-c` is required for the selected image to reach NSPasteboard. Without
+    // it screencapture writes a file (or waits for a destination), while the
+    // caller below only observes clipboard changes.
+    return new Promise((resolve, reject) => {
+      execFile("/usr/sbin/screencapture", ["-i", "-c"], { windowsHide: true }, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   }
   if (process.platform === "win32") {
-    execFile("explorer.exe", ["ms-screenclip:"], { windowsHide: true }, () => {});
-    return;
+    return new Promise((resolve, reject) => {
+      execFile("explorer.exe", ["ms-screenclip:"], { windowsHide: true }, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   }
-  execFile("gnome-screenshot", ["-a"], { windowsHide: true }, () => {});
+  return new Promise((resolve, reject) => {
+    execFile("gnome-screenshot", ["-a", "-c"], { windowsHide: true }, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 function waitForClipboardImageChange(previous, timeoutMs = 60000) {
@@ -2521,6 +2663,38 @@ async function captureScreenImageFromSystem() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return { ok: false, error: "窗口未就绪" };
   }
+
+  if (process.platform === "darwin") {
+    const capturePath = path.join(os.tmpdir(), `freeflow-screen-capture-${process.pid}-${Date.now()}.png`);
+    try {
+      mainWindow.hide();
+      mainWindow.setSkipTaskbar(true);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve, reject) => {
+        execFile("/usr/sbin/screencapture", ["-i", "-o", capturePath], { windowsHide: true }, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      const buffer = await fs.promises.readFile(capturePath);
+      if (!buffer.length) {
+        return { ok: false, error: "未获取到截图内容" };
+      }
+      return { ok: true, dataUrl: `data:image/png;base64,${buffer.toString("base64")}` };
+    } catch (error) {
+      return { ok: false, error: error?.message || "截图已取消或无法启动系统截图" };
+    } finally {
+      await fs.promises.rm(capturePath, { force: true }).catch(() => {});
+      try {
+        mainWindow.show();
+        mainWindow.setSkipTaskbar(false);
+        mainWindow.focus();
+      } catch {
+        // Ignore restore errors.
+      }
+    }
+  }
+
   const previous = getClipboardImageDataUrl();
   try {
     mainWindow.hide();
@@ -2530,7 +2704,7 @@ async function captureScreenImageFromSystem() {
   }
   await new Promise((resolve) => setTimeout(resolve, 120));
   try {
-    triggerSystemScreenshot();
+    await triggerSystemScreenshot();
   } catch (error) {
     try {
       mainWindow.show();
@@ -2540,7 +2714,13 @@ async function captureScreenImageFromSystem() {
     }
     return { ok: false, error: error.message || "无法启动系统截图" };
   }
-  const dataUrl = await waitForClipboardImageChange(previous, 60000);
+  // macOS screencapture stays attached to the interactive selection and only
+  // resolves after capture/cancel. A long poll here makes Esc/cancel appear
+  // hung for a full minute; the pasteboard update is synchronous enough to use
+  // a short propagation window. Windows/Linux launch a separate picker and
+  // therefore keep the longer polling window.
+  const clipboardWaitMs = process.platform === "darwin" ? 2500 : 60000;
+  const dataUrl = await waitForClipboardImageChange(previous, clipboardWaitMs);
   try {
     mainWindow.show();
     mainWindow.setSkipTaskbar(false);
@@ -2574,6 +2754,22 @@ async function bootstrapDesktopApp() {
       void runBackgroundExportSelfTest();
     }, 1200);
   }
+}
+
+function startDesktopBootstrap() {
+  if (desktopBootstrapPromise) {
+    return desktopBootstrapPromise;
+  }
+  desktopBootstrapPromise = bootstrapDesktopApp()
+    .catch((error) => {
+      console.error("Failed to start desktop shell:", error);
+      app.quit();
+      throw error;
+    })
+    .finally(() => {
+      desktopBootstrapPromise = null;
+    });
+  return desktopBootstrapPromise;
 }
 
 ipcMain.handle("desktop-shell:get-state", () => ({
@@ -2619,6 +2815,7 @@ ipcMain.on("desktop-shell:renderer-ready", (event, payload) => {
   mainWindow.__freeflowRendererReady = true;
   mainWindowCrashReloadAttempts = 0;
   tryShowMainWindow(mainWindow);
+  flushPendingOpenBoardPath();
 });
 
 ipcMain.on("desktop-shell:background-export-ready", (event) => {
@@ -4004,20 +4201,31 @@ if (process.platform === "win32" && typeof app.setAppUserModelId === "function")
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!mainWindow) return;
+  const initialBoardPath = process.argv.slice(1).map((value) => normalizeOpenBoardPath(value)).find(Boolean);
+  if (initialBoardPath) {
+    pendingOpenBoardPaths.push(initialBoardPath);
+  }
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    queueOpenBoardPath(filePath);
+  });
 
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
+  app.on("second-instance", (_event, commandLine = []) => {
+    const candidatePath = commandLine
+      .slice(1)
+      .map((value) => normalizeOpenBoardPath(value))
+      .find(Boolean);
+    if (candidatePath) {
+      queueOpenBoardPath(candidatePath);
     }
-
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (clickThroughEnabled) applyClickThrough(false);
+    mainWindow.show();
     mainWindow.focus();
   });
 
-  app.whenReady().then(bootstrapDesktopApp).catch((error) => {
-    console.error("Failed to start desktop shell:", error);
-    app.quit();
-  });
+  app.whenReady().then(startDesktopBootstrap).catch(() => {});
 }
 
 app.whenReady().then(() => {
@@ -4026,9 +4234,12 @@ app.whenReady().then(() => {
 });
 
 app.on("activate", async () => {
+  if (mainWindowCloseInFlight || desktopBootstrapPromise) {
+    return;
+  }
   if (BrowserWindow.getAllWindows().length === 0) {
     try {
-      await bootstrapDesktopApp();
+      await startDesktopBootstrap();
     } catch (error) {
       console.error("Failed to reactivate desktop shell:", error);
     }
@@ -4043,6 +4254,7 @@ app.on("window-all-closed", async () => {
 });
 
 app.on("before-quit", async () => {
+  appQuitInProgress = true;
   if (desktopShellBoundsTransitionTimer) {
     clearTimeout(desktopShellBoundsTransitionTimer);
   }
@@ -4053,4 +4265,3 @@ app.on("before-quit", async () => {
   globalShortcut.unregisterAll();
   await stopServer().catch(() => {});
 });
-

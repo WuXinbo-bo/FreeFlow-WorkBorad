@@ -642,8 +642,12 @@ export function toRelativePath(absolutePath = "", basePath = "") {
     return cleanAbs;
   }
   // Find common prefix
+  const windowsPath = /^[a-zA-Z]:[\\/]/.test(cleanAbs) || /^\\\\/.test(cleanAbs);
   let commonLen = 0;
-  while (commonLen < Math.min(baseParts.length, absParts.length) && baseParts[commonLen].toLowerCase() === absParts[commonLen].toLowerCase()) {
+  while (commonLen < Math.min(baseParts.length, absParts.length) &&
+    (windowsPath
+      ? baseParts[commonLen].toLowerCase() === absParts[commonLen].toLowerCase()
+      : baseParts[commonLen] === absParts[commonLen])) {
     commonLen += 1;
   }
   const upCount = baseParts.length - commonLen;
@@ -690,7 +694,8 @@ export function toFileUrl(path = "") {
   if (/^file:\/\//i.test(raw)) {
     return raw;
   }
-  const normalized = encodeURI(raw.replace(/\\/g, "/"));
+  const nativePath = raw.startsWith("/") ? raw : raw.replace(/\\/g, "/");
+  const normalized = encodeURI(nativePath).replace(/#/g, "%23").replace(/\?/g, "%3F");
   if (/^[a-zA-Z]:\//.test(normalized)) {
     return `file:///${normalized}`;
   }

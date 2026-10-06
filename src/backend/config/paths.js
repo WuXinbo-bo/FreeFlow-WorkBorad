@@ -2,7 +2,14 @@ const path = require("path");
 const os = require("os");
 
 const ROOT_DIR = path.resolve(__dirname, "../../..");
-const USER_APP_DIR = String(process.env.FREEFLOW_HOME_DIR || "").trim() || path.join(os.homedir(), "FreeFlow");
+function getDefaultUserAppDir() {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "FreeFlow");
+  }
+  return path.join(os.homedir(), "FreeFlow");
+}
+
+const USER_APP_DIR = String(process.env.FREEFLOW_HOME_DIR || "").trim() || getDefaultUserAppDir();
 const LEGACY_PROJECT_DATA_DIR =
   String(process.env.FREEFLOW_LEGACY_PROJECT_DATA_DIR || "").trim() || path.join(ROOT_DIR, "data");
 const DEFAULT_DATA_DIR = path.join(USER_APP_DIR, "AppData");

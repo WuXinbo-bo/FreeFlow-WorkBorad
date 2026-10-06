@@ -2,6 +2,10 @@ import { CONFIG } from "../config/app.config.js";
 import { PERMISSION_META } from "../config/ui-meta.js";
 import { DEFAULT_THEME_SETTINGS } from "../theme/themeSettings.js";
 
+const IS_MACOS_PLATFORM =
+  globalThis?.desktopShell?.platform === "darwin" ||
+  /Mac|iPhone|iPad|iPod/i.test(String(globalThis?.navigator?.platform || ""));
+
 export function getDefaultPermissionStore() {
   return {
     file: "",
@@ -110,7 +114,7 @@ export function createInitialState() {
     },
     shortcutSettings: {
       clickThroughAccelerator: "CommandOrControl+Shift+X",
-      clickThroughDisplay: "Ctrl+Shift+X",
+      clickThroughDisplay: IS_MACOS_PLATFORM ? "Cmd+Shift+X" : "Ctrl+Shift+X",
     },
     clipboardStore: {
       mode: "manual",

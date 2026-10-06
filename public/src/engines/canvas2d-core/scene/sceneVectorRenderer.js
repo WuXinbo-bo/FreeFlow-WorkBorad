@@ -444,7 +444,7 @@ function syncMindCollapsedBadge(node, item) {
   setAttribute(count, "x", x + 18);
   setAttribute(count, "y", centerY);
   setAttribute(count, "fill", "#3f6b60");
-  setAttribute(count, "font-family", "Segoe UI, sans-serif");
+  setAttribute(count, "font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif");
   setAttribute(count, "font-size", 11);
   setAttribute(count, "font-weight", 700);
   setAttribute(count, "dominant-baseline", "central");

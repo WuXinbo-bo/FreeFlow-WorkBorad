@@ -723,12 +723,27 @@ function runCommand(command, args = []) {
   return runProcess(command, Array.isArray(args) ? args : []);
 }
 
+function runShellScript(script) {
+  if (process.platform === "win32") {
+    return runPowerShell(script);
+  }
+  return runCommand("sh", ["-lc", String(script || "")]);
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function escapePowerShellSingleQuoted(value) {
   return String(value ?? "").replace(/'/g, "''");
+}
+
+function escapeAppleScriptString(value) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n");
 }
 
 function stripMarkdownCodeFence(text) {
@@ -1334,8 +1349,62 @@ function summarizeHardware(videoControllers) {
   };
 }
 
+function cpuTimesSnapshot() {
+  return os.cpus().reduce((total, cpu) => {
+    const times = cpu.times || {};
+    total.idle += Number(times.idle || 0);
+    total.total += Object.values(times).reduce((sum, value) => sum + Number(value || 0), 0);
+    return total;
+  }, { idle: 0, total: 0 });
+}
+
+async function sampleCpuPercent() {
+  const before = cpuTimesSnapshot();
+  await wait(100);
+  const after = cpuTimesSnapshot();
+  const total = Math.max(1, after.total - before.total);
+  const idle = Math.max(0, after.idle - before.idle);
+  return Math.min(100, Math.max(0, ((total - idle) / total) * 100));
+}
+
 async function getSystemStats(permissionStore) {
   assertPermission(permissionStore, "systemMonitor");
+
+  if (process.platform !== "win32") {
+    const cpuPercent = await sampleCpuPercent();
+    let disks = [];
+    try {
+      const diskOutput = await runCommand("df", ["-kP"]);
+      disks = String(diskOutput.stdout || "")
+        .split(/\r?\n/)
+        .slice(1)
+        .map((line) => line.trim().match(/^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(.+)$/))
+        .filter(Boolean)
+        .map((match) => {
+          const sizeBytes = Number(match[2]) * 1024;
+          const freeBytes = Number(match[4]) * 1024;
+          return {
+            device: match[1],
+            sizeBytes,
+            freeBytes,
+            usedBytes: Math.max(sizeBytes - freeBytes, 0),
+            mountPoint: match[6],
+          };
+        });
+    } catch {
+      disks = [];
+    }
+    return {
+      cpuPercent: cpuPercent.toFixed(1),
+      memory: {
+        totalBytes: os.totalmem(),
+        freeBytes: os.freemem(),
+        usedBytes: os.totalmem() - os.freemem(),
+      },
+      disks,
+      uptimeSeconds: os.uptime(),
+    };
+  }
 
   const cpuOutput = await runPowerShell(
     "(Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples | Select-Object -ExpandProperty CookedValue"
@@ -1460,6 +1529,19 @@ async function organizeDesktop(permissionStore) {
 
 function mapAppTarget(appName) {
   const normalized = String(appName || "").trim().toLowerCase();
+  if (process.platform === "darwin") {
+    const mapping = {
+      "记事本": { command: "TextEdit", processName: "TextEdit" },
+      notepad: { command: "TextEdit", processName: "TextEdit" },
+      "计算器": { command: "Calculator", processName: "Calculator" },
+      calc: { command: "Calculator", processName: "Calculator" },
+      explorer: { command: "Finder", processName: "Finder" },
+      文件资源管理器: { command: "Finder", processName: "Finder" },
+      powershell: { command: "Terminal", processName: "Terminal" },
+      cmd: { command: "Terminal", processName: "Terminal" },
+    };
+    return mapping[normalized] || { command: String(appName || "").trim(), processName: String(appName || "").trim() };
+  }
   const mapping = {
     "记事本": { command: "notepad.exe", processName: "notepad.exe" },
     notepad: { command: "notepad.exe", processName: "notepad.exe" },
@@ -1476,6 +1558,10 @@ function mapAppTarget(appName) {
 async function launchApp(permissionStore, appName) {
   assertPermission(permissionStore, "appControl");
   const target = mapAppTarget(appName);
+  if (process.platform === "darwin") {
+    await runCommand("open", ["-a", target.command]);
+    return { launched: target.command };
+  }
   await runProcess("cmd", ["/c", "start", "", target.command], { shell: false });
   return {
     launched: target.command,
@@ -1485,6 +1571,20 @@ async function launchApp(permissionStore, appName) {
 async function closeApp(permissionStore, appName) {
   assertPermission(permissionStore, "appControl");
   const target = mapAppTarget(appName);
+  if (process.platform === "darwin") {
+    const escaped = escapeAppleScriptString(target.processName);
+    try {
+      await runCommand("osascript", ["-e", `tell application \"${escaped}\" to quit`]);
+    } catch (error) {
+      if (/not authorized|assistive|accessibility|permission denied|apple event/i.test(String(error?.message || ""))) {
+        const permissionError = new Error("macOS 应用控制权限被拒绝，请在系统设置→隐私与安全性→自动化中允许 FreeFlow");
+        permissionError.statusCode = 403;
+        throw permissionError;
+      }
+      throw error;
+    }
+    return { closed: target.processName };
+  }
   await runProcess("taskkill", ["/IM", target.processName, "/F"]);
   return {
     closed: target.processName,
@@ -1493,6 +1593,22 @@ async function closeApp(permissionStore, appName) {
 
 async function simulateKeyboard(permissionStore, mode, payload) {
   assertPermission(permissionStore, "inputControl");
+
+  if (process.platform === "darwin") {
+    const escaped = escapeAppleScriptString(payload);
+    if (!escaped) return { mode, text: payload };
+    if (mode !== "text") {
+      throw new Error("macOS 暂不支持系统级按键序列，请在目标应用内使用快捷键");
+    }
+    try {
+      await runCommand("osascript", ["-e", `tell application \"System Events\" to keystroke \"${escaped}\"`]);
+    } catch (error) {
+      const permissionError = new Error("macOS 输入控制权限被拒绝，请在系统设置→隐私与安全性→辅助功能中允许 FreeFlow");
+      permissionError.statusCode = /not authorized|assistive|accessibility|permission denied|apple event/i.test(String(error?.message || "")) ? 403 : 501;
+      throw permissionError;
+    }
+    return { mode, text: payload };
+  }
 
   if (mode === "text") {
     const escaped = String(payload || "").replace(/'/g, "''");
@@ -1511,6 +1627,21 @@ async function simulateKeyboard(permissionStore, mode, payload) {
 
 async function simulateMouse(permissionStore, x, y, click = false) {
   assertPermission(permissionStore, "inputControl");
+  if (process.platform === "darwin") {
+    const pointX = Number(x);
+    const pointY = Number(y);
+    if (!Number.isFinite(pointX) || !Number.isFinite(pointY) || pointX < 0 || pointY < 0) {
+      throw new Error("macOS 鼠标坐标无效");
+    }
+    try {
+      await runCommand("cliclick", [`${click ? "c" : "m"}:${Math.round(pointX)},${Math.round(pointY)}`]);
+    } catch (error) {
+      const unavailable = new Error("macOS 鼠标控制需要安装 cliclick，并在系统设置→隐私与安全性→辅助功能中授权 FreeFlow");
+      unavailable.statusCode = /not found|ENOENT/i.test(String(error?.message || "")) ? 501 : 403;
+      throw unavailable;
+    }
+    return { x: Math.round(pointX), y: Math.round(pointY), click: Boolean(click) };
+  }
   const script = `
 Add-Type @"
 using System;
@@ -1533,6 +1664,39 @@ ${click ? "[MouseControl]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero); [MouseCont
 
 async function listDesktopWindows(permissionStore) {
   assertPermission(permissionStore, "appControl");
+  if (process.platform === "darwin") {
+    const script = [
+      'tell application "System Events"',
+      "set rows to {}",
+      "repeat with p in (every process whose background only is false)",
+      "repeat with w in (every window of p)",
+      "set end of rows to ((unix id of p as text) & tab & (name of p as text) & tab & (name of w as text))",
+      "end repeat",
+      "end repeat",
+      "set oldDelimiters to AppleScript's text item delimiters",
+      "set AppleScript's text item delimiters to linefeed",
+      "set outputText to rows as text",
+      "set AppleScript's text item delimiters to oldDelimiters",
+      "return outputText",
+      "end tell",
+    ].join("\n");
+    try {
+      const result = await runCommand("osascript", ["-e", script]);
+      const windows = String(result.stdout || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [id, processName, ...titleParts] = line.split("\t");
+          return { id: Number(id || 0), processName: processName || "", title: titleParts.join("\t"), responding: true };
+        });
+      return { count: windows.length, windows };
+    } catch (error) {
+      const permissionError = new Error("macOS 窗口列表需要辅助功能权限，请在系统设置→隐私与安全性→辅助功能中允许 FreeFlow");
+      permissionError.statusCode = /not authorized|assistive|accessibility|permission denied/i.test(String(error?.message || "")) ? 403 : 501;
+      throw permissionError;
+    }
+  }
   const script = `
 $windows = Get-Process |
   Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } |
@@ -1567,6 +1731,23 @@ async function focusWindow(permissionStore, query) {
   const normalizedQuery = String(query || "").trim();
   if (!normalizedQuery) {
     throw new Error("focus window query is required");
+  }
+
+  if (process.platform === "darwin") {
+    const escaped = escapeAppleScriptString(normalizedQuery);
+    const script = `tell application \"System Events\"\nset targetProcess to first process whose name contains \"${escaped}\"\nset frontmost of targetProcess to true\nreturn (unix id of targetProcess as text) & tab & (name of targetProcess as text)\nend tell`;
+    try {
+      const result = await runCommand("osascript", ["-e", script]);
+      const [id, processName] = String(result.stdout || "").trim().split("\t");
+      return { id: Number(id || 0), processName: processName || normalizedQuery, title: processName || normalizedQuery, query: normalizedQuery };
+    } catch (error) {
+      if (/not authorized|assistive|accessibility|permission denied|apple event/i.test(String(error?.message || ""))) {
+        const permissionError = new Error("macOS 窗口聚焦权限被拒绝，请在系统设置→隐私与安全性→辅助功能中允许 FreeFlow");
+        permissionError.statusCode = 403;
+        throw permissionError;
+      }
+      throw new Error(`找不到窗口或应用：${normalizedQuery}`);
+    }
   }
 
   const escapedQuery = escapePowerShellSingleQuoted(normalizedQuery);
@@ -1627,6 +1808,77 @@ async function captureForegroundWindow(permissionStore, { focusQuery = "", saveP
 
   const resolvedSavePath = normalizeRootPath(savePath);
   await fs.mkdir(path.dirname(resolvedSavePath), { recursive: true });
+  if (process.platform === "darwin") {
+    let screenBounds = { left: 0, top: 0, width: 0, height: 0 };
+    let scaleFactor = 1;
+    let title = focusQuery || "当前屏幕";
+    let processId = 0;
+    try {
+      const screen = await runCommand("osascript", ["-e", 'tell application "Finder" to get bounds of window of desktop']);
+      const values = String(screen.stdout || "").split(/,\s*/).map(Number);
+      if (values.length >= 4 && values.every(Number.isFinite)) {
+        screenBounds = {
+          left: values[0],
+          top: values[1],
+          width: Math.max(0, values[2] - values[0]),
+          height: Math.max(0, values[3] - values[1]),
+        };
+      }
+    } catch {
+      // Finder is not always available (for example, in a headless session).
+    }
+    try {
+      const front = await runCommand("osascript", ["-e", [
+        'tell application "System Events"',
+        "set p to first process whose frontmost is true",
+        "set w to front window of p",
+        "return (unix id of p as text) & tab & (name of p as text) & tab & (name of w as text)",
+        "end tell",
+      ].join("\n")]);
+      const [id, processName, windowTitle] = String(front.stdout || "").trim().split("\t");
+      processId = Number(id || 0);
+      title = String(windowTitle || processName || title).trim() || title;
+    } catch (error) {
+      if (/not authorized|assistive|accessibility|permission denied/i.test(String(error?.message || ""))) {
+        const permissionError = new Error("macOS 辅助功能权限被拒绝，请在系统设置→隐私与安全性→辅助功能中允许 FreeFlow");
+        permissionError.statusCode = 403;
+        throw permissionError;
+      }
+    }
+    try {
+      await runCommand("screencapture", ["-x", "-m", resolvedSavePath]);
+      try {
+        const dimensions = await runCommand("sips", ["-g", "pixelWidth", "-g", "pixelHeight", resolvedSavePath]);
+        const width = Number(String(dimensions.stdout || "").match(/pixelWidth:\s*(\d+)/)?.[1] || 0);
+        const height = Number(String(dimensions.stdout || "").match(/pixelHeight:\s*(\d+)/)?.[1] || 0);
+        if (width > 0 && height > 0) {
+          const logicalWidth = screenBounds.width;
+          const logicalHeight = screenBounds.height;
+          scaleFactor = logicalWidth > 0 ? Math.max(1, width / logicalWidth) : 1;
+          if (!logicalWidth) screenBounds.width = width;
+          if (!logicalHeight) screenBounds.height = height;
+        }
+      } catch {
+        // Finder bounds above remain the fallback for minimal macOS installs.
+      }
+      if (!screenBounds.width || !screenBounds.height) {
+        throw new Error("无法确定 macOS 主屏幕尺寸");
+      }
+      return {
+        title,
+        processId,
+        scaleFactor,
+        ...screenBounds,
+        path: resolvedSavePath,
+        focusQuery: String(focusQuery || "").trim(),
+      };
+    } catch (error) {
+      if (error?.statusCode === 403) throw error;
+      const permissionError = new Error("macOS 截屏失败，请在系统设置→隐私与安全性→屏幕录制中允许 FreeFlow");
+      permissionError.statusCode = 403;
+      throw permissionError;
+    }
+  }
   const escapedSavePath = escapePowerShellSingleQuoted(resolvedSavePath);
   const script = `
 Add-Type -AssemblyName System.Drawing
@@ -1702,7 +1954,7 @@ $bitmap.Dispose()
 async function locateUiElementWithVision({ imagePath, target, windowInfo }) {
   const imageUrl = await imagePathToDataUrl(imagePath);
   const prompt = [
-    "你是 Windows 桌面界面定位助手。",
+    `你是 ${process.platform === "darwin" ? "macOS" : "Windows"} 桌面界面定位助手。`,
     `当前截图来自窗口：${windowInfo?.title || "未知窗口"}。`,
     `请在截图中定位这个目标控件：${String(target || "").trim() || "未指定目标"}`,
     "只返回一个 JSON 对象，不要返回 markdown，不要解释。",
@@ -1745,10 +1997,11 @@ async function locateUiElementWithVision({ imagePath, target, windowInfo }) {
 
   const relativeX = Math.max(0, Math.round(Number(parsed.x || 0)));
   const relativeY = Math.max(0, Math.round(Number(parsed.y || 0)));
+  const scaleFactor = Math.max(1, Number(windowInfo?.scaleFactor || 1));
 
   return {
-    x: Number(windowInfo?.left || 0) + relativeX,
-    y: Number(windowInfo?.top || 0) + relativeY,
+    x: Number(windowInfo?.left || 0) + Math.round(relativeX / scaleFactor),
+    y: Number(windowInfo?.top || 0) + Math.round(relativeY / scaleFactor),
     relativeX,
     relativeY,
     confidence: Number(parsed.confidence || 0),
@@ -1760,7 +2013,7 @@ async function analyzeWindowUi(permissionStore, { focusQuery = "", instruction =
   const windowInfo = await captureForegroundWindow(permissionStore, { focusQuery });
   const imageUrl = await imagePathToDataUrl(windowInfo.path);
   const prompt = [
-    "你是 Windows 桌面界面理解助手。",
+    `你是 ${process.platform === "darwin" ? "macOS" : "Windows"} 桌面界面理解助手。`,
     `截图窗口标题：${windowInfo.title || "未知窗口"}。`,
     instruction
       ? `请围绕这个目标回答：${instruction}`
@@ -1793,7 +2046,7 @@ async function analyzeWindowUi(permissionStore, { focusQuery = "", instruction =
 
 async function tryRunTesseractOcr(imagePath) {
   try {
-    await runProcess("where", ["tesseract"]);
+    await runProcess(process.platform === "win32" ? "where" : "which", ["tesseract"]);
   } catch {
     return null;
   }
@@ -1829,7 +2082,7 @@ async function recognizeWindowText(permissionStore, { focusQuery = "", instructi
 
   const imageUrl = await imagePathToDataUrl(windowInfo.path);
   const prompt = [
-    "请对这张 Windows 窗口截图做 OCR 文字识别。",
+    `请对这张 ${process.platform === "darwin" ? "macOS" : "Windows"} 窗口截图做 OCR 文字识别。`,
     `窗口标题：${windowInfo.title || "未知窗口"}。`,
     instruction ? `重点要求：${instruction}` : "请尽量提取可见文本，按阅读顺序输出。",
     "直接输出识别到的文字，不要解释。",
@@ -1886,7 +2139,7 @@ async function clickWindowElement(permissionStore, { focusQuery = "", target = "
 
 async function runCustomScript(permissionStore, script) {
   assertPermission(permissionStore, "scriptExecution");
-  const result = await runPowerShell(String(script || ""));
+  const result = await runShellScript(String(script || ""));
   return {
     stdout: result.stdout,
     stderr: result.stderr,
@@ -1896,18 +2149,49 @@ async function runCustomScript(permissionStore, script) {
 async function runRepairTask(permissionStore, taskName) {
   assertPermission(permissionStore, "selfRepair");
 
-  const tasks = {
+  const normalizedTask = String(taskName || "").trim();
+  if (process.platform === "darwin" && normalizedTask === "clear_temp_user") {
+    const tempRoot = path.resolve(String(process.env.TMPDIR || os.tmpdir()));
+    if (!tempRoot || tempRoot === path.parse(tempRoot).root || !tempRoot.includes(`${path.sep}T`)) {
+      const error = new Error("macOS 临时目录路径无效，已拒绝清理");
+      error.statusCode = 400;
+      throw error;
+    }
+    const entries = await fs.readdir(tempRoot, { withFileTypes: true });
+    let removed = 0;
+    for (const entry of entries) {
+      const target = path.join(tempRoot, entry.name);
+      try {
+        const stat = await fs.lstat(target);
+        if (stat.uid !== process.getuid?.()) continue;
+        await fs.rm(target, { recursive: true, force: false });
+        removed += 1;
+      } catch (error) {
+        const detail = new Error(`清理临时文件失败：${entry.name}`);
+        detail.statusCode = 500;
+        detail.cause = error;
+        throw detail;
+      }
+    }
+    return { task: normalizedTask, stdout: `已清理 ${removed} 项用户临时文件`, stderr: "" };
+  }
+
+  const tasks = process.platform === "darwin"
+    ? {
+        flush_dns: "dscacheutil -flushcache && killall -HUP mDNSResponder",
+      }
+    : {
     restart_explorer: 'Stop-Process -Name explorer -Force; Start-Process explorer.exe',
     flush_dns: "ipconfig /flushdns",
     clear_temp_user: 'Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue',
-  };
+      };
 
   const script = tasks[String(taskName || "").trim()];
   if (!script) {
     throw new Error(`Unknown repair task: ${taskName}`);
   }
 
-  const result = await runPowerShell(script);
+  const result = await runShellScript(script);
   return {
     task: taskName,
     stdout: result.stdout,

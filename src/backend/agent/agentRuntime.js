@@ -359,7 +359,11 @@ class AgentRuntime extends EventEmitter {
       if (!isPathWithin(managedRoot, resolved)) {
         throw Object.assign(new Error("托管工作区路径无效"), { statusCode: 400 });
       }
-      return resolved;
+      // Keep the user-visible path spelling stable. macOS commonly aliases
+      // /var to /private/var; returning realpath here leaks that alias into
+      // persisted sessions and breaks path comparisons, while the canonical
+      // path check above still prevents symlink escapes.
+      return requested;
     }
     const permissions = await this.permissionsService.readPermissionsStore();
     const resolved = await this.permissionsService.resolveAllowedExistingPath(requested, permissions.allowedRoots);

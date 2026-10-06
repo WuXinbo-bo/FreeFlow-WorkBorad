@@ -1,4 +1,4 @@
-import { normalizeRichHtml, normalizeRichHtmlInlineFontSizes } from "../utils.js";
+import { normalizeRichHtml, normalizeRichHtmlInlineFontSizes, toFileUrl } from "../utils.js";
 
 function ensureEditableHost(host) {
   if (!host) {
@@ -118,15 +118,13 @@ function normalizeLinkInput(value = "") {
     }
   }
   if (/^[a-zA-Z]:[\\/]/.test(raw)) {
-    const normalizedPath = raw.replace(/\\/g, "/");
-    return encodeURI(`file:///${normalizedPath}`);
+    return toFileUrl(raw);
   }
   if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
-    const normalizedPath = raw.replace(/\\/g, "/");
-    return encodeURI(`file:${normalizedPath}`);
+    return toFileUrl(raw);
   }
   if (/^\/[^/]/.test(raw)) {
-    return encodeURI(`file://${raw}`);
+    return toFileUrl(raw);
   }
   try {
     const parsed = new URL(raw);

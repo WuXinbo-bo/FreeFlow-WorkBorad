@@ -3,6 +3,7 @@ import {
   normalizeRichHtml,
   normalizeRichHtmlInlineFontSizes,
   sanitizeText,
+  toFileUrl,
   INLINE_FONT_SIZE_ATTR,
 } from "../utils.js";
 
@@ -187,13 +188,13 @@ function normalizeUrlString(value) {
     }
   }
   if (/^[a-zA-Z]:[\\/]/.test(raw)) {
-    return encodeURI(`file:///${raw.replace(/\\/g, "/")}`);
+    return toFileUrl(raw);
   }
   if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
-    return encodeURI(`file:${raw.replace(/\\/g, "/")}`);
+    return toFileUrl(raw);
   }
   if (/^\/[^/]/.test(raw)) {
-    return encodeURI(`file://${raw}`);
+    return toFileUrl(raw);
   }
   try {
     const parsed = new URL(raw);

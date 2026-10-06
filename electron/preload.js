@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld("desktopShell", {
   chatWithDoubao: (payload) => ipcRenderer.invoke("desktop-shell:chat-with-doubao", payload),
   cancelDoubaoChat: () => ipcRenderer.invoke("desktop-shell:cancel-doubao-chat"),
   prepareDoubaoPrompt: (payload) => ipcRenderer.invoke("desktop-shell:prepare-doubao-prompt", payload),
+  onOpenBoardPath: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const handler = (_event, filePath) => listener(String(filePath || ""));
+    ipcRenderer.on("desktop-shell:open-board-path", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:open-board-path", handler);
+  },
   setClickThrough: (enabled) => ipcRenderer.invoke("desktop-shell:set-click-through", enabled),
   toggleClickThrough: () => ipcRenderer.invoke("desktop-shell:toggle-click-through"),
   setWindowShape: (rects) => ipcRenderer.invoke("desktop-shell:set-window-shape", rects),

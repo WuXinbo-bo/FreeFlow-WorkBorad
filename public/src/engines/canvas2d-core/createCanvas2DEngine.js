@@ -276,6 +276,7 @@ import {
   sanitizeHtml,
   sanitizeText,
   resolveImageSource,
+  toFileUrl,
 } from "./utils.js";
 import { createImageModule } from "./imageModule.js";
 import { createStructuredCanvasRenderer } from "./rendererStructured.js";
@@ -1227,15 +1228,13 @@ function normalizeUserLinkInput(value = "") {
     }
   }
   if (/^[a-zA-Z]:[\\/]/.test(raw)) {
-    const normalizedPath = raw.replace(/\\/g, "/");
-    return encodeURI(`file:///${normalizedPath}`);
+    return toFileUrl(raw);
   }
   if (/^\\\\[^\\]+\\[^\\]+/.test(raw)) {
-    const normalizedPath = raw.replace(/\\/g, "/");
-    return encodeURI(`file:${normalizedPath}`);
+    return toFileUrl(raw);
   }
   if (/^\/[^/]/.test(raw)) {
-    return encodeURI(`file://${raw}`);
+    return toFileUrl(raw);
   }
   try {
     const parsed = new URL(raw);
@@ -3503,6 +3502,7 @@ export function createCanvas2DEngine(options = {}) {
   let canvasPreferencePersistPromise = Promise.resolve();
   let suppressDirtyTracking = false;
   let boardLoadInFlight = null;
+  let boardStateReadyPromise = Promise.resolve();
   let boardSaveInFlight = null;
   let boardSelectionPersistPromise = Promise.resolve();
   let deferredStoreEmitHandle = 0;
@@ -7023,7 +7023,11 @@ let tablePointerSelectionState = {
   }
 
   function stripTrailingSeparators(pathValue) {
-    return String(pathValue || "").replace(/[\\/]+$/, "");
+    const rawPath = String(pathValue || "");
+    if (/^[A-Za-z]:[\\/]+$/.test(rawPath)) {
+      return rawPath.slice(0, 3);
+    }
+    return rawPath.replace(/[\\/]+$/, "") || (/^[\\/]/.test(rawPath) ? rawPath[0] : "");
   }
 
   function splitPathSegments(pathValue) {
@@ -7036,12 +7040,16 @@ let tablePointerSelectionState = {
   }
 
   function getFolderFromPath(pathValue) {
-    const segments = splitPathSegments(pathValue);
-    if (segments.length <= 1) {
+    const cleanPath = stripTrailingSeparators(pathValue);
+    const lastSeparator = Math.max(cleanPath.lastIndexOf("/"), cleanPath.lastIndexOf("\\"));
+    if (lastSeparator < 0) {
       return "";
     }
-    const separator = getPathSeparator(pathValue);
-    return segments.slice(0, -1).join(separator);
+    // Preserve POSIX, Windows drive and UNC roots when taking the parent.
+    if (lastSeparator === 0 || (/^[A-Za-z]:[\\/]/.test(cleanPath) && lastSeparator === 2)) {
+      return cleanPath.slice(0, lastSeparator + 1);
+    }
+    return cleanPath.slice(0, lastSeparator);
   }
 
   function isBoardFileName(name) {
@@ -7066,7 +7074,7 @@ let tablePointerSelectionState = {
       return name;
     }
     const separator = getPathSeparator(cleanFolder);
-    return `${cleanFolder}${separator}${name}`;
+    return `${cleanFolder}${cleanFolder.endsWith(separator) ? "" : separator}${name}`;
   }
 
   function resolveBoardFilePathFromSettings(rawPath) {
@@ -26592,10 +26600,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     store.emit();
     scheduleRender({ reason: "mount", sceneDirty: true, overlayDirty: false, fullOverlayRescan: false });
     transientMinimap.refreshSceneSnapshot();
-    if (options.initializeBoardFileState !== false) {
-      void initBoardFileState();
-    }
-    window.dispatchEvent(new CustomEvent("canvas2d-engine-ready"));
+    boardStateReadyPromise = options.initializeBoardFileState !== false
+      ? Promise.resolve().then(() => initBoardFileState())
+      : Promise.resolve();
+    window.dispatchEvent(new CustomEvent("canvas2d-engine-ready", {
+      detail: { readyPromise: boardStateReadyPromise },
+    }));
     return api;
   }
 
@@ -27631,6 +27641,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     getInteractionPrioritySnapshot,
     getCanvasPerformanceSnapshot,
     getCanvasPerformanceLifecycleSnapshot,
+    whenReady() {
+      return boardStateReadyPromise;
+    },
     setTool,
     setMode,
     setStatus,

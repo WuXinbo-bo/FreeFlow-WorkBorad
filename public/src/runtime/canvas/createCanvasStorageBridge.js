@@ -34,11 +34,15 @@ export function createCanvasStorageBridge(deps) {
     if (!clean) {
       return "";
     }
-    const trimmed = clean.replace(/[\\/]+$/, "");
-    const segments = trimmed.split(/[\\/]/).filter(Boolean);
-    const last = segments[segments.length - 1] || "";
+    const trimmed = /^[A-Za-z]:[\\/]+$/.test(clean)
+      ? clean.slice(0, 3)
+      : clean.replace(/[\\/]+$/, "") || clean[0];
+    const lastSeparator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+    const last = trimmed.slice(lastSeparator + 1);
     if (/\.(?:freeflow|json)$/i.test(last)) {
-      return segments.slice(0, -1).join(clean.includes("\\") ? "\\" : "/");
+      if (lastSeparator < 0) return "";
+      const isRoot = lastSeparator === 0 || (/^[A-Za-z]:[\\/]/.test(trimmed) && lastSeparator === 2);
+      return trimmed.slice(0, lastSeparator + (isRoot ? 1 : 0));
     }
     return trimmed;
   }

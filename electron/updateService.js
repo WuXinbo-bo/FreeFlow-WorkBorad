@@ -11,6 +11,33 @@ const DEFAULT_UPDATE_CONFIG = Object.freeze({
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 7000;
 
+function resolveUpdateTarget(options = {}) {
+  const platform = String(options.platform || (typeof process !== "undefined" ? process.platform : "win32")).trim().toLowerCase();
+  const arch = String(options.arch || (typeof process !== "undefined" ? process.arch : "x64")).trim().toLowerCase();
+  if (platform === "darwin") {
+    return {
+      platform,
+      arch,
+      extensions: ["dmg", "zip"],
+      pattern: new RegExp(`^freeflow-v[\\d.]+(?:[-\\w.]*)-${arch}\\.(?:dmg|zip)$`, "i"),
+    };
+  }
+  if (platform === "win32") {
+    return {
+      platform,
+      arch,
+      extensions: ["exe"],
+      pattern: new RegExp(`^freeflow-v[\\d.]+(?:[-\\w.]*)-${arch}(?:-portable)?\\.exe$`, "i"),
+    };
+  }
+  return {
+    platform,
+    arch,
+    extensions: ["AppImage", "deb", "rpm", "tar.gz"],
+    pattern: new RegExp(`^freeflow-v[\\d.]+(?:[-\\w.]*)-${arch}\\.(?:AppImage|deb|rpm|tar\\.gz)$`, "i"),
+  };
+}
+
 function normalizeVersion(value = "") {
   return String(value || "")
     .trim()
@@ -82,14 +109,24 @@ function buildLatestReleaseUrl(config) {
   return `${String(config.apiBaseUrl || DEFAULT_UPDATE_CONFIG.apiBaseUrl).replace(/\/+$/, "")}/repos/${config.owner}/${config.repo}/releases/latest`;
 }
 
-function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_UPDATE_CONFIG) {
+function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_UPDATE_CONFIG, options = {}) {
+  const target = resolveUpdateTarget(options);
   const escapedVersion = String(remoteVersion || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const expectedName = String(config.assetNameTemplate || DEFAULT_UPDATE_CONFIG.assetNameTemplate).replace(
-    "{version}",
-    remoteVersion
-  );
   const list = Array.isArray(assets) ? assets : [];
-  const exact = list.find((asset) => String(asset?.name || "").trim() === expectedName);
+  const configuredTemplate = String(config.assetNameTemplate || "").trim();
+  const expectedNames = [];
+  const configuredName = configuredTemplate
+    .replace("{version}", remoteVersion)
+    .replace("{arch}", target.arch);
+  const configuredExtension = configuredName.split(".").pop()?.toLowerCase() || "";
+  if (configuredTemplate && target.extensions.some((extension) => extension.toLowerCase() === configuredExtension)) {
+    expectedNames.push(configuredName);
+  } else {
+    for (const extension of target.extensions) {
+      expectedNames.push(`FreeFlow-v${remoteVersion}-${target.arch}.${extension}`);
+    }
+  }
+  const exact = list.find((asset) => expectedNames.includes(String(asset?.name || "").trim()));
   if (exact?.browser_download_url) {
     return {
       name: String(exact.name || "").trim(),
@@ -98,8 +135,8 @@ function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_
     };
   }
   const installerPattern = escapedVersion
-    ? new RegExp(`freeflow-v${escapedVersion}(?:[-\\w.]*)?-x64\\.exe$`, "i")
-    : /freeflow-v[\d.]+(?:[-\w.]*)?-x64\.exe$/i;
+    ? new RegExp(`^freeflow-v${escapedVersion}(?:[-\\w.]*)-${target.arch}(?:-portable)?\\.(?:${target.extensions.map((value) => value.replace(".", "\\.")).join("|")})$`, "i")
+    : target.pattern;
   const fallback = list.find((asset) => installerPattern.test(String(asset?.name || "").trim()));
   if (fallback?.browser_download_url) {
     return {
@@ -163,7 +200,10 @@ async function checkForAppUpdate(options = {}) {
   const comparison = compareVersions(currentVersion, latestVersion);
   const versionValid = comparison !== null;
   const hasUpdate = versionValid ? comparison < 0 : false;
-  const asset = resolveDownloadAsset(payload?.assets, latestVersion, config);
+  const asset = resolveDownloadAsset(payload?.assets, latestVersion, config, {
+    platform: options.platform,
+    arch: options.arch,
+  });
   return {
     ok: true,
     source: options.mockRelease ? "mock" : "github",
@@ -192,5 +232,7 @@ module.exports = {
   normalizeVersion,
   parseVersion,
   compareVersions,
+  resolveUpdateTarget,
+  resolveDownloadAsset,
   checkForAppUpdate,
 };

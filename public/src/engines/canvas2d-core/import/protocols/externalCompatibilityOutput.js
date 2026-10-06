@@ -53,5 +53,12 @@ export function extractExternalFilePaths(items = []) {
       }
       return "";
     })
-    .filter((value) => /^[A-Za-z]:\\/.test(value) || /^\\\\/.test(value));
+    // Keep native file paths from every desktop platform. Windows paths were
+    // historically the only accepted form, which dropped /Users/... paths on
+    // macOS during structured copy/flowback.
+    .filter((value) =>
+      /^[A-Za-z]:[\\/]/.test(value) ||
+      /^\\\\/.test(value) ||
+      /^\/(?:[^/]|$)/.test(value)
+    );
 }

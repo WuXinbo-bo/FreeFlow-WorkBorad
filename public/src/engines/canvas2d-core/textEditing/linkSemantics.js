@@ -1,4 +1,5 @@
 import { normalizeTextLinkTokens, normalizeTextUrlMetaCache } from "../textModel/richTextDocument.js";
+import { toFileUrl } from "../utils.js";
 
 const URL_MATCH_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
 const ALLOWED_FETCH_STATES = new Set(["idle", "pending", "ready", "error", "stale"]);
@@ -58,13 +59,13 @@ function normalizeUrl(rawValue = "") {
     }
   }
   if (/^[a-zA-Z]:[\\/]/.test(source)) {
-    return encodeURI(`file:///${source.replace(/\\/g, "/")}`);
+    return toFileUrl(source);
   }
   if (/^\\\\[^\\]+\\[^\\]+/.test(source)) {
-    return encodeURI(`file:${source.replace(/\\/g, "/")}`);
+    return toFileUrl(source);
   }
   if (/^\/[^/]/.test(source)) {
-    return encodeURI(`file://${source}`);
+    return toFileUrl(source);
   }
   if (/^https?:\/\//i.test(source)) {
     return source;

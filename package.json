@@ -7,7 +7,14 @@
   "scripts": {
     "start": "node server.js",
     "start:web": "node server.js",
-    "start:desktop": "set \"ELECTRON_RUN_AS_NODE=\" && electron .",
+    "start:desktop": "node scripts/start-desktop.js",
+    "test:macos-clipboard": "node scripts/check-macos-clipboard.js",
+    "test:macos-click-through-shortcut": "node scripts/check-macos-click-through-shortcut.js",
+    "test:macos-paths": "node scripts/check-macos-paths.js",
+    "test:macos-desktop-runtime": "node scripts/check-macos-desktop-runtime.js",
+    "test:macos-backend": "node scripts/check-macos-backend-runtime.js",
+    "test:macos-frontend": "node scripts/check-macos-frontend.js",
+    "test:canvas-file-paths": "node scripts/check-canvas-file-paths.js",
     "build:canvas-office": "node scripts/build-canvas-office.js",
     "build:canvas-demo": "node scripts/build-canvas-demo.js",
     "build:canvas2d-ui": "node scripts/build-canvas2d-ui.js",
@@ -77,7 +84,11 @@
     "dist:portable": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win portable",
     "dist:portable:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win portable",
     "dist:win": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable",
-    "dist:win:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable"
+    "dist:win:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable",
+    "pack:mac": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --dir --mac",
+    "pack:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --dir --mac",
+    "dist:mac": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip",
+    "dist:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip"
   },
   "keywords": [],
   "author": "Wu Xinbo",
@@ -183,6 +194,41 @@
     },
     "portable": {
       "artifactName": "${productName}-v${version}-${arch}-portable.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-v${version}-${arch}.${ext}",
+      "fileAssociations": [
+        {
+          "ext": "freeflow",
+          "name": "FreeFlow 画布",
+          "role": "Editor"
+        }
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "FreeFlow 需要麦克风权限以在用户选择时采集音频。",
+        "NSCameraUsageDescription": "FreeFlow 需要摄像头权限以在用户选择时采集视频。"
+      }
     }
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

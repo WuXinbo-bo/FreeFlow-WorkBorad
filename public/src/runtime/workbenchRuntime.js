@@ -167,7 +167,10 @@ const DEFAULT_ASSISTANT_NAME = "FreeFlow";
 const DEFAULT_APP_SUBTITLE = "自由画布与 AI 工作台";
 const DEFAULT_CANVAS_TITLE = "FreeFlow 工作白板";
 const DEFAULT_CLICK_THROUGH_ACCELERATOR = "CommandOrControl+Shift+X";
-const DEFAULT_CLICK_THROUGH_DISPLAY = "Ctrl+Shift+X";
+const IS_MACOS_PLATFORM =
+  DESKTOP_SHELL?.platform === "darwin" ||
+  /Mac|iPhone|iPad|iPod/i.test(String(globalThis?.navigator?.platform || ""));
+const DEFAULT_CLICK_THROUGH_DISPLAY = IS_MACOS_PLATFORM ? "Cmd+Shift+X" : "Ctrl+Shift+X";
 const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
   defaultCanvasPanelSide: "left",
   defaultChatPanelSide: "right",
@@ -266,7 +269,7 @@ function formatShortcutAcceleratorForDisplay(accelerator = "") {
   return normalizeShortcutAccelerator(accelerator)
     .split("+")
     .map((part) => {
-      if (part === "CommandOrControl") return DESKTOP_SHELL?.platform === "darwin" ? "Cmd" : "Ctrl";
+      if (part === "CommandOrControl") return IS_MACOS_PLATFORM ? "Cmd" : "Ctrl";
       if (part === "Control") return "Ctrl";
       if (part === "Command") return "Cmd";
       return part;
@@ -1516,6 +1519,8 @@ const saveSessionRenameBtn = document.querySelector("#save-session-rename-btn");
 const cancelSessionRenameBtn = document.querySelector("#cancel-session-rename-btn");
 let permissionAttentionTimer = null;
 let removeDesktopShellStateListener = null;
+let removeOpenBoardPathListener = null;
+let openBoardPathQueue = Promise.resolve();
 let desktopSurfaceSyncPromise = Promise.resolve();
 const desktopClearStageEl = document.querySelector(".desktop-clear-stage");
 const BOOT_SPLASH_MIN_VISIBLE_MS = 2500;
@@ -4432,6 +4437,31 @@ function getModernCanvas2DEngine() {
   return engine;
 }
 
+function waitForModernCanvas2DEngine(timeoutMs = 15000) {
+  const current = getModernCanvas2DEngine();
+  if (current) {
+    return Promise.resolve(current.whenReady?.()).then(() => current);
+  }
+  return new Promise((resolve, reject) => {
+    let timeoutId = 0;
+    const handleReady = (event) => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      const engine = getModernCanvas2DEngine();
+      if (!engine) {
+        reject(new Error("画布引擎初始化失败"));
+        return;
+      }
+      Promise.resolve(event?.detail?.readyPromise || engine.whenReady?.())
+        .then(() => resolve(engine), reject);
+    };
+    window.addEventListener("canvas2d-engine-ready", handleReady, { once: true });
+    timeoutId = window.setTimeout(() => {
+      window.removeEventListener("canvas2d-engine-ready", handleReady);
+      reject(new Error("画布引擎尚未就绪"));
+    }, Math.max(1000, Number(timeoutMs) || 15000));
+  });
+}
+
 async function setCanvasMode(nextMode, { persist = true, waitForMount = true } = {}) {
   const normalizedMode = CANVAS_MODE_LEGACY;
   if (state.canvasMode !== normalizedMode) {
@@ -7048,8 +7078,33 @@ async function initializeDesktopShell() {
   desktopWindowBarEl?.classList.add("is-visible");
   setDesktopMenuOpen(false);
   removeDesktopShellStateListener?.();
+  removeOpenBoardPathListener?.();
+  removeOpenBoardPathListener = null;
   removeDesktopShellStateListener = DESKTOP_SHELL?.onStateChange?.((nextState) => {
     syncDesktopShellState(nextState);
+  });
+  removeOpenBoardPathListener = DESKTOP_SHELL?.onOpenBoardPath?.((filePath) => {
+    const targetPath = String(filePath || "").trim();
+    if (!targetPath) {
+      return;
+    }
+    // Serialize native open requests. Electron can deliver several file-open
+    // events during startup; loadBoardFromPath intentionally coalesces only
+    // concurrent loads, so a queue is needed to preserve every requested path.
+    openBoardPathQueue = openBoardPathQueue
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const engine = await waitForModernCanvas2DEngine();
+          if (!engine?.openBoardAtPath) {
+            throw new Error("画布引擎尚未提供打开画布能力");
+          }
+          const loaded = await engine.openBoardAtPath(targetPath, { silent: false, updateSettings: true });
+          if (!loaded) setStatus(`无法打开画布：${targetPath}`, "warning");
+        } catch (error) {
+          setStatus(`打开画布失败：${error.message || error}`, "warning");
+        }
+      });
   });
   await refreshShortcutSettings();
   await refreshDesktopShellState();
@@ -7302,19 +7357,22 @@ async function setDesktopClickThrough(enabled) {
     return;
   }
 
-  if (state.desktopShellState.clickThrough === Boolean(enabled)) {
-    return;
-  }
-
   desktopSurfaceSyncPromise = desktopSurfaceSyncPromise
     .catch(() => {})
     .then(async () => {
-      if (enabled) {
+      const nextEnabled = Boolean(enabled);
+      // Check at execution time, after earlier requests have settled. An
+      // immediate false request must not be dropped while an enable request is
+      // still in flight (the previous early return caused stale pass-through).
+      if (state.desktopShellState.clickThrough === nextEnabled) {
+        return;
+      }
+      if (nextEnabled) {
         await suspendScreenSourceForClickThrough();
       }
-      const nextState = await DESKTOP_SHELL.setClickThrough(enabled);
+      const nextState = await DESKTOP_SHELL.setClickThrough(nextEnabled);
       syncDesktopShellState(nextState);
-      if (!enabled) {
+      if (!nextEnabled) {
         await resumeScreenSourceAfterClickThrough();
         await syncEmbeddedWindowOverlayVisibility();
       }
@@ -8536,7 +8594,8 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.shiftKey || event.key.toLowerCase() === "y")) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey &&
+    ((event.shiftKey && event.key.toLowerCase() === "z") || (!event.shiftKey && event.key.toLowerCase() === "y"))) {
     event.preventDefault();
     canvasItemManager.redoCanvasBoard();
     return;
@@ -9271,6 +9330,8 @@ document.addEventListener("keydown", async (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
+  removeOpenBoardPathListener?.();
+  removeOpenBoardPathListener = null;
   agentController?.destroy();
   screenSourceEmptyLoader?.destroy?.();
   stopScreenSourceCapture({ announce: false, statusText: "画面映射已停止" });
@@ -12036,4 +12097,3 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-

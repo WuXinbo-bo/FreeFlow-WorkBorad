@@ -22,16 +22,32 @@ async function main() {
       { name: `FreeFlow-v${version}-x64.exe`, browser_download_url: "https://example.com/setup.exe", size: 123 },
     ],
   };
-  const upgrade = await service.checkForAppUpdate({ currentVersion: "1.2.0", mockRelease: release });
+  const upgrade = await service.checkForAppUpdate({ currentVersion: "1.2.0", mockRelease: release, platform: "win32", arch: "x64" });
   assert(upgrade.hasUpdate);
   assert.equal(upgrade.downloadAssetName, `FreeFlow-v${version}-x64.exe`);
   assert.equal(upgrade.downloadUrl, "https://example.com/setup.exe");
-  assert((await service.checkForAppUpdate({ mockRelease: release })).isLatest);
+  assert((await service.checkForAppUpdate({ mockRelease: release, platform: "win32", arch: "x64" })).isLatest);
   assert.equal(service.compareVersions("2.0.0-rc.1", "2.0.0"), -1);
   assert.equal(service.compareVersions("2.0", "2.0.0"), 0);
   assert.equal(service.compareVersions("invalid", version), null);
-  const missingAsset = await service.checkForAppUpdate({ currentVersion: "1.2.0", mockRelease: { ...release, assets: [] } });
+  const missingAsset = await service.checkForAppUpdate({ currentVersion: "1.2.0", mockRelease: { ...release, assets: [] }, platform: "win32", arch: "x64" });
   assert.equal(missingAsset.downloadUrl, release.html_url);
+  const macRelease = {
+    tag_name: `v${version}`,
+    html_url: "https://example.com/release",
+    assets: [
+      { name: `FreeFlow-v${version}-x64.exe`, browser_download_url: "https://example.com/windows.exe" },
+      { name: `FreeFlow-v${version}-arm64.dmg`, browser_download_url: "https://example.com/macos.dmg" },
+    ],
+  };
+  const macUpgrade = await service.checkForAppUpdate({
+    currentVersion: "1.2.0",
+    mockRelease: macRelease,
+    platform: "darwin",
+    arch: "arm64",
+  });
+  assert.equal(macUpgrade.downloadAssetName, `FreeFlow-v${version}-arm64.dmg`);
+  assert.equal(macUpgrade.downloadUrl, "https://example.com/macos.dmg");
   context.fetch = async () => ({ ok: false, status: 403, json: async () => ({ message: "rate limited" }) });
   await assert.rejects(service.checkForAppUpdate(), (error) => error.code === "RATE_LIMITED");
   context.fetch = async () => ({ ok: true, json: async () => release });

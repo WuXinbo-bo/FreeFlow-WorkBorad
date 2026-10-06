@@ -6,6 +6,7 @@ const { atomicWriteFile, atomicWriteJsonFile } = require("../utils/atomicWrite")
 
 const VAULT_VERSION = 1;
 let vaultQueue = Promise.resolve();
+let fallbackKeyPromise = null;
 
 async function readVault() {
   try {
@@ -17,17 +18,25 @@ async function readVault() {
 }
 
 async function getFallbackKey() {
-  try {
-    const key = Buffer.from(String(await fs.readFile(CREDENTIALS_KEY_FILE, "utf8")).trim(), "base64");
-    if (key.length === 32) return key;
-  } catch {
-    // Create a new installation-local encryption key below.
+  if (!fallbackKeyPromise) {
+    fallbackKeyPromise = (async () => {
+      try {
+        const key = Buffer.from(String(await fs.readFile(CREDENTIALS_KEY_FILE, "utf8")).trim(), "base64");
+        if (key.length === 32) return key;
+      } catch {
+        // Create a new installation-local encryption key below.
+      }
+      const key = crypto.randomBytes(32);
+      const result = await atomicWriteFile(CREDENTIALS_KEY_FILE, key.toString("base64"), { mode: 0o600 });
+      if (!result.ok) throw new Error(result.error || "Unable to create credential key");
+      await fs.chmod(CREDENTIALS_KEY_FILE, 0o600).catch(() => {});
+      return key;
+    })().catch((error) => {
+      fallbackKeyPromise = null;
+      throw error;
+    });
   }
-  const key = crypto.randomBytes(32);
-  const result = await atomicWriteFile(CREDENTIALS_KEY_FILE, key.toString("base64"), { mode: 0o600 });
-  if (!result.ok) throw new Error(result.error || "Unable to create credential key");
-  await fs.chmod(CREDENTIALS_KEY_FILE, 0o600).catch(() => {});
-  return key;
+  return fallbackKeyPromise;
 }
 
 function protectWithDpapi(value, operation) {

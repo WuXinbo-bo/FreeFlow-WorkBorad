@@ -83,9 +83,34 @@ function collectDragEntries(dataTransfer, { internalClipboardMime, preferHtmlTex
     entries.push(createFileEntry(file, `drag-file-${entryIndex++}`));
   }
 
+  // Finder and some Chromium builds expose dropped files as file:// URLs while
+  // leaving DataTransfer.files empty. Promote those URLs to file entries so
+  // the file-resource adapter can import them on macOS. Keep web URLs in the
+  // URI entry below for the normal link parser.
+  const uriList = safeGetData(dataTransfer, "text/uri-list");
+  const filePaths = parseLocalFileUriLines(uriList);
+  const existingPaths = new Set(files.map((file) => String(file?.path || "").trim()).filter(Boolean));
+  for (const filePath of filePaths) {
+    if (existingPaths.has(filePath)) {
+      continue;
+    }
+    existingPaths.add(filePath);
+    entries.push(createFileEntry({
+      name: basenameFromPath(filePath),
+      path: filePath,
+      type: "",
+      size: null,
+    }, `drag-uri-file-${entryIndex++}`));
+  }
+
   const orderedMimeTypes = orderDragMimeTypes(mimeTypes, dataTransfer, { preferHtmlText });
   for (const mimeType of orderedMimeTypes) {
-    const rawValue = safeGetData(dataTransfer, mimeType);
+    const rawValue = mimeType === "text/uri-list"
+      ? stripLocalFileUriLines(uriList)
+      : safeGetData(dataTransfer, mimeType);
+    if (!rawValue) {
+      continue;
+    }
     const maybeEntry = createEntryFromMimeType({
       mimeType,
       value: rawValue,
@@ -101,6 +126,50 @@ function collectDragEntries(dataTransfer, { internalClipboardMime, preferHtmlTex
     entries,
     mimeTypes,
   };
+}
+
+function parseLocalFileUriLines(value = "") {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => decodeLocalFileUri(line))
+    .filter(Boolean);
+}
+
+function stripLocalFileUriLines(value = "") {
+  return String(value || "")
+    .split(/\r?\n/)
+    .filter((line) => {
+      const clean = line.trim();
+      return clean && !clean.startsWith("#") && !/^file:\/\//i.test(clean);
+    })
+    .join("\n");
+}
+
+function decodeLocalFileUri(value = "") {
+  if (!/^file:\/\//i.test(String(value || "").trim())) {
+    return "";
+  }
+  try {
+    const parsed = new URL(String(value).trim());
+    const host = String(parsed.hostname || "").trim();
+    const pathname = decodeURIComponent(parsed.pathname || "");
+    if (host && host !== "localhost") {
+      return `//${host}${pathname}`;
+    }
+    if (/^\/[A-Za-z]:\//.test(pathname)) {
+      return pathname.slice(1).replace(/\//g, "\\");
+    }
+    return pathname || "/";
+  } catch {
+    return "";
+  }
+}
+
+function basenameFromPath(value = "") {
+  const normalized = String(value || "").replace(/\\/g, "/");
+  return normalized.split("/").pop() || "";
 }
 
 function orderDragMimeTypes(mimeTypes = [], dataTransfer, { preferHtmlText = true } = {}) {

@@ -37,6 +37,12 @@ function stopProcess(child) {
     return;
   }
   child.kill("SIGTERM");
+  // Claude may keep descendants alive after SIGTERM. Escalate after a short
+  // grace period so an aborted turn always reaches its recovery path.
+  const timer = setTimeout(() => {
+    if (child.exitCode == null) child.kill("SIGKILL");
+  }, 1500);
+  timer.unref?.();
 }
 
 function textFromContent(content) {

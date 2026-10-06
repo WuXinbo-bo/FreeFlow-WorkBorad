@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execFile } = require("child_process");
 
 const PROVIDERS = Object.freeze({
@@ -32,6 +33,20 @@ function wrapperCommand(candidate) {
     if (nearby) return { command: process.execPath, args: [nearby] };
     return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", candidate] };
   }
+  // npm installs on macOS/Linux commonly expose a shebang wrapper without a
+  // file extension. Spawning it directly fails when a GUI-launched process
+  // does not inherit the executable interpreter environment. Run node
+  // wrappers explicitly while preserving the original path as argv[1].
+  if (process.platform !== "win32") {
+    try {
+      const firstLine = fs.readFileSync(candidate, "utf8").slice(0, 160).split(/\r?\n/, 1)[0];
+      if (/^#!.*\b(?:node|env\s+node)\b/.test(firstLine)) {
+        return { command: process.execPath, args: [candidate] };
+      }
+    } catch {
+      // The caller will report the normal executable probe error.
+    }
+  }
   return { command: candidate, args: [] };
 }
 
@@ -57,7 +72,15 @@ async function probeExecutable(candidate) {
 
 async function commandCandidates(command) {
   const result = [];
-  const pathEntries = String(process.env.PATH || process.env.Path || "").split(path.delimiter).filter(Boolean);
+  const pathEntries = [...new Set([
+    ...String(process.env.PATH || process.env.Path || "").split(path.delimiter),
+    ...(process.platform === "darwin" ? [
+      "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+      path.join(os.homedir(), ".local", "bin"),
+      path.join(os.homedir(), ".npm-global", "bin"),
+      path.join(os.homedir(), ".volta", "bin"),
+    ] : []),
+  ].filter(Boolean))];
   for (const directory of pathEntries) {
     const names = process.platform === "win32" ? [`${command}.exe`, `${command}.cmd`, `${command}.bat`] : [command];
     names.forEach((name) => result.push({ path: path.join(directory, name), source: "system" }));
@@ -83,6 +106,9 @@ function directoryCandidates(provider) {
     env.PNPM_HOME,
     env.VOLTA_HOME && path.join(env.VOLTA_HOME, "bin"),
     env.BUN_INSTALL && path.join(env.BUN_INSTALL, "bin"),
+    process.platform === "darwin" && path.join(os.homedir(), ".local", "bin"),
+    process.platform === "darwin" && path.join(os.homedir(), ".npm-global", "bin"),
+    process.platform === "darwin" && path.join(os.homedir(), ".volta", "bin"),
     env.USERPROFILE && path.join(env.USERPROFILE, ".npm-global", "bin"),
     env.USERPROFILE && path.join(env.USERPROFILE, ".local", "bin"),
     process.platform === "win32" && path.dirname(process.execPath),
@@ -106,8 +132,10 @@ function directoryCandidates(provider) {
 async function defaultCandidateResolver(provider, configuredPath = "") {
   const info = PROVIDERS[provider];
   if (!info) throw new Error(`不支持的 CLI Provider：${provider}`);
+  const configuredIsCommand = configuredPath && !configuredPath.includes(path.sep) && !path.isAbsolute(configuredPath);
   return uniqueCandidates([
-    ...(configuredPath ? [{ path: configuredPath, source: "configured" }] : []),
+    ...(configuredPath && !configuredIsCommand ? [{ path: configuredPath, source: "configured" }] : []),
+    ...(configuredIsCommand ? await commandCandidates(configuredPath) : []),
     ...(await commandCandidates(info.command)),
     ...directoryCandidates(provider),
   ]).filter((item) => fs.existsSync(item.path));

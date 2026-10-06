@@ -41,8 +41,13 @@ const COLOR_FIELDS = Object.freeze([
 const HIGH_RISK_PERMISSIONS = new Set(["appControl", "inputControl", "scriptExecution", "selfRepair"]);
 const DEFAULT_SHORTCUT = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
-  clickThroughDisplay: "Ctrl+Shift+X",
 });
+
+function getDefaultShortcutDisplay(desktopShell = null) {
+  return desktopShell?.platform === "darwin" || /Mac|iPhone|iPad|iPod/i.test(String(globalThis?.navigator?.platform || ""))
+    ? "Cmd+Shift+X"
+    : "Ctrl+Shift+X";
+}
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -141,8 +146,12 @@ export function mountSettingsCenter(host, options = {}) {
   } = options;
   let snapshot = null;
   let draft = null;
-  let shortcutSnapshot = clone(DEFAULT_SHORTCUT);
-  let shortcutDraft = clone(DEFAULT_SHORTCUT);
+  const defaultShortcut = {
+    ...DEFAULT_SHORTCUT,
+    clickThroughDisplay: getDefaultShortcutDisplay(desktopShell),
+  };
+  let shortcutSnapshot = clone(defaultShortcut);
+  let shortcutDraft = clone(defaultShortcut);
   let activeSection = "general";
   let phase = "idle";
   let message = "";
@@ -399,7 +408,7 @@ export function mountSettingsCenter(host, options = {}) {
       </section>
       <section class="settings-center-group">
         <div class="settings-center-group-heading"><h5>完全穿透快捷键</h5><p>${isDesktop ? "在桌面模式中全局生效。" : "网页版仅保存展示值，桌面模式中生效。"}</p></div>
-        <label class="settings-center-field"><span>快捷键组合</span><input type="text" data-settings-shortcut value="${escapeHtml(shortcutDraft.clickThroughDisplay || shortcutDraft.clickThroughAccelerator)}" maxlength="60" placeholder="Ctrl+Shift+X" /><small>至少包含一个按键；支持 Ctrl、Shift、Alt、Cmd 与字母数字。</small><em data-field-error="workbench.clickThroughShortcut"></em></label>
+        <label class="settings-center-field"><span>快捷键组合</span><input type="text" data-settings-shortcut value="${escapeHtml(shortcutDraft.clickThroughDisplay || shortcutDraft.clickThroughAccelerator)}" maxlength="60" placeholder="${defaultShortcut.clickThroughDisplay}" /><small>至少包含一个按键；支持 Ctrl、Shift、Alt、Cmd 与字母数字。</small><em data-field-error="workbench.clickThroughShortcut"></em></label>
       </section>
     `;
   }
@@ -620,7 +629,7 @@ export function mountSettingsCenter(host, options = {}) {
         baseUrl: String(data.sections.ai?.agent?.providers?.[provider]?.baseUrl || ""),
         apiKey: "",
       }]));
-      shortcutSnapshot = clone(shortcutResult?.settings || DEFAULT_SHORTCUT);
+      shortcutSnapshot = clone({ ...defaultShortcut, ...(shortcutResult?.settings || {}) });
       shortcutDraft = clone(shortcutSnapshot);
       agentRuntime = runtimeResult?.runtime || null;
       agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [
