@@ -26,6 +26,7 @@
     "check:release-version": "node scripts/check-release-version.js",
     "check:generated-bundles": "node scripts/check-generated-bundles.js",
     "test:backend-security": "node scripts/check-backend-security.js",
+    "test:github-sync-core": "node scripts/check-github-sync-core.js",
     "test:desktop-atomic-save": "node scripts/check-desktop-atomic-save.js",
     "test:electron-ipc-security": "node scripts/check-electron-ipc-security.js",
     "test:canvas-lod-scale": "node scripts/check-canvas-lod-scale.js",

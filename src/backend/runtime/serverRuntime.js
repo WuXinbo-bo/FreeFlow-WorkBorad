@@ -26,6 +26,7 @@ const { createAgentApiSecurity } = require("../agent/agentApiSecurity");
 const { createAgentRouter } = require("../agent/agentRoutes");
 const { createAgentConnectionService } = require("../agent/agentConnectionService");
 const { registerAppRoutes } = require("../routes");
+const { createGitHubSyncRouter } = require("../routes/githubSyncRoutes");
 const packageInfo = require("../../../package.json");
 
 const {
@@ -57,6 +58,7 @@ const {
   BIGMODEL_MODELS,
   AGENT_VISUAL_MODEL,
   AGENT_SCREENSHOT_SETTLE_MS,
+  FREEFLOW_GITHUB_CLIENT_ID,
 } = runtime;
 const { PERMISSIONS_FILE, readPermissionsStore, writePermissionsStore, normalizeRootPath } = permissionsService;
 const { MODEL_PROFILES_FILE, readModelProfilesStore, writeModelProfilesStore } = modelProfilesService;
@@ -143,6 +145,7 @@ function setStaticValidationHeaders(res) {
 app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
 app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity(), connections: agentConnectionService }));
+app.use("/api/github-sync", createGitHubSyncRouter({ clientId: FREEFLOW_GITHUB_CLIENT_ID }));
 app.use(
   "/vendor",
   express.static(NODE_MODULES_DIR, {
