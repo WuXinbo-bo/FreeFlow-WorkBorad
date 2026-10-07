@@ -1,9 +1,11 @@
 const assert = require("assert");
 
 async function main() {
-  const { createResourcePrewarmRuntime } = await import(
+  const { createResourcePrewarmRuntime, resolveImagePrewarmPolicy } = await import(
     "../public/src/engines/canvas2d-core/perf/resourcePrewarmRuntime.js"
   );
+  assert(resolveImagePrewarmPolicy(4).maxImages < resolveImagePrewarmPolicy(8).maxImages);
+  assert(resolveImagePrewarmPolicy(4).marginPx < resolveImagePrewarmPolicy(8).marginPx);
   const scheduled = [];
   const executed = [];
   const runtime = createResourcePrewarmRuntime({
@@ -32,7 +34,10 @@ async function main() {
   runtime.request("deferred", () => executed.push("deferred"), { priority: "visible" });
   assert.strictEqual(scheduled.length, 0, "paused prewarm runtime scheduled hot-path work");
   runtime.setPaused(false);
-  scheduled.shift().task();
+  const recoveredTask = scheduled.shift();
+  staleTask.task();
+  assert.strictEqual(runtime.getSnapshot().scheduled, true, "stale prewarm completion cleared a newer scheduled flush");
+  recoveredTask.task();
   assert(executed.includes("deferred"), "prewarm work did not recover after interaction");
   assert(runtime.getSnapshot().staleCount >= 1, "stale prewarm completion was not recorded");
   runtime.dispose();

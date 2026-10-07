@@ -188,6 +188,8 @@ import { createPresentationSnapshotController } from "./overlay/presentationSnap
 import { createStaticDisplayEventBridge } from "./overlay/staticDisplayEventBridge.js";
 import { createSceneEventBridge } from "./overlay/sceneEventBridge.js";
 import { createHydrationScheduler } from "./perf/hydrationScheduler.js";
+import { resolveCanvasResourceBudgetBytes } from "./perf/resourceBudgetRuntime.js";
+import { resolveImagePrewarmPolicy } from "./perf/resourcePrewarmRuntime.js";
 import {
   CANVAS_PERFORMANCE_LANES,
   CANVAS_PERFORMANCE_PHASES,
@@ -3598,6 +3600,7 @@ let tablePointerSelectionState = {
   });
   const overlayBudgetManager = createOverlayBudgetManager();
   const canvasPerformanceRuntime = createCanvasPerformanceRuntime({ interactionCooldownMs: 140 });
+  const imagePrewarmPolicy = resolveImagePrewarmPolicy();
   const documentPreviewRuntime = createDocumentPreviewRuntime();
   canvasPerformanceRuntime.registerResource({
     id: "background-pattern",
@@ -5058,11 +5061,15 @@ let tablePointerSelectionState = {
           frameView,
           viewportWidth,
           viewportHeight,
-          { marginPx: 1280 }
+          { marginPx: imagePrewarmPolicy.marginPx }
         );
         prewarmScene.items
           .filter((item) => item?.type === "image" && !item?.exportFallbackPlaceholder)
-          .slice(0, 64)
+          .sort((left, right) => {
+            const rank = (item) => primaryIds.has(String(item.id || "")) ? 0 : nearIds.has(String(item.id || "")) ? 1 : 2;
+            return rank(left) - rank(right);
+          })
+          .slice(0, imagePrewarmPolicy.maxImages)
           .forEach((item) => {
             const itemId = String(item.id || "");
             const priority = primaryIds.has(itemId)
@@ -9427,6 +9434,7 @@ let tablePointerSelectionState = {
     });
     const sizeChanged = hasViewportSizeChanged(lastViewportBudget, nextBudget);
     lastViewportBudget = nextBudget;
+    updateCanvasResourceBudget();
     scenePresentationCoordinator.updateViewport({
       width: nextBudget.cssWidth,
       height: nextBudget.cssHeight,
@@ -26553,6 +26561,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!mounted) return;
     const hidden = Boolean(document.hidden);
     canvasPerformanceRuntime.setBackgroundSuspended(hidden);
+    updateCanvasResourceBudget();
     if (hidden) {
       renderer.releaseRetainedFrame();
       presentationSnapshotController.setPaused(true);
@@ -26562,6 +26571,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     presentationSnapshotController.setPaused(canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical);
     scheduleRender({ reason: "canvas-visible", viewDirty: true, overlayDirty: true });
     renderScheduler?.resume?.();
+  }
+
+  function updateCanvasResourceBudget() {
+    canvasPerformanceRuntime.setResourceBudgetBytes(resolveCanvasResourceBudgetBytes(undefined, {
+      viewportBytes: Number(lastViewportBudget?.pixelWidth || 0) * Number(lastViewportBudget?.pixelHeight || 0) * 4,
+      background: Boolean(document.hidden),
+    }));
   }
 
   function mount(hostElement) {

@@ -18,6 +18,11 @@ async function main() {
     "../public/src/engines/canvas2d-core/perf/resourceBudgetRuntime.js"
   );
   assert(resolveCanvasResourceBudgetBytes(4) < resolveCanvasResourceBudgetBytes(16));
+  const foregroundBudget = resolveCanvasResourceBudgetBytes(8, { viewportBytes: 1440 * 960 * 4 });
+  const backgroundBudget = resolveCanvasResourceBudgetBytes(8, { viewportBytes: 1440 * 960 * 4, background: true });
+  assert(backgroundBudget < foregroundBudget, "background budget was not reduced");
+  assert(resolveCanvasResourceBudgetBytes(4, { viewportBytes: 400 * 300 * 4 }) < foregroundBudget);
+  assert(resolveCanvasResourceBudgetBytes(16, { viewportBytes: 7680 * 4320 * 4 }) <= 320 * 1024 * 1024);
 
   const queued = [];
   const runtime = createResourceBudgetRuntime({
@@ -59,6 +64,19 @@ async function main() {
   runtime.setInteractionActive(false);
   queued.shift().task();
   assert.strictEqual(runtime.getSnapshot().overBudgetBytes, 0, "rapid interaction recovery left stale pressure");
+  runtime.setInteractionActive(true);
+  runtime.setMaxBytes(80);
+  assert.strictEqual(runtime.getSnapshot().totalBytes, 100, "budget resize reclaimed during interaction");
+  runtime.setInteractionActive(false);
+  const oldBudgetTask = queued.shift();
+  runtime.setMaxBytes(90);
+  const newBudgetTask = queued.shift();
+  oldBudgetTask.task();
+  assert.strictEqual(runtime.getSnapshot().reconcilePending, true, "old budget task canceled new pressure recovery");
+  newBudgetTask.task();
+  assert.strictEqual(runtime.getSnapshot().overBudgetBytes, 0);
+  runtime.setMaxBytes(100);
+  assert.strictEqual(runtime.getSnapshot().budgetBytes, 100, "foreground budget failed to restore");
   runtime.dispose();
   console.log("[check-canvas-resource-budget-runtime] ok");
 }
