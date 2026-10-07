@@ -96,6 +96,24 @@ async function main() {
   assert(snapshot.performanceWindow.p95Ms >= 8, "frame window was not owned by the performance runtime");
   assert(transitions.some((entry) => entry.startsWith("recovering->active")), "rapid reverse transition was not reported");
 
+  runtime.setBackgroundSuspended(true);
+  assert.strictEqual(runtime.getSnapshot().prewarm.paused, true);
+  assert.strictEqual(runtime.getSnapshot().canRunBackground, false);
+  const hiddenSession = runtime.beginInteraction("hidden-recovery");
+  runtime.beginCommit(hiddenSession);
+  runtime.beginRecovery(hiddenSession);
+  runtime.finishRecovery(hiddenSession);
+  assert.strictEqual(runtime.getSnapshot().prewarm.paused, true, "interaction recovery resumed hidden prewarming");
+  runtime.setBackgroundSuspended(false);
+  assert.strictEqual(runtime.getSnapshot().prewarm.paused, false, "visible steady state failed to recover");
+  const activeSession = runtime.beginInteraction("visible-interaction");
+  runtime.setBackgroundSuspended(true);
+  runtime.setBackgroundSuspended(false);
+  assert.strictEqual(runtime.getSnapshot().prewarm.paused, true, "visibility recovery bypassed active input priority");
+  runtime.beginCommit(activeSession);
+  runtime.beginRecovery(activeSession);
+  runtime.finishRecovery(activeSession);
+  assert.strictEqual(runtime.getSnapshot().prewarm.paused, false);
   runtime.dispose();
   console.log("[check-canvas-performance-runtime] ok");
 }
