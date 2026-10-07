@@ -279,6 +279,7 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
     }
 
     const nextVisible = Boolean(visible);
+    activeEntry.view.webContents.setBackgroundThrottling?.(!nextVisible);
     if (nextVisible) {
       attachEntry(activeEntry, activeEntry.bounds);
     } else {
