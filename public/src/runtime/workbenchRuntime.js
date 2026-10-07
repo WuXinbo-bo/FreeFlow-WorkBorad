@@ -5135,26 +5135,53 @@ function stopClipboardPolling() {
   }
 }
 
+function canPollClipboard() {
+  return (
+    state.clipboardStore.mode === "auto" &&
+    state.clipboardPollingSuspended !== true &&
+    document.visibilityState !== "hidden"
+  );
+}
+
+async function pollClipboardOnce() {
+  if (!canPollClipboard() || state.clipboardPollInFlight) {
+    return;
+  }
+  state.clipboardPollInFlight = true;
+  try {
+    const text = String(await readClipboardText()).trim();
+    if (!text || text === state.lastClipboardText) {
+      return;
+    }
+
+    state.lastClipboardText = text;
+    await captureClipboardEntry("auto");
+  } catch {
+    // Keep polling silent; manual mode remains available even if clipboard polling fails.
+  } finally {
+    state.clipboardPollInFlight = false;
+  }
+}
+
 function startClipboardPolling() {
   stopClipboardPolling();
 
-  if (state.clipboardStore.mode !== "auto") {
+  if (!canPollClipboard()) {
     return;
   }
 
-  state.clipboardPollTimer = window.setInterval(async () => {
-    try {
-      const text = String(await readClipboardText()).trim();
-      if (!text || text === state.lastClipboardText) {
-        return;
-      }
+  state.clipboardPollTimer = window.setInterval(pollClipboardOnce, CONFIG.clipboardPollIntervalMs);
+}
 
-      state.lastClipboardText = text;
-      await captureClipboardEntry("auto");
-    } catch {
-      // Keep polling silent; manual mode remains available even if clipboard polling fails.
-    }
-  }, CONFIG.clipboardPollIntervalMs);
+function resumeClipboardPolling() {
+  state.clipboardPollingSuspended = false;
+  startClipboardPolling();
+  void pollClipboardOnce();
+}
+
+function suspendClipboardPolling() {
+  state.clipboardPollingSuspended = true;
+  stopClipboardPolling();
 }
 
 function buildUiSettingsPayload(overrides = {}) {
@@ -8832,8 +8859,21 @@ desktopShellControlsEl?.addEventListener("mouseenter", () => {
 });
 
 window.addEventListener("blur", () => {
+  suspendClipboardPolling();
   if (!state.desktopShellState.fullClickThrough) {
     setDesktopClickThrough(false);
+  }
+});
+
+window.addEventListener("focus", () => {
+  resumeClipboardPolling();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    suspendClipboardPolling();
+  } else {
+    resumeClipboardPolling();
   }
 });
 
