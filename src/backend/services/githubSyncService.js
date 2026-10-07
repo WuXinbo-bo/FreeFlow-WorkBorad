@@ -23,7 +23,7 @@ async function getConfig() {
 async function setConfig(config) {
   const next = cleanRepoConfig(config);
   if (!next.owner || !next.repo) throw new Error("GitHub 仓库配置不完整");
-  await auth.writeSettings(next, GITHUB_SYNC_SETTINGS_FILE);
+  await auth.writeSettings({ ...(await auth.readSettings(GITHUB_SYNC_SETTINGS_FILE)), ...next }, GITHUB_SYNC_SETTINGS_FILE);
   return next;
 }
 
@@ -47,7 +47,10 @@ async function getStatus() {
 async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Update FreeFlow board" } = {}) {
   const config = await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
-  await ensureBoardIdInFile(boardPath);
+  const localPath = path.resolve(boardPath);
+  const ledger = await readLedger(SYNC_LEDGER_FILE);
+  const previous = Object.values(ledger.boards).find((entry) => entry.localPath === localPath);
+  await ensureBoardIdInFile(boardPath, previous?.boardId);
   const bundle = await buildSyncBundleFromFile(boardPath, { policy });
   const client = await getClient();
   const result = await client.createCommit({
@@ -65,6 +68,7 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
       [bundle.boardId]: {
         ...(ledger.boards[bundle.boardId] || {}),
         boardId: bundle.boardId,
+        localPath,
         localHash: bundle.boardHash,
         remoteHeadSha: result.commitSha,
         baseRemoteCommit: result.commitSha,
@@ -136,6 +140,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE } = {}) {
       [id]: {
         ...(ledger.boards[id] || {}),
         boardId: id,
+        localPath: path.resolve(boardPath),
         remoteHeadSha: head?.object?.sha || ledger.boards[id]?.remoteHeadSha || "",
         syncState: "synced",
       },

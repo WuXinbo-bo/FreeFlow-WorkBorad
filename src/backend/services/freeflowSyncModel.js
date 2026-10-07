@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { parseBoardFileText } = require("../models/canvasBoardFileFormat");
 const { atomicWriteFile } = require("../utils/atomicWrite");
+const { addChecksumToEnvelope } = require("../utils/checksum");
 const { evaluateAttachment, createPlaceholderMetadata, normalizePolicy } = require("./attachmentPolicyService");
 
 const SYNC_SCHEMA_VERSION = 1;
@@ -25,18 +26,18 @@ function hashJson(value) {
   return crypto.createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex");
 }
 
-async function ensureBoardIdInFile(filePath) {
+async function ensureBoardIdInFile(filePath, previousBoardId = "") {
   const raw = await fs.readFile(filePath, "utf8");
   const parsed = parseBoardFileText(raw);
   const payload = clone(parsed.payload || {});
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const existing = String(board?.boardId || payload?.boardId || "").trim();
   if (existing) return existing;
-  const boardId = crypto.randomUUID();
+  const boardId = previousBoardId || crypto.randomUUID();
   if (payload?.kind === "structured-host-board" && payload.board) payload.board = { ...payload.board, boardId };
   else payload.boardId = boardId;
   const nextRaw = parsed.envelope
-    ? JSON.stringify({ ...parsed.envelope, payload }, null, 2)
+    ? JSON.stringify(addChecksumToEnvelope({ ...parsed.envelope, payload }), null, 2)
     : JSON.stringify(payload, null, 2);
   const result = await atomicWriteFile(filePath, nextRaw, { fsync: true });
   if (!result.ok) throw new Error(result.error || "无法为画布写入稳定 ID");

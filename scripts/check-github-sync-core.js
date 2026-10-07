@@ -11,6 +11,7 @@ const {
 } = require("../src/backend/services/attachmentPolicyService");
 const { buildSyncBundleFromFile, hashJson, ensureBoardIdInFile } = require("../src/backend/services/freeflowSyncModel");
 const { GitHubApiClient } = require("../src/backend/services/githubApiClient");
+const { addChecksumToEnvelope, verifyEnvelopeChecksum } = require("../src/backend/utils/checksum");
 
 async function main() {
   const policy = normalizePolicy();
@@ -47,6 +48,15 @@ async function main() {
   assert.equal(items[1].resourceStatus, "placeholder");
   assert.equal(items[2].syncReason, "video-disabled");
   assert.equal(hashJson({ updatedAt: 1, value: "same" }), hashJson({ updatedAt: 2, value: "same" }));
+
+  const envelopePath = path.join(root, "checksummed.freeflow");
+  const envelope = addChecksumToEnvelope({ kind: "freeflow-board", formatVersion: 1, payload: { kind: "structured-host-board", board: { items: [] } } });
+  await fsPromises.writeFile(envelopePath, JSON.stringify(envelope));
+  const stableId = await ensureBoardIdInFile(envelopePath);
+  assert.equal(verifyEnvelopeChecksum(JSON.parse(await fsPromises.readFile(envelopePath, "utf8"))).valid, true);
+  await fsPromises.writeFile(envelopePath, JSON.stringify(envelope));
+  assert.equal(await ensureBoardIdInFile(envelopePath, stableId), stableId);
+  assert.equal(verifyEnvelopeChecksum(JSON.parse(await fsPromises.readFile(envelopePath, "utf8"))).valid, true);
 
   const calls = [];
   const fakeFetch = async (url, options = {}) => {

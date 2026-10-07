@@ -23,7 +23,7 @@ class GitHubApiClient {
       ...(options.headers || {}),
     };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
-    const response = await this.fetchImpl(`${this.apiBaseUrl}${pathname}`, { ...options, headers });
+    const response = await this.fetchImpl(`${this.apiBaseUrl}${pathname}`, { signal: AbortSignal.timeout(20000), ...options, headers });
     const text = await response.text();
     let body = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = text; }
@@ -39,16 +39,51 @@ class GitHubApiClient {
 
   getUser() { return this.request("/user"); }
 
+  getRepository(owner, repo) {
+    return this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+  }
+
   listRepositories({ perPage = 100 } = {}) {
     return this.request(`/user/repos?per_page=${Math.min(100, Math.max(1, Number(perPage) || 100))}&sort=updated`);
   }
 
-  createPrivateRepository(name = "freeflow-workspace", description = "FreeFlow personal workspace") {
-    return this.request("/user/repos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description, private: true, auto_init: true }),
-    });
+  async createPrivateRepository(name = "freeflow-workspace", description = "FreeFlow personal workspace") {
+    try {
+      return await this.request("/user/repos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, private: true, auto_init: true }),
+      });
+    } catch (error) {
+      if (!error.status || error.status < 500) throw error;
+      const user = await this.getUser();
+      try {
+        const existing = await this.getRepository(user.login, name);
+        if (!existing.private) throw error;
+        return existing;
+      } catch (lookupError) {
+        if (lookupError.status !== 404) throw lookupError;
+      }
+      const result = await this.request("/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "mutation($name:String!,$description:String!){createRepository(input:{name:$name,description:$description,visibility:PRIVATE}){repository{name}}}",
+          variables: { name, description },
+        }),
+      });
+      if (!result?.data?.createRepository?.repository?.name) {
+        throw new GitHubApiError(result?.errors?.[0]?.message || "无法创建私有仓库，请在 GitHub 创建后重新加载仓库列表", { status: 502 });
+      }
+      const repository = await this.getRepository(user.login, name);
+      if (repository.private !== true || repository.owner?.login !== user.login) throw new GitHubApiError("GitHub 未返回本人私有仓库", { status: 502 });
+      await this.request(`/repos/${encodeURIComponent(user.login)}/${encodeURIComponent(name)}/contents/.freeflow/README.md`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Initialize FreeFlow workspace", content: Buffer.from("# FreeFlow workspace\n").toString("base64") }),
+      });
+      return repository;
+    }
   }
 
   getBranchHead(owner, repo, branch = "main") {
