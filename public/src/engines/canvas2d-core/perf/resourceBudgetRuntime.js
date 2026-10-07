@@ -15,12 +15,16 @@ function defaultSchedule(task) {
   return () => globalThis.clearTimeout(id);
 }
 
-export function resolveCanvasResourceBudgetBytes(deviceMemory = globalThis.navigator?.deviceMemory) {
+export function resolveCanvasResourceBudgetBytes(deviceMemory = globalThis.navigator?.deviceMemory, {
+  viewportBytes = null,
+  background = false,
+} = {}) {
   const memoryGb = Number(deviceMemory);
-  if (!Number.isFinite(memoryGb)) return DEFAULT_RESOURCE_BUDGET_BYTES;
-  if (memoryGb <= 4) return 192 * MIB;
-  if (memoryGb <= 8) return 256 * MIB;
-  return 320 * MIB;
+  const lowMemory = Number.isFinite(memoryGb) && memoryGb > 0 && memoryGb <= 4;
+  const ceiling = lowMemory ? 192 * MIB : memoryGb > 8 ? 320 * MIB : DEFAULT_RESOURCE_BUDGET_BYTES;
+  if (background) return Math.min(ceiling, Math.max(96 * MIB, normalizeBytes(viewportBytes) * 4 + 64 * MIB));
+  if (viewportBytes === null) return ceiling;
+  return Math.min(ceiling, Math.max((lowMemory ? 128 : 192) * MIB, normalizeBytes(viewportBytes) * 8 + 96 * MIB));
 }
 
 export function createResourceBudgetRuntime({
@@ -28,7 +32,7 @@ export function createResourceBudgetRuntime({
   scheduleTask = defaultSchedule,
 } = {}) {
   const pools = new Map();
-  const budgetBytes = Math.max(1, normalizeBytes(maxBytes, DEFAULT_RESOURCE_BUDGET_BYTES));
+  let budgetBytes = Math.max(1, normalizeBytes(maxBytes, DEFAULT_RESOURCE_BUDGET_BYTES));
   let interactionActive = false;
   let reconcilePending = false;
   let cancelScheduled = null;
@@ -101,6 +105,9 @@ export function createResourceBudgetRuntime({
     }
     const current = collectSnapshot();
     if (current.totalBytes <= budgetBytes) {
+      cancelScheduled?.();
+      cancelScheduled = null;
+      generation += 1;
       reconcilePending = false;
       return collectSnapshot();
     }
@@ -108,11 +115,21 @@ export function createResourceBudgetRuntime({
     reconcilePending = true;
     const targetGeneration = generation;
     cancelScheduled = scheduleTask(() => {
-      cancelScheduled = null;
       if (targetGeneration !== generation || interactionActive) return;
+      cancelScheduled = null;
       reconcileNow();
     }) || null;
     return collectSnapshot();
+  }
+
+  function setMaxBytes(nextBytes) {
+    const next = Math.max(1, normalizeBytes(nextBytes, budgetBytes));
+    if (next === budgetBytes) return collectSnapshot();
+    budgetBytes = next;
+    generation += 1;
+    cancelScheduled?.();
+    cancelScheduled = null;
+    return requestReconcile();
   }
 
   function setInteractionActive(nextActive) {
@@ -171,6 +188,7 @@ export function createResourceBudgetRuntime({
     requestReconcile,
     reconcileNow,
     setInteractionActive,
+    setMaxBytes,
     getSnapshot: () => collectSnapshot({ deferred: interactionActive && reconcilePending }),
     dispose,
   });

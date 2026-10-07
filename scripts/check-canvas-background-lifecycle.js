@@ -12,6 +12,7 @@ async function main() {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__canvas2dEngine?.getCanvasPerformanceSnapshot().resources.pools["retained-frame"].byteSize > 0);
     const initialBoard = await page.evaluate(() => JSON.stringify(window.__canvas2dEngine.getSnapshot().board));
+    const foregroundBudget = await page.evaluate(() => window.__canvas2dEngine.getCanvasPerformanceSnapshot().resources.budgetBytes);
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await page.evaluate(() => {
         Object.defineProperty(document, "hidden", { configurable: true, value: true });
@@ -22,10 +23,12 @@ async function main() {
       assert.strictEqual(hidden.backgroundSuspended, true);
       assert.strictEqual(hidden.prewarm.paused, true);
       assert.strictEqual(hidden.resources.pools["retained-frame"].byteSize, 0);
+      assert(hidden.resources.budgetBytes < foregroundBudget, "hidden page kept its foreground cache budget");
       await page.evaluate(() => {
         Object.defineProperty(document, "hidden", { configurable: true, value: false });
         document.dispatchEvent(new Event("visibilitychange"));
       });
+      assert.strictEqual(await page.evaluate(() => window.__canvas2dEngine.getCanvasPerformanceSnapshot().resources.budgetBytes), foregroundBudget);
       await page.waitForFunction(() => {
         const snapshot = window.__canvas2dEngine.getCanvasPerformanceSnapshot();
         return !snapshot.backgroundSuspended && !snapshot.prewarm.paused && snapshot.resources.pools["retained-frame"].byteSize > 0;

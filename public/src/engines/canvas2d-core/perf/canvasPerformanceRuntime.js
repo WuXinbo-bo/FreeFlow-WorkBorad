@@ -182,6 +182,7 @@ export function createCanvasPerformanceRuntime({
     setViewportIntent,
     recordFrame: (stats) => frameWindow.record(stats),
     registerResource: (descriptor) => resourceBudget.register(descriptor),
+    setResourceBudgetBytes: (bytes) => resourceBudget.setMaxBytes(bytes),
     requestResourceReconcile: () => resourceBudget.requestReconcile(),
     reconcileResourcesNow: () => resourceBudget.reconcileNow(),
     requestResourcePrewarm: (key, run, options) => resourcePrewarm.request(key, run, options),
