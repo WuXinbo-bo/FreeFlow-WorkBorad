@@ -89,6 +89,12 @@ export function createRetainedCameraFrame({
   let presentCount = 0;
   let coverageMissCount = 0;
 
+  function releaseSurface(surface) {
+    if (!surface) return;
+    surface.width = 0;
+    surface.height = 0;
+  }
+
   function getReadiness({ view, width, height, dpr = 1, key = "" } = {}) {
     if (!readyFrame?.surface || !readyFrame?.view) {
       return Object.freeze({ ready: false, reason: "unavailable" });
@@ -150,8 +156,10 @@ export function createRetainedCameraFrame({
       marginPx: margin,
     });
     if (targetGeneration !== generation) {
+      releaseSurface(surface);
       return false;
     }
+    releaseSurface(readyFrame?.surface);
     readyFrame = Object.freeze({
       key: String(descriptor.key || ""),
       surface,
@@ -177,6 +185,7 @@ export function createRetainedCameraFrame({
     const targetGeneration = generation;
     pendingKey = key;
     cancelPending = scheduleTask(() => {
+      if (targetGeneration !== generation) return;
       cancelPending = null;
       pendingKey = "";
       prepareNow(descriptor, targetGeneration);
@@ -217,6 +226,7 @@ export function createRetainedCameraFrame({
   function clear() {
     generation += 1;
     cancelScheduledPrepare();
+    releaseSurface(readyFrame?.surface);
     readyFrame = null;
   }
 

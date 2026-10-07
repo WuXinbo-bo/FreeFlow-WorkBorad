@@ -37,6 +37,7 @@ export function createCanvasPerformanceRuntime({
   let generation = 0;
   let reason = "";
   let viewportIntentActive = false;
+  let backgroundSuspended = false;
   let transitionCount = 0;
 
   function getSnapshot() {
@@ -50,9 +51,10 @@ export function createCanvasPerformanceRuntime({
       reason,
       transitionCount,
       viewportIntentActive,
+      backgroundSuspended,
       interactionCritical,
       canRunRecovery: phase === CANVAS_PERFORMANCE_PHASES.RECOVERING,
-      canRunBackground: phase === CANVAS_PERFORMANCE_PHASES.STEADY,
+      canRunBackground: !backgroundSuspended && phase === CANVAS_PERFORMANCE_PHASES.STEADY,
       interaction: Object.freeze({ ...interactionGate.getSnapshot() }),
       performanceWindow: frameWindow.getSnapshot(),
       resources: resourceBudget.getSnapshot(),
@@ -71,9 +73,10 @@ export function createCanvasPerformanceRuntime({
       reason,
       transitionCount,
       viewportIntentActive,
+      backgroundSuspended,
       interactionCritical,
       canRunRecovery: phase === CANVAS_PERFORMANCE_PHASES.RECOVERING,
-      canRunBackground: phase === CANVAS_PERFORMANCE_PHASES.STEADY,
+      canRunBackground: !backgroundSuspended && phase === CANVAS_PERFORMANCE_PHASES.STEADY,
     });
   }
 
@@ -136,7 +139,7 @@ export function createCanvasPerformanceRuntime({
       return false;
     }
     transition(CANVAS_PERFORMANCE_PHASES.STEADY, "");
-    resourcePrewarm.setPaused(false);
+    resourcePrewarm.setPaused(backgroundSuspended);
     return true;
   }
 
@@ -150,10 +153,18 @@ export function createCanvasPerformanceRuntime({
   function reset() {
     interactionGate.release();
     resourceBudget.setInteractionActive(false);
-    resourcePrewarm.setPaused(false, { stale: true });
+    resourcePrewarm.setPaused(backgroundSuspended, { stale: true });
     sessionId += 1;
     transition(CANVAS_PERFORMANCE_PHASES.STEADY, "");
     frameWindow.clear();
+  }
+
+  function setBackgroundSuspended(nextSuspended = false) {
+    const next = Boolean(nextSuspended);
+    if (backgroundSuspended === next) return getLifecycleSnapshot();
+    backgroundSuspended = next;
+    resourcePrewarm.setPaused(next || phase !== CANVAS_PERFORMANCE_PHASES.STEADY, { stale: next });
+    return getLifecycleSnapshot();
   }
 
   function dispose() {
@@ -174,6 +185,7 @@ export function createCanvasPerformanceRuntime({
     requestResourceReconcile: () => resourceBudget.requestReconcile(),
     reconcileResourcesNow: () => resourceBudget.reconcileNow(),
     requestResourcePrewarm: (key, run, options) => resourcePrewarm.request(key, run, options),
+    setBackgroundSuspended,
     getLifecycleSnapshot,
     getInteractionSnapshot: () => Object.freeze({ ...interactionGate.getSnapshot() }),
     getPerformanceSnapshot: () => frameWindow.getSnapshot(),
