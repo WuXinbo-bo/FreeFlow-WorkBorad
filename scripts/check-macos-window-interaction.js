@@ -1,4 +1,7 @@
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
 const {
   isPointInsideRect,
   isPointInsideAnyRect,
@@ -84,3 +87,83 @@ assert.strictEqual(
 );
 
 console.log("[check-macos-window-interaction] selective macOS hit testing and recovery paths passed");
+
+const mainSource = fs.readFileSync(path.join(__dirname, "../electron/main.js"), "utf8");
+const trackingSource = mainSource.slice(
+  mainSource.indexOf("function stopMacOSShapeInteractionTracking()"),
+  mainSource.indexOf("function clearMainWindowRendererReadyTimer()")
+);
+let visible = true;
+let minimized = false;
+let cursorSamples = 0;
+let cursor = { x: 120, y: 110 };
+const timers = new Map();
+const ignored = [];
+const context = vm.createContext({
+  process: { platform: "darwin" },
+  macOSShapeInteractionTimer: null,
+  macOSShapeInteractionIgnoreState: null,
+  clickThroughEnabled: false,
+  mainWindowBootShapeLocked: false,
+  mainWindowInteractionShapeLockId: "",
+  windowShapeRects: shapeRects,
+  shouldIgnoreMacOSMouseEvents,
+  mainWindow: {
+    __freeflowRendererReady: true,
+    isDestroyed: () => false,
+    isVisible: () => visible,
+    isMinimized: () => minimized,
+    getContentBounds: () => contentBounds,
+    setIgnoreMouseEvents: (value) => ignored.push(value),
+  },
+  screen: { getCursorScreenPoint: () => { cursorSamples += 1; return cursor; } },
+  setInterval: (callback, interval) => {
+    assert.strictEqual(interval, 32, "visible selective interaction became less responsive");
+    const id = { unref() {} };
+    timers.set(id, callback);
+    return id;
+  },
+  clearInterval: (id) => timers.delete(id),
+});
+vm.runInContext(trackingSource, context);
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 1);
+assert.strictEqual(ignored.at(-1), false);
+cursor = { x: 500, y: 500 };
+timers.values().next().value();
+assert.strictEqual(ignored.at(-1), true, "underlying application lost selective pass-through");
+visible = false;
+context.stopMacOSShapeInteractionTracking();
+const samplesBeforeHidden = cursorSamples;
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 0);
+assert.strictEqual(cursorSamples, samplesBeforeHidden, "hidden window continued sampling");
+visible = true;
+cursor = { x: 120, y: 110 };
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(ignored.at(-1), false, "show failed to restore hit testing immediately");
+minimized = true;
+context.stopMacOSShapeInteractionTracking();
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 0);
+minimized = false;
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 1);
+context.clickThroughEnabled = true;
+context.stopMacOSShapeInteractionTracking();
+context.startMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 0, "full click-through kept an unnecessary timer");
+assert.strictEqual(ignored.at(-1), true);
+context.clickThroughEnabled = false;
+for (let cycle = 0; cycle < 10; cycle += 1) {
+  context.stopMacOSShapeInteractionTracking();
+  context.startMacOSShapeInteractionTracking();
+  assert.strictEqual(timers.size, 1, "rapid restore duplicated or lost the tracker");
+}
+assert.strictEqual(ignored.at(-1), false);
+for (const event of ["hide", "minimize"]) {
+  assert(mainSource.includes(`window.on("${event}", stopMacOSShapeInteractionTracking)`));
+}
+context.stopMacOSShapeInteractionTracking();
+assert.strictEqual(timers.size, 0);
+console.log("[check-macos-window-interaction] tracking suspension and rapid recovery passed");

@@ -1409,6 +1409,7 @@ function syncMacOSShapeInteraction() {
 
   let shouldIgnore = clickThroughEnabled;
   if (!shouldIgnore) {
+    if (!mainWindow.isVisible() || mainWindow.isMinimized()) return;
     try {
       const contentBounds = mainWindow.getContentBounds?.() || mainWindow.getBounds?.() || {};
       const cursorScreenPoint = screen.getCursorScreenPoint?.();
@@ -1436,12 +1437,13 @@ function syncMacOSShapeInteraction() {
 }
 
 function startMacOSShapeInteractionTracking() {
-  if (process.platform !== "darwin" || macOSShapeInteractionTimer) {
+  if (process.platform !== "darwin" || !mainWindow || mainWindow.isDestroyed()) {
     return;
   }
+  syncMacOSShapeInteraction();
+  if (macOSShapeInteractionTimer || !mainWindow.isVisible() || mainWindow.isMinimized() || clickThroughEnabled) return;
   macOSShapeInteractionTimer = setInterval(syncMacOSShapeInteraction, 32);
   macOSShapeInteractionTimer.unref?.();
-  syncMacOSShapeInteraction();
 }
 
 function clearMainWindowRendererReadyTimer() {
@@ -1775,7 +1777,8 @@ function applyClickThrough(enabled) {
   }
 
   if (process.platform === "darwin") {
-    syncMacOSShapeInteraction();
+    stopMacOSShapeInteractionTracking();
+    startMacOSShapeInteractionTracking();
   } else {
     mainWindow.setIgnoreMouseEvents(clickThroughEnabled, { forward: true });
   }
@@ -2192,19 +2195,25 @@ function createMainWindow() {
   });
 
   window.on("focus", () => {
+    startMacOSShapeInteractionTracking();
     reinforcePinnedState();
   });
 
   window.on("show", () => {
+    startMacOSShapeInteractionTracking();
     reinforcePinnedState();
   });
 
   window.on("restore", () => {
+    startMacOSShapeInteractionTracking();
     reinforcePinnedState();
     syncDesktopShellExpandedStateFromWindow();
     captureDesktopShellRestoreBounds();
     broadcastDesktopShellState();
   });
+
+  window.on("hide", stopMacOSShapeInteractionTracking);
+  window.on("minimize", stopMacOSShapeInteractionTracking);
 
   window.on("maximize", () => {
     reinforcePinnedState();
