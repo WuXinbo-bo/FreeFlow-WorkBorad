@@ -1809,6 +1809,13 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onStatus: setStatus,
   onRequestClose: requestSettingsDrawerClose,
   agentClient,
+  prepareGitHubSyncBoard: async () => {
+    const engine = getModernCanvas2DEngine();
+    if (!engine?.saveBoard || !engine.getSnapshot) throw new Error("当前画布尚未就绪，请稍后重试");
+    if (!engine.getSnapshot().boardFilePath) throw new Error("请先将当前画布保存到本机，再同步到 GitHub");
+    if (!(await engine.saveBoard({ silent: true, exactPath: true }))) throw new Error("当前画布保存失败，已停止 GitHub 同步");
+    return engine.getSnapshot().boardFilePath;
+  },
 });
 agentController = createAgentController({
   client: agentClient,

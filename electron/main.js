@@ -3995,23 +3995,25 @@ ipcMain.handle("desktop-shell:prepare-doubao-prompt", async (_event, payload) =>
 });
 
 async function githubSyncRequest(pathname, options = {}) {
-  const response = await fetch(`${APP_URL}/api/github-sync${pathname}`, {
+  const response = await fetch(new URL(`/api/github-sync${pathname}`, APP_URL), {
     method: options.method || "GET",
     headers: { "Content-Type": "application/json" },
     body: options.body == null ? undefined : JSON.stringify(options.body),
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch(() => null);
   if (!response.ok || data?.ok === false) {
     const error = new Error(data?.error || `GitHub 同步请求失败 (${response.status})`);
     error.status = response.status;
     error.code = data?.code || "";
     throw error;
   }
+  if (data?.ok !== true) throw new Error("GitHub 同步接口返回了无效响应，请重启桌面应用");
   return data;
 }
 
 ipcMain.handle("desktop-shell:github-sync-status", () => githubSyncRequest("/status"));
-ipcMain.handle("desktop-shell:github-sync-device-flow-start", () => githubSyncRequest("/device-flow/start", { method: "POST", body: {} }));
+ipcMain.handle("desktop-shell:github-sync-device-flow-start", (_event, payload) => githubSyncRequest("/device-flow/start", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-token-connect", (_event, payload) => githubSyncRequest("/token", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-device-flow-poll", (_event, payload) => githubSyncRequest("/device-flow/poll", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-disconnect", () => githubSyncRequest("/disconnect", { method: "POST", body: {} }));
 ipcMain.handle("desktop-shell:github-sync-user", () => githubSyncRequest("/user"));
