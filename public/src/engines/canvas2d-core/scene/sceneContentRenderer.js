@@ -272,9 +272,12 @@ function syncTableNode(node, item, context) {
   if (context.tableEditingId === item.id) {
     return false;
   }
+  const presentation = getPresentationState(context, item.id);
+  if (presentation.plannedRepresentation === PRESENTATION_REPRESENTATIONS.NATIVE_COMPACT) {
+    return false;
+  }
   syncWorldBox(node, item);
   const contentSignature = getTableContentSignature(item);
-  const presentation = getPresentationState(context, item.id);
   const snapshotContext = context.resolveSnapshotContext(context.frameContext, item.id);
   const snapshotSignature = [
     "table",

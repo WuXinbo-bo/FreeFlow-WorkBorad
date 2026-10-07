@@ -180,10 +180,10 @@ function drawTable(ctx, item, view, selected, hover, helpers, { compact = false 
   const alternateFill = STRUCTURED_TABLE_VISUAL_THEME.alternateSurface;
   const stroke = STRUCTURED_TABLE_VISUAL_THEME.divider;
   const textColor = STRUCTURED_TABLE_VISUAL_THEME.text;
-  const fontPx = Math.max(1, scaleSceneValue(view, 12, { min: compact ? 1 : 9 }));
-  const lineHeight = Math.max(fontPx * 1.35, scaleSceneValue(view, 15, { min: compact ? 1 : 11 }));
-  const padX = scaleSceneValue(view, 8, { min: compact ? 0.5 : 5 });
-  const padY = scaleSceneValue(view, 6, { min: compact ? 0.5 : 4 });
+  const fontPx = Math.max(compact ? 2.2 : 1, scaleSceneValue(view, 12, { min: compact ? 2.2 : 9 }));
+  const lineHeight = Math.max(fontPx * 1.35, scaleSceneValue(view, 15, { min: compact ? 3 : 11 }));
+  const padX = scaleSceneValue(view, 8, { min: compact ? 1 : 5 });
+  const padY = scaleSceneValue(view, 6, { min: compact ? 1 : 4 });
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, STRUCTURED_TABLE_RADIUS_PX);
   ctx.fillStyle = cellFill;
