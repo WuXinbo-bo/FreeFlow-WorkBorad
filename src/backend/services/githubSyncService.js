@@ -98,19 +98,23 @@ function itemIdentity(item, index) {
   return String(value || `index:${index}`);
 }
 
-function indexItems(items) {
+function indexItems(items, conflicts, side) {
   const result = new Map();
   for (const [index, item] of (Array.isArray(items) ? items : []).entries()) {
     const id = itemIdentity(item, index);
-    if (!result.has(id)) result.set(id, item);
+    if (result.has(id)) {
+      conflicts.push({ path: `items[${id}]`, reason: "duplicate-id", side, index });
+      continue;
+    }
+    result.set(id, item);
   }
   return result;
 }
 
 function mergeItems(ancestorItems, localItems, remoteItems, conflicts) {
-  const ancestor = indexItems(ancestorItems);
-  const local = indexItems(localItems);
-  const remote = indexItems(remoteItems);
+  const ancestor = indexItems(ancestorItems, conflicts, "ancestor");
+  const local = indexItems(localItems, conflicts, "local");
+  const remote = indexItems(remoteItems, conflicts, "remote");
   const order = [];
   for (const id of [...ancestor.keys(), ...local.keys(), ...remote.keys()]) if (!order.includes(id)) order.push(id);
   const merged = [];
@@ -506,7 +510,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   const localLedger = await readLedger(SYNC_LEDGER_FILE);
   const existingEntry = localLedger.boards[id];
   const local = await readLocalSyncHash(targetPath);
-  if (!force && local.exists && !local.hash) {
+  if (!force && local.exists && !local.hash && local.errorCode !== "LOCAL_MISSING") {
     throw new GitHubApiError("本地画布无法解析或读取，已阻止远端覆盖", {
       status: 409,
       code: "SYNC_CONFLICT",
@@ -516,6 +520,11 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   }
   if (!force && existingEntry?.localPath === targetPath && existingEntry.localHash && local.hash !== existingEntry.localHash) {
     throw new GitHubApiError("本地画布有未同步修改，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", boardId: id });
+  }
+  if (!force && local.exists && !existingEntry && !remoteCommit && local.hash && targetPath === path.resolve(CANVAS_BOARD_FILE)) {
+    throw new GitHubApiError("本地画布没有同步基线，已阻止远端覆盖；请明确选择使用远端版本", {
+      status: 409, code: "SYNC_BASE_UNKNOWN", boardId: id,
+    });
   }
   const client = await getClient();
   const snapshot = await getSnapshotAtRef(client, config, remoteCommit);
@@ -528,7 +537,9 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   validateRemoteResources(resources);
   const resourcePaths = resources.map((resource) => String(resource?.path || ""));
   const files = await client.getFilesAtSnapshot(config.owner, config.repo, snapshot, resourcePaths);
-  const localAssetRoot = path.join(path.dirname(targetPath), "assets");
+  const targetRoot = path.dirname(targetPath);
+  const stagingRoot = await fs.mkdtemp(path.join(targetRoot, `.freeflow-download-${id}-`));
+  const localAssetRoot = path.join(stagingRoot, "assets");
   const available = new Set();
   const missingResources = [];
   await fs.mkdir(localAssetRoot, { recursive: true });
@@ -543,7 +554,8 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
       missingResources.push(resource.path);
       continue;
     }
-    await atomicWriteFile(path.join(localAssetRoot, path.basename(resource.path)), bytes, { fsync: true });
+    const assetWrite = await atomicWriteFile(path.join(localAssetRoot, path.basename(resource.path)), bytes, { fsync: true });
+    if (!assetWrite.ok) throw new Error(assetWrite.error || "无法物化远端附件");
     available.add(resource.path);
   }
   let boardText = remote.boardText;
@@ -568,8 +580,27 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     });
     boardText = JSON.stringify(rawPayload, null, 2);
   }
-  const result = await writeDownloadedBoard(targetPath, boardText);
-  const syncState = missingResources.length ? "partial" : "synced";
+  const stagedBoardPath = path.join(stagingRoot, path.basename(targetPath));
+  const result = await writeDownloadedBoard(stagedBoardPath, boardText);
+  if (missingResources.length) {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+    throw new GitHubApiError("远端附件不完整，已阻止部分下载覆盖本地画布", {
+      status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: id, missingResources,
+    });
+  }
+  const materialized = await readLocalSyncHash(stagedBoardPath);
+  if (!materialized.hash || materialized.hash !== remote.boardHash) {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+    throw new GitHubApiError("下载后的画布校验和不一致，已阻止覆盖本地文件", { status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: id });
+  }
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.rename(stagedBoardPath, targetPath);
+  const stagedAssets = path.join(stagingRoot, "assets");
+  const finalAssets = path.join(targetRoot, "assets");
+  await fs.rm(finalAssets, { recursive: true, force: true });
+  await fs.rename(stagedAssets, finalAssets);
+  await fs.rm(stagingRoot, { recursive: true, force: true });
+  const syncState = "synced";
   const ledger = await updateLedger((current) => ({
     ...current,
     repository: config,
@@ -725,7 +756,15 @@ async function reconcileBoard({ boardId, boardPath = "", resolution = "", strate
       state,
     });
   }
-  await writeDownloadedBoard(state.localPath, JSON.stringify(merged.payload, null, 2));
+  const beforeMerge = await readLocalSyncHash(state.localPath);
+  if (beforeMerge.hash !== state.localHash) {
+    throw new GitHubApiError("合并期间本地画布发生变化，已保留当前编辑", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", state });
+  }
+  const mergedBundle = await require("./freeflowSyncModel").buildSyncBundleFromPayload(merged.payload, {
+    baseDir: path.dirname(state.localPath),
+  });
+  const mergedText = mergedBundle.boardText;
+  await writeDownloadedBoard(state.localPath, mergedText);
   const synced = await syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, expectedRemoteCommit: state.remoteCommit, message: "Resolve FreeFlow sync conflict (merge)" });
   return { ...synced, merged: true, conflicts: [], ancestorSha };
 }

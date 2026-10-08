@@ -108,12 +108,16 @@ function replaceWithPlaceholder(item, input, evaluation) {
 }
 
 async function buildSyncBundleFromFile(filePath, options = {}) {
-  const policy = normalizePolicy(options.policy);
   const stat = await fs.stat(filePath);
   checkFileSizeSafe(stat.size);
   const raw = await fs.readFile(filePath, "utf8");
   const parsed = parseBoardFileText(raw);
-  const payload = clone(parsed.payload || {});
+  return buildSyncBundleFromPayload(parsed.payload, { ...options, baseDir: path.dirname(filePath) });
+}
+
+async function buildSyncBundleFromPayload(inputPayload, options = {}) {
+  const policy = normalizePolicy(options.policy);
+  const payload = clone(inputPayload || {});
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const resources = [];
   const resourcesByPath = new Map();
@@ -126,7 +130,7 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
       const item = board.items[index];
       const input = attachmentInput(item);
       if (!input) continue;
-      const bytes = await readAttachmentBytes(input, path.dirname(filePath));
+      const bytes = await readAttachmentBytes(input, options.baseDir || "");
       const sizeBytes = bytes?.bytes?.length || input.sizeBytes || 0;
       const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
       const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";
@@ -220,5 +224,6 @@ module.exports = {
   ensureBoardIdInFile,
   parseDataUrl,
   buildSyncBundleFromFile,
+  buildSyncBundleFromPayload,
   writeDownloadedBoard,
 };
