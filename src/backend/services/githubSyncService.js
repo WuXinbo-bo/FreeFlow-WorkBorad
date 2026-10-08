@@ -515,7 +515,11 @@ async function listBoards() {
   const ledger = await readLedger(SYNC_LEDGER_FILE);
   const workspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
   const boards = Object.values(workspace.boards).filter((board) => !board.deletedAt);
-  if (boards.length) return { workspace, boards, remoteHeadSha: snapshot.commitSha };
+  // A present workspace is authoritative, including when every board is
+  // tombstoned. Only legacy repositories without workspace.json should use
+  // the tree scan fallback; otherwise deleted boards would reappear.
+  const hasWorkspaceFile = snapshot.entries.some((entry) => entry?.type === "blob" && String(entry.path || "") === WORKSPACE_PATH);
+  if (boards.length || hasWorkspaceFile) return { workspace, boards, remoteHeadSha: snapshot.commitSha };
   const discovered = new Map();
   for (const entry of snapshot.entries) {
     const match = String(entry?.path || "").match(/^\.freeflow\/boards\/([^/]+)\/board\.freeflow$/);
