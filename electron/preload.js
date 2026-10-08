@@ -107,6 +107,11 @@ contextBridge.exposeInMainWorld("desktopShell", {
     evaluateAttachment: (payload) => invokeGitHubSync("desktop-shell:github-sync-attachment-policy", payload),
     sync: (payload) => invokeGitHubSync("desktop-shell:github-sync", payload),
     download: (payload) => invokeGitHubSync("desktop-shell:github-sync-download", payload),
+    getWorkspace: () => invokeGitHubSync("desktop-shell:github-sync-workspace"),
+    listBoards: () => invokeGitHubSync("desktop-shell:github-sync-boards"),
+    getBoardState: (payload) => invokeGitHubSync("desktop-shell:github-sync-board-state", payload),
+    pull: (payload) => invokeGitHubSync("desktop-shell:github-sync-pull", payload),
+    reconcile: (payload) => invokeGitHubSync("desktop-shell:github-sync-reconcile", payload),
   },
   onOpenBoardPath: (listener) => {
     if (typeof listener !== "function") return () => {};
