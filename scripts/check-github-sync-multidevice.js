@@ -278,6 +278,19 @@ async function main() {
   const noopPull = await sync.pullBoard({ boardId, boardPath: boardBPath });
   assert.equal(noopPull.pulled, false, "pull should be a no-op after a successful download");
 
+  // Advance the remote branch from device A and let device B pull the newer
+  // snapshot using its ledger base. This covers the actual remote-changed pull
+  // path after the initial bootstrap download.
+  const boardA2Path = path.join(deviceA, "board-v2.freeflow");
+  await fsPromises.writeFile(boardA2Path, JSON.stringify(fixtureBoard("Windows second change", false)), "utf8");
+  const bundleA2 = await buildSyncBundleFromFile(boardA2Path);
+  const committedA2 = await clientA.createCommit({ owner, repo, branch, message: "Windows second commit", files: bundleA2.files });
+  const pulledRemote = await sync.pullBoard({ boardId, boardPath: boardBPath });
+  assert.equal(pulledRemote.pulled, true, "pull did not apply a newer remote snapshot");
+  assert.equal(pulledRemote.state.state, "up-to-date");
+  assert.equal((await fsPromises.readFile(boardBPath, "utf8")).includes("Windows second change"), true);
+  assert.equal((await readLedger(SYNC_LEDGER_FILE)).boards[boardId].remoteHeadSha, committedA2.commitSha);
+
   // A transient board read is retried by the GitHub client and still leaves
   // the already materialized local board unchanged.
   const beforeInterruptedPull = await fsPromises.readFile(boardBPath, "utf8");
