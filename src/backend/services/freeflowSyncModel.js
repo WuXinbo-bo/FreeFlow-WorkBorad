@@ -117,6 +117,7 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const resources = [];
   const resourcesByPath = new Map();
+  const resourcesByHash = new Map();
   let skippedCount = 0;
   let assetBytes = 0;
 
@@ -129,7 +130,8 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
       const sizeBytes = bytes?.bytes?.length || input.sizeBytes || 0;
       const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
       const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";
-      const assetPath = sha256 ? `.freeflow/assets/${sha256}.${extension}` : "";
+      const computedAssetPath = sha256 ? `.freeflow/assets/${sha256}.${extension}` : "";
+      const assetPath = (sha256 && resourcesByHash.get(sha256)?.path) || computedAssetPath;
       const duplicateResource = Boolean(assetPath && resourcesByPath.has(assetPath));
       const uniqueBytes = duplicateResource ? 0 : (bytes?.bytes?.length || 0);
       const evaluation = evaluateAttachment({ ...input, mime: bytes?.mime || input.mime, sizeBytes }, {
@@ -154,6 +156,7 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
       if (!resourcesByPath.has(assetPath)) {
         const resource = { path: assetPath, sha256, sizeBytes: bytes.bytes.length, mime: bytes.mime || input.mime, bytes: bytes.bytes };
         resourcesByPath.set(assetPath, resource);
+        if (sha256) resourcesByHash.set(sha256, resource);
         resources.push(resource);
         assetBytes += bytes.bytes.length;
       }
