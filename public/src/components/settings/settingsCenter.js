@@ -974,6 +974,7 @@ export function mountSettingsCenter(host, options = {}) {
         else { githubDeviceFlow = null; githubRepositories = []; githubSyncStatus = await client.getStatus(); setMessage("GitHub 已连接", "success"); }
       } else if (action === "refresh") {
         githubSyncStatus = await client.getStatus();
+        if (githubSyncStatus?.repository?.owner && githubSyncStatus?.repository?.repo) await refreshGithubWorkspace();
         setMessage("GitHub 同步状态已刷新", "success");
       } else if (action === "repositories") {
         const result = await client.listRepositories();
@@ -1003,6 +1004,40 @@ export function mountSettingsCenter(host, options = {}) {
         await client.sync({ boardPath });
         githubSyncStatus = await client.getStatus();
         setMessage("当前画布已同步到 GitHub", "success");
+        await refreshGithubWorkspace();
+      } else if (action === "pull" || action === "reconcile") {
+        if (!boardId) throw new Error("未选择远程画布");
+        const board = githubRemoteBoards.find((item) => item.boardId === boardId) || {};
+        let boardPath = board.syncState === "remote-only"
+          ? ""
+          : String(board.localPath || githubSyncStatus?.ledger?.boards?.[boardId]?.localPath || "").trim();
+        if (!boardPath && desktopShell?.pickCanvasBoardPath) {
+          const defaultName = String(board.name || board.title || `freeflow-${boardId}`).replace(/[\\/:*?"<>|]/g, "-");
+          const picked = await desktopShell.pickCanvasBoardPath({ defaultPath: defaultName.endsWith(".freeflow") ? defaultName : `${defaultName}.freeflow` });
+          if (picked?.canceled || !picked?.filePath) {
+            setMessage("已取消选择本地画布路径", "warning");
+            return;
+          }
+          boardPath = picked.filePath;
+        }
+        if (!boardPath) throw new Error("此远程画布还没有本地路径，请选择保存位置");
+        const payload = { boardId, boardPath };
+        let result;
+        if (action === "pull") {
+          result = typeof client.pull === "function" ? await client.pull(payload) : await client.download(payload);
+        } else {
+          if (typeof client.reconcile !== "function") throw new Error("当前版本暂不支持远程冲突合并，请更新桌面应用");
+          result = await client.reconcile({ ...payload, resolution });
+        }
+        githubSyncStatus = await client.getStatus();
+        await refreshGithubWorkspace();
+        if (action === "reconcile" && !resolution && Array.isArray(result?.resolutions)) {
+          githubConflictResolutions[boardId] = result.resolutions;
+          setMessage("请选择保留本地版本或使用远端版本", "warning");
+        } else {
+          delete githubConflictResolutions[boardId];
+          setMessage(action === "pull" ? "远程画布已拉取到本机" : "已处理远程画布冲突", "success");
+        }
       } else if (action === "disconnect") {
         await client.disconnect();
         githubDeviceFlow = null;
