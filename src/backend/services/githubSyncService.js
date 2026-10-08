@@ -594,11 +594,38 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     throw new GitHubApiError("下载后的画布校验和不一致，已阻止覆盖本地文件", { status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: id });
   }
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.rename(stagedBoardPath, targetPath);
+  const backupPath = `${targetPath}.freeflow-backup-${Date.now()}`;
+  let hadTarget = false;
+  try {
+    await fs.rename(targetPath, backupPath);
+    hadTarget = true;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  try {
+    await fs.rename(stagedBoardPath, targetPath);
+  } catch (error) {
+    if (hadTarget) await fs.rename(backupPath, targetPath).catch(() => {});
+    throw error;
+  }
+  if (hadTarget) await fs.rm(backupPath, { force: true });
   const stagedAssets = path.join(stagingRoot, "assets");
   const finalAssets = path.join(targetRoot, "assets");
-  await fs.rm(finalAssets, { recursive: true, force: true });
-  await fs.rename(stagedAssets, finalAssets);
+  const backupAssets = `${finalAssets}.freeflow-backup-${Date.now()}`;
+  let hadAssets = false;
+  try {
+    await fs.rename(finalAssets, backupAssets);
+    hadAssets = true;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  try {
+    await fs.rename(stagedAssets, finalAssets);
+  } catch (error) {
+    if (hadAssets) await fs.rename(backupAssets, finalAssets).catch(() => {});
+    throw error;
+  }
+  if (hadAssets) await fs.rm(backupAssets, { recursive: true, force: true });
   await fs.rm(stagingRoot, { recursive: true, force: true });
   const syncState = "synced";
   const ledger = await updateLedger((current) => ({
