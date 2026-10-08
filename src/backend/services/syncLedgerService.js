@@ -2,7 +2,7 @@ const fs = require("fs/promises");
 const { SYNC_LEDGER_FILE } = require("../config/paths");
 const { atomicWriteJsonFile } = require("../utils/atomicWrite");
 
-const DEFAULT_LEDGER = Object.freeze({ schemaVersion: 1, repository: null, boards: {}, updatedAt: 0 });
+const DEFAULT_LEDGER = Object.freeze({ schemaVersion: 2, repository: null, workspaceId: "", remoteWorkspace: null, boards: {}, updatedAt: 0 });
 
 async function readLedger(filePath = SYNC_LEDGER_FILE) {
   try {

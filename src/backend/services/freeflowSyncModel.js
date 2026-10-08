@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
-const { parseBoardFileText } = require("../models/canvasBoardFileFormat");
+const { parseBoardFileText, checkFileSizeSafe } = require("../models/canvasBoardFileFormat");
 const { atomicWriteFile } = require("../utils/atomicWrite");
 const { addChecksumToEnvelope } = require("../utils/checksum");
 const { evaluateAttachment, createPlaceholderMetadata, normalizePolicy } = require("./attachmentPolicyService");
@@ -96,6 +96,11 @@ function replaceWithPlaceholder(item, input, evaluation) {
   delete next.dataUrl;
   delete next.sourcePath;
   delete next.filePath;
+  delete next.resourcePath;
+  delete next.resourceSha256;
+  delete next._relative;
+  delete next.resourceStatus;
+  delete next.syncable;
   return {
     ...next,
     ...createPlaceholderMetadata(input, evaluation),
@@ -104,11 +109,14 @@ function replaceWithPlaceholder(item, input, evaluation) {
 
 async function buildSyncBundleFromFile(filePath, options = {}) {
   const policy = normalizePolicy(options.policy);
+  const stat = await fs.stat(filePath);
+  checkFileSizeSafe(stat.size);
   const raw = await fs.readFile(filePath, "utf8");
   const parsed = parseBoardFileText(raw);
   const payload = clone(parsed.payload || {});
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const resources = [];
+  const resourcesByPath = new Map();
   let skippedCount = 0;
   let assetBytes = 0;
 
@@ -119,7 +127,15 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
       if (!input) continue;
       const bytes = await readAttachmentBytes(input, path.dirname(filePath));
       const sizeBytes = bytes?.bytes?.length || input.sizeBytes || 0;
-      const evaluation = evaluateAttachment({ ...input, mime: bytes?.mime || input.mime, sizeBytes }, { policy, repositoryBytes: assetBytes });
+      const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
+      const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";
+      const assetPath = sha256 ? `.freeflow/assets/${sha256}.${extension}` : "";
+      const duplicateResource = Boolean(assetPath && resourcesByPath.has(assetPath));
+      const uniqueBytes = duplicateResource ? 0 : (bytes?.bytes?.length || 0);
+      const evaluation = evaluateAttachment({ ...input, mime: bytes?.mime || input.mime, sizeBytes }, {
+        policy,
+        repositoryBytes: duplicateResource ? Math.max(0, assetBytes - sizeBytes) : assetBytes,
+      });
       if (!evaluation.syncable) {
         board.items[index] = replaceWithPlaceholder(item, input, evaluation);
         skippedCount += 1;
@@ -130,16 +146,17 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
         skippedCount += 1;
         continue;
       }
-      if (assetBytes + bytes.bytes.length > policy.batchMaxBytes) {
+      if (assetBytes + uniqueBytes > policy.batchMaxBytes) {
         board.items[index] = replaceWithPlaceholder(item, { ...input, sizeBytes: bytes.bytes.length }, { ...evaluation, reason: "batch-quota" });
         skippedCount += 1;
         continue;
       }
-      const sha256 = crypto.createHash("sha256").update(bytes.bytes).digest("hex");
-      const extension = extensionFor(input.name, bytes.mime || input.mime);
-      const assetPath = `.freeflow/assets/${sha256}.${extension}`;
-      resources.push({ path: assetPath, sha256, sizeBytes: bytes.bytes.length, mime: bytes.mime || input.mime, bytes: bytes.bytes });
-      assetBytes += bytes.bytes.length;
+      if (!resourcesByPath.has(assetPath)) {
+        const resource = { path: assetPath, sha256, sizeBytes: bytes.bytes.length, mime: bytes.mime || input.mime, bytes: bytes.bytes };
+        resourcesByPath.set(assetPath, resource);
+        resources.push(resource);
+        assetBytes += bytes.bytes.length;
+      }
       board.items[index] = {
         ...item,
         dataUrl: "",
