@@ -198,6 +198,12 @@ export function mountSettingsCenter(host, options = {}) {
     return GITHUB_SYNC_STATE_LABELS[key] || key || "未检查";
   }
 
+  function shouldResetGithubDeviceFlow(error) {
+    const code = String(error?.code || "").trim().toLowerCase();
+    if (["expired_token", "access_denied", "invalid_grant"].includes(code)) return true;
+    return /过期|失效|取消|拒绝|无效/.test(String(error?.message || ""));
+  }
+
   function normalizeGithubBoards(result) {
     const source = result?.boards ?? result?.workspace?.boards ?? result;
     if (result?.error || source?.error) return [];
@@ -1182,7 +1188,7 @@ export function mountSettingsCenter(host, options = {}) {
         setMessage("已断开 GitHub，画布仍保留在本机", "success");
       }
     } catch (error) {
-      if (action === "poll") githubDeviceFlow = null;
+      if (action === "poll" && shouldResetGithubDeviceFlow(error)) githubDeviceFlow = null;
       if (boardId && (error?.code === "SYNC_CONFLICT" || error?.conflicts || error?.artifacts || error?.state)) {
         githubConflictDetails[boardId] = {
           conflicts: Array.isArray(error.conflicts) ? error.conflicts : [],
