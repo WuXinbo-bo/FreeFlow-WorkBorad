@@ -403,10 +403,19 @@ function resourceHashIsValid(value = "") {
   return /^[a-f0-9]{64}$/i.test(String(value || ""));
 }
 
-async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCommit = "" } = {}) {
+async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCommit = "", force = false } = {}) {
   const config = await getConfig();
   const id = assertBoardId(boardId);
   if (!config.owner || !config.repo) throw new Error("下载画布所需参数不完整");
+  const targetPath = path.resolve(boardPath);
+  const localLedger = await readLedger(SYNC_LEDGER_FILE);
+  const existingEntry = localLedger.boards[id];
+  if (!force && existingEntry?.localPath === targetPath && existingEntry.localHash) {
+    const local = await readLocalSyncHash(targetPath);
+    if (local.hash && local.hash !== existingEntry.localHash) {
+      throw new GitHubApiError("本地画布有未同步修改，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", boardId: id });
+    }
+  }
   const client = await getClient();
   const snapshot = await getSnapshotAtRef(client, config, remoteCommit);
   const remote = await readRemoteBoardAtSnapshot(client, config, snapshot, id);
@@ -419,7 +428,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     }
   }
   const files = await client.getFilesAtSnapshot(config.owner, config.repo, snapshot, resourcePaths);
-  const localAssetRoot = path.join(path.dirname(boardPath), "assets");
+  const localAssetRoot = path.join(path.dirname(targetPath), "assets");
   const available = new Set();
   const missingResources = [];
   await fs.mkdir(localAssetRoot, { recursive: true });
@@ -459,7 +468,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     });
     boardText = JSON.stringify(rawPayload, null, 2);
   }
-  const result = await writeDownloadedBoard(boardPath, boardText);
+  const result = await writeDownloadedBoard(targetPath, boardText);
   const syncState = missingResources.length ? "partial" : "synced";
   const ledger = await updateLedger((current) => ({
     ...current,
@@ -469,7 +478,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
       [id]: {
         ...(current.boards[id] || {}),
         boardId: id,
-        localPath: path.resolve(boardPath),
+        localPath: targetPath,
         localHash: remote.boardHash,
         baseBoardHash: remote.boardHash,
         remoteHash: remote.boardHash,
@@ -561,7 +570,7 @@ async function pullBoard(options = {}) {
 async function reconcileBoard({ boardId, boardPath = "", resolution = "", strategy = "" } = {}) {
   const selected = String(resolution || strategy || "").trim().toLowerCase();
   const state = await getBoardState({ boardId, boardPath });
-  if (selected === "remote") return downloadBoard({ boardId: state.boardId, boardPath: state.localPath, remoteCommit: state.remoteCommit });
+  if (selected === "remote") return downloadBoard({ boardId: state.boardId, boardPath: state.localPath, remoteCommit: state.remoteCommit, force: true });
   if (selected === "local") return syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, message: "Resolve FreeFlow sync conflict (local)" });
   if (selected !== "auto" && selected !== "merge") {
     return { ok: true, state, resolutions: ["local", "remote", "auto", "merge"] };
