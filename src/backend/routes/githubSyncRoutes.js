@@ -72,18 +72,43 @@ function createGitHubSyncRouter(options = {}) {
     } catch (error) { res.status(error.status || 400).json({ ok: false, error: error.message }); }
   });
 
+  router.get("/workspace", async (_req, res) => {
+    try { res.json({ ok: true, ...(await sync.getWorkspace()) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+  });
+
   router.post("/attachment-policy/evaluate", (req, res) => {
     res.json({ ok: true, policy: normalizePolicy(req.body?.policy), evaluation: evaluateAttachment(req.body || {}, { policy: req.body?.policy }) });
   });
 
   router.post("/sync", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.syncBoard(req.body || {})) }); }
-    catch (error) { res.status(error.code === "REMOTE_CHANGED" ? 409 : error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+    catch (error) { res.status(error.code === "REMOTE_CHANGED" ? 409 : error.status || 500).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   router.post("/download", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.downloadBoard(req.body || {})) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(error.status || (error.code === "REMOTE_CHANGED" || error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+  });
+
+  router.get("/boards", async (_req, res) => {
+    try { res.json({ ok: true, ...(await sync.listBoards()) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+  });
+
+  router.get("/boards/:boardId/state", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.getBoardState({ boardId: req.params.boardId, boardPath: req.query?.boardPath || "" })) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+  });
+
+  router.post("/pull", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.pullBoard(req.body || {})) }); }
+    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+  });
+
+  router.post("/reconcile", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.reconcileBoard(req.body || {})) }); }
+    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" || error.code === "SYNC_MERGE_REQUIRED" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   return router;
