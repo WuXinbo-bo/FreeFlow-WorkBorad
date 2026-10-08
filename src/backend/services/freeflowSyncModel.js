@@ -65,7 +65,7 @@ function itemType(item = {}) {
 
 function attachmentInput(item = {}) {
   const type = itemType(item);
-  if (!["image", "file", "filecard", "file-card"].includes(type)) return null;
+  if (!["image", "file", "filecard", "file-card", "video", "video-card", "videocard"].includes(type)) return null;
   return {
     name: item.name || item.fileName || item.title || "附件",
     mime: item.mime || item.mimeType || item.detectedMimeType || "",
