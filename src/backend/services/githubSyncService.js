@@ -5,6 +5,7 @@ const { GITHUB_SYNC_SETTINGS_FILE, SYNC_LEDGER_FILE, CANVAS_BOARD_FILE } = requi
 const { GitHubApiClient, GitHubApiError } = require("./githubApiClient");
 const auth = require("./githubAuthService");
 const {
+  SYNC_SCHEMA_VERSION,
   buildSyncBundleFromFile,
   writeDownloadedBoard,
   ensureBoardIdInFile,
@@ -257,12 +258,24 @@ async function readRemoteBoardAtSnapshot(client, config, snapshot, boardId) {
   }
   const boardBuffer = decodeBlob(files[paths.board].blob);
   const boardText = boardBuffer.toString("utf8");
-  const parsed = parseBoardFileText(boardText);
+  let parsed;
+  try {
+    parsed = parseBoardFileText(boardText);
+  } catch (error) {
+    throw new GitHubApiError("远端画布格式无效，已阻止覆盖本地文件", { status: 422, code: "REMOTE_INVALID_BOARD", cause: error });
+  }
   const payload = parsed.payload || {};
   const manifest = files[paths.manifest]?.blob ? parseJsonBuffer(decodeBlob(files[paths.manifest].blob), "manifest.json") : null;
+  if (manifest?.schemaVersion != null && Number(manifest.schemaVersion) > SYNC_SCHEMA_VERSION) {
+    throw new GitHubApiError("远端画布版本高于当前应用，请先升级 FreeFlow", { status: 422, code: "REMOTE_SCHEMA_UNSUPPORTED" });
+  }
   const boardHash = hashJson(payload);
   if (manifest?.boardId && String(manifest.boardId) !== id) {
     throw new GitHubApiError("远端 manifest 与画布 ID 不一致", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
+  }
+  const payloadBoardId = String(boardFromPayload(payload)?.boardId || payload?.boardId || "").trim();
+  if (payloadBoardId && payloadBoardId !== id) {
+    throw new GitHubApiError("远端画布内容与路径 ID 不一致", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
   }
   if (manifest?.boardHash && String(manifest.boardHash) !== boardHash) {
     throw new GitHubApiError("远端画布校验和不一致", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
