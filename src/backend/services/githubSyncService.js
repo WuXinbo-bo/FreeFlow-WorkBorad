@@ -19,6 +19,9 @@ const { atomicWriteFile } = require("../utils/atomicWrite");
 const WORKSPACE_PATH = ".freeflow/workspace.json";
 const WORKSPACE_SCHEMA_VERSION = 1;
 const BOARD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const MAX_REMOTE_RESOURCE_COUNT = 4096;
+const MAX_REMOTE_RESOURCE_SIZE = 50 * 1024 * 1024;
+const MAX_REMOTE_RESOURCE_BYTES = 100 * 1024 * 1024;
 
 function cleanRepoConfig(input = {}) {
   const source = input && typeof input === "object" ? input : {};
@@ -284,11 +287,29 @@ async function readRemoteBoardAtSnapshot(client, config, snapshot, boardId) {
 }
 
 async function readLocalSyncHash(filePath, policy) {
+  let stat;
+  try {
+    stat = await fs.stat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return { hash: "", boardId: "", exists: false, errorCode: "LOCAL_MISSING" };
+    }
+    return {
+      hash: "",
+      boardId: "",
+      exists: true,
+      errorCode: "LOCAL_READ_ERROR",
+      errorMessage: String(error?.message || "无法读取本地画布"),
+    };
+  }
+  if (!stat.isFile()) {
+    return { hash: "", boardId: "", exists: true, errorCode: "LOCAL_INVALID", errorMessage: "本地画布路径不是文件" };
+  }
   try {
     const bundle = await buildSyncBundleFromFile(filePath, { policy });
-    return { hash: bundle.boardHash, boardId: bundle.boardId };
+    return { hash: bundle.boardHash, boardId: bundle.boardId, exists: true, errorCode: "" };
   } catch {
-    return { hash: "", boardId: "" };
+    return { hash: "", boardId: "", exists: true, errorCode: "LOCAL_INVALID", errorMessage: "本地画布格式或大小无效" };
   }
 }
 
@@ -409,11 +430,53 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
 
 function resourcePathIsSafe(resourcePath = "") {
   const value = String(resourcePath || "");
-  return value.startsWith(".freeflow/assets/") && !value.split("/").some((part) => part === ".." || part === "");
+  const prefix = ".freeflow/assets/";
+  if (!value.startsWith(prefix)) return false;
+  const filename = value.slice(prefix.length);
+  if (!filename || filename.includes("/") || filename.includes("\\") || filename === "." || filename === "..") return false;
+  const separator = filename.indexOf(".");
+  if (separator !== 64) return false;
+  const extension = filename.slice(separator + 1);
+  return resourceHashIsValid(filename.slice(0, separator))
+    && extension.length >= 1
+    && extension.length <= 32
+    && !/[\u0000-\u001f\u007f./\\]/.test(extension);
 }
 
 function resourceHashIsValid(value = "") {
   return /^[a-f0-9]{64}$/i.test(String(value || ""));
+}
+
+function validateRemoteResources(resources = []) {
+  if (!Array.isArray(resources)) return { totalBytes: 0 };
+  if (resources.length > MAX_REMOTE_RESOURCE_COUNT) {
+    throw new GitHubApiError("远端附件数量超过安全限制", { status: 413, code: "REMOTE_RESOURCE_LIMIT" });
+  }
+  const paths = new Set();
+  const hashes = new Set();
+  let totalBytes = 0;
+  for (const resource of resources) {
+    const resourcePath = String(resource?.path || "");
+    const sha256 = String(resource?.sha256 || "").toLowerCase();
+    const sizeBytes = Number(resource?.sizeBytes);
+    if (!resourcePathIsSafe(resourcePath) || !resourceHashIsValid(sha256)) {
+      throw new GitHubApiError("远端附件清单路径或哈希无效", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
+    }
+    const filenameHash = resourcePath.slice(".freeflow/assets/".length).split(".", 1)[0].toLowerCase();
+    if (filenameHash !== sha256 || paths.has(resourcePath) || hashes.has(sha256)) {
+      throw new GitHubApiError("远端附件清单包含重复或不一致的哈希", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
+    }
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > MAX_REMOTE_RESOURCE_SIZE) {
+      throw new GitHubApiError("远端附件大小超出安全限制", { status: 413, code: "REMOTE_RESOURCE_LIMIT" });
+    }
+    totalBytes += sizeBytes;
+    if (totalBytes > MAX_REMOTE_RESOURCE_BYTES) {
+      throw new GitHubApiError("远端附件总大小超过安全限制", { status: 413, code: "REMOTE_RESOURCE_LIMIT" });
+    }
+    paths.add(resourcePath);
+    hashes.add(sha256);
+  }
+  return { totalBytes };
 }
 
 async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCommit = "", force = false } = {}) {
@@ -423,23 +486,28 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   const targetPath = path.resolve(boardPath);
   const localLedger = await readLedger(SYNC_LEDGER_FILE);
   const existingEntry = localLedger.boards[id];
-  if (!force && existingEntry?.localPath === targetPath && existingEntry.localHash) {
-    const local = await readLocalSyncHash(targetPath);
-    if (local.hash && local.hash !== existingEntry.localHash) {
-      throw new GitHubApiError("本地画布有未同步修改，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", boardId: id });
-    }
+  const local = await readLocalSyncHash(targetPath);
+  if (!force && local.exists && !local.hash) {
+    throw new GitHubApiError("本地画布无法解析或读取，已阻止远端覆盖", {
+      status: 409,
+      code: "SYNC_CONFLICT",
+      reason: local.errorCode || "LOCAL_INVALID",
+      boardId: id,
+    });
+  }
+  if (!force && existingEntry?.localPath === targetPath && existingEntry.localHash && local.hash !== existingEntry.localHash) {
+    throw new GitHubApiError("本地画布有未同步修改，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", boardId: id });
   }
   const client = await getClient();
   const snapshot = await getSnapshotAtRef(client, config, remoteCommit);
   const remote = await readRemoteBoardAtSnapshot(client, config, snapshot, id);
   const manifest = remote.manifest;
-  const resources = Array.isArray(manifest?.resources) ? manifest.resources : [];
-  const resourcePaths = resources.map((resource) => String(resource?.path || ""));
-  for (const resource of resources) {
-    if (!resourcePathIsSafe(resource.path) || !resourceHashIsValid(resource.sha256)) {
-      throw new GitHubApiError("远端附件清单路径或哈希无效", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
-    }
+  if (manifest?.resources != null && !Array.isArray(manifest.resources)) {
+    throw new GitHubApiError("远端附件清单格式无效", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
   }
+  const resources = Array.isArray(manifest?.resources) ? manifest.resources : [];
+  validateRemoteResources(resources);
+  const resourcePaths = resources.map((resource) => String(resource?.path || ""));
   const files = await client.getFilesAtSnapshot(config.owner, config.repo, snapshot, resourcePaths);
   const localAssetRoot = path.join(path.dirname(targetPath), "assets");
   const available = new Set();
@@ -553,10 +621,11 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
   const entry = ledger.boards[id] || {};
   const localPath = path.resolve(boardPath || entry.localPath || config.boardPath || CANVAS_BOARD_FILE);
   const local = await readLocalSyncHash(localPath);
-  const localExists = Boolean(local.hash);
+  const localExists = Boolean(local.exists);
   const remoteHash = remote.boardHash || String(remote.manifest?.boardHash || "");
   let state = "remote-changed";
   if (!localExists) state = "remote-only";
+  else if (local.errorCode) state = "local-invalid";
   else if (local.hash === remoteHash) state = "up-to-date";
   else if (entry.baseRemoteCommit && entry.baseRemoteCommit === snapshot.commitSha) state = "local-changed";
   else if (entry.localHash && local.hash === entry.localHash) state = "remote-changed";
@@ -566,6 +635,7 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
     state,
     localPath,
     localHash: local.hash,
+    localError: local.errorCode || "",
     remoteHash,
     remoteCommit: snapshot.commitSha,
     baseRemoteCommit: entry.baseRemoteCommit || "",
@@ -576,6 +646,9 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
 async function pullBoard(options = {}) {
   const state = await getBoardState(options);
   if (state.state === "up-to-date") return { ok: true, pulled: false, state };
+  if (state.state === "local-invalid") {
+    throw new GitHubApiError("本地画布无法解析或读取，请修复或明确选择使用远端版本", { status: 409, code: "SYNC_CONFLICT", state });
+  }
   if (state.state === "local-changed") return { ok: true, pulled: false, state, requiresPush: true };
   if (state.state === "both-changed") {
     throw new GitHubApiError("本地和远端画布都已修改，请先选择保留版本或合并", { status: 409, code: "SYNC_CONFLICT", state });
@@ -653,4 +726,6 @@ module.exports = {
   pullBoard,
   reconcileBoard,
   mergeBoardPayloads,
+  readLocalSyncHash,
+  validateRemoteResources,
 };
