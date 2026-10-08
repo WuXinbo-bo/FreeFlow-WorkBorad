@@ -615,7 +615,7 @@ export function mountSettingsCenter(host, options = {}) {
       const resolutions = Array.isArray(githubConflictResolutions[board.boardId]) ? githubConflictResolutions[board.boardId] : [];
       const reconcileActions = canReconcile
         ? (resolutions.length
-          ? resolutions.filter((resolution) => ["local", "remote"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : "使用远端"}</button>`).join("")
+          ? resolutions.filter((resolution) => ["local", "remote", "auto"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : resolution === "remote" ? "使用远端" : "自动合并"}</button>`).join("")
           : `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>查看冲突处理</button>`)
         : "";
       return `<article class="settings-center-github-board" data-github-board-id="${escapeHtml(board.boardId)}">
@@ -1074,6 +1074,7 @@ export function mountSettingsCenter(host, options = {}) {
         else { githubDeviceFlow = null; githubRepositories = []; githubSyncStatus = await client.getStatus(); setMessage("GitHub 已连接", "success"); }
       } else if (action === "refresh") {
         githubSyncStatus = await client.getStatus();
+        if (githubSyncStatus?.repository?.owner && githubSyncStatus?.repository?.repo) await refreshGithubWorkspace();
         setMessage("GitHub 同步状态已刷新", "success");
       } else if (action === "workspace") {
         githubSyncStatus = await client.getStatus();
@@ -1121,7 +1122,9 @@ export function mountSettingsCenter(host, options = {}) {
       } else if (action === "pull" || action === "reconcile") {
         if (!boardId) throw new Error("未选择远程画布");
         const board = githubRemoteBoards.find((item) => item.boardId === boardId) || {};
-        let boardPath = String(board.localPath || githubSyncStatus?.ledger?.boards?.[boardId]?.localPath || "").trim();
+        let boardPath = board.syncState === "remote-only"
+          ? ""
+          : String(board.localPath || githubSyncStatus?.ledger?.boards?.[boardId]?.localPath || "").trim();
         if (!boardPath && desktopShell?.pickCanvasBoardPath) {
           const defaultName = String(board.name || board.title || `freeflow-${boardId}`).replace(/[\\/:*?"<>|]/g, "-");
           const picked = await desktopShell.pickCanvasBoardPath({ defaultPath: defaultName.endsWith(".freeflow") ? defaultName : `${defaultName}.freeflow` });
