@@ -1144,10 +1144,15 @@ export function mountSettingsCenter(host, options = {}) {
         await refreshGithubWorkspace();
         if (action === "reconcile" && !resolution && Array.isArray(result?.resolutions)) {
           githubConflictResolutions[boardId] = result.resolutions;
-          setMessage("请选择保留本地版本或使用远端版本", "warning");
+          setMessage("请选择自动合并、保留本地版本或使用远端版本", "warning");
         } else {
           delete githubConflictResolutions[boardId];
-          setMessage(action === "pull" ? "远程画布已拉取到本机" : "已处理远程画布冲突", "success");
+          const pullMessage = result?.requiresPush
+            ? "本机有未上传修改，请先同步后再拉取"
+            : result?.pulled === false
+              ? "本机画布已经是最新版本"
+              : "远程画布已拉取到本机";
+          setMessage(action === "pull" ? pullMessage : resolution === "auto" ? "远程画布已自动合并" : "已处理远程画布冲突", result?.requiresPush ? "warning" : "success");
         }
       } else if (action === "disconnect") {
         await client.disconnect();
