@@ -5,7 +5,15 @@ let pendingBootstrapTimeout = null;
 
 async function invokeGitHubSync(channel, payload) {
   try {
-    return await ipcRenderer.invoke(channel, payload);
+    const result = await ipcRenderer.invoke(channel, payload);
+    if (result?.ok === false) {
+      const wrapped = new Error(String(result.error || "GitHub 同步失败"));
+      for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+        if (result[key] !== undefined) wrapped[key] = result[key];
+      }
+      throw wrapped;
+    }
+    return result;
   } catch (error) {
     const rawMessage = String(error?.message || "GitHub 同步失败").replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
     const marker = "\n__FREEFLOW_GITHUB_SYNC_DETAILS__";
