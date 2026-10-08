@@ -94,7 +94,7 @@ export const THEME_PRESET_DEFS = {
       patternColor: "#a5afbc",
       buttonColor: "#293b50",
       buttonTextColor: "#ffffff",
-      shellPanelColor: "#eff2f6",
+      shellPanelColor: "#f9fafb",
       shellPanelTextColor: "#253246",
       controlColor: "#f7f9fc",
       controlActiveColor: "#d1dbe8",
