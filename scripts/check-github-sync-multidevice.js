@@ -287,7 +287,7 @@ async function main() {
   assert.equal(deletedListing.boards.length, 0, "deleted boards must not reappear from legacy tree scan");
   await assert.rejects(
     sync.syncBoard({ boardPath: boardAPath }),
-    (error) => error.code === "REMOTE_CHANGED",
+    (error) => error.code === "REMOTE_BOARD_DELETED",
     "a normal push must not silently resurrect a remotely deleted board",
   );
   assert.equal(typeof sync.pullBoard, "function");
