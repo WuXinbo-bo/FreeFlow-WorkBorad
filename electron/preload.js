@@ -7,7 +7,18 @@ async function invokeGitHubSync(channel, payload) {
   try {
     return await ipcRenderer.invoke(channel, payload);
   } catch (error) {
-    throw new Error(String(error?.message || "GitHub 同步失败").replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
+    const rawMessage = String(error?.message || "GitHub 同步失败").replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
+    const marker = "\n__FREEFLOW_GITHUB_SYNC_DETAILS__";
+    const markerIndex = rawMessage.indexOf(marker);
+    const message = markerIndex >= 0 ? rawMessage.slice(0, markerIndex) : rawMessage;
+    const detailsText = markerIndex >= 0 ? rawMessage.slice(markerIndex + marker.length) : "";
+    let details = {};
+    try { details = detailsText ? JSON.parse(detailsText) : {}; } catch { details = {}; }
+    const wrapped = new Error(message || "GitHub 同步失败");
+    for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+      if (details[key] !== undefined) wrapped[key] = details[key];
+    }
+    throw wrapped;
   }
 }
 
