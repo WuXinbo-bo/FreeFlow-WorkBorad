@@ -73,7 +73,7 @@ function createGitHubSyncRouter(options = {}) {
   });
 
   router.get("/workspace", async (_req, res) => {
-    try { res.json({ ok: true, ...(await sync.getWorkspace()) }); }
+    try { res.json({ ok: true, ...(await sync.getWorkspace({ includeDeleted: String(_req.query?.includeDeleted || "") === "true" })) }); }
     catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
   });
 
@@ -92,7 +92,7 @@ function createGitHubSyncRouter(options = {}) {
   });
 
   router.get("/boards", async (_req, res) => {
-    try { res.json({ ok: true, ...(await sync.listBoards()) }); }
+    try { res.json({ ok: true, ...(await sync.listBoards({ includeDeleted: String(_req.query?.includeDeleted || "") === "true" })) }); }
     catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
   });
 

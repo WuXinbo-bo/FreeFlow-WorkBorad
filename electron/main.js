@@ -4343,8 +4343,14 @@ ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) 
 ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequestForIpc("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequestForIpc("/sync", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequestForIpc("/download", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-workspace", () => githubSyncRequestForIpc("/workspace"));
-ipcMain.handle("desktop-shell:github-sync-boards", () => githubSyncRequestForIpc("/boards"));
+ipcMain.handle("desktop-shell:github-sync-workspace", (_event, payload) => {
+  const includeDeleted = payload?.includeDeleted ? "?includeDeleted=true" : "";
+  return githubSyncRequestForIpc(`/workspace${includeDeleted}`);
+});
+ipcMain.handle("desktop-shell:github-sync-boards", (_event, payload) => {
+  const includeDeleted = payload?.includeDeleted ? "?includeDeleted=true" : "";
+  return githubSyncRequestForIpc(`/boards${includeDeleted}`);
+});
 ipcMain.handle("desktop-shell:github-sync-board-state", (_event, payload) => {
   const boardId = encodeURIComponent(String(payload?.boardId || "").trim());
   if (!boardId) throw new Error("未指定远程画布");
