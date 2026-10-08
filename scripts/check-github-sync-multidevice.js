@@ -69,6 +69,7 @@ function createGitHubMock() {
   const state = {
     head: "base",
     failBoardReads: 0,
+    boardReadAttempts: 0,
     requestCount: 0,
     seenIfNoneMatch: [],
   };
@@ -125,6 +126,7 @@ function createGitHubMock() {
       const sha = decodeURIComponent(pathname.split("/git/blobs/")[1]);
       const currentTree = trees.get(commits.get(state.head)?.tree) || new Map();
       const boardBlob = [...currentTree.entries()].some(([entryPath, blobSha]) => entryPath.endsWith("/board.freeflow") && blobSha === sha);
+      if (boardBlob) state.boardReadAttempts += 1;
       if (boardBlob && state.failBoardReads > 0) {
         state.failBoardReads -= 1;
         return jsonResponse({ message: "temporary download interruption" }, 503);
@@ -276,13 +278,14 @@ async function main() {
   const noopPull = await sync.pullBoard({ boardId, boardPath: boardBPath });
   assert.equal(noopPull.pulled, false, "pull should be a no-op after a successful download");
 
-  // A failed board download leaves the previous local file intact; a retry
-  // after the remote interruption is cleared completes normally.
+  // A transient board read is retried by the GitHub client and still leaves
+  // the already materialized local board unchanged.
   const beforeInterruptedPull = await fsPromises.readFile(boardBPath, "utf8");
+  const attemptsBeforeInterruption = remote.state.boardReadAttempts;
   remote.state.failBoardReads = 1;
-  await assert.rejects(sync.downloadBoard({ boardId, boardPath: boardBPath }), /temporary download interruption|GitHub API 请求失败/);
-  assert.equal(await fsPromises.readFile(boardBPath, "utf8"), beforeInterruptedPull, "interrupted pull replaced the local board");
   await sync.downloadBoard({ boardId, boardPath: boardBPath });
+  assert(remote.state.boardReadAttempts >= attemptsBeforeInterruption + 2, "download did not retry a transient board read");
+  assert.equal(await fsPromises.readFile(boardBPath, "utf8"), beforeInterruptedPull, "interrupted pull changed the local board");
 
   // The mock implements the ETag and 429 signals.  The client should expose a
   // 304 as an unchanged result and preserve retry metadata on a 429.
@@ -307,11 +310,65 @@ async function main() {
     return remote.fetchImpl(url, options);
   };
   const rateLimitedClient = new GitHubApiClient({ token: "fixture-token", fetchImpl: rateLimitedFetch, apiBaseUrl: "https://fixture.github" });
-  await assert.rejects(rateLimitedClient.getBranchHead(owner, repo, branch), (error) => error.status === 429 && error.headers?.get("retry-after") === "1");
-  assert.equal(rateLimitedCalls, 1, "429 should not be retried blindly in the same request");
   const retriedHead = await rateLimitedClient.getBranchHead(owner, repo, branch);
-  assert.equal(retriedHead.object.sha, remote.state.head, "caller retry did not recover after 429");
-  assert.equal(rateLimitedCalls, 2);
+  assert.equal(retriedHead.object.sha, remote.state.head, "429 retry did not recover");
+  assert.equal(rateLimitedCalls, 2, "GET should retry one transient 429 after Retry-After");
+
+  const alwaysRateLimitedClient = new GitHubApiClient({
+    token: "fixture-token",
+    fetchImpl: async () => jsonResponse({ message: "secondary rate limit" }, 429, { "retry-after": "1", "x-ratelimit-remaining": "0" }),
+    apiBaseUrl: "https://fixture.github",
+  });
+  await assert.rejects(
+    alwaysRateLimitedClient.request(`/repos/${owner}/${repo}/git/ref/heads/${branch}`, { retryLimit: 0 }),
+    (error) => error.status === 429 && error.headers?.get("retry-after") === "1" && error.meta?.retryAfterMs === 1000,
+  );
+
+  const ancestorPayload = { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "base", color: "black" }], view: { scale: 1 } } };
+  const localPayload = { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "local", color: "black" }], view: { scale: 1 } } };
+  const remotePayload = { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "base", color: "red" }], view: { scale: 2 } } };
+  const merged = sync.mergeBoardPayloads(ancestorPayload, localPayload, remotePayload);
+  assert.equal(merged.conflicts.length, 0, "independent item and board fields should merge automatically");
+  assert.equal(merged.payload.board.items[0].text, "local");
+  assert.equal(merged.payload.board.items[0].color, "red");
+  assert.equal(merged.payload.board.view.scale, 2);
+  const sameFieldConflict = sync.mergeBoardPayloads(
+    ancestorPayload,
+    { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "local", color: "black" }] } },
+    { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "remote", color: "black" }] } },
+  );
+  assert.equal(sameFieldConflict.conflicts.length, 1, "same-field edits must remain a conflict");
+  assert.equal(sameFieldConflict.conflicts[0].path, "items[item-1].text");
+  const deleteEditConflict = sync.mergeBoardPayloads(
+    ancestorPayload,
+    { kind: "structured-host-board", board: { items: [] } },
+    { kind: "structured-host-board", board: { items: [{ id: "item-1", text: "remote", color: "black" }] } },
+  );
+  assert.equal(deleteEditConflict.conflicts[0].reason, "delete-vs-edit");
+
+  // Reconcile a real both-changed board: the local and remote text field are
+  // intentionally different, so auto merge must refuse to publish and leave
+  // ancestor/local/remote copies on disk.
+  const localConflictBoard = JSON.parse(await fsPromises.readFile(boardBPath, "utf8"));
+  localConflictBoard.board.items[0].text = "Mac local conflict";
+  await fsPromises.writeFile(boardBPath, JSON.stringify(localConflictBoard), "utf8");
+  const remoteConflictPath = path.join(deviceA, "remote-conflict.freeflow");
+  await fsPromises.writeFile(remoteConflictPath, JSON.stringify(fixtureBoard("Windows remote conflict", false)), "utf8");
+  const remoteConflictBundle = await buildSyncBundleFromFile(remoteConflictPath);
+  const remoteConflictCommit = await clientA.createCommit({ owner, repo, branch, message: "Windows remote conflict", files: remoteConflictBundle.files });
+  assert.notEqual(remoteConflictCommit.commitSha, committedA.commitSha);
+  let mergeError = null;
+  try {
+    await sync.reconcileBoard({ boardId, boardPath: boardBPath, strategy: "auto" });
+  } catch (error) {
+    mergeError = error;
+  }
+  assert(mergeError, "auto reconcile should stop on same-field conflict");
+  assert.equal(mergeError.code, "SYNC_CONFLICT");
+  assert(mergeError.conflicts.some((item) => item.path === "items[text].text"));
+  for (const artifactPath of Object.values(mergeError.artifacts.files)) assert(fs.existsSync(artifactPath), `missing merge artifact: ${artifactPath}`);
+  const preservedLocal = JSON.parse(await fsPromises.readFile(boardBPath, "utf8"));
+  assert.equal(preservedLocal.board.items[0].text, "Mac local conflict", "conflict must not overwrite the active local board");
 
   await auth.clearTokens();
   console.log("[check-github-sync-multidevice] dual-device pull, stale-base rejection, large-blob hash, and interrupted-download recovery passed");
