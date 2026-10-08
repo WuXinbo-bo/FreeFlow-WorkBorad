@@ -285,6 +285,8 @@ async function main() {
   });
   const deletedListing = await sync.listBoards();
   assert.equal(deletedListing.boards.length, 0, "deleted boards must not reappear from legacy tree scan");
+  const deletedWithTombstone = await sync.listBoards({ includeDeleted: true });
+  assert.equal(deletedWithTombstone.boards[0]?.deletedAt != null, true, "explicit deleted-board discovery should retain the tombstone");
   await assert.rejects(
     sync.syncBoard({ boardPath: boardAPath }),
     (error) => error.code === "REMOTE_BOARD_DELETED",

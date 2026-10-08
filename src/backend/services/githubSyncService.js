@@ -594,14 +594,14 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   return { ...result, boardId: id, manifest, remoteCommit: snapshot.commitSha, missingResources, syncState, ledger };
 }
 
-async function listBoards() {
+async function listBoards({ includeDeleted = false } = {}) {
   const config = await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
   const client = await getClient();
   const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
   const ledger = await readLedger(SYNC_LEDGER_FILE);
   const workspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
-  const boards = Object.values(workspace.boards).filter((board) => !board.deletedAt);
+  const boards = Object.values(workspace.boards).filter((board) => includeDeleted || !board.deletedAt);
   // A present workspace is authoritative, including when every board is
   // tombstoned. Only legacy repositories without workspace.json should use
   // the tree scan fallback; otherwise deleted boards would reappear.
@@ -624,8 +624,8 @@ async function listBoards() {
   return { workspace, boards: [...discovered.values()], remoteHeadSha: snapshot.commitSha };
 }
 
-async function getWorkspace() {
-  const result = await listBoards();
+async function getWorkspace(options = {}) {
+  const result = await listBoards(options);
   return { workspace: result.workspace, remoteHeadSha: result.remoteHeadSha, boards: result.boards };
 }
 

@@ -187,6 +187,7 @@ export function mountSettingsCenter(host, options = {}) {
     "remote-changed": "远端有更新",
     "both-changed": "双方都有修改",
     "remote-only": "仅远端存在",
+    deleted: "远端已删除",
     conflict: "存在冲突",
     missing: "本地未找到",
     partial: "部分完成",
@@ -230,8 +231,8 @@ export function mountSettingsCenter(host, options = {}) {
       return { boards: [] };
     }
     const [workspaceResult, boardsResult] = await Promise.all([
-      typeof client.getWorkspace === "function" ? client.getWorkspace().catch((error) => ({ error: error.message })) : Promise.resolve(null),
-      typeof client.listBoards === "function" ? client.listBoards().catch((error) => ({ error: error.message })) : Promise.resolve(null),
+      typeof client.getWorkspace === "function" ? client.getWorkspace({ includeDeleted: true }).catch((error) => ({ error: error.message })) : Promise.resolve(null),
+      typeof client.listBoards === "function" ? client.listBoards({ includeDeleted: true }).catch((error) => ({ error: error.message })) : Promise.resolve(null),
     ]);
     if (workspaceResult?.error && boardsResult?.error) throw new Error(workspaceResult.error || boardsResult.error);
     const workspace = workspaceResult?.workspace || workspaceResult;
@@ -243,7 +244,7 @@ export function mountSettingsCenter(host, options = {}) {
       return {
         ...board,
         localPath: board.localPath || local.localPath || "",
-        syncState: board.syncState || board.state || local.syncState || "",
+        syncState: board.deletedAt ? "deleted" : board.syncState || board.state || local.syncState || "",
         boardHash: board.boardHash || board.contentHash || board.hash || "",
       };
     });
@@ -619,6 +620,7 @@ export function mountSettingsCenter(host, options = {}) {
       const state = board.syncState || board.state || "";
       const boardPath = board.localPath || "";
       const canPull = Boolean(client && hasRepository && board.boardId);
+      const isDeleted = Boolean(board.deletedAt) || state === "deleted";
       const canReconcile = ["both-changed", "conflict"].includes(state);
       const resolutions = Array.isArray(githubConflictResolutions[board.boardId]) ? githubConflictResolutions[board.boardId] : [];
       const conflict = githubConflictDetails[board.boardId] || null;
@@ -631,11 +633,14 @@ export function mountSettingsCenter(host, options = {}) {
           ? resolutions.filter((resolution) => ["local", "remote", "auto"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : resolution === "remote" ? "使用远端" : "自动合并"}</button>`).join("")
           : `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>查看冲突处理</button>`)
         : "";
+      const restoreAction = isDeleted
+        ? `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="local"${!canPull || !boardPath || githubSyncAction ? " disabled" : ""}>恢复本地版本</button>`
+        : "";
       const conflictDetails = conflict && (conflictPaths.length || conflictDirectory) ? `<details class="settings-center-github-conflict-details"><summary>冲突详情${conflictPaths.length ? ` · ${conflictPaths.length} 个字段` : ""}</summary>${conflictPaths.length ? `<ul>${conflictPaths.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}</ul>` : ""}${conflictDirectory ? `<div><small>三方副本</small><code>${escapeHtml(conflictDirectory)}</code><button type="button" data-settings-action="github-reveal-conflict" data-github-board-id="${escapeHtml(board.boardId)}">打开所在目录</button></div>` : ""}</details>` : "";
       return `<article class="settings-center-github-board" data-github-board-id="${escapeHtml(board.boardId)}">
         <div class="settings-center-github-board-copy"><strong>${escapeHtml(title)}</strong><small><code>${escapeHtml(board.boardId)}</code>${board.updatedAt ? ` · ${escapeHtml(formatDateTime(board.updatedAt))}` : ""}</small>${boardPath ? `<small class="settings-center-github-board-path">${escapeHtml(boardPath)}</small>` : ""}</div>
-        <span class="settings-center-github-board-state${state === "conflict" || state === "both-changed" ? " is-warning" : state === "up-to-date" || state === "synced" ? " is-ready" : ""}">${escapeHtml(githubSyncStateLabel(state))}</span>
-        <div class="settings-center-inline-actions">${canReconcile ? reconcileActions : `<button type="button" data-settings-action="github-pull" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>拉取</button>`}</div>
+        <span class="settings-center-github-board-state${isDeleted || state === "conflict" || state === "both-changed" ? " is-warning" : state === "up-to-date" || state === "synced" ? " is-ready" : ""}">${escapeHtml(githubSyncStateLabel(state))}</span>
+        <div class="settings-center-inline-actions">${isDeleted ? restoreAction : canReconcile ? reconcileActions : `<button type="button" data-settings-action="github-pull" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>拉取</button>`}</div>
         ${conflictDetails}
       </article>`;
     }).join("");
