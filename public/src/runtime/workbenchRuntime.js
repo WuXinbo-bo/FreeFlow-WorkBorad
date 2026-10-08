@@ -1809,6 +1809,13 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onStatus: setStatus,
   onRequestClose: requestSettingsDrawerClose,
   agentClient,
+  prepareGitHubSyncBoard: async () => {
+    const engine = getModernCanvas2DEngine();
+    if (!engine?.saveBoard || !engine.getSnapshot) throw new Error("当前画布尚未就绪，请稍后重试");
+    if (!engine.getSnapshot().boardFilePath) throw new Error("请先将当前画布保存到本机，再同步到 GitHub");
+    if (!(await engine.saveBoard({ silent: true, exactPath: true }))) throw new Error("当前画布保存失败，已停止 GitHub 同步");
+    return engine.getSnapshot().boardFilePath;
+  },
 });
 agentController = createAgentController({
   client: agentClient,
@@ -5105,26 +5112,53 @@ function stopClipboardPolling() {
   }
 }
 
+function canPollClipboard() {
+  return (
+    state.clipboardStore.mode === "auto" &&
+    state.clipboardPollingSuspended !== true &&
+    document.visibilityState !== "hidden"
+  );
+}
+
+async function pollClipboardOnce() {
+  if (!canPollClipboard() || state.clipboardPollInFlight) {
+    return;
+  }
+  state.clipboardPollInFlight = true;
+  try {
+    const text = String(await readClipboardText()).trim();
+    if (!text || text === state.lastClipboardText) {
+      return;
+    }
+
+    state.lastClipboardText = text;
+    await captureClipboardEntry("auto");
+  } catch {
+    // Keep polling silent; manual mode remains available even if clipboard polling fails.
+  } finally {
+    state.clipboardPollInFlight = false;
+  }
+}
+
 function startClipboardPolling() {
   stopClipboardPolling();
 
-  if (state.clipboardStore.mode !== "auto") {
+  if (!canPollClipboard()) {
     return;
   }
 
-  state.clipboardPollTimer = window.setInterval(async () => {
-    try {
-      const text = String(await readClipboardText()).trim();
-      if (!text || text === state.lastClipboardText) {
-        return;
-      }
+  state.clipboardPollTimer = window.setInterval(pollClipboardOnce, CONFIG.clipboardPollIntervalMs);
+}
 
-      state.lastClipboardText = text;
-      await captureClipboardEntry("auto");
-    } catch {
-      // Keep polling silent; manual mode remains available even if clipboard polling fails.
-    }
-  }, CONFIG.clipboardPollIntervalMs);
+function resumeClipboardPolling() {
+  state.clipboardPollingSuspended = false;
+  startClipboardPolling();
+  void pollClipboardOnce();
+}
+
+function suspendClipboardPolling() {
+  state.clipboardPollingSuspended = true;
+  stopClipboardPolling();
 }
 
 function buildUiSettingsPayload(overrides = {}) {
@@ -8773,8 +8807,21 @@ desktopShellControlsEl?.addEventListener("mouseenter", () => {
 });
 
 window.addEventListener("blur", () => {
+  suspendClipboardPolling();
   if (!state.desktopShellState.fullClickThrough) {
     setDesktopClickThrough(false);
+  }
+});
+
+window.addEventListener("focus", () => {
+  resumeClipboardPolling();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    suspendClipboardPolling();
+  } else {
+    resumeClipboardPolling();
   }
 });
 
@@ -12036,4 +12083,3 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-

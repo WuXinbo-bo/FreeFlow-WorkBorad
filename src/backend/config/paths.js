@@ -24,6 +24,8 @@ const MODEL_PROFILES_FILE = path.join(DATA_DIR, "model-profiles.json");
 const MODEL_PROVIDER_SETTINGS_FILE = path.join(DATA_DIR, "model-provider-settings.json");
 const CREDENTIALS_FILE = path.join(DATA_DIR, "credentials.json");
 const CREDENTIALS_KEY_FILE = path.join(DATA_DIR, ".credentials.key");
+const SYNC_LEDGER_FILE = path.join(DATA_DIR, "github-sync-ledger.json");
+const GITHUB_SYNC_SETTINGS_FILE = path.join(DATA_DIR, "github-sync-settings.json");
 const PERMISSIONS_FILE = path.join(DATA_DIR, "permissions.json");
 const CLIPBOARD_STORE_FILE = path.join(DATA_DIR, "clipboard-store.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
@@ -65,6 +67,8 @@ module.exports = {
   MODEL_PROVIDER_SETTINGS_FILE,
   CREDENTIALS_FILE,
   CREDENTIALS_KEY_FILE,
+  SYNC_LEDGER_FILE,
+  GITHUB_SYNC_SETTINGS_FILE,
   PERMISSIONS_FILE,
   CLIPBOARD_STORE_FILE,
   SESSIONS_FILE,

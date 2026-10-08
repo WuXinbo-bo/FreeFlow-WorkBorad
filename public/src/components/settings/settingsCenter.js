@@ -12,6 +12,7 @@ const SECTION_DEFS = Object.freeze([
   { key: "workbench", label: "工作台", icon: "panels" },
   { key: "canvas", label: "画布", icon: "pen-tool" },
   { key: "permissions", label: "权限", icon: "shield" },
+  { key: "github", label: "GitHub 同步", icon: "github" },
   { key: "diagnostics", label: "诊断", icon: "activity" },
 ]);
 
@@ -23,6 +24,7 @@ const SECTION_ICON_PATHS = Object.freeze({
   "pen-tool": '<path d="m12 19 7-7 3 3-7 7-3-3Z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="m9 12 2 2 4-4"/>',
   activity: '<path d="M3 12h4l3-9 4 18 3-9h4"/>',
+  github: '<path d="M9 19c-4 1.3-4-2-5.5-2m11 4v-3.9c0-1.1.1-1.4-.5-2.1 1.7-.2 3.5-.8 3.5-3.8 0-.8-.3-1.5-.8-2 .1-.2.3-1-.1-2 0 0-.7-.2-2.2.8a7.6 7.6 0 0 0-4 0C9.9 8 9.2 8.2 9.2 8.2c-.4 1-.2 1.8-.1 2-.5.5-.8 1.2-.8 2 0 3 1.8 3.6 3.5 3.8-.4.4-.5 1-.5 2.1V21"/>',
 });
 
 function renderSectionIcon(name) {
@@ -138,6 +140,7 @@ export function mountSettingsCenter(host, options = {}) {
     onStatus = () => {},
     onRequestClose = () => {},
     agentClient = null,
+    prepareGitHubSyncBoard = null,
   } = options;
   let snapshot = null;
   let draft = null;
@@ -160,6 +163,108 @@ export function mountSettingsCenter(host, options = {}) {
   let agentBackupError = "";
   let backupAction = "";
   let restoreCandidate = "";
+  let githubSyncStatus = null;
+  let githubSyncAction = "";
+  let githubDeviceFlow = null;
+  let githubSyncError = "";
+  let githubRepositories = [];
+  let githubWorkspace = null;
+  let githubRemoteBoards = [];
+  let githubConflictResolutions = {};
+  let githubConflictDetails = {};
+  let githubClientId = "";
+  let githubAppType = "github-app";
+  let githubAuthMethod = "token";
+
+  function getGithubSyncClient() {
+    return isDesktop && desktopShell?.githubSync ? desktopShell.githubSync : null;
+  }
+
+  const GITHUB_SYNC_STATE_LABELS = Object.freeze({
+    "up-to-date": "已是最新",
+    synced: "已同步",
+    "local-changed": "本机有修改",
+    "remote-changed": "远端有更新",
+    "both-changed": "双方都有修改",
+    "remote-only": "仅远端存在",
+    deleted: "远端已删除",
+    conflict: "存在冲突",
+    missing: "本地未找到",
+    partial: "部分完成",
+    error: "需要重试",
+  });
+
+  function githubSyncStateLabel(state) {
+    const key = String(state || "").trim();
+    return GITHUB_SYNC_STATE_LABELS[key] || key || "未检查";
+  }
+
+  function shouldResetGithubDeviceFlow(error) {
+    const code = String(error?.code || "").trim().toLowerCase();
+    if (["expired_token", "access_denied", "invalid_grant"].includes(code)) return true;
+    return /过期|失效|取消|拒绝|无效/.test(String(error?.message || ""));
+  }
+
+  function normalizeGithubBoards(result) {
+    const source = result?.boards ?? result?.workspace?.boards ?? result;
+    if (result?.error || source?.error) return [];
+    if (Array.isArray(source)) {
+      return source.map((board) => ({
+        ...board,
+        boardId: String(board?.boardId || board?.id || "").trim(),
+      })).filter((board) => board.boardId);
+    }
+    if (!source || typeof source !== "object") return [];
+    return Object.entries(source).map(([boardId, board]) => ({
+      ...(board && typeof board === "object" ? board : {}),
+      boardId: String(board?.boardId || board?.id || boardId).trim(),
+    })).filter((board) => board.boardId);
+  }
+
+  async function refreshGithubWorkspace() {
+    const client = getGithubSyncClient();
+    if (!client || typeof client.getWorkspace !== "function" && typeof client.listBoards !== "function") {
+      githubWorkspace = null;
+      githubRemoteBoards = [];
+      githubConflictResolutions = {};
+      githubConflictDetails = {};
+      return { boards: [] };
+    }
+    const [workspaceResult, boardsResult] = await Promise.all([
+      typeof client.getWorkspace === "function" ? client.getWorkspace({ includeDeleted: true }).catch((error) => ({ error: error.message })) : Promise.resolve(null),
+      typeof client.listBoards === "function" ? client.listBoards({ includeDeleted: true }).catch((error) => ({ error: error.message })) : Promise.resolve(null),
+    ]);
+    if (workspaceResult?.error && boardsResult?.error) throw new Error(workspaceResult.error || boardsResult.error);
+    const workspace = workspaceResult?.workspace || workspaceResult;
+    const boards = normalizeGithubBoards(boardsResult?.boards ? boardsResult : (boardsResult || workspaceResult));
+    const ledgerBoards = githubSyncStatus?.ledger?.boards || {};
+    githubWorkspace = workspace && typeof workspace === "object" && !workspace.error ? workspace : null;
+    githubRemoteBoards = boards.map((board) => {
+      const local = ledgerBoards[board.boardId] || {};
+      return {
+        ...board,
+        localPath: board.localPath || local.localPath || "",
+        syncState: board.deletedAt ? "deleted" : board.syncState || board.state || local.syncState || "",
+        boardHash: board.boardHash || board.contentHash || board.hash || "",
+      };
+    });
+    if (typeof client.getBoardState === "function" && githubRemoteBoards.length) {
+      const states = await Promise.all(githubRemoteBoards.map(async (board) => {
+        if (board.syncState) return null;
+        try {
+          return await client.getBoardState({ boardId: board.boardId, boardPath: board.localPath });
+        } catch {
+          return null;
+        }
+      }));
+      githubRemoteBoards = githubRemoteBoards.map((board, index) => {
+        const state = states[index];
+        if (!state) return board;
+        return { ...board, ...state, syncState: state.state || board.syncState || "" };
+      });
+    }
+    return { workspace: githubWorkspace, boards: githubRemoteBoards, workspaceResult, boardsResult };
+  }
 
   function isDirty() {
     if (!snapshot || !draft) return false;
@@ -503,6 +608,74 @@ export function mountSettingsCenter(host, options = {}) {
     `;
   }
 
+  function renderGithubSyncPanel() {
+    const client = getGithubSyncClient();
+    const status = githubSyncStatus || {};
+    const repository = status.repository || {};
+    const connected = Boolean(status.connected);
+    const flow = githubDeviceFlow || {};
+    const hasRepository = Boolean(repository.owner && repository.repo);
+    const workspaceBoards = githubRemoteBoards.map((board) => {
+      const title = board.name || board.title || board.boardId;
+      const state = board.syncState || board.state || "";
+      const boardPath = board.localPath || "";
+      const canPull = Boolean(client && hasRepository && board.boardId);
+      const isDeleted = Boolean(board.deletedAt) || state === "deleted";
+      const canReconcile = ["both-changed", "conflict"].includes(state);
+      const resolutions = Array.isArray(githubConflictResolutions[board.boardId]) ? githubConflictResolutions[board.boardId] : [];
+      const conflict = githubConflictDetails[board.boardId] || null;
+      const conflictPaths = Array.isArray(conflict?.conflicts)
+        ? conflict.conflicts.map((item) => String(item?.path || "").trim()).filter(Boolean).slice(0, 8)
+        : [];
+      const conflictDirectory = String(conflict?.artifacts?.directory || "").trim();
+      const reconcileActions = canReconcile
+        ? (resolutions.length
+          ? resolutions.filter((resolution) => ["local", "remote", "auto"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : resolution === "remote" ? "使用远端" : "自动合并"}</button>`).join("")
+          : `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>查看冲突处理</button>`)
+        : "";
+      const restoreAction = isDeleted
+        ? `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="local"${!canPull || !boardPath || githubSyncAction ? " disabled" : ""}>恢复本地版本</button>`
+        : "";
+      const conflictDetails = conflict && (conflictPaths.length || conflictDirectory) ? `<details class="settings-center-github-conflict-details"><summary>冲突详情${conflictPaths.length ? ` · ${conflictPaths.length} 个字段` : ""}</summary>${conflictPaths.length ? `<ul>${conflictPaths.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}</ul>` : ""}${conflictDirectory ? `<div><small>三方副本</small><code>${escapeHtml(conflictDirectory)}</code><button type="button" data-settings-action="github-reveal-conflict" data-github-board-id="${escapeHtml(board.boardId)}">打开所在目录</button></div>` : ""}</details>` : "";
+      return `<article class="settings-center-github-board" data-github-board-id="${escapeHtml(board.boardId)}">
+        <div class="settings-center-github-board-copy"><strong>${escapeHtml(title)}</strong><small><code>${escapeHtml(board.boardId)}</code>${board.updatedAt ? ` · ${escapeHtml(formatDateTime(board.updatedAt))}` : ""}</small>${boardPath ? `<small class="settings-center-github-board-path">${escapeHtml(boardPath)}</small>` : ""}</div>
+        <span class="settings-center-github-board-state${isDeleted || state === "conflict" || state === "both-changed" ? " is-warning" : state === "up-to-date" || state === "synced" ? " is-ready" : ""}">${escapeHtml(githubSyncStateLabel(state))}</span>
+        <div class="settings-center-inline-actions">${isDeleted ? restoreAction : canReconcile ? reconcileActions : `<button type="button" data-settings-action="github-pull" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>拉取</button>`}</div>
+        ${conflictDetails}
+      </article>`;
+    }).join("");
+    return `
+      <div class="settings-center-section-heading">
+        <div><p>GitHub</p><h4>GitHub 画布同步</h4></div>
+        <span>自己的私有仓库 · 本机加密凭据</span>
+      </div>
+      <section class="settings-center-group">
+      <div class="settings-center-group-heading"><h5>连接到你自己的 GitHub</h5><p>同步只写入你授权的私有仓库。大图片、视频和超限附件只保存为占位框。</p></div>
+      ${!client ? `<div class="settings-center-empty-inline">仅桌面版支持 GitHub 同步。</div>` : `
+        <div class="settings-center-diagnostic-grid">
+          <div><span>授权</span><strong>${connected ? `已连接${status.auth?.user?.login ? ` · ${escapeHtml(status.auth.user.login)}` : ""}` : "未连接"}</strong></div>
+          <div><span>仓库</span><strong>${escapeHtml(repository.owner && repository.repo ? `${repository.owner}/${repository.repo}` : "尚未选择")}</strong></div>
+          <div><span>画布状态</span><strong>${escapeHtml(Object.values(status.ledger?.boards || {}).map((item) => item.syncState).filter(Boolean)[0] || "未同步")}</strong></div>
+        </div>
+        ${githubSyncError ? `<div class="settings-center-runtime-error">${escapeHtml(githubSyncError)}</div>` : ""}
+        ${!connected ? `<div class="settings-center-auth-methods" role="radiogroup" aria-label="GitHub 连接方式">
+          <label class="settings-center-auth-method${githubAuthMethod === "token" ? " is-active" : ""}"><input type="radio" name="github-auth-method" data-github-auth-method="token" value="token"${githubAuthMethod === "token" ? " checked" : ""} /><span><strong>个人访问令牌</strong><small>直接验证你的 GitHub 账号。只需要令牌，不需要下面的应用类型和 Client ID。</small></span><i aria-hidden="true"></i></label>
+          <label class="settings-center-auth-method${githubAuthMethod === "device-flow" ? " is-active" : ""}"><input type="radio" name="github-auth-method" data-github-auth-method="device-flow" value="device-flow"${githubAuthMethod === "device-flow" ? " checked" : ""} /><span><strong>设备授权</strong><small>通过授权应用登录。需要选择应用类型并填写公开 Client ID，不需要令牌。</small></span><i aria-hidden="true"></i></label>
+        </div>
+        ${githubAuthMethod === "token" ? `<div class="settings-center-auth-panel"><label class="settings-center-field"><span>个人访问令牌</span><input type="password" data-github-token autocomplete="off" spellcheck="false" maxlength="512" placeholder="粘贴 GitHub Fine-grained token" /><small>建议只选择自己的同步仓库，并授予 Contents Read and write。令牌验证成功后仅在本机加密保存。</small></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-open-token">创建个人访问令牌</button><button class="is-primary" type="button" data-settings-action="github-token-connect"${githubSyncAction ? " disabled" : ""}>验证并连接</button></div></div>` : `<div class="settings-center-auth-panel"><div class="settings-center-form-grid"><label class="settings-center-field"><span>授权应用类型</span><select data-github-app-type><option value="github-app"${githubAppType === "github-app" ? " selected" : ""}>GitHub App</option><option value="oauth-app"${githubAppType === "oauth-app" ? " selected" : ""}>OAuth App</option></select><small>GitHub App 需要安装到同步仓库并授予 Contents 读写；OAuth App 使用 repo 授权范围。</small></label><label class="settings-center-field"><span>公开 Client ID</span><input type="text" data-github-client-id value="${escapeHtml(githubClientId)}" maxlength="128" placeholder="启用了 Device Flow 的授权应用 Client ID" /><small>Client ID 不是密码，不要填写 Client Secret。</small></label></div><div class="settings-center-inline-actions"><button class="is-primary" type="button" data-settings-action="github-connect"${githubSyncAction ? " disabled" : ""}>开始设备授权</button></div></div>`}` : ""}
+        ${flow.user_code ? `<div class="settings-center-inline-actions"><code>${escapeHtml(flow.user_code)}</code><button type="button" data-settings-action="github-open-device">打开 GitHub 授权页</button><button type="button" data-settings-action="github-poll"${githubSyncAction ? " disabled" : ""}>检查授权结果</button></div>` : ""}
+        ${connected ? `<div class="settings-center-form-grid"><label class="settings-center-field"><span>私有仓库</span><select data-github-repository><option value="">请选择仓库</option>${githubRepositories.map((repo) => `<option value="${escapeHtml(`${repo.owner?.login || repo.owner?.name || ""}/${repo.name || ""}`)}"${repo.owner?.login === repository.owner && repo.name === repository.repo ? " selected" : ""}>${escapeHtml(`${repo.owner?.login || ""}/${repo.name || ""}`)}</option>`).join("")}</select></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-repositories">加载仓库</button><button type="button" data-settings-action="github-repository-create">创建私有仓库</button><button type="button" data-settings-action="github-repository-save">使用所选仓库</button></div></div>` : ""}
+        <div class="settings-center-inline-actions">
+          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-workspace"${!hasRepository || githubSyncAction ? " disabled" : ""}>发现远程画布</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>立即同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : ""}
+        </div>
+        ${connected && hasRepository ? `<div class="settings-center-github-remote" aria-live="polite">
+          <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>远程画布</h5><p>${githubWorkspace?.lastCommitSha ? `远端版本 ${escapeHtml(String(githubWorkspace.lastCommitSha).slice(0, 12))}` : "发现后列出此仓库中的画布；新设备无需提前知道 boardId。"}</p></div><span>${githubSyncAction === "workspace" ? "正在读取" : githubRemoteBoards.length ? `${githubRemoteBoards.length} 个画布` : "尚未读取"}</span></div>
+          ${workspaceBoards || (githubSyncAction === "workspace" ? `<div class="settings-center-loading"><span></span><strong>正在读取远程画布</strong></div>` : `<div class="settings-center-empty-inline">点击“发现远程画布”读取远端 workspace。</div>`)}
+        </div>` : ""}
+      `}
+      </section>`;
+  }
+
   function renderActiveSection() {
     if (!draft) return "";
     switch (activeSection) {
@@ -511,18 +684,19 @@ export function mountSettingsCenter(host, options = {}) {
       case "workbench": return renderWorkbench();
       case "canvas": return renderCanvas();
       case "permissions": return renderPermissions();
+      case "github": return renderGithubSyncPanel();
       case "diagnostics": return renderDiagnostics();
       default: return renderGeneral();
     }
   }
 
   function render() {
-    if (phase === "loading" || !draft) {
-      host.innerHTML = `<div class="settings-center-loading"><span></span><strong>正在读取设置</strong></div>`;
-      return;
-    }
     if (phase === "load-error") {
       host.innerHTML = `<div class="settings-center-load-error"><strong>设置读取失败</strong><p>${escapeHtml(message)}</p><button type="button" data-settings-action="reload">重新载入</button></div>`;
+      return;
+    }
+    if (phase === "loading" || !draft) {
+      host.innerHTML = `<div class="settings-center-loading"><span></span><strong>正在读取设置</strong></div>`;
       return;
     }
     host.innerHTML = `
@@ -533,10 +707,10 @@ export function mountSettingsCenter(host, options = {}) {
       <footer class="settings-center-footer">
         <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "所有设置已同步"}</span></div>
         <div class="settings-center-footer-actions">
-          ${conflictPending ? `<button type="button" data-settings-action="reload">重新载入最新设置</button>` : ""}
-          <button type="button" data-settings-action="reset-section"${phase === "saving" ? " disabled" : ""}>恢复本页</button>
-          <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
-          <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
+          ${conflictPending ? `<button type="button" data-settings-action="reload"${githubSyncAction ? " disabled" : ""}>重新载入最新设置</button>` : ""}
+          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction ? " disabled" : ""}>恢复本页</button>
+          <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
+          <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" || githubSyncAction ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
         </div>
       </footer>
     `;
@@ -560,8 +734,10 @@ export function mountSettingsCenter(host, options = {}) {
       stateEl.className = "settings-center-save-state";
       stateEl.textContent = isDirty() ? "有未保存修改" : "所有设置已同步";
     }
+    const cancelButton = host.querySelector('[data-settings-action="cancel"]');
+    if (cancelButton) cancelButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);
     const saveButton = host.querySelector('[data-settings-action="save"]');
-    if (saveButton) saveButton.disabled = !isDirty() || phase === "saving";
+    if (saveButton) saveButton.disabled = !isDirty() || phase === "saving" || githubSyncAction;
   }
 
   function restoreThemePreview() {
@@ -598,7 +774,7 @@ export function mountSettingsCenter(host, options = {}) {
     setMessage("", "");
     render();
     try {
-      const [response, shortcutResult, runtimeResult, backupsResult] = await Promise.all([
+      const [response, shortcutResult, runtimeResult, backupsResult, githubResult] = await Promise.all([
         fetch(apiRoutes.settingsCenter, { cache: "no-store" }),
         isDesktop && desktopShell?.getShortcutSettings
           ? desktopShell.getShortcutSettings().catch(() => null)
@@ -609,6 +785,9 @@ export function mountSettingsCenter(host, options = {}) {
         agentClient?.listBackups
           ? agentClient.listBackups().catch((error) => ({ backups: [], error: error.message }))
           : Promise.resolve({ backups: [], error: "Agent API 不可用" }),
+        getGithubSyncClient()?.getStatus
+          ? getGithubSyncClient().getStatus().catch((error) => ({ connected: false, error: error.message }))
+          : Promise.resolve(null),
       ]);
       const data = await readJsonResponse(response, "系统设置");
       if (!response.ok || !data.ok) throw new Error(data.error || "无法读取系统设置");
@@ -629,6 +808,17 @@ export function mountSettingsCenter(host, options = {}) {
       ]));
       agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
       agentBackupError = String(backupsResult?.error || "");
+      githubSyncStatus = githubResult;
+      githubClientId = String(githubResult?.auth?.clientId || "");
+      githubAppType = githubResult?.auth?.appType === "oauth-app" ? "oauth-app" : "github-app";
+      githubAuthMethod = githubResult?.auth?.method === "device-flow" ? "device-flow" : "token";
+      githubSyncError = String(githubResult?.error || "");
+      githubDeviceFlow = null;
+      githubRepositories = [];
+      githubWorkspace = null;
+      githubRemoteBoards = [];
+      githubConflictResolutions = {};
+      githubConflictDetails = {};
       backupAction = "";
       restoreCandidate = "";
       phase = "idle";
@@ -872,10 +1062,170 @@ export function mountSettingsCenter(host, options = {}) {
     render();
   }
 
+  async function runGithubAction(action, actionPayload = {}) {
+    const client = getGithubSyncClient();
+    if (!client || githubSyncAction) return;
+    const token = action === "token-connect" ? String(host.querySelector("[data-github-token]")?.value || "").trim() : "";
+    const repositoryValue = action === "repository-save" ? host.querySelector("[data-github-repository]")?.value || "" : "";
+    const boardId = String(actionPayload.boardId || "").trim();
+    const resolution = String(actionPayload.resolution || "").trim();
+    const tokenInput = host.querySelector("[data-github-token]");
+    if (tokenInput) tokenInput.value = "";
+    if (action === "token-connect") githubDeviceFlow = null;
+    githubSyncAction = action;
+    githubSyncError = "";
+    render();
+    try {
+      if (action === "connect") {
+        githubDeviceFlow = null;
+        githubDeviceFlow = await client.startDeviceFlow({ clientId: githubClientId, appType: githubAppType });
+        setMessage("请在 GitHub 页面完成授权，然后点击检查授权结果", "warning");
+      } else if (action === "token-connect") {
+        await client.connectToken({ token });
+        githubDeviceFlow = null;
+        githubRepositories = [];
+        githubSyncStatus = await client.getStatus();
+        setMessage("GitHub 已连接，请加载并选择你自己的私有仓库", "success");
+      } else if (action === "poll") {
+        const result = await client.pollDeviceFlow({ deviceCode: githubDeviceFlow?.device_code, interval: githubDeviceFlow?.interval });
+        if (result.pending) {
+          githubDeviceFlow = { ...githubDeviceFlow, interval: result.interval };
+          setMessage(`GitHub 仍在等待授权，请至少等待 ${result.interval || 5} 秒后再检查`, "warning");
+        }
+        else { githubDeviceFlow = null; githubRepositories = []; githubSyncStatus = await client.getStatus(); setMessage("GitHub 已连接", "success"); }
+      } else if (action === "refresh") {
+        githubSyncStatus = await client.getStatus();
+        if (githubSyncStatus?.repository?.owner && githubSyncStatus?.repository?.repo) await refreshGithubWorkspace();
+        setMessage("GitHub 同步状态已刷新", "success");
+      } else if (action === "workspace") {
+        githubSyncStatus = await client.getStatus();
+        if (!githubSyncStatus?.repository?.owner || !githubSyncStatus?.repository?.repo) {
+          throw new Error("请先绑定一个 GitHub 私有仓库");
+        }
+        const workspaceResult = await refreshGithubWorkspace();
+        const count = workspaceResult.boards?.length || 0;
+        setMessage(count ? `已发现 ${count} 个远程画布` : "远端仓库中还没有 FreeFlow 画布", count ? "success" : "warning");
+      } else if (action === "repositories") {
+        const result = await client.listRepositories();
+        githubRepositories = (Array.isArray(result) ? result : (Array.isArray(result?.repositories) ? result.repositories : []))
+          .filter((repository) => repository.private === true && repository.owner?.login === (result?.user?.login || githubSyncStatus?.auth?.user?.login));
+        setMessage(githubRepositories.length ? `已读取 ${githubRepositories.length} 个私有仓库` : "没有可用的私有仓库，请检查仓库授权；GitHub App 还需安装到该仓库", githubRepositories.length ? "success" : "warning");
+      } else if (action === "repository-save") {
+        const value = repositoryValue;
+        const separator = value.indexOf("/");
+        if (separator <= 0) throw new Error("请选择一个 GitHub 仓库");
+        const selected = githubRepositories.find((repository) => `${repository.owner?.login}/${repository.name}` === value);
+        await client.setRepository({ owner: value.slice(0, separator), repo: value.slice(separator + 1), branch: selected?.default_branch || "main" });
+        githubSyncStatus = await client.getStatus();
+        githubWorkspace = null;
+        githubRemoteBoards = [];
+        githubConflictResolutions = {};
+        githubConflictDetails = {};
+        setMessage("GitHub 仓库已绑定", "success");
+      } else if (action === "repository-create") {
+        const created = await client.createRepository({ name: "freeflow-workspace", description: "FreeFlow personal workspace" });
+        const repositoryResult = await client.listRepositories();
+        githubRepositories = (Array.isArray(repositoryResult) ? repositoryResult : (Array.isArray(repositoryResult?.repositories) ? repositoryResult.repositories : []))
+          .filter((repository) => repository.private === true && repository.owner?.login === (repositoryResult?.user?.login || githubSyncStatus?.auth?.user?.login));
+        const owner = created?.repository?.owner?.login || "";
+        if (owner && created?.repository?.name) await client.setRepository({ owner, repo: created.repository.name, branch: created.repository.default_branch || "main" });
+        githubSyncStatus = await client.getStatus();
+        githubWorkspace = null;
+        githubRemoteBoards = [];
+        githubConflictResolutions = {};
+        githubConflictDetails = {};
+        setMessage("已创建并绑定私有仓库", "success");
+      } else if (action === "sync") {
+        if (!prepareGitHubSyncBoard) throw new Error("当前画布尚未就绪，请稍后重试");
+        const boardPath = await prepareGitHubSyncBoard();
+        await client.sync({ boardPath });
+        githubSyncStatus = await client.getStatus();
+        setMessage("当前画布已同步到 GitHub", "success");
+        await refreshGithubWorkspace();
+      } else if (action === "pull" || action === "reconcile") {
+        if (!boardId) throw new Error("未选择远程画布");
+        const board = githubRemoteBoards.find((item) => item.boardId === boardId) || {};
+        let boardPath = board.syncState === "remote-only"
+          ? ""
+          : String(board.localPath || githubSyncStatus?.ledger?.boards?.[boardId]?.localPath || "").trim();
+        if (!boardPath && desktopShell?.pickCanvasBoardPath) {
+          const defaultName = String(board.name || board.title || `freeflow-${boardId}`).replace(/[\\/:*?"<>|]/g, "-");
+          const picked = await desktopShell.pickCanvasBoardPath({ defaultPath: defaultName.endsWith(".freeflow") ? defaultName : `${defaultName}.freeflow` });
+          if (picked?.canceled || !picked?.filePath) {
+            setMessage("已取消选择本地画布路径", "warning");
+            return;
+          }
+          boardPath = picked.filePath;
+        }
+        if (!boardPath) throw new Error("此远程画布还没有本地路径，请选择保存位置");
+        const payload = { boardId, boardPath };
+        let result;
+        if (action === "pull") {
+          result = typeof client.pull === "function" ? await client.pull(payload) : await client.download(payload);
+        } else {
+          if (typeof client.reconcile !== "function") throw new Error("当前版本暂不支持远程冲突合并，请更新桌面应用");
+          result = await client.reconcile({ ...payload, resolution });
+        }
+        githubSyncStatus = await client.getStatus();
+        await refreshGithubWorkspace();
+        if (action === "reconcile" && !resolution && Array.isArray(result?.resolutions)) {
+          githubConflictResolutions[boardId] = result.resolutions;
+          setMessage("请选择自动合并、保留本地版本或使用远端版本", "warning");
+        } else {
+          delete githubConflictResolutions[boardId];
+          delete githubConflictDetails[boardId];
+          const pullMessage = result?.requiresPush
+            ? "本机有未上传修改，请先同步后再拉取"
+            : result?.pulled === false
+              ? "本机画布已经是最新版本"
+              : "远程画布已拉取到本机";
+          setMessage(action === "pull" ? pullMessage : resolution === "auto" ? "远程画布已自动合并" : "已处理远程画布冲突", result?.requiresPush ? "warning" : "success");
+        }
+      } else if (action === "disconnect") {
+        await client.disconnect();
+        githubDeviceFlow = null;
+        githubRepositories = [];
+        githubWorkspace = null;
+        githubRemoteBoards = [];
+        githubConflictResolutions = {};
+        githubConflictDetails = {};
+        githubSyncStatus = await client.getStatus();
+        setMessage("已断开 GitHub，画布仍保留在本机", "success");
+      }
+    } catch (error) {
+      if (action === "poll" && shouldResetGithubDeviceFlow(error)) githubDeviceFlow = null;
+      if (boardId && (error?.code === "SYNC_CONFLICT" || error?.conflicts || error?.artifacts || error?.state)) {
+        githubConflictDetails[boardId] = {
+          conflicts: Array.isArray(error.conflicts) ? error.conflicts : [],
+          artifacts: error.artifacts && typeof error.artifacts === "object" ? error.artifacts : null,
+          state: error.state && typeof error.state === "object" ? error.state : null,
+        };
+        if (["pull", "reconcile"].includes(action)) {
+          githubConflictResolutions[boardId] = ["local", "remote", "auto"];
+        }
+      }
+      githubSyncError = error?.message || "GitHub 同步失败";
+      setMessage(githubSyncError, "error");
+      if (["refresh", "workspace", "sync", "pull", "reconcile"].includes(action)) {
+        try {
+          githubSyncStatus = await client.getStatus();
+          if (githubSyncStatus?.repository?.owner && githubSyncStatus?.repository?.repo) await refreshGithubWorkspace();
+        } catch {
+          // Preserve the original operation error when the recovery refresh also fails.
+        }
+      }
+    } finally {
+      githubSyncAction = "";
+      render();
+    }
+  }
+
   host.addEventListener("click", async (event) => {
+    if (phase === "saving") return;
     const target = event.target instanceof Element ? event.target : null;
     const sectionButton = target?.closest("[data-settings-section]");
     if (sectionButton) {
+      if (githubSyncAction) return;
       activeSection = sectionButton.dataset.settingsSection;
       riskConfirmationPending = false;
       setMessage("", "");
@@ -920,6 +1270,40 @@ export function mountSettingsCenter(host, options = {}) {
     const actionButton = target?.closest("[data-settings-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.settingsAction;
+    if (githubSyncAction && ["reload", "save", "confirm-risk", "reset-section", "cancel"].includes(action)) return;
+    if (action === "github-connect") { await runGithubAction("connect"); return; }
+    if (action === "github-token-connect") { await runGithubAction("token-connect"); return; }
+    if (action === "github-open-token") {
+      window.open("https://github.com/settings/personal-access-tokens/new", "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (action === "github-poll") { await runGithubAction("poll"); return; }
+    if (action === "github-refresh") { await runGithubAction("refresh"); return; }
+    if (action === "github-workspace") { await runGithubAction("workspace"); return; }
+    if (action === "github-repositories") { await runGithubAction("repositories"); return; }
+    if (action === "github-repository-create") { await runGithubAction("repository-create"); return; }
+    if (action === "github-repository-save") { await runGithubAction("repository-save"); return; }
+    if (action === "github-sync") { await runGithubAction("sync"); return; }
+    if (action === "github-pull") { await runGithubAction("pull", { boardId: actionButton.dataset.githubBoardId }); return; }
+    if (action === "github-reconcile") { await runGithubAction("reconcile", { boardId: actionButton.dataset.githubBoardId, resolution: actionButton.dataset.githubResolution }); return; }
+    if (action === "github-reveal-conflict") {
+      const boardId = actionButton.dataset.githubBoardId || "";
+      const directory = githubConflictDetails[boardId]?.artifacts?.directory || "";
+      if (directory && desktopShell?.revealPath) {
+        const result = await desktopShell.revealPath(directory);
+        if (result?.ok === false) {
+          setMessage(result.error || "无法打开冲突副本目录", "error");
+          render();
+        }
+      }
+      return;
+    }
+    if (action === "github-disconnect") { await runGithubAction("disconnect"); return; }
+    if (action === "github-open-device") {
+      const url = githubDeviceFlow?.verification_uri || githubDeviceFlow?.verification_uri_complete;
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (action === "reload") await load();
     if (action === "save") await save();
     if (action === "confirm-risk") await save({ confirmedRisk: true });
@@ -967,13 +1351,18 @@ export function mountSettingsCenter(host, options = {}) {
   });
 
   host.addEventListener("input", (event) => {
+    if (phase === "saving") return;
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+    if (target.matches("[data-github-client-id]")) {
+      githubClientId = target.value.trim();
+      return;
+    }
     if (target.dataset.agentConnectionField) {
       const provider = draft.ai.agent?.activeProvider === "claude" ? "claude" : "codex";
       agentConnectionDrafts[provider][target.dataset.agentConnectionField] = target.value;
       const discardButton = host.querySelector('[data-settings-action="cancel"]');
-      if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || Boolean(agentAction);
+      if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);
       return;
     }
     if (target.matches("[data-settings-shortcut]")) {
@@ -1000,8 +1389,23 @@ export function mountSettingsCenter(host, options = {}) {
   });
 
   host.addEventListener("change", (event) => {
+    if (phase === "saving") return;
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    if (target.matches("[data-github-auth-method]")) {
+      githubAuthMethod = target.value === "device-flow" ? "device-flow" : "token";
+      githubDeviceFlow = null;
+      githubSyncError = "";
+      const tokenInput = host.querySelector("[data-github-token]");
+      if (tokenInput) tokenInput.value = "";
+      setMessage("", "");
+      render();
+      return;
+    }
+    if (target.matches("[data-github-app-type]")) {
+      githubAppType = target.value === "oauth-app" ? "oauth-app" : "github-app";
+      return;
+    }
     if (target.dataset.permissionKey) {
       draft.permissions.permissions[target.dataset.permissionKey] = target.checked;
       markDraftChanged();
@@ -1046,6 +1450,9 @@ export function mountSettingsCenter(host, options = {}) {
 
   function open() {
     if (!draft || phase === "load-error") return load();
+    if (snapshot?.sections?.appearance && stableStringify(draft.appearance) !== stableStringify(snapshot.sections.appearance)) {
+      previewTheme();
+    }
     render();
     return Promise.resolve();
   }

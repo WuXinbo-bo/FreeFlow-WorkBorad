@@ -119,6 +119,7 @@ export function pickThemeSettings(payload = {}) {
 
 export function resolveThemePresetKey(settings = {}, requestedKey = "") {
   const rawRequestedKey = typeof requestedKey === "string" ? requestedKey.trim() : "";
+  if (rawRequestedKey === "custom") return "custom";
   const normalizedRequestedKey = THEME_PRESET_ALIASES[rawRequestedKey] || rawRequestedKey;
   if (normalizedRequestedKey && THEME_PRESET_DEFS[normalizedRequestedKey] && normalizedRequestedKey !== "custom") {
     return normalizedRequestedKey;
@@ -128,15 +129,9 @@ export function resolveThemePresetKey(settings = {}, requestedKey = "") {
     if (!preset?.settings) continue;
     const presetSource = { ...DEFAULT_THEME_SETTINGS, ...preset.settings };
     const normalizedPreset = {
-      panelOpacity: Number.isFinite(Number(presetSource.panelOpacity))
-        ? Math.min(Math.max(Number(presetSource.panelOpacity), 0.55), 1)
-        : DEFAULT_THEME_SETTINGS.panelOpacity,
-      canvasOpacity: Number.isFinite(Number(presetSource.canvasOpacity))
-        ? Math.min(Math.max(Number(presetSource.canvasOpacity), 0.2), 1)
-        : DEFAULT_THEME_SETTINGS.canvasOpacity,
-      backgroundOpacity: Number.isFinite(Number(presetSource.backgroundOpacity))
-        ? Math.min(Math.max(Number(presetSource.backgroundOpacity), 0), 1)
-        : DEFAULT_THEME_SETTINGS.backgroundOpacity,
+      panelOpacity: DEFAULT_THEME_SETTINGS.panelOpacity,
+      canvasOpacity: 1,
+      backgroundOpacity: 1,
       ...deriveThemeColors(presetSource),
       themePreset: preset.key,
     };
@@ -151,9 +146,10 @@ export function resolveThemePresetKey(settings = {}, requestedKey = "") {
 
 export function normalizeThemeSettings(payload = {}) {
   const rawSource = pickThemeSource(payload);
-  const aliasedPreset = THEME_PRESET_ALIASES[String(rawSource.themePreset || "").trim()] || "";
-  const source = aliasedPreset
-    ? { ...rawSource, ...THEME_PRESET_DEFS[aliasedPreset]?.settings, themePreset: aliasedPreset }
+  const requestedPreset = String(rawSource.themePreset || "").trim();
+  const presetKey = THEME_PRESET_ALIASES[requestedPreset] || requestedPreset;
+  const source = THEME_PRESET_DEFS[presetKey]?.settings
+    ? { ...rawSource, ...THEME_PRESET_DEFS[presetKey].settings, themePreset: presetKey }
     : rawSource;
   const panelOpacity = DEFAULT_THEME_SETTINGS.panelOpacity;
   const canvasOpacity = 1;

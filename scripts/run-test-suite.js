@@ -19,6 +19,8 @@ const CHECKS = [
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
+  "scripts/check-github-sync-core.js",
+  "scripts/check-github-sync-auth.js",
   "scripts/check-server-port.js",
   "scripts/check-update-service.js",
   "scripts/check-window-bounds-lifecycle.js",
@@ -142,6 +144,9 @@ async function main() {
     await runNodeScript("scripts/check-canvas-presentation-performance.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
+    await runNodeScript("scripts/check-canvas-background-lifecycle.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-document-preview-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
@@ -172,6 +177,7 @@ async function main() {
     await runNodeScript("scripts/check-settings-center-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
+    await runNodeScript("scripts/check-settings-github-browser.js", {});
     await runNodeScript("scripts/check-tutorial-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });

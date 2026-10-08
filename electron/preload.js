@@ -3,6 +3,33 @@ const rendererDocumentId = `${Date.now().toString(36)}-${Math.random().toString(
 const bootstrapTimeoutListeners = new Set();
 let pendingBootstrapTimeout = null;
 
+async function invokeGitHubSync(channel, payload) {
+  try {
+    const result = await ipcRenderer.invoke(channel, payload);
+    if (result?.ok === false) {
+      const wrapped = new Error(String(result.error || "GitHub 同步失败"));
+      for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+        if (result[key] !== undefined) wrapped[key] = result[key];
+      }
+      throw wrapped;
+    }
+    return result;
+  } catch (error) {
+    const rawMessage = String(error?.message || "GitHub 同步失败").replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
+    const marker = "\n__FREEFLOW_GITHUB_SYNC_DETAILS__";
+    const markerIndex = rawMessage.indexOf(marker);
+    const message = markerIndex >= 0 ? rawMessage.slice(0, markerIndex) : rawMessage;
+    const detailsText = markerIndex >= 0 ? rawMessage.slice(markerIndex + marker.length) : "";
+    let details = {};
+    try { details = detailsText ? JSON.parse(detailsText) : {}; } catch { details = {}; }
+    const wrapped = new Error(message || "GitHub 同步失败");
+    for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+      if (details[key] !== undefined) wrapped[key] = details[key];
+    }
+    throw wrapped;
+  }
+}
+
 ipcRenderer.on("desktop-shell:bootstrap-timeout", (_event, payload) => {
   pendingBootstrapTimeout = payload || {};
   bootstrapTimeoutListeners.forEach((listener) => listener(pendingBootstrapTimeout));
@@ -86,6 +113,25 @@ contextBridge.exposeInMainWorld("desktopShell", {
   chatWithDoubao: (payload) => ipcRenderer.invoke("desktop-shell:chat-with-doubao", payload),
   cancelDoubaoChat: () => ipcRenderer.invoke("desktop-shell:cancel-doubao-chat"),
   prepareDoubaoPrompt: (payload) => ipcRenderer.invoke("desktop-shell:prepare-doubao-prompt", payload),
+  githubSync: {
+    getStatus: () => invokeGitHubSync("desktop-shell:github-sync-status"),
+    startDeviceFlow: (payload) => invokeGitHubSync("desktop-shell:github-sync-device-flow-start", payload),
+    connectToken: (payload) => invokeGitHubSync("desktop-shell:github-sync-token-connect", payload),
+    pollDeviceFlow: (payload) => invokeGitHubSync("desktop-shell:github-sync-device-flow-poll", payload),
+    disconnect: () => invokeGitHubSync("desktop-shell:github-sync-disconnect"),
+    getUser: () => invokeGitHubSync("desktop-shell:github-sync-user"),
+    listRepositories: () => invokeGitHubSync("desktop-shell:github-sync-repositories"),
+    setRepository: (payload) => invokeGitHubSync("desktop-shell:github-sync-repository", payload),
+    createRepository: (payload) => invokeGitHubSync("desktop-shell:github-sync-repository-create", payload),
+    evaluateAttachment: (payload) => invokeGitHubSync("desktop-shell:github-sync-attachment-policy", payload),
+    sync: (payload) => invokeGitHubSync("desktop-shell:github-sync", payload),
+    download: (payload) => invokeGitHubSync("desktop-shell:github-sync-download", payload),
+    getWorkspace: (payload) => invokeGitHubSync("desktop-shell:github-sync-workspace", payload),
+    listBoards: (payload) => invokeGitHubSync("desktop-shell:github-sync-boards", payload),
+    getBoardState: (payload) => invokeGitHubSync("desktop-shell:github-sync-board-state", payload),
+    pull: (payload) => invokeGitHubSync("desktop-shell:github-sync-pull", payload),
+    reconcile: (payload) => invokeGitHubSync("desktop-shell:github-sync-reconcile", payload),
+  },
   setClickThrough: (enabled) => ipcRenderer.invoke("desktop-shell:set-click-through", enabled),
   toggleClickThrough: () => ipcRenderer.invoke("desktop-shell:toggle-click-through"),
   setWindowShape: (rects) => ipcRenderer.invoke("desktop-shell:set-window-shape", rects),

@@ -29,13 +29,18 @@ async function main() {
     isRetainedFrameCoverageValid,
   } = await import("../public/src/engines/canvas2d-core/render/retainedCameraFrame.js");
   const queued = [];
+  const surfaces = [];
   const runtime = createRetainedCameraFrame({
     marginPx: 200,
     scheduleTask: (task) => {
       queued.push(task);
       return () => {};
     },
-    surfaceFactory: createFakeSurface,
+    surfaceFactory: (width, height) => {
+      const surface = createFakeSurface(width, height);
+      surfaces.push(surface);
+      return surface;
+    },
   });
   const baseView = { scale: 1, offsetX: 40, offsetY: 60 };
   let drawCount = 0;
@@ -115,6 +120,21 @@ async function main() {
   assert.strictEqual(missed.presented, false, "out-of-coverage camera view reused stale pixels");
   runtime.clear();
   assert.strictEqual(runtime.getStats().ready, false, "retained frame survived clear");
+  assert.strictEqual(surfaces[0].width, 0, "clear kept the backing store allocated");
+  const descriptor = { key: "old", view: baseView, width: 1000, height: 700, draw: () => {} };
+  runtime.schedulePrepare(descriptor);
+  const stalePrepare = queued.shift();
+  runtime.clear();
+  runtime.schedulePrepare({ ...descriptor, key: "new" });
+  stalePrepare();
+  assert.strictEqual(runtime.getStats().pendingKey, "new", "canceled prepare cleared a newer pending frame");
+  queued.shift()();
+  assert.strictEqual(runtime.getStats().key, "new", "clear/reprepare failed to restore the retained frame");
+  const previousSurface = surfaces.at(-1);
+  runtime.prepareNow({ ...descriptor, key: "replacement" });
+  assert.strictEqual(previousSurface.width, 0, "replacement kept the old backing store allocated");
+  runtime.clear();
+  assert.strictEqual(runtime.getStats().byteSize, 0);
   console.log("[check-retained-camera-frame] ok");
 }
 

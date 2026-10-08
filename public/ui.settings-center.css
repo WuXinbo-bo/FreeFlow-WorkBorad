@@ -836,6 +836,76 @@
   font-size: 0.8rem;
 }
 
+.settings-center-github-remote {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e3e8ea;
+}
+
+.settings-center-github-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid #dce3e6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.settings-center-github-board-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.settings-center-github-board-copy strong {
+  overflow: hidden;
+  color: #33414a;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-center-github-board-copy small {
+  overflow: hidden;
+  color: #7d8991;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-center-github-board-copy code {
+  color: inherit;
+  font-size: 0.64rem;
+}
+
+.settings-center-github-board-path {
+  direction: rtl;
+  text-align: left;
+}
+
+.settings-center-github-board-state {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #64727a;
+  background: #eef2f3;
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.settings-center-github-board-state.is-ready {
+  color: #226246;
+  background: #e6f4eb;
+}
+
+.settings-center-github-board-state.is-warning {
+  color: #8b561b;
+  background: #fff0d8;
+}
+
 .settings-center-revision {
   display: flex;
   align-items: center;
@@ -2272,5 +2342,142 @@
   .settings-center-theme-presets,
   .settings-center-color-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* GitHub uses two explicit, mutually exclusive authentication paths. Keep
+   the choice cards visually distinct from the credential panel so it is clear
+   which values are required for the selected method. */
+.settings-center-auth-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-center-auth-method {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: start;
+  gap: 10px;
+  min-height: 84px;
+  padding: 13px 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 7px;
+  color: var(--settings-text);
+  background: var(--settings-control);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.settings-center-auth-method:hover {
+  border-color: var(--settings-border-strong);
+  background: var(--settings-active);
+}
+
+.settings-center-auth-method.is-active {
+  border-color: var(--settings-accent);
+  background: var(--settings-active);
+  box-shadow: 0 0 0 2px rgb(var(--app-button-rgb) / 0.12);
+}
+
+.settings-center-auth-method:has(input:focus-visible) {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 2px;
+}
+
+.settings-center-auth-method input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-center-auth-method > span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-center-auth-method strong {
+  color: var(--settings-text);
+  font-size: 0.78rem;
+}
+
+.settings-center-auth-method small {
+  color: var(--settings-muted);
+  font-size: 0.67rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.settings-center-auth-method i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 2px solid var(--settings-border-strong);
+  border-radius: 50%;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.settings-center-auth-method.is-active i {
+  border-color: var(--settings-accent);
+  box-shadow: inset 0 0 0 3px var(--settings-control), inset 0 0 0 6px var(--settings-accent);
+}
+
+.settings-center-auth-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 7px;
+  background: var(--settings-control-strong);
+}
+
+.settings-center-github-remote {
+  border-top-color: var(--settings-border);
+}
+
+.settings-center-github-board {
+  border-color: var(--settings-border);
+  background: rgb(var(--theme-input-surface-rgb) / 0.68);
+}
+
+.settings-center-github-board-copy strong {
+  color: var(--settings-text);
+}
+
+.settings-center-github-board-copy small {
+  color: var(--settings-muted);
+}
+
+.settings-center-github-board-state {
+  color: var(--settings-muted);
+  background: rgb(var(--theme-control-surface-strong-rgb) / 0.72);
+}
+
+.settings-center-github-board-state.is-ready {
+  color: var(--settings-brand);
+  background: rgb(var(--app-button-rgb) / 0.12);
+}
+
+.settings-center-github-board-state.is-warning {
+  color: var(--settings-warning, #8b561b);
+  background: rgb(201 132 40 / 0.14);
+}
+
+@media (max-width: 620px) {
+  .settings-center-auth-methods {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-center-github-board {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-center-github-board .settings-center-inline-actions {
+    grid-column: 1 / -1;
   }
 }

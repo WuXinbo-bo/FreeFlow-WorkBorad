@@ -27,6 +27,7 @@ const RECOMMENDED_MODELS = ["qwen3.5:4b"];
 const BIGMODEL_MODELS = ["glm-4.7-flash", "glm-4.6v-flash"];
 const AGENT_VISUAL_MODEL = "glm-4.6v-flash";
 const AGENT_SCREENSHOT_SETTLE_MS = 350;
+const FREEFLOW_GITHUB_CLIENT_ID = String(process.env.FREEFLOW_GITHUB_CLIENT_ID || "").trim();
 
 module.exports = {
   PORT,
@@ -44,4 +45,5 @@ module.exports = {
   BIGMODEL_MODELS,
   AGENT_VISUAL_MODEL,
   AGENT_SCREENSHOT_SETTLE_MS,
+  FREEFLOW_GITHUB_CLIENT_ID,
 };

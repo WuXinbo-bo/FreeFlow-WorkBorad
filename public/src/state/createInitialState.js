@@ -125,6 +125,8 @@ export function createInitialState() {
     },
     composerAttachments: [],
     clipboardPollTimer: null,
+    clipboardPollInFlight: false,
+    clipboardPollingSuspended: false,
     lastClipboardText: "",
     activeTaskRoute: "",
     canvasBoardPersistTimer: null,

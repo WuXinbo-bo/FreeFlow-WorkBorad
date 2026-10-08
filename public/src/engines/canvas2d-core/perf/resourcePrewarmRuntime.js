@@ -5,6 +5,12 @@ const PRIORITY_WEIGHT = Object.freeze({
   background: 3,
 });
 
+export function resolveImagePrewarmPolicy(deviceMemory = globalThis.navigator?.deviceMemory) {
+  const memoryGb = Number(deviceMemory);
+  const lowMemory = Number.isFinite(memoryGb) && memoryGb > 0 && memoryGb <= 4;
+  return Object.freeze({ marginPx: lowMemory ? 640 : 1280, maxImages: lowMemory ? 24 : 64 });
+}
+
 function defaultSchedule(task) {
   if (typeof globalThis.requestIdleCallback === "function") {
     const id = globalThis.requestIdleCallback(task, { timeout: 240 });
@@ -59,11 +65,11 @@ export function createResourcePrewarmRuntime({
     if (paused || flushing || cancelScheduled || !tasks.size) return false;
     const targetGeneration = generation;
     cancelScheduled = scheduleTask(() => {
-      cancelScheduled = null;
       if (paused || targetGeneration !== generation) {
         staleCount += 1;
         return;
       }
+      cancelScheduled = null;
       flushing = true;
       try {
         let processed = 0;

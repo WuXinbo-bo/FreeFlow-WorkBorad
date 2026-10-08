@@ -22,6 +22,10 @@ async function openSettings(page) {
     const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
     return rect && rect.left >= -1 && rect.right <= innerWidth + 1;
   });
+  await page.waitForFunction(() => {
+    const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
+    return rect && rect.left <= 14 && innerWidth - rect.right <= 14;
+  });
   await page.waitForSelector("[data-settings-section=general]");
 }
 
@@ -370,14 +374,14 @@ async function main() {
     });
     assert(
       settingsVisualContract.headerText === "系统设置" &&
-        settingsVisualContract.navCount === 7 &&
-        settingsVisualContract.navIconCount === 7 &&
+        settingsVisualContract.navCount === 8 &&
+        settingsVisualContract.navIconCount === 8 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
-        settingsVisualContract.frame.left <= 13 &&
-        settingsVisualContract.frame.top <= 13 &&
-        settingsVisualContract.frame.right <= 13 &&
-        settingsVisualContract.frame.bottom <= 13 &&
+        settingsVisualContract.frame.left <= 14 &&
+        settingsVisualContract.frame.top <= 14 &&
+        settingsVisualContract.frame.right <= 14 &&
+        settingsVisualContract.frame.bottom <= 14 &&
         settingsVisualContract.frame.width >= 1414 &&
         settingsVisualContract.frame.height >= 874,
       "settings visual hierarchy regressed",
@@ -489,6 +493,8 @@ async function main() {
 
     const readThemeState = () => page.evaluate(() => ({
       root: getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"),
+      panel: getComputedStyle(document.documentElement).getPropertyValue("--theme-panel-surface-rgb"),
+      accent: getComputedStyle(document.documentElement).getPropertyValue("--app-button-rgb"),
       canvasBackground: getComputedStyle(document.querySelector(".canvas-engine-stage")).backgroundColor,
       canvasPixel: Array.from((() => {
         const canvas = document.querySelector("#canvas-office-canvas");
@@ -526,6 +532,8 @@ async function main() {
     const previewTheme = await readThemeState();
     assert(
       previewTheme.root !== committedTheme.root &&
+        previewTheme.panel !== committedTheme.panel &&
+        previewTheme.accent !== committedTheme.accent &&
         previewTheme.canvasBackground === "rgb(255, 255, 255)" &&
         previewTheme.canvasPixel.every((value) => value === 255),
       "theme preset changed the protected white canvas surface",
@@ -562,6 +570,13 @@ async function main() {
       "rapid theme changes left a stale canvas background",
       rapidTheme
     );
+    const presetStates = [];
+    for (const preset of ["minimalist-slate", "midnight-slate-glow", "clear-day", "harbor-blue", "spruce-green"]) {
+      await page.locator(`[data-theme-preset="${preset}"]`).click();
+      presetStates.push(await readThemeState());
+    }
+    const uniquePresetSurfaces = new Set(presetStates.map((state) => `${state.root}|${state.panel}|${state.accent}`));
+    assert(uniquePresetSurfaces.size === 5, "theme presets did not produce five distinct application surfaces", presetStates);
     await page.locator('[data-theme-preset="midnight-slate-glow"]').click();
     await page.locator('[data-settings-action="cancel"]').click();
     await page.waitForFunction(() => !document.querySelector("#insight-drawer")?.classList.contains("is-open"));

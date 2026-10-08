@@ -1495,6 +1495,11 @@ export function createRenderer({ customRenderers = [] } = {}) {
       retainedCameraFrame.getReadiness({ view, width, height, dpr, key: retainedFrameExpectedKey }),
     trimBackgroundPatternCacheToBytes: (maxBytes) => backgroundPatternCache.trimToBytes(maxBytes),
     trimTileCacheToBytes: (maxBytes) => staticTileLayer.trimToBytes(maxBytes),
+    releaseRetainedFrame: () => {
+      retainedCameraFrame.clear();
+      retainedFrameExpectedKey = "";
+    },
+    releaseCachedSurfaces: resetCachedSurfaces,
     hasRuntimeElementRenderer: (item) => {
       const type = canvasElementRegistry.resolveElement(item)?.type || String(item?.type || "");
       return runtimeFallbackRendererCount > 0 || (runtimeRendererCounts.get(type) || 0) > 0;
