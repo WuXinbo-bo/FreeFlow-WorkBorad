@@ -263,6 +263,28 @@ async function main() {
   assert.equal(typeof sync.listBoards, "function");
   const discovered = await sync.listBoards();
   assert(discovered.boards.some((board) => board.boardId === boardId), "workspace discovery missed the remote board");
+  const deletedWorkspace = {
+    schemaVersion: 1,
+    workspaceId: "fixture-workspace",
+    boards: {
+      [boardId]: {
+        boardId,
+        path: `.freeflow/boards/${boardId}/board.freeflow`,
+        manifestPath: `.freeflow/boards/${boardId}/manifest.json`,
+        boardHash: bundleA.boardHash,
+        deletedAt: new Date().toISOString(),
+      },
+    },
+  };
+  await clientA.createCommit({
+    owner,
+    repo,
+    branch,
+    message: "Mark board deleted",
+    files: [{ path: ".freeflow/workspace.json", content: Buffer.from(JSON.stringify(deletedWorkspace), "utf8") }],
+  });
+  const deletedListing = await sync.listBoards();
+  assert.equal(deletedListing.boards.length, 0, "deleted boards must not reappear from legacy tree scan");
   assert.equal(typeof sync.pullBoard, "function");
   assert.equal(typeof sync.reconcileBoard, "function");
 
