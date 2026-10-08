@@ -51,6 +51,21 @@ async function main() {
   assert.equal(items[3].syncReason, "video-disabled");
   assert.equal(hashJson({ updatedAt: 1, value: "same" }), hashJson({ updatedAt: 2, value: "same" }));
 
+  const duplicateAssetPath = path.join(root, "duplicate-assets.freeflow");
+  await fsPromises.writeFile(duplicateAssetPath, JSON.stringify({
+    kind: "structured-host-board",
+    board: {
+      boardId: "duplicate-assets",
+      items: [
+        { id: "png", type: "image", name: "same.png", mime: "image/png", dataUrl: `data:image/png;base64,${smallData}` },
+        { id: "jpg", type: "image", name: "same.jpg", mime: "image/jpeg", dataUrl: `data:image/jpeg;base64,${smallData}` },
+      ],
+    },
+  }), "utf8");
+  const duplicateBundle = await buildSyncBundleFromFile(duplicateAssetPath);
+  assert.equal(duplicateBundle.manifest.resources.length, 1, "same attachment content should be stored once");
+  assert.equal(duplicateBundle.manifest.assetBytes, Buffer.from("small-image").length);
+
   const envelopePath = path.join(root, "checksummed.freeflow");
   const envelope = addChecksumToEnvelope({ kind: "freeflow-board", formatVersion: 1, payload: { kind: "structured-host-board", board: { items: [] } } });
   await fsPromises.writeFile(envelopePath, JSON.stringify(envelope));
