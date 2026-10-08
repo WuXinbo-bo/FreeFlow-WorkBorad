@@ -3995,6 +3995,7 @@ ipcMain.handle("desktop-shell:prepare-doubao-prompt", async (_event, payload) =>
 });
 
 async function githubSyncRequest(pathname, options = {}) {
+  const detailsMarker = "\n__FREEFLOW_GITHUB_SYNC_DETAILS__";
   const response = await fetch(new URL(`/api/github-sync${pathname}`, APP_URL), {
     method: options.method || "GET",
     headers: { "Content-Type": "application/json" },
@@ -4002,38 +4003,70 @@ async function githubSyncRequest(pathname, options = {}) {
   });
   const data = await response.json().catch(() => null);
   if (!response.ok || data?.ok === false) {
-    const error = new Error(data?.error || `GitHub 同步请求失败 (${response.status})`);
+    const details = {
+      status: response.status,
+      code: data?.code || "",
+      conflicts: data?.conflicts,
+      artifacts: data?.artifacts,
+      state: data?.state,
+    };
+    const error = new Error(`${data?.error || `GitHub 同步请求失败 (${response.status})`}${detailsMarker}${JSON.stringify(details)}`);
     error.status = response.status;
     error.code = data?.code || "";
+    error.conflicts = data?.conflicts;
+    error.artifacts = data?.artifacts;
+    error.state = data?.state;
     throw error;
   }
   if (data?.ok !== true) throw new Error("GitHub 同步接口返回了无效响应，请重启桌面应用");
   return data;
 }
 
-ipcMain.handle("desktop-shell:github-sync-status", () => githubSyncRequest("/status"));
-ipcMain.handle("desktop-shell:github-sync-device-flow-start", (_event, payload) => githubSyncRequest("/device-flow/start", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-token-connect", (_event, payload) => githubSyncRequest("/token", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-device-flow-poll", (_event, payload) => githubSyncRequest("/device-flow/poll", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-disconnect", () => githubSyncRequest("/disconnect", { method: "POST", body: {} }));
-ipcMain.handle("desktop-shell:github-sync-user", () => githubSyncRequest("/user"));
-ipcMain.handle("desktop-shell:github-sync-repositories", () => githubSyncRequest("/repositories"));
-ipcMain.handle("desktop-shell:github-sync-repository", (_event, payload) => githubSyncRequest("/repository", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) => githubSyncRequest("/repository/create", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequest("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequest("/sync", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequest("/download", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-workspace", () => githubSyncRequest("/workspace"));
-ipcMain.handle("desktop-shell:github-sync-boards", () => githubSyncRequest("/boards"));
+function serializeGithubSyncError(error) {
+  return {
+    ok: false,
+    error: String(error?.message || "GitHub 同步请求失败"),
+    status: Number(error?.status) || 0,
+    code: String(error?.code || ""),
+    conflicts: Array.isArray(error?.conflicts) ? error.conflicts : undefined,
+    artifacts: error?.artifacts && typeof error.artifacts === "object" ? error.artifacts : undefined,
+    state: error?.state && typeof error.state === "object" ? error.state : undefined,
+  };
+}
+
+async function githubSyncRequestForIpc(pathname, options = {}) {
+  try {
+    return await githubSyncRequest(pathname, options);
+  } catch (error) {
+    // Return a cloneable envelope so Electron does not discard custom Error
+    // properties while crossing the main/preload IPC boundary.
+    return serializeGithubSyncError(error);
+  }
+}
+
+ipcMain.handle("desktop-shell:github-sync-status", () => githubSyncRequestForIpc("/status"));
+ipcMain.handle("desktop-shell:github-sync-device-flow-start", (_event, payload) => githubSyncRequestForIpc("/device-flow/start", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-token-connect", (_event, payload) => githubSyncRequestForIpc("/token", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-device-flow-poll", (_event, payload) => githubSyncRequestForIpc("/device-flow/poll", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-disconnect", () => githubSyncRequestForIpc("/disconnect", { method: "POST", body: {} }));
+ipcMain.handle("desktop-shell:github-sync-user", () => githubSyncRequestForIpc("/user"));
+ipcMain.handle("desktop-shell:github-sync-repositories", () => githubSyncRequestForIpc("/repositories"));
+ipcMain.handle("desktop-shell:github-sync-repository", (_event, payload) => githubSyncRequestForIpc("/repository", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) => githubSyncRequestForIpc("/repository/create", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequestForIpc("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequestForIpc("/sync", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequestForIpc("/download", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-workspace", () => githubSyncRequestForIpc("/workspace"));
+ipcMain.handle("desktop-shell:github-sync-boards", () => githubSyncRequestForIpc("/boards"));
 ipcMain.handle("desktop-shell:github-sync-board-state", (_event, payload) => {
   const boardId = encodeURIComponent(String(payload?.boardId || "").trim());
   if (!boardId) throw new Error("未指定远程画布");
   const boardPath = String(payload?.boardPath || "").trim();
   const query = boardPath ? `?boardPath=${encodeURIComponent(boardPath)}` : "";
-  return githubSyncRequest(`/boards/${boardId}/state${query}`);
+  return githubSyncRequestForIpc(`/boards/${boardId}/state${query}`);
 });
-ipcMain.handle("desktop-shell:github-sync-pull", (_event, payload) => githubSyncRequest("/pull", { method: "POST", body: payload || {} }));
-ipcMain.handle("desktop-shell:github-sync-reconcile", (_event, payload) => githubSyncRequest("/reconcile", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-pull", (_event, payload) => githubSyncRequestForIpc("/pull", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-reconcile", (_event, payload) => githubSyncRequestForIpc("/reconcile", { method: "POST", body: payload || {} }));
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
