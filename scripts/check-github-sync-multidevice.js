@@ -405,6 +405,35 @@ async function main() {
   const preservedLocal = JSON.parse(await fsPromises.readFile(boardBPath, "utf8"));
   assert.equal(preservedLocal.board.items[0].text, "Mac local conflict", "conflict must not overwrite the active local board");
 
+  // A third device may publish after conflict inspection but before the
+  // resolution commit. The resolution must keep the inspected remote SHA and
+  // reject the stale rebase instead of overwriting that newer commit.
+  const thirdPartyPath = path.join(deviceA, "remote-third-party.freeflow");
+  await fsPromises.writeFile(thirdPartyPath, JSON.stringify(fixtureBoard("Windows third-party change", false)), "utf8");
+  const thirdPartyBundle = await buildSyncBundleFromFile(thirdPartyPath);
+  let headReads = 0;
+  let injectingThirdParty = false;
+  const guardedFetch = async (url, options = {}) => {
+    const parsedUrl = new URL(url);
+    const isHeadRead = parsedUrl.pathname === `/repos/${owner}/${repo}/git/ref/heads/${branch}` && !options.method;
+    if (isHeadRead && !injectingThirdParty && ++headReads === 2) {
+      injectingThirdParty = true;
+      await clientA.createCommit({ owner, repo, branch, message: "Third device concurrent change", files: thirdPartyBundle.files });
+    }
+    return remote.fetchImpl(url, options);
+  };
+  globalThis.fetch = guardedFetch;
+  let staleResolutionError = null;
+  try {
+    await sync.reconcileBoard({ boardId, boardPath: boardBPath, resolution: "local" });
+  } catch (error) {
+    staleResolutionError = error;
+  } finally {
+    globalThis.fetch = remote.fetchImpl;
+  }
+  assert(staleResolutionError, "concurrent resolution should reject a stale rebase");
+  assert.equal(staleResolutionError.code, "REMOTE_CHANGED");
+
   await auth.clearTokens();
   console.log("[check-github-sync-multidevice] dual-device pull, stale-base rejection, large-blob hash, and interrupted-download recovery passed");
 }

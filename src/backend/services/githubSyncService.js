@@ -337,7 +337,7 @@ async function writeMergeConflictArtifacts(filePath, boardId, { ancestor, local,
   };
 }
 
-async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Update FreeFlow board", allowRemoteRebase = false } = {}) {
+async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Update FreeFlow board", allowRemoteRebase = false, expectedRemoteCommit = "" } = {}) {
   const config = await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
   const localPath = path.resolve(boardPath);
@@ -352,6 +352,16 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
   }
   const client = await getClient();
   const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
+  const expectedRemote = String(expectedRemoteCommit || "").trim();
+  if (expectedRemote && expectedRemote !== snapshot.commitSha) {
+    throw new GitHubApiError("远端分支在处理期间再次变化，请重新拉取并处理冲突", {
+      status: 409,
+      code: "REMOTE_CHANGED",
+      expectedBaseSha: expectedRemote,
+      currentBaseSha: snapshot.commitSha,
+      boardId: bundle.boardId,
+    });
+  }
   const remoteWorkspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
   const workspace = normalizeWorkspace(remoteWorkspace, config, ledger.workspaceId);
   const remoteBoard = workspace.boards[bundle.boardId];
@@ -395,7 +405,7 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
     branch: config.branch,
     message,
     files,
-    expectedBaseSha: snapshot.commitSha,
+    expectedBaseSha: expectedRemote || snapshot.commitSha,
   });
   await updateLedger((current) => ({
     ...current,
@@ -661,7 +671,7 @@ async function reconcileBoard({ boardId, boardPath = "", resolution = "", strate
   const selected = String(resolution || strategy || "").trim().toLowerCase();
   const state = await getBoardState({ boardId, boardPath });
   if (selected === "remote") return downloadBoard({ boardId: state.boardId, boardPath: state.localPath, remoteCommit: state.remoteCommit, force: true });
-  if (selected === "local") return syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, message: "Resolve FreeFlow sync conflict (local)" });
+  if (selected === "local") return syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, expectedRemoteCommit: state.remoteCommit, message: "Resolve FreeFlow sync conflict (local)" });
   if (selected !== "auto" && selected !== "merge") {
     return { ok: true, state, resolutions: ["local", "remote", "auto", "merge"] };
   }
@@ -707,7 +717,7 @@ async function reconcileBoard({ boardId, boardPath = "", resolution = "", strate
     });
   }
   await writeDownloadedBoard(state.localPath, JSON.stringify(merged.payload, null, 2));
-  const synced = await syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, message: "Resolve FreeFlow sync conflict (merge)" });
+  const synced = await syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, expectedRemoteCommit: state.remoteCommit, message: "Resolve FreeFlow sync conflict (merge)" });
   return { ...synced, merged: true, conflicts: [], ancestorSha };
 }
 
