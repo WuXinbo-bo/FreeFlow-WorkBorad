@@ -4023,6 +4023,10 @@ ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) 
 ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequest("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequest("/sync", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequest("/download", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-workspace", () => githubSyncRequest("/workspace"));
+ipcMain.handle("desktop-shell:github-sync-boards", () => githubSyncRequest("/boards"));
+ipcMain.handle("desktop-shell:github-sync-pull", (_event, payload) => githubSyncRequest("/pull", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-reconcile", (_event, payload) => githubSyncRequest("/reconcile", { method: "POST", body: payload || {} }));
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
