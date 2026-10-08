@@ -12,6 +12,7 @@ const SECTION_DEFS = Object.freeze([
   { key: "workbench", label: "工作台", icon: "panels" },
   { key: "canvas", label: "画布", icon: "pen-tool" },
   { key: "permissions", label: "权限", icon: "shield" },
+  { key: "github", label: "GitHub 同步", icon: "github" },
   { key: "diagnostics", label: "诊断", icon: "activity" },
 ]);
 
@@ -23,6 +24,7 @@ const SECTION_ICON_PATHS = Object.freeze({
   "pen-tool": '<path d="m12 19 7-7 3 3-7 7-3-3Z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="m9 12 2 2 4-4"/>',
   activity: '<path d="M3 12h4l3-9 4 18 3-9h4"/>',
+  github: '<path d="M9 19c-4 1.3-4-2-5.5-2m11 4v-3.9c0-1.1.1-1.4-.5-2.1 1.7-.2 3.5-.8 3.5-3.8 0-.8-.3-1.5-.8-2 .1-.2.3-1-.1-2 0 0-.7-.2-2.2.8a7.6 7.6 0 0 0-4 0C9.9 8 9.2 8.2 9.2 8.2c-.4 1-.2 1.8-.1 2-.5.5-.8 1.2-.8 2 0 3 1.8 3.6 3.5 3.8-.4.4-.5 1-.5 2.1V21"/>',
 });
 
 function renderSectionIcon(name) {
@@ -177,6 +179,7 @@ export function mountSettingsCenter(host, options = {}) {
   let githubRepositories = [];
   let githubClientId = "";
   let githubAppType = "github-app";
+  let githubAuthMethod = "token";
 
   function getGithubSyncClient() {
     return isDesktop && desktopShell?.githubSync ? desktopShell.githubSync : null;
@@ -513,7 +516,6 @@ export function mountSettingsCenter(host, options = {}) {
       <section class="settings-center-group">
         <div class="settings-center-group-heading"><h5>状态说明</h5><p>CLI、连接和模型状态独立检测；重新载入会丢弃未保存修改并恢复主题预览。</p></div>
       </section>
-      ${renderGithubSyncPanel()}
       <section class="settings-center-group">
         <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>AI 会话备份</h5><p>备份只包含新版 AI 会话数据。恢复前必须停止全部任务，当前数据会自动再留一份备份。</p></div><button type="button" data-settings-action="agent-create-backup"${backupAction ? " disabled" : ""}>${backupAction === "create" ? "正在备份" : "立即备份"}</button></div>
         ${agentBackupError ? `<div class="settings-center-runtime-error">${escapeHtml(agentBackupError)}</div>` : ""}
@@ -531,8 +533,13 @@ export function mountSettingsCenter(host, options = {}) {
     const repository = status.repository || {};
     const connected = Boolean(status.connected);
     const flow = githubDeviceFlow || {};
-    return `<section class="settings-center-group">
-      <div class="settings-center-group-heading"><h5>GitHub 画布同步</h5><p>使用你自己的 GitHub 私有仓库同步画布。大图片、视频和超限附件只保存为占位框。</p></div>
+    return `
+      <div class="settings-center-section-heading">
+        <div><p>GitHub</p><h4>GitHub 画布同步</h4></div>
+        <span>自己的私有仓库 · 本机加密凭据</span>
+      </div>
+      <section class="settings-center-group">
+      <div class="settings-center-group-heading"><h5>连接到你自己的 GitHub</h5><p>同步只写入你授权的私有仓库。大图片、视频和超限附件只保存为占位框。</p></div>
       ${!client ? `<div class="settings-center-empty-inline">仅桌面版支持 GitHub 同步。</div>` : `
         <div class="settings-center-diagnostic-grid">
           <div><span>授权</span><strong>${connected ? `已连接${status.auth?.user?.login ? ` · ${escapeHtml(status.auth.user.login)}` : ""}` : "未连接"}</strong></div>
@@ -540,19 +547,18 @@ export function mountSettingsCenter(host, options = {}) {
           <div><span>画布状态</span><strong>${escapeHtml(Object.values(status.ledger?.boards || {}).map((item) => item.syncState).filter(Boolean)[0] || "未同步")}</strong></div>
         </div>
         ${githubSyncError ? `<div class="settings-center-runtime-error">${escapeHtml(githubSyncError)}</div>` : ""}
-        ${!connected ? `<div class="settings-center-form-grid">
-          <label class="settings-center-field"><span>GitHub 个人访问令牌</span><input type="password" data-github-token autocomplete="off" spellcheck="false" maxlength="512" placeholder="粘贴 GitHub 个人访问令牌" /><small>推荐使用 Fine-grained token：选择你自己的私有仓库，Contents 设为 Read and write。凭证仅在本机加密保存。</small></label>
-          <div class="settings-center-inline-actions"><button type="button" data-settings-action="github-open-token">创建个人访问令牌</button><button class="is-primary" type="button" data-settings-action="github-token-connect"${githubSyncAction ? " disabled" : ""}>使用令牌连接</button></div>
-          <label class="settings-center-field"><span>授权应用类型</span><select data-github-app-type><option value="github-app"${githubAppType === "github-app" ? " selected" : ""}>GitHub App</option><option value="oauth-app"${githubAppType === "oauth-app" ? " selected" : ""}>OAuth App</option></select><small>GitHub App 需安装到自己的同步仓库并授予 Contents 读写权限。OAuth App 连接私有仓库需要 repo 授权范围。</small></label>
-          <label class="settings-center-field"><span>Client ID（设备授权）</span><input type="text" data-github-client-id value="${escapeHtml(githubClientId)}" maxlength="128" placeholder="填写启用了 Device Flow 的授权应用 Client ID" /><small>无需填写 Client Secret。没有授权应用时，可使用上方的个人访问令牌。</small></label>
-        </div>` : ""}
+        ${!connected ? `<div class="settings-center-auth-methods" role="radiogroup" aria-label="GitHub 连接方式">
+          <label class="settings-center-auth-method${githubAuthMethod === "token" ? " is-active" : ""}"><input type="radio" name="github-auth-method" data-github-auth-method="token" value="token"${githubAuthMethod === "token" ? " checked" : ""} /><span><strong>个人访问令牌</strong><small>直接验证你的 GitHub 账号。只需要令牌，不需要下面的应用类型和 Client ID。</small></span><i aria-hidden="true"></i></label>
+          <label class="settings-center-auth-method${githubAuthMethod === "device-flow" ? " is-active" : ""}"><input type="radio" name="github-auth-method" data-github-auth-method="device-flow" value="device-flow"${githubAuthMethod === "device-flow" ? " checked" : ""} /><span><strong>设备授权</strong><small>通过授权应用登录。需要选择应用类型并填写公开 Client ID，不需要令牌。</small></span><i aria-hidden="true"></i></label>
+        </div>
+        ${githubAuthMethod === "token" ? `<div class="settings-center-auth-panel"><label class="settings-center-field"><span>个人访问令牌</span><input type="password" data-github-token autocomplete="off" spellcheck="false" maxlength="512" placeholder="粘贴 GitHub Fine-grained token" /><small>建议只选择自己的同步仓库，并授予 Contents Read and write。令牌验证成功后仅在本机加密保存。</small></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-open-token">创建个人访问令牌</button><button class="is-primary" type="button" data-settings-action="github-token-connect"${githubSyncAction ? " disabled" : ""}>验证并连接</button></div></div>` : `<div class="settings-center-auth-panel"><div class="settings-center-form-grid"><label class="settings-center-field"><span>授权应用类型</span><select data-github-app-type><option value="github-app"${githubAppType === "github-app" ? " selected" : ""}>GitHub App</option><option value="oauth-app"${githubAppType === "oauth-app" ? " selected" : ""}>OAuth App</option></select><small>GitHub App 需要安装到同步仓库并授予 Contents 读写；OAuth App 使用 repo 授权范围。</small></label><label class="settings-center-field"><span>公开 Client ID</span><input type="text" data-github-client-id value="${escapeHtml(githubClientId)}" maxlength="128" placeholder="启用了 Device Flow 的授权应用 Client ID" /><small>Client ID 不是密码，不要填写 Client Secret。</small></label></div><div class="settings-center-inline-actions"><button class="is-primary" type="button" data-settings-action="github-connect"${githubSyncAction ? " disabled" : ""}>开始设备授权</button></div></div>`}` : ""}
         ${flow.user_code ? `<div class="settings-center-inline-actions"><code>${escapeHtml(flow.user_code)}</code><button type="button" data-settings-action="github-open-device">打开 GitHub 授权页</button><button type="button" data-settings-action="github-poll"${githubSyncAction ? " disabled" : ""}>检查授权结果</button></div>` : ""}
         ${connected ? `<div class="settings-center-form-grid"><label class="settings-center-field"><span>私有仓库</span><select data-github-repository><option value="">请选择仓库</option>${githubRepositories.map((repo) => `<option value="${escapeHtml(`${repo.owner?.login || repo.owner?.name || ""}/${repo.name || ""}`)}"${repo.owner?.login === repository.owner && repo.name === repository.repo ? " selected" : ""}>${escapeHtml(`${repo.owner?.login || ""}/${repo.name || ""}`)}</option>`).join("")}</select></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-repositories">加载仓库</button><button type="button" data-settings-action="github-repository-create">创建私有仓库</button><button type="button" data-settings-action="github-repository-save">使用所选仓库</button></div></div>` : ""}
         <div class="settings-center-inline-actions">
-          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>立即同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : `<button type="button" data-settings-action="github-connect"${githubSyncAction ? " disabled" : ""}>使用设备授权连接</button>`}
+          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>立即同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : ""}
         </div>
       `}
-    </section>`;
+      </section>`;
   }
 
   function renderActiveSection() {
@@ -563,18 +569,19 @@ export function mountSettingsCenter(host, options = {}) {
       case "workbench": return renderWorkbench();
       case "canvas": return renderCanvas();
       case "permissions": return renderPermissions();
+      case "github": return renderGithubSyncPanel();
       case "diagnostics": return renderDiagnostics();
       default: return renderGeneral();
     }
   }
 
   function render() {
-    if (phase === "loading" || !draft) {
-      host.innerHTML = `<div class="settings-center-loading"><span></span><strong>正在读取设置</strong></div>`;
-      return;
-    }
     if (phase === "load-error") {
       host.innerHTML = `<div class="settings-center-load-error"><strong>设置读取失败</strong><p>${escapeHtml(message)}</p><button type="button" data-settings-action="reload">重新载入</button></div>`;
+      return;
+    }
+    if (phase === "loading" || !draft) {
+      host.innerHTML = `<div class="settings-center-loading"><span></span><strong>正在读取设置</strong></div>`;
       return;
     }
     host.innerHTML = `
@@ -585,10 +592,10 @@ export function mountSettingsCenter(host, options = {}) {
       <footer class="settings-center-footer">
         <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "所有设置已同步"}</span></div>
         <div class="settings-center-footer-actions">
-          ${conflictPending ? `<button type="button" data-settings-action="reload">重新载入最新设置</button>` : ""}
-          <button type="button" data-settings-action="reset-section"${phase === "saving" ? " disabled" : ""}>恢复本页</button>
-          <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
-          <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
+          ${conflictPending ? `<button type="button" data-settings-action="reload"${githubSyncAction ? " disabled" : ""}>重新载入最新设置</button>` : ""}
+          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction ? " disabled" : ""}>恢复本页</button>
+          <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
+          <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" || githubSyncAction ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
         </div>
       </footer>
     `;
@@ -612,8 +619,10 @@ export function mountSettingsCenter(host, options = {}) {
       stateEl.className = "settings-center-save-state";
       stateEl.textContent = isDirty() ? "有未保存修改" : "所有设置已同步";
     }
+    const cancelButton = host.querySelector('[data-settings-action="cancel"]');
+    if (cancelButton) cancelButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);
     const saveButton = host.querySelector('[data-settings-action="save"]');
-    if (saveButton) saveButton.disabled = !isDirty() || phase === "saving";
+    if (saveButton) saveButton.disabled = !isDirty() || phase === "saving" || githubSyncAction;
   }
 
   function restoreThemePreview() {
@@ -687,6 +696,7 @@ export function mountSettingsCenter(host, options = {}) {
       githubSyncStatus = githubResult;
       githubClientId = String(githubResult?.auth?.clientId || "");
       githubAppType = githubResult?.auth?.appType === "oauth-app" ? "oauth-app" : "github-app";
+      githubAuthMethod = githubResult?.auth?.method === "device-flow" ? "device-flow" : "token";
       githubSyncError = String(githubResult?.error || "");
       githubDeviceFlow = null;
       githubRepositories = [];
@@ -1011,9 +1021,11 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   host.addEventListener("click", async (event) => {
+    if (phase === "saving") return;
     const target = event.target instanceof Element ? event.target : null;
     const sectionButton = target?.closest("[data-settings-section]");
     if (sectionButton) {
+      if (githubSyncAction) return;
       activeSection = sectionButton.dataset.settingsSection;
       riskConfirmationPending = false;
       setMessage("", "");
@@ -1058,6 +1070,7 @@ export function mountSettingsCenter(host, options = {}) {
     const actionButton = target?.closest("[data-settings-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.settingsAction;
+    if (githubSyncAction && ["reload", "save", "confirm-risk", "reset-section", "cancel"].includes(action)) return;
     if (action === "github-connect") { await runGithubAction("connect"); return; }
     if (action === "github-token-connect") { await runGithubAction("token-connect"); return; }
     if (action === "github-open-token") {
@@ -1123,6 +1136,7 @@ export function mountSettingsCenter(host, options = {}) {
   });
 
   host.addEventListener("input", (event) => {
+    if (phase === "saving") return;
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
     if (target.matches("[data-github-client-id]")) {
@@ -1133,7 +1147,7 @@ export function mountSettingsCenter(host, options = {}) {
       const provider = draft.ai.agent?.activeProvider === "claude" ? "claude" : "codex";
       agentConnectionDrafts[provider][target.dataset.agentConnectionField] = target.value;
       const discardButton = host.querySelector('[data-settings-action="cancel"]');
-      if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || Boolean(agentAction);
+      if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);
       return;
     }
     if (target.matches("[data-settings-shortcut]")) {
@@ -1160,8 +1174,19 @@ export function mountSettingsCenter(host, options = {}) {
   });
 
   host.addEventListener("change", (event) => {
+    if (phase === "saving") return;
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    if (target.matches("[data-github-auth-method]")) {
+      githubAuthMethod = target.value === "device-flow" ? "device-flow" : "token";
+      githubDeviceFlow = null;
+      githubSyncError = "";
+      const tokenInput = host.querySelector("[data-github-token]");
+      if (tokenInput) tokenInput.value = "";
+      setMessage("", "");
+      render();
+      return;
+    }
     if (target.matches("[data-github-app-type]")) {
       githubAppType = target.value === "oauth-app" ? "oauth-app" : "github-app";
       return;
@@ -1210,6 +1235,9 @@ export function mountSettingsCenter(host, options = {}) {
 
   function open() {
     if (!draft || phase === "load-error") return load();
+    if (snapshot?.sections?.appearance && stableStringify(draft.appearance) !== stableStringify(snapshot.sections.appearance)) {
+      previewTheme();
+    }
     render();
     return Promise.resolve();
   }

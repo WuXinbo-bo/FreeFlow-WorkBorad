@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: var(--app-color-scheme, light);
   --air-canvas: #f8faf8;
   --air-canvas-surface: #ffffff;
   --air-canvas-strong: #ffffff;

@@ -14,6 +14,16 @@ assert.deepEqual(
   "appearance should expose only the five supported presets"
 );
 
+// A preset must carry its own shell palette. If only the label changes while
+// normalization keeps the default colors, the appearance picker is misleading.
+const paletteSignatures = presetKeys
+  .filter((key) => key !== "custom")
+  .map((key) => {
+    const settings = normalizeThemeSettings({ themePreset: key });
+    return [key, settings.backgroundColor, settings.shellPanelColor, settings.buttonColor].join("|");
+  });
+assert.equal(new Set(paletteSignatures.map((value) => value.slice(value.indexOf("|") + 1))).size, 5, "each preset should have a distinct shell palette");
+
 for (const [legacyKey, nextKey] of Object.entries(THEME_PRESET_ALIASES)) {
   const migrated = normalizeThemeSettings({
     themePreset: legacyKey,

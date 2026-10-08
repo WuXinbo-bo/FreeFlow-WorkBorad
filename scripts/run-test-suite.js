@@ -177,6 +177,7 @@ async function main() {
     await runNodeScript("scripts/check-settings-center-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
+    await runNodeScript("scripts/check-settings-github-browser.js", {});
     await runNodeScript("scripts/check-tutorial-browser.js", {
       AIR_CANVAS_TEST_URL: `${BASE_URL}/?desktop=1`,
     });
