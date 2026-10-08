@@ -615,7 +615,7 @@ export function mountSettingsCenter(host, options = {}) {
       const resolutions = Array.isArray(githubConflictResolutions[board.boardId]) ? githubConflictResolutions[board.boardId] : [];
       const reconcileActions = canReconcile
         ? (resolutions.length
-          ? resolutions.filter((resolution) => ["local", "remote"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : "使用远端"}</button>`).join("")
+          ? resolutions.filter((resolution) => ["local", "remote", "auto"].includes(resolution)).map((resolution) => `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}" data-github-resolution="${escapeHtml(resolution)}"${!canPull || githubSyncAction ? " disabled" : ""}>${resolution === "local" ? "保留本地" : resolution === "remote" ? "使用远端" : "自动合并"}</button>`).join("")
           : `<button type="button" data-settings-action="github-reconcile" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>查看冲突处理</button>`)
         : "";
       return `<article class="settings-center-github-board" data-github-board-id="${escapeHtml(board.boardId)}">
@@ -1147,10 +1147,10 @@ export function mountSettingsCenter(host, options = {}) {
         await refreshGithubWorkspace();
         if (action === "reconcile" && !resolution && Array.isArray(result?.resolutions)) {
           githubConflictResolutions[boardId] = result.resolutions;
-          setMessage("请选择保留本地版本或使用远端版本", "warning");
+          setMessage("请选择自动合并、保留本地版本或使用远端版本", "warning");
         } else {
           delete githubConflictResolutions[boardId];
-          setMessage(action === "pull" ? "远程画布已拉取到本机" : "已处理远程画布冲突", "success");
+          setMessage(action === "pull" ? "远程画布已拉取到本机" : resolution === "auto" ? "远程画布已自动合并" : "已处理远程画布冲突", "success");
         }
       } else if (action === "disconnect") {
         await client.disconnect();
