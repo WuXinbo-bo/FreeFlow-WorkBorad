@@ -1280,7 +1280,10 @@ export function mountSettingsCenter(host, options = {}) {
       const directory = githubConflictDetails[boardId]?.artifacts?.directory || "";
       if (directory && desktopShell?.revealPath) {
         const result = await desktopShell.revealPath(directory);
-        if (result?.ok === false) setMessage(result.error || "无法打开冲突副本目录", "error");
+        if (result?.ok === false) {
+          setMessage(result.error || "无法打开冲突副本目录", "error");
+          render();
+        }
       }
       return;
     }
