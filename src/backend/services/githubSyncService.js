@@ -365,12 +365,21 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
   const remoteWorkspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
   const workspace = normalizeWorkspace(remoteWorkspace, config, ledger.workspaceId);
   const remoteBoard = workspace.boards[bundle.boardId];
+  if (remoteBoard?.deletedAt && !allowRemoteRebase) {
+    throw new GitHubApiError("远端画布已删除，已阻止本地画布自动复活；如需恢复请明确选择保留本地版本", {
+      status: 409,
+      code: "REMOTE_BOARD_DELETED",
+      boardId: bundle.boardId,
+      currentBaseSha: snapshot.commitSha,
+    });
+  }
   const remoteBoardChanged = Boolean(
     remoteBoard?.boardHash && previous?.baseBoardHash && remoteBoard.boardHash !== previous.baseBoardHash,
   );
+  const remoteBoardDeleted = Boolean(remoteBoard?.deletedAt);
   const staleBranch = Boolean(previous?.baseRemoteCommit && previous.baseRemoteCommit !== snapshot.commitSha);
   const unknownRemoteBoard = Boolean(!previous && remoteBoard?.boardHash && remoteBoard.boardHash !== bundle.boardHash);
-  if ((remoteBoardChanged || unknownRemoteBoard || (staleBranch && !remoteBoard)) && !allowRemoteRebase) {
+  if ((remoteBoardChanged || remoteBoardDeleted || unknownRemoteBoard || (staleBranch && !remoteBoard)) && !allowRemoteRebase) {
     const error = new GitHubApiError("远端画布已变化，请先拉取并处理冲突", {
       status: 409,
       code: "REMOTE_CHANGED",
