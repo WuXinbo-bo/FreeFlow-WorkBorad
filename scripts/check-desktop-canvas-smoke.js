@@ -36,6 +36,7 @@ async function main() {
     assert.equal(await page.evaluate(() => window.desktopShell.platform), process.platform);
     const result = await page.evaluate(async () => {
       const engine = window.__canvas2dEngine;
+      await engine.whenReady();
       engine.loadStructuredBoardForExport({
         items: [{ id: "desktop-smoke", type: "shape", shapeType: "rect", x: 100, y: 100, width: 180, height: 100 }],
         selectedIds: ["desktop-smoke"], view: { scale: 1, offsetX: 0, offsetY: 0 },

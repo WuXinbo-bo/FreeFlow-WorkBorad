@@ -22,6 +22,38 @@ async function main() {
   const { createCanvasImageStorageManager } = await import("../public/src/engines/canvas2d-core/storage/createCanvasImageStorageManager.js");
   const { createCanvasStorageBridge } = await import("../public/src/runtime/canvas/createCanvasStorageBridge.js");
   const { getDirectoryName } = await import("../public/src/features/canvas/canvasUtils.js");
+  const { toRelativePath, resolveRelativePath, toFileUrl } = await import("../public/src/engines/canvas2d-core/utils.js");
+  const { serializeHostBoard, deserializeHostBoard } = await import("../public/src/engines/canvas2d-core/import/host/hostPersistenceAdapter.js");
+  const { normalizeTextLinkToken } = await import("../public/src/engines/canvas2d-core/textModel/richTextDocument.js");
+  const roundTrips = [
+    ["/Boards/image.png", "/Boards/board.freeflow", "image.png", "/Boards/image.png"],
+    ["/Boards/image.png", "/boards/board.freeflow", "../Boards/image.png", "/Boards/image.png"],
+    ["C:\\Boards\\image.png", "c:\\boards\\board.freeflow", "image.png", "c:/boards/image.png"],
+    ["D:\\Images\\image.png", "C:\\Boards\\board.freeflow", "D:\\Images\\image.png", "D:\\Images\\image.png"],
+    ["\\\\server\\share\\images\\image.png", "\\\\server\\share\\boards\\board.freeflow", "../images/image.png", "//server/share/images/image.png"],
+    ["//SERVER/Share/Images/image.png", "//server/share/boards/board.freeflow", "../Images/image.png", "//server/share/Images/image.png"],
+    ["\\\\server\\other\\image.png", "\\\\server\\share\\board.freeflow", "\\\\server\\other\\image.png", "\\\\server\\other\\image.png"],
+    ["/image.png", "/board.freeflow", "/image.png", "/image.png"],
+  ];
+  for (const [imagePath, boardPath, relative, resolved] of roundTrips) {
+    assert.equal(toRelativePath(imagePath, boardPath), relative, `relative: ${imagePath}`);
+    assert.equal(resolveRelativePath(relative, boardPath), resolved, `resolved: ${imagePath}`);
+    const serialized = serializeHostBoard({ items: [{ id: "path-image", type: "image", sourcePath: imagePath, x: 0, y: 0, width: 80, height: 80 }] }, { meta: { boardFilePath: boardPath } });
+    const restored = deserializeHostBoard(JSON.stringify(serialized));
+    assert.equal(restored.board.items[0].sourcePath, resolved, `saved board: ${imagePath}`);
+  }
+  assert.equal(resolveRelativePath("../../../image.png", "C:\\Boards\\board.freeflow"), "C:/image.png");
+  assert.equal(resolveRelativePath("../../../image.png", "\\\\server\\share\\board.freeflow"), "//server/share/image.png");
+  for (const filePath of ["/Users/me/图片 #1?100%.png", "C:\\Boards\\图片 #1%.png", "\\\\server\\share\\图 #1.png"]) {
+    const url = new URL(toFileUrl(filePath));
+    assert.equal(url.search, "");
+    assert.equal(url.hash, "");
+    assert.equal(normalizeTextLinkToken({ url: filePath }).url, toFileUrl(filePath));
+    const decodedPath = decodeURIComponent(url.pathname);
+    const expected = filePath.startsWith("/") ? filePath : filePath.replaceAll("\\", "/");
+    assert.equal(url.host ? `//${url.host}${decodedPath}` : decodedPath.replace(/^\/([a-zA-Z]:\/)/, "$1"), expected);
+  }
+  assert.equal(toFileUrl("/Users/me/a\\b.png"), "file:///Users/me/a%5Cb.png");
   const bridge = createCanvasStorageBridge({});
   let savedPath;
   globalThis.desktopShell = { writeFile: async (filePath) => { savedPath = filePath; return { ok: true }; } };
@@ -45,6 +77,6 @@ async function main() {
   } finally {
     delete globalThis.desktopShell;
   }
-  console.log("Canvas paths: POSIX, Unicode, Windows drive, UNC and relative image storage passed");
+  console.log("Canvas paths: roots, drive/share boundaries, relative round trips and file URL encoding passed");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

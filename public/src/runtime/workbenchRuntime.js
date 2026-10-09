@@ -7410,14 +7410,24 @@ async function setDesktopClickThrough(enabled) {
       if (state.desktopShellState.clickThrough === nextEnabled) {
         return;
       }
+      let suspendedScreenSource = false;
       if (nextEnabled) {
         await suspendScreenSourceForClickThrough();
+        suspendedScreenSource = true;
       }
-      const nextState = await DESKTOP_SHELL.setClickThrough(nextEnabled);
-      syncDesktopShellState(nextState);
-      if (!nextEnabled) {
-        await resumeScreenSourceAfterClickThrough();
-        await syncEmbeddedWindowOverlayVisibility();
+      try {
+        const nextState = await DESKTOP_SHELL.setClickThrough(nextEnabled);
+        syncDesktopShellState(nextState);
+        if (!nextEnabled) {
+          await resumeScreenSourceAfterClickThrough();
+          await syncEmbeddedWindowOverlayVisibility();
+        }
+      } catch (error) {
+        if (suspendedScreenSource) {
+          await resumeScreenSourceAfterClickThrough();
+          await syncEmbeddedWindowOverlayVisibility();
+        }
+        throw error;
       }
     });
 

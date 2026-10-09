@@ -96,7 +96,9 @@
     "pack:mac": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --dir --mac",
     "pack:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --dir --mac",
     "dist:mac": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip",
-    "dist:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip"
+    "dist:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip",
+    "test:workbench-shared-recovery": "node scripts/check-workbench-shared-recovery.js",
+    "test:secret-storage": "node scripts/check-secret-storage-concurrency.js"
   },
   "keywords": [],
   "author": "Wu Xinbo",
