@@ -7345,21 +7345,34 @@ async function setDesktopClickThrough(enabled) {
     return;
   }
 
-  if (state.desktopShellState.clickThrough === Boolean(enabled)) {
-    return;
-  }
-
   desktopSurfaceSyncPromise = desktopSurfaceSyncPromise
     .catch(() => {})
     .then(async () => {
-      if (enabled) {
-        await suspendScreenSourceForClickThrough();
+      const nextEnabled = Boolean(enabled);
+      // Check at execution time, after earlier requests have settled. An
+      // immediate false request must not be dropped while an enable request is
+      // still in flight (the previous early return caused stale pass-through).
+      if (state.desktopShellState.clickThrough === nextEnabled) {
+        return;
       }
-      const nextState = await DESKTOP_SHELL.setClickThrough(enabled);
-      syncDesktopShellState(nextState);
-      if (!enabled) {
-        await resumeScreenSourceAfterClickThrough();
-        await syncEmbeddedWindowOverlayVisibility();
+      let suspendedScreenSource = false;
+      if (nextEnabled) {
+        await suspendScreenSourceForClickThrough();
+        suspendedScreenSource = true;
+      }
+      try {
+        const nextState = await DESKTOP_SHELL.setClickThrough(nextEnabled);
+        syncDesktopShellState(nextState);
+        if (!nextEnabled) {
+          await resumeScreenSourceAfterClickThrough();
+          await syncEmbeddedWindowOverlayVisibility();
+        }
+      } catch (error) {
+        if (suspendedScreenSource) {
+          await resumeScreenSourceAfterClickThrough();
+          await syncEmbeddedWindowOverlayVisibility();
+        }
+        throw error;
       }
     });
 
@@ -8579,7 +8592,8 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.shiftKey || event.key.toLowerCase() === "y")) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey &&
+    ((event.shiftKey && event.key.toLowerCase() === "z") || (!event.shiftKey && event.key.toLowerCase() === "y"))) {
     event.preventDefault();
     canvasItemManager.redoCanvasBoard();
     return;

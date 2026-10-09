@@ -665,16 +665,35 @@ export function toRelativePath(absolutePath = "", basePath = "") {
     return cleanAbs;
   }
   const normalizeSlashes = (p) => p.replace(/\\/g, "/");
-  const absParts = normalizeSlashes(cleanAbs).split("/").filter(Boolean);
-  const baseParts = normalizeSlashes(cleanBase).split("/").filter(Boolean);
+  const normalizedAbs = normalizeSlashes(cleanAbs);
+  const normalizedBase = normalizeSlashes(cleanBase);
+  const windowsAbs = /^[a-zA-Z]:\//.test(normalizedAbs) || normalizedAbs.startsWith("//");
+  const windowsBase = /^[a-zA-Z]:\//.test(normalizedBase) || normalizedBase.startsWith("//");
+  if (windowsAbs || windowsBase) {
+    const rootOf = (value) => {
+      const drive = value.match(/^([a-zA-Z]:)\//);
+      if (drive) return drive[1].toLowerCase();
+      const unc = value.match(/^\/\/([^/]+)\/([^/]+)/);
+      return unc ? `//${unc[1]}/${unc[2]}`.toLowerCase() : "";
+    };
+    if (!windowsAbs || !windowsBase || rootOf(normalizedAbs) !== rootOf(normalizedBase)) {
+      return cleanAbs;
+    }
+  }
+  const absParts = normalizedAbs.split("/").filter(Boolean);
+  const baseParts = normalizedBase.split("/").filter(Boolean);
   // Remove the last segment (the file name) from base to get the directory
   baseParts.pop();
   if (!baseParts.length || !absParts.length) {
     return cleanAbs;
   }
   // Find common prefix
+  const windowsPath = windowsAbs;
   let commonLen = 0;
-  while (commonLen < Math.min(baseParts.length, absParts.length) && baseParts[commonLen].toLowerCase() === absParts[commonLen].toLowerCase()) {
+  while (commonLen < Math.min(baseParts.length, absParts.length) &&
+    (windowsPath
+      ? baseParts[commonLen].toLowerCase() === absParts[commonLen].toLowerCase()
+      : baseParts[commonLen] === absParts[commonLen])) {
     commonLen += 1;
   }
   const upCount = baseParts.length - commonLen;
@@ -693,23 +712,27 @@ export function resolveRelativePath(relativePath = "", basePath = "") {
     return cleanRel || cleanBase;
   }
   // Already absolute
-  if (/^[a-zA-Z]:[\\/]/.test(cleanRel) || cleanRel.startsWith("/")) {
+  if (/^[a-zA-Z]:[\\/]/.test(cleanRel) || cleanRel.startsWith("/") || cleanRel.startsWith("\\\\")) {
     return cleanRel;
   }
   const normalizeSlashes = (p) => p.replace(/\\/g, "/");
   const baseParts = normalizeSlashes(cleanBase).split("/").filter(Boolean);
+  const normalizedBase = normalizeSlashes(cleanBase);
+  const isDriveBase = /^[a-zA-Z]:\//.test(normalizedBase);
+  const isUncBase = normalizedBase.startsWith("//");
+  const rootPartCount = isUncBase ? 2 : (isDriveBase ? 1 : 0);
   // Remove last segment (file name)
   baseParts.pop();
   const relParts = normalizeSlashes(cleanRel).split("/").filter(Boolean);
   const resultParts = [...baseParts];
   for (const part of relParts) {
     if (part === "..") {
-      resultParts.pop();
+      if (resultParts.length > rootPartCount) resultParts.pop();
     } else if (part !== ".") {
       resultParts.push(part);
     }
   }
-  const prefix = /^[a-zA-Z]:/.test(resultParts[0]) ? "" : "/";
+  const prefix = isUncBase ? "//" : (isDriveBase ? "" : "/");
   return prefix + resultParts.join("/");
 }
 
@@ -721,7 +744,8 @@ export function toFileUrl(path = "") {
   if (/^file:\/\//i.test(raw)) {
     return raw;
   }
-  const normalized = encodeURI(raw.replace(/\\/g, "/"));
+  const nativePath = raw.startsWith("/") ? raw : raw.replace(/\\/g, "/");
+  const normalized = encodeURI(nativePath).replace(/#/g, "%23").replace(/\?/g, "%3F");
   if (/^[a-zA-Z]:\//.test(normalized)) {
     return `file:///${normalized}`;
   }

@@ -66,10 +66,11 @@ export function getFileBaseName(fileName = "") {
 export function getDirectoryName(filePath = "") {
   const normalized = normalizePathLike(filePath);
   if (!normalized) return "";
-  const segments = splitPathSegments(normalized);
-  if (!segments.length) return "";
-  segments.pop();
-  return segments.join("/");
+  const trimmed = normalized.replace(/\/+$/, "");
+  const lastSeparator = trimmed.lastIndexOf("/");
+  if (lastSeparator < 0) return "";
+  const isRoot = lastSeparator === 0 || (/^[A-Za-z]:\//.test(trimmed) && lastSeparator === 2);
+  return trimmed.slice(0, lastSeparator + (isRoot ? 1 : 0));
 }
 
 export function sanitizeCanvasTextPreview(text, maxLength = 8000) {
