@@ -269,6 +269,8 @@ function resolveAppIconPath() {
     ? [
         path.join(app.getAppPath(), "build", "icon.icns"),
         path.join(process.resourcesPath || "", "icon.icns"),
+        path.join(app.getAppPath(), "build", "icon.png"),
+        path.join(process.resourcesPath || "", "icon.png"),
         path.join(app.getAppPath(), "build", "icon.ico"),
       ]
     : [path.join(app.getAppPath(), "build", "icon.ico")];
@@ -278,6 +280,21 @@ function resolveAppIconPath() {
     }
   }
   return "";
+}
+
+function applyMacOSDockIcon() {
+  if (process.platform !== "darwin" || typeof app.dock?.setIcon !== "function") {
+    return;
+  }
+  const iconPath = resolveAppIconPath();
+  if (!iconPath) {
+    return;
+  }
+  try {
+    app.dock.setIcon(iconPath);
+  } catch (error) {
+    console.warn(`[desktop-shell] Failed to set macOS Dock icon: ${error.message}`);
+  }
 }
 
 function execFileAsync(command, args = [], options = {}) {
@@ -4399,6 +4416,7 @@ if (!gotSingleInstanceLock) {
 }
 
 app.whenReady().then(() => {
+  applyMacOSDockIcon();
   loadShortcutSettings();
   registerDesktopShortcuts();
 });
