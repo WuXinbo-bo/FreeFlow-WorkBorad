@@ -86,6 +86,21 @@ function createGitHubSyncRouter(options = {}) {
     catch (error) { res.status(error.code === "REMOTE_CHANGED" ? 409 : error.status || 500).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
+  router.post("/workspace/plan", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.getWorkspacePlan(req.body || {})) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+  });
+
+  router.post("/workspace/sync", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.syncWorkspace(req.body || {})) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", state: error.state || undefined }); }
+  });
+
+  router.post("/workspace/pull", async (req, res) => {
+    try { res.json({ ok: true, ...(await sync.pullWorkspace(req.body || {})) }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", state: error.state || undefined }); }
+  });
+
   router.post("/download", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.downloadBoard(req.body || {})) }); }
     catch (error) { res.status(error.status || (error.code === "REMOTE_CHANGED" || error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }

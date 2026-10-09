@@ -4055,6 +4055,9 @@ ipcMain.handle("desktop-shell:github-sync-repository", (_event, payload) => gith
 ipcMain.handle("desktop-shell:github-sync-repository-create", (_event, payload) => githubSyncRequestForIpc("/repository/create", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-attachment-policy", (_event, payload) => githubSyncRequestForIpc("/attachment-policy/evaluate", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync", (_event, payload) => githubSyncRequestForIpc("/sync", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-workspace-plan", (_event, payload) => githubSyncRequestForIpc("/workspace/plan", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-workspace-sync", (_event, payload) => githubSyncRequestForIpc("/workspace/sync", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-workspace-pull", (_event, payload) => githubSyncRequestForIpc("/workspace/pull", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-download", (_event, payload) => githubSyncRequestForIpc("/download", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-workspace", (_event, payload) => {
   const includeDeleted = payload?.includeDeleted ? "?includeDeleted=true" : "";
