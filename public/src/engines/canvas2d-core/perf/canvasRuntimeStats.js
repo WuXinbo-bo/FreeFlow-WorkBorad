@@ -48,14 +48,14 @@ const state = {
   },
 };
 
-function publish() {
+function publish(section = "") {
   if (typeof window === "undefined") {
     return;
   }
-  window.__ffLoadStats = clonePlain(state.load);
-  window.__ffOverlayStats = clonePlain(state.overlay);
-  window.__ffAssetStats = clonePlain(state.asset);
-  window.__ffPerfSnapshot = () => ({
+  if (!section || section === "load") window.__ffLoadStats = clonePlain(state.load);
+  if (!section || section === "overlay") window.__ffOverlayStats = clonePlain(state.overlay);
+  if (!section || section === "asset") window.__ffAssetStats = clonePlain(state.asset);
+  window.__ffPerfSnapshot ||= () => ({
     load: clonePlain(window.__ffLoadStats || state.load),
     overlay: clonePlain(window.__ffOverlayStats || state.overlay),
     asset: clonePlain(window.__ffAssetStats || state.asset),
@@ -65,12 +65,12 @@ function publish() {
 
 export function markLoadGeneration(generation = 0) {
   state.load.generation = Math.max(0, Number(generation || 0) || 0);
-  publish();
+  publish("load");
 }
 
 export function recordHydrationStats(patch = {}) {
   Object.assign(state.load, patch && typeof patch === "object" ? patch : {});
-  publish();
+  publish("load");
 }
 
 export function recordHydrationTask(type = "", durationMs = 0, status = "completed") {
@@ -80,7 +80,7 @@ export function recordHydrationTask(type = "", durationMs = 0, status = "complet
   else if (status === "cancelled") state.load.cancelled += 1;
   else if (status === "stale") state.load.stale += 1;
   else state.load.completed += 1;
-  publish();
+  publish("load");
 }
 
 export function beginOverlayFrame({ budget = {}, reason = "" } = {}) {
@@ -91,7 +91,7 @@ export function beginOverlayFrame({ budget = {}, reason = "" } = {}) {
   state.overlay.hiddenThisFrame = 0;
   state.overlay.budget = clonePlain(budget || {});
   state.overlay.lastReason = String(reason || "");
-  publish();
+  publish("overlay");
 }
 
 export function recordOverlayEvent(type = "created", count = 1) {
@@ -103,19 +103,19 @@ export function recordOverlayEvent(type = "created", count = 1) {
   else if (type === "removed") state.overlay.removedThisFrame += amount;
   else if (type === "hidden") state.overlay.hiddenThisFrame += amount;
   else state.overlay.createdThisFrame += amount;
-  publish();
+  publish("overlay");
 }
 
 export function recordOverlayActive(activeByType = {}) {
   const byType = activeByType && typeof activeByType === "object" ? activeByType : {};
   state.overlay.activeByType = { ...byType };
   state.overlay.active = Object.values(byType).reduce((sum, value) => sum + Math.max(0, Number(value || 0) || 0), 0);
-  publish();
+  publish("overlay");
 }
 
 export function recordAssetStats(patch = {}) {
   Object.assign(state.asset, patch && typeof patch === "object" ? patch : {});
-  publish();
+  publish("asset");
 }
 
 export function timeAssetTask(type = "", task) {
@@ -125,7 +125,7 @@ export function timeAssetTask(type = "", task) {
   const startedAt = now();
   state.asset.running += 1;
   state.asset.lastAssetType = String(type || "");
-  publish();
+  publish("asset");
   return Promise.resolve()
     .then(() => task())
     .then((result) => {
@@ -140,7 +140,7 @@ export function timeAssetTask(type = "", task) {
     })
     .finally(() => {
       state.asset.running = Math.max(0, state.asset.running - 1);
-      publish();
+      publish("asset");
     });
 }
 

@@ -57,9 +57,15 @@ function mixSignatureCode(state, code) {
 function mixSignatureString(state, value) {
   const text = String(value ?? "");
   mixSignatureCode(state, text.length);
+  let first = state.first;
+  let second = state.second;
   for (let index = 0; index < text.length; index += 1) {
-    mixSignatureCode(state, text.charCodeAt(index));
+    const code = text.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = Math.imul(second ^ code, 2246822519) >>> 0;
   }
+  state.first = first;
+  state.second = second;
 }
 
 function visitSignatureValue(state, value, ancestors) {
@@ -189,14 +195,16 @@ function getPatchTargetSignature(entry, targetKey) {
     return "";
   }
   try {
-    return JSON.stringify({
+    return getSnapshotSignature({
       kind: entry.kind,
       patchKind: entry.patchKind || "",
-      itemIds: Array.isArray(entry.itemIds) ? clone(entry.itemIds) : [],
-      items: getPatchTargetItems(entry, targetKey),
+      itemIds: Array.isArray(entry.itemIds) ? entry.itemIds : [],
+      items: Array.isArray(entry[`${targetKey}Items`])
+        ? entry[`${targetKey}Items`]
+        : entry[`${targetKey}Item`] ? [entry[`${targetKey}Item`]] : [],
       orderIds: getPatchTargetOrderIds(entry, targetKey),
-      selectedIds: clone(entry[`${targetKey}SelectedIds`] || []),
-      view: clone(entry[`${targetKey}View`] || {}),
+      selectedIds: entry[`${targetKey}SelectedIds`] || [],
+      view: entry[`${targetKey}View`] || {},
       editingId: entry[`${targetKey}EditingId`] || null,
       editingType: entry[`${targetKey}EditingType`] || null,
     });
@@ -318,8 +326,8 @@ export function pushPatchHistory(history, patch, reason = "") {
     patchKind: String(patch?.patchKind || ""),
     itemId: String(patch?.itemId || itemIds[0] || "").trim(),
     itemIds,
-    beforeItem: beforeItems[0] ? clone(beforeItems[0]) : null,
-    afterItem: afterItems[0] ? clone(afterItems[0]) : null,
+    beforeItem: beforeItems[0] || null,
+    afterItem: afterItems[0] || null,
     beforeItems,
     afterItems,
     beforeOrderIds: Array.isArray(patch?.beforeOrderIds) ? clone(patch.beforeOrderIds) : [],
@@ -419,7 +427,7 @@ export function undoHistory(history, currentSnapshot) {
     return null;
   }
   if (entry.kind === "patch") {
-    history.redo.push(clone(entry));
+    history.redo.push(entry);
     history.lastSignature = getHistoryEntryTargetSignature(entry, "before");
     return {
       kind: "patch",
@@ -431,12 +439,7 @@ export function undoHistory(history, currentSnapshot) {
   if (!entry?.before) {
     return null;
   }
-  history.redo.push({
-    before: clone(currentSnapshot),
-    after: clone(entry.after || currentSnapshot),
-    reason: "undo",
-    createdAt: Date.now(),
-  });
+  history.redo.push(entry);
   history.lastSignature = getSnapshotSignature(entry.before);
   return {
     kind: "snapshot",
@@ -452,7 +455,7 @@ export function redoHistory(history, currentSnapshot) {
     return null;
   }
   if (entry.kind === "patch") {
-    history.undo.push(clone(entry));
+    history.undo.push(entry);
     history.lastSignature = getHistoryEntryTargetSignature(entry, "after");
     return {
       kind: "patch",
@@ -464,12 +467,7 @@ export function redoHistory(history, currentSnapshot) {
   if (!entry?.after) {
     return null;
   }
-  history.undo.push({
-    before: clone(currentSnapshot),
-    after: clone(entry.after),
-    reason: "redo",
-    createdAt: Date.now(),
-  });
+  history.undo.push(entry);
   history.lastSignature = getSnapshotSignature(entry.after);
   return {
     kind: "snapshot",
