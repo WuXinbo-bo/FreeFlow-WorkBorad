@@ -1,4 +1,23 @@
 import { MAX_SCALE, MIN_SCALE } from "./constants.js";
+import createDOMPurify from "../../../assets/vendor/dompurify/purify.es.mjs";
+
+let htmlPurifier = null;
+
+function getHtmlPurifier() {
+  if (!htmlPurifier) {
+    htmlPurifier = createDOMPurify(window);
+    htmlPurifier.addHook("afterSanitizeAttributes", (node) => {
+      if (node.getAttribute?.("target") === "_blank") {
+        node.setAttribute("rel", "noopener noreferrer");
+      }
+      const style = node.getAttribute?.("style") || "";
+      if (/url\s*\(|image-set\s*\(|expression\s*\(|behavior\s*:/i.test(style)) {
+        node.removeAttribute("style");
+      }
+    });
+  }
+  return htmlPurifier;
+}
 
 export const CANVAS_TEXT_LINE_HEIGHT_RATIO = 1.3;
 export const INLINE_FONT_SIZE_ATTR = "data-ff-font-size";
@@ -48,11 +67,23 @@ export function sanitizeHtml(value = "") {
     return "";
   }
   if (typeof document === "undefined") {
+    // Node-only parsers do not insert this text into a live document.
     return raw.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "");
   }
+  // Template parsing retains clipboard fragments such as standalone tr/td.
   const template = document.createElement("template");
   template.innerHTML = raw;
-  template.content.querySelectorAll("script,style").forEach((node) => node.remove());
+  const cleaned = getHtmlPurifier().sanitize(template.content, {
+    RETURN_DOM_FRAGMENT: true,
+    USE_PROFILES: { html: true, mathMl: true },
+    ALLOW_DATA_ATTR: true,
+    ALLOW_ARIA_ATTR: true,
+    ADD_ATTR: ["target"],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ftp|file|blob):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+    FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "foreignobject", "svg"],
+    FORBID_ATTR: ["srcdoc"],
+  });
+  template.content.replaceChildren(cleaned);
   return template.innerHTML;
 }
 

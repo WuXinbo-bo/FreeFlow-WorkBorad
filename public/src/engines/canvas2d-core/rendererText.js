@@ -6,6 +6,7 @@ import {
   TEXT_BODY_LINE_HEIGHT_RATIO,
 } from "./textLayout/typographyTokens.js";
 import { renderLatexToStaticHtml } from "./import/renderers/markdown/markdownStaticRenderer.js";
+import { sanitizeHtml } from "./utils.js";
 
 export const TEXT_LINE_HEIGHT_RATIO = TEXT_BODY_LINE_HEIGHT_RATIO;
 export const TEXT_FONT_FAMILY = '"Segoe UI", "PingFang SC", sans-serif';
@@ -565,7 +566,7 @@ function materializeLinkTokensIntoHtml(text = "", html = "", linkTokens = []) {
 }
 
 export function resolveRichTextDisplayHtml({ text = "", html = "", linkTokens = [] } = {}) {
-  const rawHtml = String(html || "").trim();
+  const rawHtml = sanitizeHtml(String(html || "")).trim();
   const linkStyledHtml = buildLinkStyledHtmlFromTokens(text, linkTokens);
   if (!rawHtml) {
     return linkStyledHtml;

@@ -34,6 +34,9 @@
     "test:canvas-resource-prewarm": "node scripts/check-canvas-resource-prewarm-runtime.js",
     "test:canvas-resource-budget": "node scripts/check-canvas-resource-budget-runtime.js",
     "test:canvas-state-history": "node scripts/check-canvas-state-history.js",
+    "test:canvas-runtime-hardening": "node scripts/check-canvas-runtime-hardening.js",
+    "test:canvas-html-safety": "node scripts/check-canvas-html-safety-browser.js",
+    "test:desktop-canvas-smoke": "node scripts/check-desktop-canvas-smoke.js",
     "test:canvas-operation-results": "node scripts/check-canvas-operation-results.js",
     "test:canvas-semantic-transfer": "node scripts/check-canvas-semantic-transfer.js",
     "test:clipboard-fidelity": "node scripts/structured-import/validate-clipboard-fidelity.cjs && node scripts/check-clipboard-fidelity-browser.cjs",
@@ -88,6 +91,7 @@
   "type": "commonjs",
   "dependencies": {
     "docx": "^9.5.1",
+    "dompurify": "^3.4.16",
     "express": "^5.2.1",
     "html-to-docx": "^1.8.0",
     "html2canvas": "^1.4.1",

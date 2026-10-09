@@ -5670,7 +5670,7 @@ let tablePointerSelectionState = {
     pendingPerformanceRecovery = { performanceSessionId, presentationSessionId };
     store.setPersistencePaused?.(false);
     presentationSnapshotController.setPaused(document.hidden);
-    hydrationScheduler.setPaused(false);
+    hydrationScheduler.setPaused(Boolean(document.hidden));
     if (emit) {
       store.emit();
     }
@@ -26553,6 +26553,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!mounted) return;
     const hidden = Boolean(document.hidden);
     canvasPerformanceRuntime.setBackgroundSuspended(hidden);
+    hydrationScheduler.setPaused(hidden || canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical);
     updateCanvasResourceBudget();
     if (hidden) {
       renderer.releaseRetainedFrame();
@@ -26642,6 +26643,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function unmount() {
     finishPendingWheelSession({ persist: true });
+    cancelFocusAnimation();
     cancelClipboardImports();
     importedBatchStabilizationTokens.clear();
     deferredTextSemanticUpgradeTasks.clear();
@@ -26662,7 +26664,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     presentationQualityRuntime.reset();
     presentationSnapshotController.clear();
     documentPreviewRuntime.dispose();
-    hydrationScheduler.setPaused(false);
+    hydrationScheduler.setPaused(true);
+    hydrationScheduler.clear({ stale: true });
+    codeBlockCopyFeedbackTimers.forEach((timer) => window.clearTimeout(timer));
+    codeBlockCopyFeedbackTimers.clear();
     if (typeof cancelPendingHydrationSync === "function") {
       cancelPendingHydrationSync();
       cancelPendingHydrationSync = null;
