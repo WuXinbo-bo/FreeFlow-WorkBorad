@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "start:web": "node server.js",
-    "start:desktop": "set \"ELECTRON_RUN_AS_NODE=\" && electron .",
+    "start:desktop": "node scripts/start-desktop.js",
     "build:canvas-office": "node scripts/build-canvas-office.js",
     "build:canvas-demo": "node scripts/build-canvas-demo.js",
     "build:canvas2d-ui": "node scripts/build-canvas2d-ui.js",
@@ -36,6 +36,9 @@
     "test:canvas-runtime-hardening": "node scripts/check-canvas-runtime-hardening.js",
     "test:canvas-html-safety": "node scripts/check-canvas-html-safety-browser.js",
     "test:desktop-canvas-smoke": "node scripts/check-desktop-canvas-smoke.js",
+    "test:canvas-file-paths": "node scripts/check-canvas-file-paths.js",
+    "test:workbench-shared-recovery": "node scripts/check-workbench-shared-recovery.js",
+    "test:secret-storage": "node scripts/check-secret-storage-concurrency.js",
     "test:canvas-operation-results": "node scripts/check-canvas-operation-results.js",
     "test:canvas-semantic-transfer": "node scripts/check-canvas-semantic-transfer.js",
     "test:clipboard-fidelity": "node scripts/structured-import/validate-clipboard-fidelity.cjs && node scripts/check-clipboard-fidelity-browser.cjs",
