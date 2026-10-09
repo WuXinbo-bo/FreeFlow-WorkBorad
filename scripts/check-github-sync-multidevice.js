@@ -320,6 +320,22 @@ async function main() {
   assert.equal((await fsPromises.readFile(boardBPath, "utf8")).includes("Windows second change"), true);
   assert.equal((await readLedger(SYNC_LEDGER_FILE)).boards[boardId].remoteHeadSha, committedA2.commitSha);
 
+  // Workspace-level sync discovers every canvas in the active folder and can
+  // publish a local-only canvas without asking for a second path.
+  const localOnlyPath = path.join(deviceB, "local-only.freeflow");
+  await fsPromises.writeFile(localOnlyPath, JSON.stringify({
+    kind: "structured-host-board",
+    version: "1.0.0",
+    board: { boardId: "local-only-board", items: [{ id: "local", type: "text", text: "local-only" }] },
+  }), "utf8");
+  const workspacePlan = await sync.getWorkspacePlan({ rootPath: deviceB, boardPath: boardBPath });
+  assert.equal(workspacePlan.rootPath, path.resolve(deviceB));
+  assert.equal(workspacePlan.items.some((item) => item.boardId === "local-only-board" && item.state === "local-only"), true);
+  const workspaceSync = await sync.syncWorkspace({ rootPath: deviceB, boardPath: boardBPath });
+  assert.equal(workspaceSync.ok, true);
+  assert.equal(workspaceSync.results.some((item) => item.boardId === "local-only-board" && item.commitSha), true);
+  assert.equal((await sync.listBoards()).boards.some((board) => board.boardId === "local-only-board"), true);
+
   // A transient board read is retried by the GitHub client and still leaves
   // the already materialized local board unchanged.
   const beforeInterruptedPull = await fsPromises.readFile(boardBPath, "utf8");

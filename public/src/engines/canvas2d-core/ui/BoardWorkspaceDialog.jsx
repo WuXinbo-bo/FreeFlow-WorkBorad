@@ -216,6 +216,15 @@ export function BoardWorkspaceDialog({ open, bridge, snapshot, onClose }) {
   }, [open, bridge]);
 
   useEffect(() => {
+    if (!open || typeof window === "undefined") return undefined;
+    const handleWorkspaceFilesChanged = () => {
+      void refreshBoards(folderPath);
+    };
+    window.addEventListener("freeflow:workspace-files-changed", handleWorkspaceFilesChanged);
+    return () => window.removeEventListener("freeflow:workspace-files-changed", handleWorkspaceFilesChanged);
+  }, [open, folderPath]);
+
+  useEffect(() => {
     if (!open) {
       return;
     }

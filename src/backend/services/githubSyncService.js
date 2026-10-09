@@ -33,6 +33,25 @@ function cleanRepoConfig(input = {}) {
   };
 }
 
+function normalizeWorkspaceRoot(rootPath = "", boardPath = "") {
+  const candidate = String(rootPath || "").trim();
+  if (candidate) return path.resolve(candidate);
+  const currentBoardPath = String(boardPath || "").trim();
+  if (currentBoardPath) return path.dirname(path.resolve(currentBoardPath));
+  return path.dirname(path.resolve(CANVAS_BOARD_FILE));
+}
+
+function normalizeRelativeBoardPath(value = "") {
+  const relative = String(value || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!relative || relative === "." || relative.split("/").some((part) => !part || part === "." || part === "..")) return "";
+  return relative;
+}
+
+function boardRelativePath(rootPath, boardPath) {
+  const relative = normalizeRelativeBoardPath(path.relative(rootPath, boardPath));
+  return relative || path.basename(boardPath);
+}
+
 function isSafeBoardId(value = "") {
   return BOARD_ID_RE.test(String(value || "").trim());
 }
@@ -189,6 +208,7 @@ function normalizeWorkspace(value = {}, config = {}, workspaceId = "") {
         name: String(board.name || id),
         path: String(board.path || `.freeflow/boards/${id}/board.freeflow`),
         manifestPath: String(board.manifestPath || `.freeflow/boards/${id}/manifest.json`),
+        relativePath: normalizeRelativeBoardPath(board.relativePath || board.localRelativePath || "") || `${String(board.name || id).trim() || id}.freeflow`,
         boardHash: String(board.boardHash || ""),
         updatedAt: String(board.updatedAt || ""),
         deletedAt: board.deletedAt || null,
@@ -341,7 +361,7 @@ async function writeMergeConflictArtifacts(filePath, boardId, { ancestor, local,
   };
 }
 
-async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Update FreeFlow board", allowRemoteRebase = false, expectedRemoteCommit = "" } = {}) {
+async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", policy, message = "Update FreeFlow board", allowRemoteRebase = false, expectedRemoteCommit = "" } = {}) {
   const config = await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
   const localPath = path.resolve(boardPath);
@@ -399,11 +419,13 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
     throw error;
   }
   workspace.updatedAt = new Date().toISOString();
+  const localWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot || config.boardPath, localPath);
   workspace.boards[bundle.boardId] = {
     boardId: bundle.boardId,
     name: path.basename(localPath).replace(/\.[^.]+$/, "") || bundle.boardId,
     path: `.freeflow/boards/${bundle.boardId}/board.freeflow`,
     manifestPath: `.freeflow/boards/${bundle.boardId}/manifest.json`,
+    relativePath: boardRelativePath(localWorkspaceRoot, localPath),
     boardHash: bundle.boardHash,
     updatedAt: workspace.updatedAt,
     deletedAt: null,
@@ -449,6 +471,209 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, policy, message = "Upd
     workspace,
     bundle: { ...bundle, files: files.map(({ content, ...file }) => file) },
   };
+}
+
+async function scanLocalWorkspace({ rootPath = "", policy } = {}) {
+  const root = normalizeWorkspaceRoot(rootPath);
+  let entries = [];
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return { rootPath: root, boards: [] };
+    throw error;
+  }
+  const boards = [];
+  for (const entry of entries) {
+    if (!entry?.isFile?.()) continue;
+    const name = String(entry.name || "");
+    if (name.startsWith(".")) continue;
+    if (!/\.(freeflow|json)$/i.test(name)) continue;
+    const localPath = path.join(root, name);
+    try {
+      const boardId = await ensureBoardIdInFile(localPath);
+      const bundle = await buildSyncBundleFromFile(localPath, { policy });
+      boards.push({
+        boardId: bundle.boardId || boardId,
+        name: name.replace(/\.[^.]+$/, "") || name,
+        relativePath: boardRelativePath(root, localPath),
+        localPath,
+        localHash: bundle.boardHash,
+        bundle,
+      });
+    } catch {
+      // Ignore unrelated JSON files and leave invalid canvas files visible to
+      // the existing local repair flow instead of uploading them blindly.
+    }
+  }
+  return { rootPath: root, boards };
+}
+
+function workspacePlanState(local, remote, ledgerEntry) {
+  if (!local && remote) return "remote-only";
+  if (local && !remote) return "local-only";
+  if (!local || !remote) return "error";
+  if (local.localHash === remote.boardHash) return "up-to-date";
+  const baseHash = String(ledgerEntry?.baseBoardHash || ledgerEntry?.localHash || "");
+  const remoteChanged = Boolean(baseHash && remote.boardHash && remote.boardHash !== baseHash);
+  const localChanged = Boolean(!baseHash || local.localHash !== baseHash);
+  if (remoteChanged && localChanged) return "both-changed";
+  if (remoteChanged) return "remote-changed";
+  return "local-changed";
+}
+
+async function getWorkspacePlan({ rootPath = "", boardPath = "", policy } = {}) {
+  const config = await getConfig();
+  if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
+  const root = normalizeWorkspaceRoot(rootPath || config.boardPath, boardPath);
+  const client = await getClient();
+  const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
+  const remoteResult = await listBoards({ includeDeleted: true });
+  const localResult = await scanLocalWorkspace({ rootPath: root, policy });
+  const ledger = await readLedger(SYNC_LEDGER_FILE);
+  const localById = new Map(localResult.boards.map((board) => [board.boardId, board]));
+  const localByPath = new Map(localResult.boards.map((board) => [board.relativePath, board]));
+  const remoteById = new Map(remoteResult.boards.map((board) => [board.boardId, board]));
+  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
+  const items = [];
+  for (const boardId of ids) {
+    const local = localById.get(boardId);
+    const remote = remoteById.get(boardId);
+    const relativePath = normalizeRelativeBoardPath(remote?.relativePath || local?.relativePath || "") || `${String(remote?.name || local?.name || boardId)}.freeflow`;
+    const pathMatch = localByPath.get(relativePath);
+    const pathCollision = Boolean(!local && pathMatch && pathMatch.boardId !== boardId);
+    const pathLocal = local || (pathCollision ? null : pathMatch);
+    const state = remote?.deletedAt
+      ? (pathLocal ? "deleted-remote" : "deleted")
+      : pathCollision
+        ? "path-collision"
+        : workspacePlanState(pathLocal, remote, ledger.boards[boardId]);
+    const targetRelativePath = pathCollision
+      ? `${relativePath.replace(/\.[^.]+$/, "")}-${boardId.slice(0, 8)}.freeflow`
+      : relativePath;
+    items.push({
+      boardId,
+      name: remote?.name || pathLocal?.name || boardId,
+      relativePath: targetRelativePath,
+      localPath: pathLocal?.localPath || path.join(root, targetRelativePath),
+      localHash: pathLocal?.localHash || "",
+      remoteHash: remote?.boardHash || "",
+      updatedAt: remote?.updatedAt || "",
+      state,
+      remote,
+    });
+  }
+  items.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const counts = items.reduce((result, item) => {
+    result[item.state] = (result[item.state] || 0) + 1;
+    return result;
+  }, {});
+  return {
+    rootPath: root,
+    remoteHeadSha: snapshot.commitSha,
+    workspace: remoteResult.workspace,
+    items,
+    counts,
+    total: items.length,
+  };
+}
+
+async function syncWorkspace({ rootPath = "", boardPath = "", policy, selectedBoardIds = [], message = "Sync FreeFlow workspace" } = {}) {
+  const plan = await getWorkspacePlan({ rootPath, boardPath, policy });
+  const config = await getConfig();
+  const selected = new Set((Array.isArray(selectedBoardIds) ? selectedBoardIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+  const candidates = plan.items.filter((item) => ["local-only", "local-changed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
+  const results = [];
+  const filesByPath = new Map();
+  const bundles = [];
+  let commit = null;
+  const workspace = normalizeWorkspace(plan.workspace, config, plan.workspace?.workspaceId || "");
+  const updatedAt = new Date().toISOString();
+  for (const item of candidates) {
+    try {
+      const beforeStat = await fs.stat(item.localPath);
+      const bundle = await buildSyncBundleFromFile(item.localPath, { policy });
+      const afterStat = await fs.stat(item.localPath);
+      if (beforeStat.mtimeMs !== afterStat.mtimeMs || beforeStat.size !== afterStat.size) {
+        throw new GitHubApiError("同步期间本地画布发生变化，请保存后重试", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", boardId: item.boardId });
+      }
+      if (bundle.boardId !== item.boardId) {
+        throw new GitHubApiError("本地画布 ID 在同步期间发生变化，请重新生成同步计划", { status: 409, code: "LOCAL_BOARD_ID_CHANGED", boardId: item.boardId });
+      }
+      for (const file of bundle.files) filesByPath.set(file.path, file);
+      workspace.boards[bundle.boardId] = {
+        boardId: bundle.boardId,
+        name: path.basename(item.localPath).replace(/\.[^.]+$/, "") || bundle.boardId,
+        path: `.freeflow/boards/${bundle.boardId}/board.freeflow`,
+        manifestPath: `.freeflow/boards/${bundle.boardId}/manifest.json`,
+        relativePath: boardRelativePath(plan.rootPath, item.localPath),
+        boardHash: bundle.boardHash,
+        updatedAt,
+        deletedAt: null,
+      };
+      bundles.push({ item, bundle });
+    } catch (error) {
+      results.push({ boardId: item.boardId, state: "error", error: error.message, code: error.code || "" });
+    }
+  }
+  if (bundles.length) {
+    workspace.updatedAt = updatedAt;
+    filesByPath.set(WORKSPACE_PATH, { path: WORKSPACE_PATH, content: Buffer.from(JSON.stringify(workspace, null, 2), "utf8") });
+    const client = await getClient();
+    try {
+      const result = await client.createCommit({
+        owner: config.owner,
+        repo: config.repo,
+        branch: config.branch,
+        message,
+        files: [...filesByPath.values()],
+        expectedBaseSha: plan.remoteHeadSha,
+      });
+      await updateLedger((current) => {
+        const nextBoards = { ...current.boards };
+        for (const { item, bundle } of bundles) {
+          nextBoards[bundle.boardId] = {
+            ...(nextBoards[bundle.boardId] || {}),
+            boardId: bundle.boardId,
+            localPath: path.resolve(item.localPath),
+            localHash: bundle.boardHash,
+            baseBoardHash: bundle.boardHash,
+            remoteHash: bundle.boardHash,
+            remoteHeadSha: result.commitSha,
+            baseRemoteCommit: result.commitSha,
+            ancestorSha: plan.remoteHeadSha,
+            syncState: "synced",
+            skippedCount: bundle.manifest.skippedCount,
+            assetBytes: bundle.manifest.assetBytes,
+            relativePath: boardRelativePath(plan.rootPath, item.localPath),
+            updatedAt,
+          };
+          results.push({ boardId: bundle.boardId, state: "synced", commitSha: result.commitSha, bundle: { ...bundle, files: bundle.files.map(({ content, ...file }) => file) } });
+        }
+        return { ...current, repository: config, workspaceId: workspace.workspaceId, remoteWorkspace: workspace, boards: nextBoards };
+      }, SYNC_LEDGER_FILE);
+      commit = result;
+    } catch (error) {
+      for (const { item } of bundles) results.push({ boardId: item.boardId, state: "error", error: error.message, code: error.code || "" });
+    }
+  }
+  const refreshed = await getWorkspacePlan({ rootPath: plan.rootPath, policy });
+  return { ok: true, mode: "workspace", rootPath: plan.rootPath, plan, results, commit, refreshed, counts: refreshed.counts };
+}
+
+async function pullWorkspace({ rootPath = "", boardPath = "", policy, selectedBoardIds = [] } = {}) {
+  const plan = await getWorkspacePlan({ rootPath, boardPath, policy });
+  const selected = new Set((Array.isArray(selectedBoardIds) ? selectedBoardIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+  const candidates = plan.items.filter((item) => ["remote-only", "remote-changed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
+  const results = [];
+  for (const item of candidates) {
+    try {
+      results.push({ boardId: item.boardId, ...(await downloadBoard({ boardId: item.boardId, boardPath: item.localPath, remoteCommit: plan.remoteHeadSha, force: false })) });
+    } catch (error) {
+      results.push({ boardId: item.boardId, state: "error", error: error.message, code: error.code || "" });
+    }
+  }
+  const refreshed = await getWorkspacePlan({ rootPath: plan.rootPath, policy });
+  return { ok: true, mode: "workspace", rootPath: plan.rootPath, plan, results, refreshed, counts: refreshed.counts };
 }
 
 function resourcePathIsSafe(resourcePath = "") {
@@ -674,6 +899,7 @@ async function listBoards({ includeDeleted = false } = {}) {
       name: match[1],
       path: entry.path,
       manifestPath: `.freeflow/boards/${match[1]}/manifest.json`,
+      relativePath: `${match[1]}.freeflow`,
       boardHash: "",
       updatedAt: "",
       deletedAt: null,
@@ -810,6 +1036,10 @@ module.exports = {
   getBoardState,
   pullBoard,
   reconcileBoard,
+  scanLocalWorkspace,
+  getWorkspacePlan,
+  syncWorkspace,
+  pullWorkspace,
   mergeBoardPayloads,
   readLocalSyncHash,
   validateRemoteResources,

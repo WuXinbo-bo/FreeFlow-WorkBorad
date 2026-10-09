@@ -141,6 +141,7 @@ export function mountSettingsCenter(host, options = {}) {
     onRequestClose = () => {},
     agentClient = null,
     prepareGitHubSyncBoard = null,
+    prepareGitHubSyncWorkspace = null,
   } = options;
   let snapshot = null;
   let draft = null;
@@ -169,6 +170,7 @@ export function mountSettingsCenter(host, options = {}) {
   let githubSyncError = "";
   let githubRepositories = [];
   let githubWorkspace = null;
+  let githubWorkspacePlan = null;
   let githubRemoteBoards = [];
   let githubConflictResolutions = {};
   let githubConflictDetails = {};
@@ -190,6 +192,7 @@ export function mountSettingsCenter(host, options = {}) {
     deleted: "远端已删除",
     conflict: "存在冲突",
     missing: "本地未找到",
+    "path-collision": "文件名冲突",
     partial: "部分完成",
     error: "需要重试",
   });
@@ -225,6 +228,7 @@ export function mountSettingsCenter(host, options = {}) {
     const client = getGithubSyncClient();
     if (!client || typeof client.getWorkspace !== "function" && typeof client.listBoards !== "function") {
       githubWorkspace = null;
+      githubWorkspacePlan = null;
       githubRemoteBoards = [];
       githubConflictResolutions = {};
       githubConflictDetails = {};
@@ -666,8 +670,9 @@ export function mountSettingsCenter(host, options = {}) {
         ${flow.user_code ? `<div class="settings-center-inline-actions"><code>${escapeHtml(flow.user_code)}</code><button type="button" data-settings-action="github-open-device">打开 GitHub 授权页</button><button type="button" data-settings-action="github-poll"${githubSyncAction ? " disabled" : ""}>检查授权结果</button></div>` : ""}
         ${connected ? `<div class="settings-center-form-grid"><label class="settings-center-field"><span>私有仓库</span><select data-github-repository><option value="">请选择仓库</option>${githubRepositories.map((repo) => `<option value="${escapeHtml(`${repo.owner?.login || repo.owner?.name || ""}/${repo.name || ""}`)}"${repo.owner?.login === repository.owner && repo.name === repository.repo ? " selected" : ""}>${escapeHtml(`${repo.owner?.login || ""}/${repo.name || ""}`)}</option>`).join("")}</select></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-repositories">加载仓库</button><button type="button" data-settings-action="github-repository-create">创建私有仓库</button><button type="button" data-settings-action="github-repository-save">使用所选仓库</button></div></div>` : ""}
         <div class="settings-center-inline-actions">
-          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-workspace"${!hasRepository || githubSyncAction ? " disabled" : ""}>发现远程画布</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>立即同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : ""}
+          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-workspace"${!hasRepository || githubSyncAction ? " disabled" : ""}>发现远程画布</button><button type="button" data-settings-action="github-workspace-plan"${!hasRepository || githubSyncAction ? " disabled" : ""}>检查当前文件夹</button><button type="button" data-settings-action="github-workspace-pull"${!hasRepository || githubSyncAction ? " disabled" : ""}>拉取到当前文件夹</button><button type="button" data-settings-action="github-workspace-sync"${!hasRepository || githubSyncAction ? " disabled" : ""}>同步当前文件夹</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : ""}
         </div>
+        ${connected && hasRepository && githubWorkspacePlan ? `<div class="settings-center-diagnostic-grid"><div><span>本地工作区</span><strong>${escapeHtml(githubWorkspacePlan.rootPath || "当前文件夹")}</strong></div><div><span>画布总数</span><strong>${Number(githubWorkspacePlan.total || githubWorkspacePlan.items?.length || 0)}</strong></div><div><span>待上传 / 待拉取</span><strong>${Number(githubWorkspacePlan.counts?.["local-only"] || 0) + Number(githubWorkspacePlan.counts?.["local-changed"] || 0)} / ${Number(githubWorkspacePlan.counts?.["remote-only"] || 0) + Number(githubWorkspacePlan.counts?.["remote-changed"] || 0)}</strong></div></div>` : ""}
         ${connected && hasRepository ? `<div class="settings-center-github-remote" aria-live="polite">
           <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>远程画布</h5><p>${githubWorkspace?.lastCommitSha ? `远端版本 ${escapeHtml(String(githubWorkspace.lastCommitSha).slice(0, 12))}` : "发现后列出此仓库中的画布；新设备无需提前知道 boardId。"}</p></div><span>${githubSyncAction === "workspace" ? "正在读取" : githubRemoteBoards.length ? `${githubRemoteBoards.length} 个画布` : "尚未读取"}</span></div>
           ${workspaceBoards || (githubSyncAction === "workspace" ? `<div class="settings-center-loading"><span></span><strong>正在读取远程画布</strong></div>` : `<div class="settings-center-empty-inline">点击“发现远程画布”读取远端 workspace。</div>`)}
@@ -1118,6 +1123,7 @@ export function mountSettingsCenter(host, options = {}) {
         await client.setRepository({ owner: value.slice(0, separator), repo: value.slice(separator + 1), branch: selected?.default_branch || "main" });
         githubSyncStatus = await client.getStatus();
         githubWorkspace = null;
+        githubWorkspacePlan = null;
         githubRemoteBoards = [];
         githubConflictResolutions = {};
         githubConflictDetails = {};
@@ -1131,6 +1137,7 @@ export function mountSettingsCenter(host, options = {}) {
         if (owner && created?.repository?.name) await client.setRepository({ owner, repo: created.repository.name, branch: created.repository.default_branch || "main" });
         githubSyncStatus = await client.getStatus();
         githubWorkspace = null;
+        githubWorkspacePlan = null;
         githubRemoteBoards = [];
         githubConflictResolutions = {};
         githubConflictDetails = {};
@@ -1142,6 +1149,32 @@ export function mountSettingsCenter(host, options = {}) {
         githubSyncStatus = await client.getStatus();
         setMessage("当前画布已同步到 GitHub", "success");
         await refreshGithubWorkspace();
+      } else if (["workspace-plan", "workspace-sync", "workspace-pull"].includes(action)) {
+        if (!prepareGitHubSyncWorkspace) throw new Error("当前工作区尚未就绪，请稍后重试");
+        const context = await prepareGitHubSyncWorkspace();
+        const payload = { rootPath: context?.workspaceRoot || "", boardPath: context?.boardPath || "" };
+        const result = action === "workspace-plan"
+          ? await client.planWorkspace(payload)
+          : action === "workspace-sync"
+            ? await client.syncWorkspace(payload)
+            : await client.pullWorkspace(payload);
+        githubWorkspacePlan = result?.refreshed || result;
+        githubSyncStatus = await client.getStatus();
+        await refreshGithubWorkspace();
+        if (action !== "workspace-plan") {
+          window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: result }));
+        }
+        const counts = result?.counts || result?.refreshed?.counts || {};
+        const uploadCount = Number(counts["local-only"] || 0) + Number(counts["local-changed"] || 0);
+        const pullCount = Number(counts["remote-only"] || 0) + Number(counts["remote-changed"] || 0);
+        setMessage(
+          action === "workspace-plan"
+            ? `已生成工作区同步计划，共 ${Number(result?.total || result?.items?.length || 0)} 个画布`
+            : action === "workspace-sync"
+              ? `当前文件夹同步完成，待上传 ${uploadCount} 个，待拉取 ${pullCount} 个`
+              : `当前文件夹拉取完成，待上传 ${uploadCount} 个，待拉取 ${pullCount} 个`,
+          "success"
+        );
       } else if (action === "pull" || action === "reconcile") {
         if (!boardId) throw new Error("未选择远程画布");
         const board = githubRemoteBoards.find((item) => item.boardId === boardId) || {};
@@ -1186,6 +1219,7 @@ export function mountSettingsCenter(host, options = {}) {
         githubDeviceFlow = null;
         githubRepositories = [];
         githubWorkspace = null;
+        githubWorkspacePlan = null;
         githubRemoteBoards = [];
         githubConflictResolutions = {};
         githubConflictDetails = {};
