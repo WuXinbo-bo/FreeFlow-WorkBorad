@@ -267,11 +267,10 @@ process.on("uncaughtException", (error) => {
 function resolveAppIconPath() {
   const candidatePaths = process.platform === "darwin"
     ? [
-        path.join(app.getAppPath(), "build", "icon.icns"),
+        // Packaged apps use the generated ICNS; development uses the same
+        // macOS artwork, never the full-bleed Windows icon or a stale ICNS.
         path.join(process.resourcesPath || "", "icon.icns"),
-        path.join(app.getAppPath(), "build", "icon.png"),
-        path.join(process.resourcesPath || "", "icon.png"),
-        path.join(app.getAppPath(), "build", "icon.ico"),
+        path.join(app.getAppPath(), "build", "icon-mac.png"),
       ]
     : [path.join(app.getAppPath(), "build", "icon.ico")];
   for (const candidatePath of candidatePaths) {

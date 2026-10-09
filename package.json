@@ -13,6 +13,7 @@
     "test:macos-window-interaction": "node scripts/check-macos-window-interaction.js",
     "test:macos-paths": "node scripts/check-macos-paths.js",
     "test:macos-desktop-runtime": "node scripts/check-macos-desktop-runtime.js",
+    "test:macos-icons": "node scripts/check-macos-icons.js",
     "test:macos-backend": "node scripts/check-macos-backend-runtime.js",
     "test:macos-frontend": "node scripts/check-macos-frontend.js",
     "test:canvas-file-paths": "node scripts/check-canvas-file-paths.js",
@@ -201,7 +202,7 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "build/icon.png",
+      "icon": "build/icon-mac.png",
       "target": [
         {
           "target": "dmg",

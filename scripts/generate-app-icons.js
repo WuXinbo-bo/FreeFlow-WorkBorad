@@ -8,12 +8,17 @@ const SOURCE_ICON_PNG = path.join(ROOT_DIR, "public", "assets", "brand", "FreeFl
 const SOURCE_ICON_SVG = path.join(ROOT_DIR, "public", "assets", "brand", "FreeFlow_logo.svg");
 const BUILD_DIR = path.join(ROOT_DIR, "build");
 const PNG_ICON = path.join(BUILD_DIR, "icon.png");
+const MAC_PNG_ICON = path.join(BUILD_DIR, "icon-mac.png");
 const ICO_ICON = path.join(BUILD_DIR, "icon.ico");
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 const PNG_BLACK_ALPHA_THRESHOLD = 18;
 const DESKTOP_ICON_SIZE = 512;
 const DESKTOP_ICON_PADDING = 58;
 const DESKTOP_ICON_RADIUS = 112;
+// Legacy ICNS/Dock artwork includes its own safe area. A 1024px canvas with
+// a centered 824px tile matches the visible bounds of native macOS icons.
+const MAC_ICON_SIZE = 1024;
+const MAC_ICON_INSET = 100;
 
 async function ensureDir(targetPath) {
   await fs.mkdir(targetPath, { recursive: true });
@@ -101,12 +106,13 @@ async function main() {
   // the macOS Dock and in Windows shortcuts.
   const logoSource = sharp(trimmedBuffer);
 
-  async function renderDesktopIcon(size) {
-    const padding = Math.max(2, Math.round((DESKTOP_ICON_PADDING / DESKTOP_ICON_SIZE) * size));
-    const radius = Math.max(2, Math.round((DESKTOP_ICON_RADIUS / DESKTOP_ICON_SIZE) * size));
-    const innerSize = Math.max(1, size - padding * 2);
+  async function renderDesktopIcon(size, inset = 0) {
+    const tileSize = size - inset * 2;
+    const padding = Math.max(2, Math.round((DESKTOP_ICON_PADDING / DESKTOP_ICON_SIZE) * tileSize));
+    const radius = Math.max(2, Math.round((DESKTOP_ICON_RADIUS / DESKTOP_ICON_SIZE) * tileSize));
+    const innerSize = Math.max(1, tileSize - padding * 2);
     const backgroundSvg = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${radius}" fill="#ffffff"/></svg>`
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect x="${inset}" y="${inset}" width="${tileSize}" height="${tileSize}" rx="${radius}" fill="#ffffff"/></svg>`
     );
     const logoBuffer = await logoSource
       .clone()
@@ -126,13 +132,14 @@ async function main() {
     })
       .composite([
         { input: backgroundSvg, left: 0, top: 0 },
-        { input: logoBuffer, left: padding, top: padding },
+        { input: logoBuffer, left: inset + padding, top: inset + padding },
       ])
       .png()
       .toBuffer();
   }
 
   await fs.writeFile(PNG_ICON, await renderDesktopIcon(DESKTOP_ICON_SIZE));
+  await fs.writeFile(MAC_PNG_ICON, await renderDesktopIcon(MAC_ICON_SIZE, MAC_ICON_INSET));
 
   const pngBuffers = [];
   for (const size of ICO_SIZES) {
@@ -143,6 +150,7 @@ async function main() {
   await fs.writeFile(ICO_ICON, icoBuffer);
 
   console.log(`[generate-app-icons] generated ${path.relative(ROOT_DIR, PNG_ICON)}`);
+  console.log(`[generate-app-icons] generated ${path.relative(ROOT_DIR, MAC_PNG_ICON)}`);
   console.log(`[generate-app-icons] generated ${path.relative(ROOT_DIR, ICO_ICON)}`);
 }
 

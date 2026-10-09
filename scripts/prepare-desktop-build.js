@@ -26,5 +26,6 @@ function warnIfMissing(relativePath, message) {
 runNodeScript(path.join("scripts", "build-canvas2d-ui.js"));
 runNodeScript(path.join("scripts", "build-canvas-office.js"));
 runNodeScript(path.join("scripts", "generate-app-icons.js"));
+runNodeScript(path.join("scripts", "check-macos-icons.js"));
 
 warnIfMissing(path.join("build", "icon.ico"), "Windows 图标生成失败");
