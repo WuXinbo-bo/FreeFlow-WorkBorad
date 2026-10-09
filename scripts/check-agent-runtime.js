@@ -123,7 +123,7 @@ function checkStoreMigration(tempDir) {
 }
 
 async function main() {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-agent-runtime-"));
+  const tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-agent-runtime-")));
   checkStoreMigration(tempDir);
   const clients = [];
   const clientConfigs = [];

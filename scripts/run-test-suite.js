@@ -36,6 +36,7 @@ const CHECKS = [
   "scripts/check-canvas-resource-prewarm-runtime.js",
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
+  "scripts/check-canvas-runtime-hardening.js",
   "scripts/check-canvas-copy-integrity.js",
   "scripts/check-canvas-operation-results.js",
   "scripts/check-canvas-semantic-transfer.js",
@@ -132,6 +133,9 @@ async function main() {
   });
   try {
     await waitForServer(server);
+    await runNodeScript("scripts/check-canvas-html-safety-browser.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-canvas-command-integration.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });

@@ -141,7 +141,9 @@ function WordDocxPreviewPane({ request }) {
         jszipScript.onerror = () => reject(new Error("JSZip 加载失败"));
         doc.head.appendChild(jszipScript);
       });
+      if (cancelled) return;
       const module = await win.eval(`import("${previewUrl}")`);
+      if (cancelled) return;
       const renderAsync = module?.renderAsync;
       if (typeof renderAsync !== "function") {
         throw new Error("docx-preview 未提供 renderAsync");
@@ -167,6 +169,7 @@ function WordDocxPreviewPane({ request }) {
         renderFootnotes: true,
         useBase64URL: true,
       });
+      if (cancelled) return;
       const handleWheel = (event) => {
         if (!event.ctrlKey) {
           return;

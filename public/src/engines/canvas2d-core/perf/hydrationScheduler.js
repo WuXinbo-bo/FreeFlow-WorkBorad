@@ -37,6 +37,8 @@ export function createHydrationScheduler({
   let sequence = 0;
   let running = 0;
   let paused = false;
+  let flushing = false;
+  let scheduleEpoch = 0;
 
   function publish() {
     recordHydrationStats({
@@ -53,10 +55,12 @@ export function createHydrationScheduler({
   }
 
   function ensureFlush() {
-    if (paused || cancelFlush || !tasks.size) {
+    if (paused || flushing || cancelFlush || !tasks.size) {
       return;
     }
+    const epoch = ++scheduleEpoch;
     cancelFlush = scheduleIdle((deadline) => {
+      if (epoch !== scheduleEpoch || paused) return;
       cancelFlush = null;
       void flush(deadline);
     }, timeout);
@@ -88,54 +92,61 @@ export function createHydrationScheduler({
   }
 
   async function flush(deadline = null) {
-    const startedAt = now();
-    let processed = 0;
-    while (tasks.size && processed < maxTasksPerFlush) {
-      if (
-        processed > 0 &&
-        deadline &&
-        typeof deadline.timeRemaining === "function" &&
-        deadline.timeRemaining() < 4
-      ) {
-        break;
-      }
-      if (processed > 0 && now() - startedAt >= frameBudgetMs) {
-        break;
-      }
-      const task = takeNextTask();
-      if (!task) {
-        break;
-      }
-      if (task.staleOnGenerationChange && task.generation !== generation) {
-        recordHydrationTask(task.type, 0, "stale");
-        processed += 1;
-        continue;
-      }
-      const taskStartedAt = now();
-      running += 1;
-      publish();
-      try {
-        await task.run({
-          generation,
-          isStale: () => task.staleOnGenerationChange && task.generation !== generation,
-        });
-        recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "completed");
-      } catch (error) {
-        if (task.staleOnGenerationChange && task.generation !== generation) {
-          recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "stale");
-        } else {
-          recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "failed");
-          if (typeof task.onError === "function") {
-            task.onError(error);
-          }
+    if (flushing || paused) return;
+    flushing = true;
+    try {
+      const startedAt = now();
+      let processed = 0;
+      while (!paused && tasks.size && processed < maxTasksPerFlush) {
+        if (
+          processed > 0 &&
+          deadline &&
+          typeof deadline.timeRemaining === "function" &&
+          deadline.timeRemaining() < 4
+        ) {
+          break;
         }
-      } finally {
-        running = Math.max(0, running - 1);
-        processed += 1;
+        if (processed > 0 && now() - startedAt >= frameBudgetMs) {
+          break;
+        }
+        const task = takeNextTask();
+        if (!task) {
+          break;
+        }
+        if (task.staleOnGenerationChange && task.generation !== generation) {
+          recordHydrationTask(task.type, 0, "stale");
+          processed += 1;
+          continue;
+        }
+        const taskStartedAt = now();
+        running += 1;
         publish();
+        try {
+          await task.run({
+            generation,
+            isStale: () => task.staleOnGenerationChange && task.generation !== generation,
+          });
+          const stale = task.staleOnGenerationChange && task.generation !== generation;
+          recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), stale ? "stale" : "completed");
+        } catch (error) {
+          if (task.staleOnGenerationChange && task.generation !== generation) {
+            recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "stale");
+          } else {
+            recordHydrationTask(task.type, Number((now() - taskStartedAt).toFixed(2)), "failed");
+            if (typeof task.onError === "function") {
+              task.onError(error);
+            }
+          }
+        } finally {
+          running = Math.max(0, running - 1);
+          processed += 1;
+          publish();
+        }
       }
+    } finally {
+      flushing = false;
+      ensureFlush();
     }
-    ensureFlush();
   }
 
   function enqueue(key = "", run, options = {}) {
@@ -162,6 +173,7 @@ export function createHydrationScheduler({
   function setPaused(nextPaused = false) {
     paused = Boolean(nextPaused);
     if (paused && typeof cancelFlush === "function") {
+      scheduleEpoch += 1;
       cancelFlush();
       cancelFlush = null;
     }
@@ -182,6 +194,7 @@ export function createHydrationScheduler({
   }
 
   function clear({ stale = false } = {}) {
+    scheduleEpoch += 1;
     const size = tasks.size;
     tasks.clear();
     if (typeof cancelFlush === "function") {
