@@ -93,13 +93,16 @@ async function main() {
     .png()
     .toBuffer();
 
-  const base = sharp(trimmedBuffer);
+  // Desktop application icons should remain legible against light and dark
+  // system surfaces, so the generated installation assets use a solid white
+  // background. The source Logo stays transparent for in-app UI usage.
+  const base = sharp(trimmedBuffer).flatten({ background: "#ffffff" });
 
   await base
     .clone()
     .resize(512, 512, {
       fit: "contain",
-      background: "#00000000",
+      background: "#ffffff",
     })
     .png()
     .toFile(PNG_ICON);
@@ -110,7 +113,7 @@ async function main() {
       .clone()
       .resize(size, size, {
         fit: "contain",
-        background: "#00000000",
+        background: "#ffffff",
       })
       .png()
       .toBuffer();
