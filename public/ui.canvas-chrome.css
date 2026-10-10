@@ -313,7 +313,8 @@
   cursor: grab !important;
 }
 
-.desktop-clear-stage .canvas-chrome-edge-rail.is-top {
+.desktop-clear-stage .canvas-chrome-edge-rail.is-top,
+.conversation-panel .canvas-chrome-edge-rail.is-top {
   height: 12px;
 }
 

@@ -6971,19 +6971,20 @@ function beginPaneResize(side, startX, startY, pointerId) {
         resizeFrameElement.remove();
         document.body.classList.remove("is-pane-resizing");
         if (side === "right") {
+          if (paneResizeFrozenViewport && paneResizeFrozenViewportStyles) {
+            paneResizeFrozenViewportStyles.forEach(({ property, value, priority }) => {
+              if (value) {
+                paneResizeFrozenViewport.style.setProperty(property, value, priority);
+              } else {
+                paneResizeFrozenViewport.style.removeProperty(property);
+              }
+            });
+          }
+          paneResizeFrozenViewport = null;
+          paneResizeFrozenViewportStyles = null;
+          syncPanelDependentUi("right", { syncShape: false });
           paneGlassResumeTimer = window.setTimeout(() => {
             paneGlassResumeTimer = 0;
-            if (paneResizeFrozenViewport && paneResizeFrozenViewportStyles) {
-              paneResizeFrozenViewportStyles.forEach(({ property, value, priority }) => {
-                if (value) {
-                  paneResizeFrozenViewport.style.setProperty(property, value, priority);
-                } else {
-                  paneResizeFrozenViewport.style.removeProperty(property);
-                }
-              });
-            }
-            paneResizeFrozenViewport = null;
-            paneResizeFrozenViewportStyles = null;
             panelElement?.classList.remove("is-pane-glass-suspended");
             syncPanelDependentUi("right", { syncShape: false });
           }, 360);
