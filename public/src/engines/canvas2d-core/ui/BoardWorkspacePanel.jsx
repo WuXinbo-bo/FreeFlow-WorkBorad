@@ -40,6 +40,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
     try { return Math.min(360, Math.max(260, Number(localStorage.getItem("freeflow.canvas.chrome.workspaceWidth")) || 288)); } catch { return 288; }
   });
   const rootRef = useRef(null);
+  const folderRef = useRef("");
   const searchRef = useRef(null);
   const sequence = useRef(0);
   const statusSequence = useRef(0);
@@ -63,7 +64,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
     setEditor(null);
   };
 
-  async function refresh(target = folder) {
+  async function refresh(target = folderRef.current) {
     const request = ++sequence.current;
     setLoading(true);
     try {
@@ -71,7 +72,8 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
       const result = root ? await bridge.listCanvasBoards(root) : { ok: true, boards: [], folderPath: "" };
       if (!mounted.current || request !== sequence.current) return;
       if (!result?.ok) throw new Error(result?.error || "无法读取工作区");
-      setFolder(result.folderPath || root || "");
+      folderRef.current = result.folderPath || root || "";
+      setFolder(folderRef.current);
       setBoards(result.boards || []);
     } catch (cause) {
       if (mounted.current && request === sequence.current) setError(cause.message || "无法读取工作区");
