@@ -45,9 +45,13 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     await page.mouse.down();
     await page.mouse.move(x + (side === "right" ? before.width - width : width - before.width), y, { steps: 12 });
     await page.mouse.up();
-    await page.waitForTimeout(180);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const resized = await rect(selector);
     assert(Math.abs(resized.width - width) < 2, `actual ${side} panel resize did not reach ${width}: ${resized.width}`);
+    if (side === "right") {
+      const frozenWidth = await page.locator('[data-pane-resize-viewport="right"]').evaluate((element) => element.style.width);
+      assert.equal(frozenWidth, "", "right header retained stale frozen geometry after resize");
+    }
   };
 
   try {
@@ -100,6 +104,9 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     const left = await rect('[data-stage-panel-controls="left"]');
     assert(!overlap(toolbar, left), "top canvas controls overlap the toolbar");
     assert(Math.abs(toolbar.y + toolbar.height / 2 - left.y - left.height / 2) <= 2, "canvas top controls are not vertically aligned");
+    for (const side of ["left", "right"]) {
+      assert((await rect(`.workspace-drag-band.is-top[data-stage-panel-frame="${side}"]`)).height <= 12, `${side} top drag rail covers header controls`);
+    }
     await capture("workspace-wide");
 
     for (const width of [420, 360, 320, 600]) {
@@ -123,7 +130,11 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
           const hit = await page.locator(id).evaluate((button) => {
             const r = button.getBoundingClientRect();
             const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-            return { rect: r.toJSON(), width: r.width, inside: button.contains(hit), target: hit?.outerHTML.slice(0, 400), rail: button.closest(".conversation-panel")?.querySelector(".workspace-drag-band.is-top")?.getBoundingClientRect().toJSON() };
+            const points = [r.top + 4, r.top + r.height / 2, r.bottom - 4].map((y) => {
+              const target = document.elementFromPoint(r.x + r.width / 2, y);
+              return { y, inside: button.contains(target), target: target?.className };
+            });
+            return { rect: r.toJSON(), width: r.width, inside: points.every((point) => point.inside), points, target: hit?.outerHTML.slice(0, 400), viewport: button.closest(".pane-resize-viewport")?.style.cssText, body: document.body.className };
           });
           assert(hit.width >= 24 && hit.inside, `header button is not hittable: ${width}/${mode}/${id}: ${JSON.stringify(hit)}`);
         }
@@ -156,6 +167,19 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     assert.equal(await mapCollapsed(), false, "rapid map/directory switches lost the selected state");
     await mapToggle.click();
     assert(await mapCollapsed());
+    for (const side of ["left", "right"]) {
+      await page.locator(`[data-stage-panel-action="close"][data-stage-panel-side="${side}"]`).click();
+      const restore = page.locator(`#restore-${side}-pane-btn`);
+      await restore.waitFor({ state: "visible" });
+      const frame = await restore.boundingBox();
+      const viewportHeight = await page.evaluate(() => window.innerHeight);
+      assert(Math.abs(frame.y + frame.height / 2 - viewportHeight / 2) <= 2, `${side} restore control did not stay vertically centered`);
+    }
+    await capture("both-panels-collapsed");
+    for (const side of ["left", "right"]) {
+      await page.locator(`#restore-${side}-pane-btn`).click();
+      await page.waitForFunction((side) => document.querySelector(`#restore-${side}-pane-btn`)?.classList.contains("is-hidden"), side);
+    }
     assert.deepEqual(errors, [], "workspace chrome generated browser errors");
     console.log("[workspace-chrome] layout, local preferences, directory isolation, occlusion/recovery and rapid toggles passed");
   } finally {
