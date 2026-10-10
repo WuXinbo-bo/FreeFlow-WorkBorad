@@ -41,13 +41,15 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     const handle = await rect(`#${side}-pane-resizer`);
     const x = handle.x + handle.width / 2;
     const y = handle.y + handle.height / 2;
+    const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.outerHTML.slice(0, 400), { x, y });
+    assert(hit?.includes(`${side}-pane-resizer`), `${side} resize handle was covered: ${JSON.stringify({ hit, before, handle, body: await page.locator("body").getAttribute("class"), panelClass: await page.locator(selector).getAttribute("class"), panelStyle: await page.locator(selector).getAttribute("style") })}`);
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + (side === "right" ? before.width - width : width - before.width), y, { steps: 12 });
     await page.mouse.up();
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const resized = await rect(selector);
-    assert(Math.abs(resized.width - width) < 2, `actual ${side} panel resize did not reach ${width}: ${resized.width}`);
+    assert(Math.abs(resized.width - width) < 2, `actual ${side} panel resize did not reach ${width}: ${JSON.stringify({ before, handle, resized, hit, body: await page.locator("body").getAttribute("class"), panelStyle: await page.locator(selector).getAttribute("style") })}`);
     if (side === "right") {
       const frozenWidth = await page.locator('[data-pane-resize-viewport="right"]').evaluate((element) => element.style.width);
       assert.equal(frozenWidth, "", "right header retained stale frozen geometry after resize");
@@ -151,6 +153,8 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     await addSceneItem("minimap-occluded-edit");
     assert.equal((await stats()).snapshotRenderCount, hiddenStats.snapshotRenderCount, "occluded minimap kept redrawing snapshots");
     await setDirectory(true);
+    const workspaceCollapse = page.locator(".canvas2d-workspace-panel").getByRole("button", { name: "收起画布工作区", exact: true });
+    if (await workspaceCollapse.isVisible()) await workspaceCollapse.click();
     await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
     await page.waitForFunction((count) => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.snapshotRenderCount > count, hiddenStats.snapshotRenderCount);
     assert.equal(await mapCollapsed(), false, "minimap did not restore after occlusion");

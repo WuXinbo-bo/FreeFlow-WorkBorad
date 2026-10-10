@@ -3509,6 +3509,8 @@ export function createCanvas2DEngine(options = {}) {
   let boardLoadInFlight = null;
   let boardStateReadyPromise = Promise.resolve();
   let boardSaveInFlight = null;
+  let boardFileOperationActive = false;
+  let boardDirtyRevision = 0;
   let boardSelectionPersistPromise = Promise.resolve();
   let deferredStoreEmitHandle = 0;
   let cancelDeferredStoreEmit = null;
@@ -7283,6 +7285,7 @@ let tablePointerSelectionState = {
     if (suppressDirtyTracking) {
       return;
     }
+    boardDirtyRevision += 1;
     if (!state.boardDirty) {
       state.boardDirty = true;
       scheduleDeferredStoreEmit();
@@ -7439,8 +7442,8 @@ let tablePointerSelectionState = {
     return ensureFreeFlowBoardFileName(raw);
   }
 
-  function buildBoardFilePayload(targetPath) {
-    const payload = structuredImportRuntime.serializeBoard(state.board, {
+  function buildBoardFilePayload(targetPath, board = state.board) {
+    const payload = structuredImportRuntime.serializeBoard(board, {
       meta: {
         boardFilePath: targetPath,
       },
@@ -7515,19 +7518,24 @@ let tablePointerSelectionState = {
     return String(result.filePath || "").trim();
   }
 
-  async function saveBoard({ saveAs = false, autosave = false, silent = false, exactPath = false } = {}) {
+  async function saveBoard({ saveAs = false, autosave = false, silent = false, exactPath = true, fileOperation = false } = {}) {
     if (!useLocalFileSystem) {
       if (!silent) {
         setStatus("当前环境不支持本地保存");
       }
       return false;
     }
-    syncActiveDraftEditingState({ markDirty: true });
-    if (boardSaveInFlight) {
-      return boardSaveInFlight;
+    if ((boardFileOperationActive && !fileOperation) || (state.boardFileReloadRequired && !saveAs)) {
+      if (!silent) setStatus("文件正在更新或等待重载，请稍后重试；内存修改可以另存为", "warning");
+      return false;
     }
+    if (boardLoadInFlight) return false;
+    syncActiveDraftEditingState({ markDirty: true });
+    while (boardSaveInFlight) await boardSaveInFlight;
+    if (boardFileOperationActive && !fileOperation) return false;
+    if (boardLoadInFlight) return false;
     boardSaveInFlight = (async () => {
-      if (!state.boardDirty && !saveAs && !autosave) {
+      if (!state.boardDirty && !saveAs) {
         if (!silent) {
           setSaveToast("画布已保存");
         }
@@ -7546,8 +7554,7 @@ let tablePointerSelectionState = {
         if (!picked) {
           return false;
         }
-        const pickedName = getFileName(picked);
-        targetPath = boardFolder ? joinPath(boardFolder, pickedName) : picked;
+        targetPath = picked;
       } else if (!targetPath) {
         if (autosave) {
           return false;
@@ -7570,7 +7577,14 @@ let tablePointerSelectionState = {
         return false;
       }
       targetPath = ensureBoardFileExtension(targetPath);
-      const payload = JSON.stringify(buildBoardFilePayload(targetPath), null, 2);
+      if (state.boardFileReloadRequired && targetPath.replace(/\\/g, "/").toLowerCase() === state.boardFilePath.replace(/\\/g, "/").toLowerCase()) {
+        setStatus("请另存到新文件，以保留磁盘的新版本", "warning");
+        return false;
+      }
+      const copiedBoardId = saveAs && targetPath !== state.boardFilePath ? globalThis.crypto.randomUUID() : "";
+      const savedBoard = state.board;
+      const savedRevision = boardDirtyRevision;
+      const payload = JSON.stringify(buildBoardFilePayload(targetPath, copiedBoardId ? { ...state.board, boardId: copiedBoardId } : state.board), null, 2);
       const result = await globalThis.desktopShell.writeFile(targetPath, payload);
       if (!result?.ok) {
         if (!silent) {
@@ -7578,8 +7592,11 @@ let tablePointerSelectionState = {
         }
         return false;
       }
+      if (state.board !== savedBoard) return false;
+      if (copiedBoardId) { state.board.boardId = copiedBoardId; state.boardRevision += 1; }
       await setBoardFilePath(targetPath, { emit: false, updateSettings: true });
-      setBoardDirty(false, { emit: false });
+      if (savedRevision === boardDirtyRevision) setBoardDirty(false, { emit: false });
+      if (saveAs) state.boardFileReloadRequired = false;
       if (autosave) {
         state.boardAutosaveAt = Date.now();
       } else {
@@ -7588,7 +7605,7 @@ let tablePointerSelectionState = {
           setSaveToast("画布已保存");
         }
       }
-      if (state.editingId) {
+      if (state.editingId && savedRevision === boardDirtyRevision) {
         const editingItem = sceneRegistry.getItemById(state.editingId);
         editBaselineSnapshot = isMindMapNode(editingItem)
           ? takeItemsHistorySnapshot(getMindMapHistoryItemIds())
@@ -7608,6 +7625,44 @@ let tablePointerSelectionState = {
         boardSaveInFlight = null;
       });
     return boardSaveInFlight;
+  }
+
+  async function withBoardFileOperation(task, { saveFirst = true } = {}) {
+    if (boardFileOperationActive) throw new Error("另一个文件操作正在进行，请稍后重试");
+    boardFileOperationActive = true;
+    stopAutosaveTimer();
+    let activePath = state.boardFilePath;
+    let before = null;
+    try {
+      while (boardSaveInFlight) await boardSaveInFlight;
+      while (boardLoadInFlight) await boardLoadInFlight;
+      activePath = state.boardFilePath;
+      if (saveFirst && !(await saveBoard({ silent: true, exactPath: true, fileOperation: true }))) throw new Error("当前画布保存失败，已停止文件操作");
+      if (saveFirst && state.boardDirty) throw new Error("保存期间仍有编辑，请停止编辑后重试");
+      activePath = state.boardFilePath;
+      if (saveFirst && activePath && globalThis.desktopShell?.readFile) {
+        before = await globalThis.desktopShell.readFile(activePath);
+        if (!before?.ok) throw new Error(before?.error || "当前画布无法读取，已停止同步");
+      }
+      return await task();
+    } finally {
+      try {
+        // A failed batch may still have replaced some files. Reconcile memory before writes resume.
+        if (before?.ok && activePath === state.boardFilePath) {
+          const after = await globalThis.desktopShell.readFile(activePath).catch(() => null);
+          if (!after?.ok || before.text !== after.text) {
+            state.boardFileReloadRequired = true;
+            syncActiveDraftEditingState({ markDirty: true });
+            if (after?.ok && !state.boardDirty && !state.editingId) await loadBoardFromPath(activePath);
+            if (state.boardFileReloadRequired) setStatus("磁盘画布已更新，内存内容已保留；请另存修改或重新载入", "warning");
+            store.emit();
+          }
+        }
+      } finally {
+        boardFileOperationActive = false;
+        if (mounted && state.boardAutosaveEnabled) startAutosaveTimer();
+      }
+    }
   }
 
   async function loadBoardFromPath(
@@ -7630,9 +7685,7 @@ let tablePointerSelectionState = {
     if (!targetPath) {
       return false;
     }
-    if (boardLoadInFlight) {
-      return boardLoadInFlight;
-    }
+    while (boardLoadInFlight || boardSaveInFlight) await (boardLoadInFlight || boardSaveInFlight);
     boardLoadInFlight = (async () => {
       cancelStartupHydrationWork();
       const loadMetrics = createBoardLoadMetrics(targetPath);
@@ -7749,6 +7802,7 @@ let tablePointerSelectionState = {
         await setBoardFilePath(canonicalPath, { emit: false, updateSettings });
         loadMetrics.mark("set-board-path");
         setBoardDirty(false, { emit: false });
+        state.boardFileReloadRequired = false;
         store.emit();
         loadMetrics.mark("emit-store");
         if (deferHydration) {
@@ -7849,10 +7903,12 @@ let tablePointerSelectionState = {
   }
 
   async function maybeSaveBeforeSwitch() {
+    while (boardSaveInFlight) await boardSaveInFlight;
+    syncActiveDraftEditingState({ markDirty: true });
     if (!state.boardDirty) {
       return true;
     }
-    return saveBoard({ silent: true });
+    return await saveBoard({ silent: true, exactPath: true }) && !state.boardDirty;
   }
 
   function persistCommittedBoardIfPossible() {
@@ -7869,6 +7925,7 @@ let tablePointerSelectionState = {
   }
 
   async function newBoard() {
+    if (boardFileOperationActive) return false;
     const ok = await maybeSaveBeforeSwitch();
     if (!ok) {
       return false;
@@ -7899,6 +7956,7 @@ let tablePointerSelectionState = {
   }
 
   async function openBoard() {
+    if (boardFileOperationActive) return false;
     const ok = await maybeSaveBeforeSwitch();
     if (!ok) {
       return false;
@@ -7913,12 +7971,13 @@ let tablePointerSelectionState = {
     return loadBoardFromPath(picked);
   }
 
-  async function openBoardAtPath(filePath, { silent = false, updateSettings = true } = {}) {
+  async function openBoardAtPath(filePath, { silent = false, updateSettings = true, saveBeforeSwitch = true } = {}) {
+    if (boardFileOperationActive) return false;
     const cleanPath = String(filePath || "").trim();
     if (!cleanPath) {
       return false;
     }
-    const ok = await maybeSaveBeforeSwitch();
+    const ok = !saveBeforeSwitch || await maybeSaveBeforeSwitch();
     if (!ok) {
       return false;
     }
@@ -7958,6 +8017,7 @@ let tablePointerSelectionState = {
   }
 
   async function ensureTutorialBoard() {
+    if (boardFileOperationActive) return { ok: false, error: "文件操作正在进行" };
     if (!useLocalFileSystem || typeof globalThis?.desktopShell?.ensureTutorialBoard !== "function") {
       setStatus("当前环境不支持教程画布", "warning");
       return { ok: false, error: "当前环境不支持教程画布" };
@@ -8227,16 +8287,11 @@ let tablePointerSelectionState = {
 
   const workspaceManager = createCanvasWorkspaceManager({
     state,
-    store,
     useLocalFileSystem,
-    setSuppressDirtyTracking(nextValue) {
-      suppressDirtyTracking = Boolean(nextValue);
-    },
     getFileApi() {
       return {
         setStatus,
         setBoardFilePath,
-        setBoardDirty,
         setCanvasImageSavePath,
         resolveCanvasBoardSavePath,
         resolveCanvasWorkspaceFolderPath,
@@ -8247,7 +8302,6 @@ let tablePointerSelectionState = {
         resolveBoardFolderPath,
         joinPath,
         isBoardFileName,
-        resolveUniqueBoardFilePath,
         resolveUniqueBoardFilePathByBaseName,
         sanitizeBoardFileBaseName,
       };
@@ -8256,17 +8310,10 @@ let tablePointerSelectionState = {
       return {
         saveBoard,
         maybeSaveBeforeSwitch,
-        syncBoard,
+        buildBoardFilePayload,
+        loadBoardFromPath,
+        withBoardFileOperation,
         ensureImportImageFolderExists,
-      };
-    },
-    getEditApi() {
-      return {
-        cancelTextEdit,
-        cancelFlowNodeEdit,
-        cancelFileMemoEdit,
-        cancelImageMemoEdit,
-        finishImageEdit,
       };
     },
   });
@@ -21083,6 +21130,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onPointerDown(event) {
+    if (boardFileOperationActive) return;
     if (!isInteractiveMode() || (event.button !== 0 && event.button !== 1 && event.button !== 2)) {
       return;
     }
@@ -26256,6 +26304,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onPaste(event) {
+    if (boardFileOperationActive) { event.preventDefault(); return; }
     if (!isInteractiveMode() || state.editingId) return;
     const snapshot = createClipboardDataTransferSnapshot(event.clipboardData);
     const anchor = { ...(state.lastPointerScenePoint || getCenterScenePoint()) };
@@ -26388,7 +26437,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onWindowKeyDown(event) {
+    if (boardFileOperationActive) return;
     if (!isInteractiveMode() || globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") return;
+    if (event.target?.closest?.(".canvas2d-workspace-panel, .canvas2d-workspace-menu, .canvas2d-workspace-confirm-backdrop")) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "escape" && pendingRichExternalLinkEdit) {
       event.preventDefault();
@@ -27513,6 +27564,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function runCommand(name, ...args) {
+    if (boardFileOperationActive) return false;
     return canvasUiRuntime.commands.run(name, getCanvasCommandContext(), ...args);
   }
 
@@ -27798,9 +27850,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     ensureTutorialBoard,
     saveBoard,
     saveBoardAs,
+    withBoardFileOperation,
     renameBoard: workspaceManager.renameBoard,
     renameBoardAtPath: workspaceManager.renameBoardAtPath,
     deleteBoardAtPath: workspaceManager.deleteBoardAtPath,
+    duplicateBoardAtPath: workspaceManager.duplicateBoardAtPath,
     revealBoardInFolder: workspaceManager.revealBoardInFolder,
     revealBoardPathInFolder: workspaceManager.revealBoardPathInFolder,
     openExternalUrl,

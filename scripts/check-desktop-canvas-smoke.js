@@ -72,6 +72,8 @@ async function main() {
       window.show();
       window.focus();
     });
+    const workspace = page.locator(".canvas2d-workspace-panel");
+    await workspace.getByRole("button", { name: "收起画布工作区", exact: true }).click();
     await checkCanvasTrackpad(page);
     const point = await page.locator("#canvas-office-canvas").evaluate((canvas) => {
       const rect = canvas.getBoundingClientRect();
@@ -98,6 +100,7 @@ async function main() {
     const recoveredScale = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view.scale);
     assert(Math.abs(recoveredScale / beforePinch - 1) < 0.03, "native reverse pinch did not recover the camera scale");
     await cdp.detach();
+    await workspace.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await checkWorkspaceChrome(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
     if (process.env.FREEFLOW_SCREENSHOT_DIR) {
       await fs.mkdir(process.env.FREEFLOW_SCREENSHOT_DIR, { recursive: true });
