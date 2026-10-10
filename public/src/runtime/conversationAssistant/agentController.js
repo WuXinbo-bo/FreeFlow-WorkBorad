@@ -343,7 +343,11 @@ export function createAgentController(options = {}) {
     refs.chatLog.querySelectorAll("[data-agent-disclosure]").forEach((element) => { element.open = expanded.has(element.dataset.agentDisclosure); });
     requestAnimationFrame(() => {
       if (!refs.threadViewport) return;
-      refs.threadViewport.scrollTop = followThread ? refs.threadViewport.scrollHeight : previousScrollTop;
+      const targetScrollTop = followThread ? refs.threadViewport.scrollHeight : previousScrollTop;
+      const previousScrollBehavior = refs.threadViewport.style.scrollBehavior;
+      refs.threadViewport.style.scrollBehavior = "auto";
+      refs.threadViewport.scrollTop = targetScrollTop;
+      refs.threadViewport.style.scrollBehavior = previousScrollBehavior;
       updateScrollFollowing();
     });
   }
