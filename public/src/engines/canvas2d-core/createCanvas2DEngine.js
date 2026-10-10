@@ -7665,6 +7665,11 @@ let tablePointerSelectionState = {
     }
   }
 
+  function getBoardEditRevision() {
+    syncActiveDraftEditingState({ markDirty: true });
+    return boardDirtyRevision;
+  }
+
   async function loadBoardFromPath(
     filePath,
     {
@@ -7673,6 +7678,7 @@ let tablePointerSelectionState = {
       deferHydration = true,
       deferFileCardResolve = true,
       deferOverlayRescan = true,
+      expectedEditRevision = null,
     } = {}
   ) {
     if (!useLocalFileSystem) {
@@ -7686,6 +7692,8 @@ let tablePointerSelectionState = {
       return false;
     }
     while (boardLoadInFlight || boardSaveInFlight) await (boardLoadInFlight || boardSaveInFlight);
+    const previousBoard = state.board;
+    const loadRevision = expectedEditRevision ?? getBoardEditRevision();
     boardLoadInFlight = (async () => {
       cancelStartupHydrationWork();
       const loadMetrics = createBoardLoadMetrics(targetPath);
@@ -7765,6 +7773,10 @@ let tablePointerSelectionState = {
           }
           return false;
         }
+      }
+      if (state.board !== previousBoard || getBoardEditRevision() !== loadRevision) {
+        if (!silent) setStatus("读取期间出现新编辑，已停止切换；请保存后重试", "warning");
+        return false;
       }
       suppressDirtyTracking = true;
       try {
@@ -8312,6 +8324,7 @@ let tablePointerSelectionState = {
         maybeSaveBeforeSwitch,
         buildBoardFilePayload,
         loadBoardFromPath,
+        getBoardEditRevision,
         withBoardFileOperation,
         ensureImportImageFolderExists,
       };
