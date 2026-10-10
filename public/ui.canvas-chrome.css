@@ -1,5 +1,5 @@
 .canvas2d-engine-topbar {
-  top: calc(var(--canvas-chrome-block-inset) + 36px) !important;
+  top: 6px !important;
   left: var(--canvas-chrome-inline-inset) !important;
   right: var(--canvas-chrome-inline-end-inset) !important;
 }
@@ -9,6 +9,11 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 6px !important;
+  max-width: calc(100% - 94px) !important;
+}
+
+.canvas2d-engine-topbar .canvas2d-engine-corner-top-left {
+  top: calc(var(--canvas-chrome-height) + 6px);
 }
 
 .canvas2d-engine-toolbar-wrap {
@@ -56,7 +61,7 @@
   background-color: var(--chrome-glass-idle) !important;
   background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 52%, rgba(181, 204, 224, 0.12)) !important;
   opacity: 0.84;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .canvas-chrome-utility-dock .canvas2d-engine-search-placeholder,
@@ -144,6 +149,7 @@
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  pointer-events: none;
 }
 
 .canvas-chrome-minimap.is-collapsed:hover,
@@ -170,6 +176,7 @@
   line-height: 1;
   cursor: pointer;
   user-select: none;
+  pointer-events: auto;
 }
 
 .canvas-chrome-minimap .canvas2d-transient-minimap-label {
@@ -286,7 +293,7 @@
 @media (min-width: 721px) {
   .canvas2d-navigator-head {
     padding-left: 0 !important;
-    padding-top: 36px !important;
+    padding-top: 32px !important;
   }
 }
 
@@ -304,6 +311,10 @@
   overflow: hidden;
   background: transparent !important;
   cursor: grab !important;
+}
+
+.desktop-clear-stage .canvas-chrome-edge-rail.is-top {
+  height: 12px;
 }
 
 .canvas-chrome-edge-rail::after {
@@ -362,11 +373,7 @@
 
 @media (max-width: 1024px) {
   .canvas2d-engine-topbar-stack {
-    max-width: calc(100% - 88px) !important;
-  }
-
-  .canvas-chrome-minimap {
-    transform: translateY(calc(var(--canvas-chrome-height) + 6px)) !important;
+    max-width: calc(100% - 94px) !important;
   }
 }
 

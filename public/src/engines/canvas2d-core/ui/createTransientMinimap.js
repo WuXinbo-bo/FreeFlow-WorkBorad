@@ -1,5 +1,6 @@
 import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
+import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
 
 const DEFAULT_WIDTH = 164;
 const DEFAULT_HEIGHT = 96;
@@ -171,23 +172,6 @@ function clearCanvas(canvas) {
   return ctx;
 }
 
-function resolveAnchorRect(host) {
-  const anchor = document.querySelector(".canvas2d-engine-corner-top-left .canvas2d-floating-card-info");
-  if (!(anchor instanceof HTMLElement) || !(host instanceof HTMLElement)) {
-    return null;
-  }
-  const anchorRect = anchor.getBoundingClientRect();
-  const hostRect = host.getBoundingClientRect();
-  return {
-    left: Math.max(0, anchorRect.left - hostRect.left),
-    top: Math.max(0, anchorRect.top - hostRect.top),
-    width: Math.max(0, anchorRect.width),
-    height: Math.max(0, anchorRect.height),
-    right: Math.max(0, anchorRect.right - hostRect.left),
-    bottom: Math.max(0, anchorRect.bottom - hostRect.top),
-  };
-}
-
 function drawBoardSnapshot(ctx, items = [], layout) {
   if (!ctx || !layout) {
     return;
@@ -254,7 +238,8 @@ export function createTransientMinimap({
   let label = null;
   let toggleButton = null;
   let mounted = false;
-  let collapsed = false;
+  let collapsed = readChromePreference("minimapCollapsed", true);
+  let occluded = false;
   let lastSceneRevision = -1;
   let lastLayout = null;
   let lastBoardBounds = null;
@@ -265,15 +250,25 @@ export function createTransientMinimap({
   let viewportRenderCount = 0;
   let placementObserver = null;
   let sizeObserver = null;
-  let observedAnchor = null;
+  let observedZoom = null;
   let placementFrame = 0;
 
   function schedulePlacement() {
     if (!mounted || placementFrame) return;
     placementFrame = requestAnimationFrame(() => {
       placementFrame = 0;
-      if (mounted) syncPlacement();
+      if (mounted) {
+        syncPlacement();
+        if (!collapsed && !occluded && !document.hidden) {
+          renderSnapshotIfNeeded();
+          renderViewportFrame();
+        }
+      }
     });
+  }
+
+  function handleVisibilityChange() {
+    if (!document.hidden) update();
   }
 
   function syncDebugStats() {
@@ -303,7 +298,9 @@ export function createTransientMinimap({
     event.preventDefault();
     event.stopPropagation();
     collapsed = !collapsed;
+    writeChromePreference("minimapCollapsed", collapsed);
     applyCollapsedState();
+    update();
   }
 
   function handleCanvasPointerDown(event) {
@@ -397,27 +394,37 @@ export function createTransientMinimap({
     if (!(shell instanceof HTMLDivElement) || !(host instanceof HTMLElement)) {
       return;
     }
-    const anchor = resolveAnchorRect(host);
-    const anchorElement = host.closest(".canvas-engine-stage")?.querySelector(".canvas2d-floating-card-info");
-    if (sizeObserver && anchorElement !== observedAnchor) {
-      if (observedAnchor) sizeObserver.unobserve(observedAnchor);
-      observedAnchor = anchorElement || null;
-      if (observedAnchor) sizeObserver.observe(observedAnchor);
+    const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host;
+    const zoom = stage?.querySelector(".canvas2d-floating-card-zoom");
+    if (sizeObserver && zoom !== observedZoom) {
+      if (observedZoom) sizeObserver.unobserve(observedZoom);
+      observedZoom = zoom || null;
+      if (observedZoom) sizeObserver.observe(observedZoom);
     }
     const hostRect = host.getBoundingClientRect();
-    const navigator = host.closest(".canvas-engine-stage")?.querySelector(".canvas2d-navigator-panel");
+    const navigator = stage?.querySelector(".canvas2d-navigator-panel");
     const navigatorRect = navigator instanceof HTMLElement && getComputedStyle(navigator).display !== "none"
       ? navigator.getBoundingClientRect()
       : null;
-    const top = anchor ? anchor.bottom + 10 : DEFAULT_MARGIN + 84;
-    const overlapsNavigator = navigatorRect && navigatorRect.top < hostRect.top + top + shell.offsetHeight && navigatorRect.bottom > hostRect.top + top;
-    const navigatorSafeLeft = overlapsNavigator ? navigatorRect.right - hostRect.left + 12 : DEFAULT_MARGIN;
-    const desiredLeft = anchor ? Math.max(anchor.left, navigatorSafeLeft) : navigatorSafeLeft;
-    const maxLeft = Math.max(DEFAULT_MARGIN, host.clientWidth - shell.offsetWidth - DEFAULT_MARGIN);
-    shell.style.left = `${Math.round(Math.min(desiredLeft, maxLeft))}px`;
-    shell.style.top = `${Math.round(top)}px`;
-    shell.style.right = "auto";
-    shell.style.bottom = "auto";
+    const zoomRect = zoom?.getBoundingClientRect();
+    const width = collapsed ? 38 : DEFAULT_WIDTH;
+    const height = collapsed ? 38 : DEFAULT_HEIGHT + 38;
+    const right = zoomRect ? Math.max(8, hostRect.right - zoomRect.right) : DEFAULT_MARGIN;
+    const bottom = zoomRect ? Math.max(DEFAULT_MARGIN, hostRect.bottom - zoomRect.top + 10) : 64;
+    const left = host.clientWidth - width - right;
+    const top = host.clientHeight - height - bottom;
+    const wasOccluded = occluded;
+    occluded = top < 90 || left < 8 || Boolean(navigatorRect &&
+      navigatorRect.left < hostRect.left + left + width + 8 && navigatorRect.right > hostRect.left + left - 8 &&
+      navigatorRect.top < hostRect.top + top + height + 8 && navigatorRect.bottom > hostRect.top + top - 8);
+    shell.style.visibility = occluded ? "hidden" : "visible";
+    shell.style.pointerEvents = occluded || collapsed ? "none" : "auto";
+    shell.setAttribute("aria-hidden", String(occluded));
+    shell.style.left = "auto";
+    shell.style.top = "auto";
+    shell.style.right = `${Math.round(right)}px`;
+    shell.style.bottom = `${Math.round(bottom)}px`;
+    if (wasOccluded && !occluded && !collapsed) lastSceneRevision = -1;
   }
 
   function renderSnapshotIfNeeded(force = false) {
@@ -465,6 +472,10 @@ export function createTransientMinimap({
     }
     syncShellMetrics();
     syncPlacement();
+    if (collapsed || occluded || document.hidden) {
+      if (forceSnapshot) lastSceneRevision = -1;
+      return;
+    }
     renderSnapshotIfNeeded(forceSnapshot);
     renderViewportFrame();
   }
@@ -479,11 +490,12 @@ export function createTransientMinimap({
         return false;
       }
       mounted = true;
+      document.addEventListener("visibilitychange", handleVisibilityChange);
       sizeObserver = new ResizeObserver(schedulePlacement);
       sizeObserver.observe(host);
       sizeObserver.observe(shell);
-      const stage = host.closest(".canvas-engine-stage") || host.parentElement;
-      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-engine-corner-top-left, .canvas2d-floating-card-info";
+      const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host.parentElement;
+      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom";
       // React replaces directory DOM after the board update; measure that committed layout.
       placementObserver = new MutationObserver((records) => {
         if (records.some((record) => record.type === "attributes"
@@ -503,11 +515,12 @@ export function createTransientMinimap({
     },
     unmount() {
       mounted = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       placementObserver?.disconnect();
       sizeObserver?.disconnect();
       placementObserver = null;
       sizeObserver = null;
-      observedAnchor = null;
+      observedZoom = null;
       if (placementFrame) cancelAnimationFrame(placementFrame);
       placementFrame = 0;
       lastSceneRevision = -1;
@@ -540,7 +553,7 @@ export function createTransientMinimap({
       update(true);
     },
     refreshViewport() {
-      if (!mounted) {
+      if (!mounted || collapsed || occluded || document.hidden) {
         return;
       }
       renderSnapshotIfNeeded(false);

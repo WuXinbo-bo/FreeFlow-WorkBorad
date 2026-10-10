@@ -201,6 +201,7 @@ import {
   timeAssetTask,
 } from "./perf/canvasRuntimeStats.js";
 import { createTransientMinimap } from "./ui/createTransientMinimap.js";
+import { readChromePreference, writeChromePreference } from "./ui/chromePreferences.js";
 import { createCanvasUiRuntime } from "./uiRuntime/canvasUiRuntime.js";
 import { createDocumentPreviewRuntime } from "./documentPreview/documentPreviewRuntime.js";
 import {
@@ -3479,6 +3480,7 @@ export function createCanvas2DEngine(options = {}) {
     },
   });
   const cleanupFns = [];
+  let navigatorCollapsed = readChromePreference("navigatorCollapsed", null);
   let resizeObserver = null;
   let pendingResizeFrame = 0;
   let paneResizeDeferred = false;
@@ -5791,7 +5793,7 @@ let tablePointerSelectionState = {
 
   function getCanvasNavigatorViewModel() {
     const navigator = ensureCanvasNavigatorState();
-    return buildCanvasNavigatorViewModel(navigator, state.board.items, state.board.selectedIds);
+    return buildCanvasNavigatorViewModel({ ...navigator, collapsed: navigatorCollapsed ?? navigator.collapsed }, state.board.items, state.board.selectedIds);
   }
 
   function getCanvasNavigatorSuggestions(limit = 8) {
@@ -5804,23 +5806,13 @@ let tablePointerSelectionState = {
 
   function setCanvasNavigatorCollapsed(collapsed) {
     const navigator = ensureCanvasNavigatorState();
-    if (navigator.collapsed === Boolean(collapsed)) {
+    if ((navigatorCollapsed ?? navigator.collapsed) === Boolean(collapsed)) {
       return navigator;
     }
-    state.board.navigator = {
-      ...navigator,
-      collapsed: Boolean(collapsed),
-    };
-    syncBoard({
-      persist: true,
-      emit: true,
-      markDirty: true,
-      sceneChange: false,
-      boardChange: true,
-      fullOverlayRescan: false,
-      reason: "canvas-navigator-collapse",
-    });
-    return state.board.navigator;
+    navigatorCollapsed = Boolean(collapsed);
+    writeChromePreference("navigatorCollapsed", navigatorCollapsed);
+    store.emit();
+    return getCanvasNavigatorViewModel();
   }
 
   function addCanvasNavigatorFolder(options = {}) {
