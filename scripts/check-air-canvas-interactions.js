@@ -287,6 +287,26 @@ async function checkChromeStates(page, viewport) {
   assert(backdropAfterRapidToggle === "none", "settings backdrop did not recover after rapid toggles", { viewport, backdropAfterRapidToggle });
 }
 
+async function checkRightHeaderRow(page, viewport) {
+  const row = await page.evaluate(() => {
+    const selectors = ["#right-panel-tab-assistant", "#right-panel-tab-screen", "#right-panel-switch-lock-btn", "#screen-source-header-menu > summary"];
+    return selectors.map((selector) => {
+      const element = document.querySelector(selector);
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height, hitInside: Boolean(hit && element.contains(hit)) };
+    }).filter((item) => item.width && item.height);
+  });
+  const center = (row[0].top + row[0].bottom) / 2;
+  for (const item of row) {
+    assert(Math.abs((item.top + item.bottom) / 2 - center) <= 2 && item.width >= 30 && item.height >= 30 && item.hitInside,
+      "assistant/mirror tabs, lock and target controls do not share a usable row", { viewport, row });
+  }
+  for (let index = 1; index < row.length; index += 1) {
+    assert(row[index - 1].right <= row[index].left, "right header controls overlap", { viewport, row });
+  }
+}
+
 async function checkRightWorkspaceGlass(page, viewport) {
   const restoreRight = page.locator("#restore-right-pane-btn");
   if (await restoreRight.isVisible()) {
@@ -297,6 +317,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
   await page.locator("#right-panel-tab-assistant").click();
   await page.mouse.move(1, 1);
   await page.waitForTimeout(220);
+  await checkRightHeaderRow(page, viewport);
   const assistantGlass = await page.evaluate(() => {
     const read = (selector) => {
       const element = document.querySelector(selector);
@@ -728,6 +749,7 @@ async function checkMirrorFrame(page, viewport) {
   await page.locator("#right-panel-tab-screen").click();
   await page.waitForSelector("#screen-source-panel.is-active");
   await page.waitForTimeout(220);
+  await checkRightHeaderRow(page, viewport);
   const frame = await page.evaluate(() => {
     const panel = document.querySelector(".conversation-panel");
     const preview = document.querySelector(".screen-source-preview-shell");
@@ -786,7 +808,7 @@ async function checkMirrorFrame(page, viewport) {
     { viewport, frame }
   );
   assert(
-    frame.switcherTop - frame.panelFrame.top <= (viewport.width <= 720 ? 56 : 24) &&
+    frame.switcherTop - frame.panelFrame.top <= 60 &&
       (viewport.width <= 720 || Math.abs(frame.switcherTop - frame.canvasToolbarTop) <= 4),
     "AI assistant and AI mirror switcher remains lower than the canvas toolbar",
     { viewport, frame }
@@ -1204,24 +1226,20 @@ async function checkPanelLayoutControls(page, viewport) {
     ["right", defaultLayout.right, defaultLayout.rightControls],
   ]) {
     assert(
-      controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 10 && controls.bottom <= panel.top + 38,
+      controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 10 && controls.bottom <= panel.top + 46,
       `${name} panel controls are not docked to the top-left edge rail`,
       { viewport, panel, controls }
     );
   }
-  for (const [name, panel, collapse, expectedSide] of [
-    ["left", defaultLayout.left, defaultLayout.leftCollapse, "left"],
-    ["right", defaultLayout.right, defaultLayout.rightCollapse, "right"],
+  for (const [name, panel, collapse] of [
+    ["left", defaultLayout.left, defaultLayout.leftCollapse],
+    ["right", defaultLayout.right, defaultLayout.rightCollapse],
   ]) {
-    const sideAligned = expectedSide === "left"
-      ? Math.abs(collapse.left - panel.left) <= 1
-      : Math.abs(collapse.right - panel.right) <= 1;
     assert(
-      sideAligned &&
-        Math.abs((collapse.top + collapse.bottom) / 2 - (panel.top + panel.bottom) / 2) <= 1 &&
-        collapse.width <= 12.5 &&
-        collapse.height >= 70,
-      `${name} panel collapse control is not docked to the side midpoint`,
+      collapse.left >= panel.left && collapse.left <= panel.left + 12 &&
+        collapse.top >= panel.top && collapse.top <= panel.top + 12 &&
+        collapse.width >= 32 && collapse.height >= 32,
+      `${name} panel collapse control is not accessible at the top-left`,
       { viewport, panel, collapse }
     );
   }
@@ -1296,12 +1314,10 @@ async function checkPanelLayoutControls(page, viewport) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   });
   assert(
-    Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
-      collapsedRestore.left <= 0.5 &&
-      collapsedRestore.right - collapsedRestore.left >= 15 &&
-      collapsedRestore.right - collapsedRestore.left <= 16.5 &&
-      collapsedRestore.bottom - collapsedRestore.top >= 80,
-    "collapsed canvas restore control is not a centered left-edge drawer handle",
+    collapsedRestore.top <= 10 && collapsedRestore.left <= 10 &&
+      collapsedRestore.right - collapsedRestore.left >= 32 &&
+      collapsedRestore.bottom - collapsedRestore.top >= 32,
+    "collapsed canvas restore control is not accessible at the top-left",
     { viewport, collapsedRestore }
   );
   await restoreLeft.click();
@@ -1318,18 +1334,30 @@ async function checkPanelLayoutControls(page, viewport) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   });
   assert(
-    Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 1 &&
-      Math.abs(viewport.width - rightRestore.right) <= 0.5 &&
-      rightRestore.right - rightRestore.left >= 15 &&
-      rightRestore.right - rightRestore.left <= 16.5 &&
-      rightRestore.bottom - rightRestore.top >= 80,
-    "collapsed conversation restore control is not a centered right-edge drawer handle",
+    rightRestore.top <= 10 && Math.abs(viewport.width - rightRestore.right) <= 110 &&
+      rightRestore.right - rightRestore.left >= 32 &&
+      rightRestore.bottom - rightRestore.top >= 32,
+    "collapsed conversation restore control is not accessible at the top-right",
     { viewport, rightRestore }
   );
+  const globalActions = await readSurface(page, ".app-global-shell-actions");
+  assert(!rectanglesOverlap(rightRestore, globalActions.rect), "restore control overlaps the global actions", { viewport, rightRestore, globalActions });
   await restoreRight.click();
   await page.waitForFunction(() => !document.querySelector(".conversation-panel")?.classList.contains("is-pane-collapsed"));
   assert((await rightPanel.getAttribute("data-workspace-mode")) === "normal", "conversation panel did not recover its normal layout", viewport);
   assert(await leftPanel.isVisible(), "canvas panel was damaged by conversation panel recovery", viewport);
+  for (let cycle = 0; cycle < 5; cycle += 1) {
+    await leftCollapse.click();
+    await rightCollapse.click();
+    assert(await restoreLeft.isVisible() && await restoreRight.isVisible(), "both collapsed workspaces lost their restore controls", { viewport, cycle });
+    await restoreLeft.click();
+    await restoreRight.click();
+  }
+  assert(await leftPanel.isVisible() && await rightPanel.isVisible(), "rapid collapse/restore did not recover both workspaces", viewport);
+  await checkRightHeaderRow(page, viewport);
+  if (process.env.FREEFLOW_SCREENSHOT_DIR) {
+    await page.screenshot({ path: `${process.env.FREEFLOW_SCREENSHOT_DIR}/controls-${viewport.width}.png` });
+  }
 }
 
 async function checkPanelResizeContract(page, viewport) {
@@ -1598,6 +1626,9 @@ async function checkViewport(browser, viewport) {
     await checkRightWorkspaceGlass(page, viewport);
     await checkMirrorFrame(page, viewport);
     assert(errors.length === 0, "page errors detected", { viewport, errors });
+    if (process.env.FREEFLOW_SCREENSHOT_DIR) {
+      await page.screenshot({ path: `${process.env.FREEFLOW_SCREENSHOT_DIR}/workspace-${viewport.width}.png` });
+    }
   } finally {
     await page.close();
   }

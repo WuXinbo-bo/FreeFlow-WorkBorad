@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { checkCanvasTrackpad } = require("./fixtures/check-canvas-trackpad");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -56,8 +57,43 @@ async function main() {
     assert.equal(result.locked, true);
     assert.deepEqual(result.cycles, Array.from({ length: 4 }, () => [false, true]));
     assert.equal(result.nativeWordPreview, "function");
+    await application.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.show();
+      window.focus();
+    });
+    await checkCanvasTrackpad(page);
+    const point = await page.locator("#canvas-office-canvas").evaluate((canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      const point = { x: rect.left + rect.width * 0.72, y: rect.top + rect.height * 0.65 };
+      const hit = document.elementFromPoint(point.x, point.y);
+      if (hit !== canvas) throw new Error(`Pinch target covered by ${hit?.className || hit?.id}`);
+      return point;
+    });
+    const cdp = await page.context().newCDPSession(page);
+    const beforePinch = await page.evaluate(() => {
+      window.__trustedPinchEvents = [];
+      document.addEventListener("wheel", (event) => {
+        if (event.ctrlKey) window.__trustedPinchEvents.push({ trusted: event.isTrusted, deltaY: event.deltaY });
+      }, { capture: true });
+      return window.__canvas2dEngine.getSnapshot().board.view.scale;
+    });
+    await cdp.send("Input.synthesizePinchGesture", { ...point, scaleFactor: 1.2, relativeSpeed: 400, gestureSourceType: "mouse" });
+    await page.waitForFunction((scale) => window.__canvas2dEngine.getSnapshot().board.view.scale > scale * 1.1, beforePinch);
+    assert(await page.evaluate(() => window.__trustedPinchEvents.some((event) => event.trusted)), "native Chromium pinch did not deliver trusted wheel events");
+    assert.equal(await page.evaluate(() => window.visualViewport.scale), 1, "pinch zoomed the app chrome instead of the canvas");
+    await page.waitForFunction(() => !window.__canvas2dEngine.getCanvasPerformanceLifecycleSnapshot().interactionCritical);
+    await cdp.send("Input.synthesizePinchGesture", { ...point, scaleFactor: 1 / 1.2, relativeSpeed: 400, gestureSourceType: "mouse" });
+    await page.waitForFunction(() => !window.__canvas2dEngine.getCanvasPerformanceLifecycleSnapshot().interactionCritical);
+    const recoveredScale = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view.scale);
+    assert(Math.abs(recoveredScale / beforePinch - 1) < 0.03, "native reverse pinch did not recover the camera scale");
+    await cdp.detach();
+    if (process.env.FREEFLOW_SCREENSHOT_DIR) {
+      await fs.mkdir(process.env.FREEFLOW_SCREENSHOT_DIR, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "native-electron.png") });
+    }
     assert.deepEqual(errors, []);
-    console.log(`[check-desktop-canvas-smoke] native Electron startup, preload and canvas passed (${process.platform})`);
+    console.log(`[check-desktop-canvas-smoke] native Electron startup, canvas, trusted pinch/reverse and recovery passed (${process.platform})`);
   } finally {
     if (application) {
       // Test data is disposable; exit without the app's interactive save flow.

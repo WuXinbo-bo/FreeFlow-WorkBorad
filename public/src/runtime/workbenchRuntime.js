@@ -2462,8 +2462,8 @@ function renderRightPanelSwitchLockState() {
   rightPanelWindowStripEl?.classList.toggle("is-locked", locked);
   rightPanelSwitchLockBtn?.classList.toggle("is-locked", locked);
   rightPanelSwitchLockBtn?.setAttribute("aria-pressed", String(locked));
-  rightPanelSwitchLockBtn?.setAttribute("aria-label", locked ? "解锁界面切换" : "锁定界面切换");
-  rightPanelSwitchLockBtn?.setAttribute("title", locked ? "解锁界面切换" : "锁定界面切换");
+  rightPanelSwitchLockBtn?.setAttribute("aria-label", locked ? "解锁助手与镜像切换" : "锁定助手与镜像切换");
+  rightPanelSwitchLockBtn?.setAttribute("title", locked ? "解锁助手与镜像切换" : "锁定助手与镜像切换");
 
   for (const tab of rightPanelViewTabEls) {
     tab.disabled = locked;
@@ -2666,7 +2666,6 @@ function syncRightPanelWindowControlsLayout() {
 
   const overflowThreshold = 4;
   const hasWidth = rightPanelWindowControlsEl.clientWidth > 0;
-  const hasScreenSourceSlot = Boolean(screenSourceHeaderSlotEl && !screenSourceHeaderSlotEl.classList.contains("is-hidden"));
 
   conversationHeaderToplineEl?.classList.remove("is-compact", "is-tight");
   rightPanelWindowControlsEl.classList.remove("is-compact", "is-tight");
@@ -2684,13 +2683,13 @@ function syncRightPanelWindowControlsLayout() {
     );
     return rightPanelWindowControlsEl.scrollWidth > availableWidth + overflowThreshold;
   };
-  if (hasScreenSourceSlot && isOverflowing()) {
+  if (isOverflowing()) {
     conversationHeaderToplineEl?.classList.add("is-compact");
     rightPanelWindowControlsEl.classList.add("is-compact");
     rightPanelWindowStripEl.classList.add("is-compact");
   }
 
-  if (hasScreenSourceSlot && isOverflowing()) {
+  if (isOverflowing()) {
     conversationHeaderToplineEl?.classList.add("is-tight");
     rightPanelWindowControlsEl.classList.add("is-tight");
     rightPanelWindowStripEl.classList.add("is-tight");
@@ -8772,6 +8771,7 @@ canvasViewportEl?.addEventListener("drop", async (event) => {
 canvasViewportEl?.addEventListener(
   "wheel",
   (event) => {
+    if (getModernCanvas2DEngine() || event.defaultPrevented) return;
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const currentScale = state.canvasBoard.view.scale;

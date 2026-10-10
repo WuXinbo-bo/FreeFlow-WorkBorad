@@ -28,6 +28,7 @@ const CHECKS = [
   "scripts/check-overlay-budget.js",
   "scripts/check-interaction-coordination.js",
   "scripts/check-camera-interaction-runtime.js",
+  "scripts/check-canvas-wheel-input.js",
   "scripts/check-retained-camera-frame.js",
   "scripts/check-presentation-quality-runtime.js",
   "scripts/check-canvas-performance-policy.js",
@@ -152,6 +153,9 @@ async function main() {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas-background-lifecycle.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
+    await runNodeScript("scripts/check-canvas-trackpad-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-document-preview-browser.js", {
