@@ -89,7 +89,7 @@ export function createInitialState() {
       defaultChatPanelSide: "right",
       defaultCanvasPanelVisible: true,
       defaultChatPanelVisible: true,
-      defaultLaunchFullscreen: false,
+      defaultLaunchFullscreen: true,
       ...DEFAULT_THEME_SETTINGS,
     },
     workbenchPreferences: {
@@ -97,7 +97,7 @@ export function createInitialState() {
       defaultChatPanelSide: "right",
       defaultCanvasPanelVisible: true,
       defaultChatPanelVisible: true,
-      defaultLaunchFullscreen: false,
+      defaultLaunchFullscreen: true,
     },
     desktopShellState: {
       pinned: false,

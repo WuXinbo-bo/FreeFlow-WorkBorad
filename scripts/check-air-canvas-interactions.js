@@ -1321,10 +1321,10 @@ async function checkPanelLayoutControls(page, viewport) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   });
   assert(
-    collapsedRestore.top <= 10 && collapsedRestore.left <= 10 &&
+    Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 2 && collapsedRestore.left <= 10 &&
       collapsedRestore.right - collapsedRestore.left >= 32 &&
       collapsedRestore.bottom - collapsedRestore.top >= 32,
-    "collapsed canvas restore control is not accessible at the top-left",
+    "collapsed canvas restore control is not accessible at the left midpoint",
     { viewport, collapsedRestore }
   );
   await restoreLeft.click();
@@ -1341,10 +1341,10 @@ async function checkPanelLayoutControls(page, viewport) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   });
   assert(
-    rightRestore.top <= 10 && Math.abs(viewport.width - rightRestore.right) <= 110 &&
+    Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 2 && Math.abs(viewport.width - rightRestore.right) <= 10 &&
       rightRestore.right - rightRestore.left >= 32 &&
       rightRestore.bottom - rightRestore.top >= 32,
-    "collapsed conversation restore control is not accessible at the top-right",
+    "collapsed conversation restore control is not accessible at the right midpoint",
     { viewport, rightRestore }
   );
   const globalActions = await readSurface(page, ".app-global-shell-actions");
