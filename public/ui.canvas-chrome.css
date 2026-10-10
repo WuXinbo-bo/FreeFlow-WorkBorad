@@ -1,5 +1,5 @@
 .canvas2d-engine-topbar {
-  top: var(--canvas-chrome-block-inset) !important;
+  top: calc(var(--canvas-chrome-block-inset) + 36px) !important;
   left: var(--canvas-chrome-inline-inset) !important;
   right: var(--canvas-chrome-inline-end-inset) !important;
 }
@@ -285,7 +285,8 @@
 
 @media (min-width: 721px) {
   .canvas2d-navigator-head {
-    padding-left: 58px !important;
+    padding-left: 0 !important;
+    padding-top: 36px !important;
   }
 }
 
@@ -377,7 +378,7 @@
 
 @media (max-width: 720px) {
   .canvas2d-navigator-panel {
-    top: 252px !important;
+    top: 288px !important;
     bottom: 56px !important;
   }
 

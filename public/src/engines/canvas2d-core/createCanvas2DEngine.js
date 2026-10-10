@@ -1,4 +1,5 @@
 import { createClipboardDataTransferSnapshot, createClipboardDataTransferFacade } from "./brokers/clipboardSnapshot.js";
+import { normalizeCanvasWheelInput } from "./runtime/wheelInput.js";
 import {
   createView,
   getViewportCenterScenePoint,
@@ -22398,11 +22399,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onWheel(event) {
-    if (!isInteractiveMode()) {
+    if (!isInteractiveMode() || event.defaultPrevented) {
       return;
     }
+    if (state.pointer) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const rect = getCanvasRect();
+    const input = normalizeCanvasWheelInput(event, { controlKeyPressed: canvasControlKeyPressed, viewport: rect });
+    if (!input.deltaX && !input.deltaY) return;
     event.preventDefault();
-    const zooming = Boolean(event.ctrlKey || event.metaKey);
+    event.stopPropagation();
+    const zooming = input.zooming;
     const reason = zooming ? "wheel-zoom" : "wheel-pan";
     activateInteractionPriority(reason);
     const baseView = cameraInteractionRuntime.getCurrentView();
@@ -22410,15 +22420,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const focusPoint = screenToScene(
         baseView,
         { x: Number(event.clientX || 0), y: Number(event.clientY || 0) },
-        getCanvasRect()
+        rect
       );
-      const zoomFactor = Math.exp(-event.deltaY * 0.0015);
+      const zoomFactor = input.zoomFactor;
       cameraInteractionRuntime.update(
         () => zoomAtScenePoint(baseView, baseView.scale * zoomFactor, focusPoint),
         reason
       );
     } else {
-      cameraInteractionRuntime.update(() => panView(baseView, -event.deltaX, -event.deltaY), reason);
+      cameraInteractionRuntime.update(() => panView(baseView, -input.deltaX, -input.deltaY), reason);
     }
     releaseInteractionPriority(160, {
       emit: false,
@@ -24630,10 +24640,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
-  function onRichEditorWheel(event) {
-    if (!(event.ctrlKey || event.metaKey)) {
-      return;
-    }
+  let canvasControlKeyPressed = false;
+
+  function onCanvasModifierKey(event) {
+    canvasControlKeyPressed = Boolean(event.ctrlKey);
+  }
+
+  function onCanvasInputBlur() {
+    canvasControlKeyPressed = false;
+    finishPendingWheelSession({ persist: true });
+  }
+
+  function onCanvasZoomWheel(event) {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const editors = [refs.richEditor, refs.editor, refs.fileMemoEditor, refs.imageMemoEditor, refs.tableEditor, refs.codeBlockEditor];
+    const inEditor = editors.some((editor) => editor?.contains(target));
+    if (!inEditor && (isCanvasUiControlTarget(target) || refs.uiHost?.contains(target))) return;
     onWheel(event);
   }
 
@@ -26438,6 +26462,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function bindEvents() {
     bind(document, "visibilitychange", onCanvasVisibilityChange);
+    bind(window, "keydown", onCanvasModifierKey, true);
+    bind(window, "keyup", onCanvasModifierKey, true);
+    bind(window, "blur", onCanvasInputBlur);
+    bind(refs.surface, "wheel", onCanvasZoomWheel, { passive: false, capture: true });
+    bind(refs.fixedOverlayHost, "wheel", onCanvasZoomWheel, { passive: false, capture: true });
     bind(refs.canvas, "pointerdown", onPointerDown);
     bind(refs.canvas, "pointermove", onPointerMove);
     bind(refs.canvas, "pointerup", onPointerUp);
@@ -26463,15 +26492,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.richEditor, "cut", onRichEditorCut);
     bind(refs.richEditor, "dblclick", onRichEditorDoubleClick);
     bind(refs.richEditor, "paste", onRichEditorPaste);
-    bind(refs.richEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.richEditor, "contextmenu", onRichEditorContextMenu);
     bind(refs.editor, "blur", onMathEditorBlur);
     bind(refs.editor, "keydown", onMathEditorKeyDown);
-    bind(refs.fileMemoEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.fileMemoEditor, "blur", onFileMemoBlur);
     bind(refs.fileMemoEditor, "input", onFileMemoInput);
     bind(refs.fileMemoEditor, "keydown", onFileMemoKeyDown);
-    bind(refs.imageMemoEditor, "wheel", onRichEditorWheel, { passive: false });
     bind(refs.imageMemoEditor, "blur", onImageMemoBlur);
     bind(refs.imageMemoEditor, "input", onImageMemoInput);
     bind(refs.imageMemoEditor, "keydown", onImageMemoKeyDown);
@@ -26564,6 +26590,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     hydrationScheduler.setPaused(hidden || canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical);
     updateCanvasResourceBudget();
     if (hidden) {
+      onCanvasInputBlur();
       renderer.releaseRetainedFrame();
       presentationSnapshotController.setPaused(true);
       canvasPerformanceRuntime.requestResourceReconcile();
@@ -26731,6 +26758,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     renderScheduler?.dispose?.();
     renderScheduler = null;
     cameraInteractionRuntime.cancel();
+    canvasControlKeyPressed = false;
     visualCameraView = null;
     cameraFrameCache = null;
     cachedOverlayOwnedIds = new Set();
