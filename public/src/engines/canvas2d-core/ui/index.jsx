@@ -8,7 +8,8 @@ import {
 } from "../tutorial-system/canvasTutorialIndex.js";
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
-import { BoardWorkspaceDialog } from "./BoardWorkspaceDialog.jsx";
+import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
+import { FolderOpen } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import {
   buildCanvasSearchIndex,
@@ -1739,7 +1740,7 @@ function Canvas2DControls({ engine }) {
   const [captureIncludeBackground, setCaptureIncludeBackground] = useState(true);
   const [insertMenuOpen, setInsertMenuOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [boardWorkspaceOpen, setBoardWorkspaceOpen] = useState(false);
+  const [workspaceOpenRequest, setWorkspaceOpenRequest] = useState(0);
   const [canvasImageManagerOpen, setCanvasImageManagerOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
@@ -2404,7 +2405,9 @@ function Canvas2DControls({ engine }) {
         "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
       }}
     >
+      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} onShowDirectory={() => bridge.setCanvasNavigatorCollapsed?.(false)}>
       <CanvasNavigatorPanel
+        key={snapshot.boardFilePath}
         navigator={navigatorView}
         onCollapse={(collapsed) => bridge.setCanvasNavigatorCollapsed?.(collapsed)}
         onFocusEntry={(entryId) => bridge.focusCanvasNavigatorEntry?.(entryId)}
@@ -2418,6 +2421,7 @@ function Canvas2DControls({ engine }) {
         onCancelPickFolderTarget={() => bridge.cancelCanvasNavigatorFolderTargetPick?.()}
         pendingTargetFolderId={navigatorPendingTargetFolderId}
       />
+      </BoardWorkspacePanel>
       <div
         className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >
@@ -2497,6 +2501,9 @@ function Canvas2DControls({ engine }) {
         aria-label="工作白板工具栏"
       >
         <div className="canvas2d-engine-toolbar canvas-chrome-surface canvas-chrome-toolbar" role="toolbar" ref={toolbarRef}>
+          {globalThis.desktopShell?.listCanvasBoards ? <button type="button" className="canvas2d-engine-tool" aria-label="画布工作区" title="画布工作区" onClick={() => setWorkspaceOpenRequest((value) => value + 1)}>
+            <span className="canvas2d-engine-tool-icon" aria-hidden="true"><FolderOpen size={18} /></span>
+          </button> : null}
           <button
             type="button"
             className={`canvas2d-engine-tool${activeTool === "pan" ? " is-active" : ""}`}
@@ -2964,18 +2971,7 @@ function Canvas2DControls({ engine }) {
               className="canvas2d-engine-menu-wide"
             >
                 <div className="canvas2d-engine-menu-section">
-                  <div className="canvas2d-engine-menu-title">画布管理</div>
-                  <button
-                    type="button"
-                    className="canvas2d-engine-menu-item canvas2d-engine-menu-item-primary"
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      setBoardWorkspaceOpen(true);
-                    }}
-                  >
-                    <span>画布工作区</span>
-                  </button>
+                  <div className="canvas2d-engine-menu-title">画布选项与帮助</div>
                   <button
                     type="button"
                     className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-primary${canvasImageManagerOpen ? " is-active" : ""}`}
@@ -3367,12 +3363,6 @@ function Canvas2DControls({ engine }) {
         }}
       />
 
-      <BoardWorkspaceDialog
-        open={boardWorkspaceOpen}
-        bridge={bridge}
-        snapshot={snapshot}
-        onClose={() => setBoardWorkspaceOpen(false)}
-      />
       <CanvasImageManagerDialog
         open={canvasImageManagerOpen}
         bridge={bridge}

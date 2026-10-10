@@ -1,23 +1,18 @@
 import { createEmptyBoard } from "../elements/index.js";
-import { createHistoryState, markHistoryStateBaseline } from "../history.js";
 import { getFileName } from "../utils.js";
-import { DEFAULT_BOARD_FILE_NAME } from "../boardFileFormat.js";
+import { DEFAULT_BOARD_FILE_NAME, parseBoardFileText, wrapFreeFlowBoardPayload } from "../boardFileFormat.js";
 
 export function createCanvasWorkspaceManager(deps) {
   const {
     state,
-    store,
     useLocalFileSystem,
     getFileApi,
     getBoardOps,
-    getEditApi,
-    setSuppressDirtyTracking,
   } = deps;
 
   const {
     setStatus,
     setBoardFilePath,
-    setBoardDirty,
     setCanvasImageSavePath,
     resolveCanvasBoardSavePath,
     resolveCanvasWorkspaceFolderPath,
@@ -28,7 +23,6 @@ export function createCanvasWorkspaceManager(deps) {
     resolveBoardFolderPath,
     joinPath,
     isBoardFileName,
-    resolveUniqueBoardFilePath,
     resolveUniqueBoardFilePathByBaseName,
     sanitizeBoardFileBaseName,
   } = getFileApi();
@@ -36,17 +30,11 @@ export function createCanvasWorkspaceManager(deps) {
   const {
     saveBoard,
     maybeSaveBeforeSwitch,
-    syncBoard,
+    buildBoardFilePayload,
+    loadBoardFromPath,
+    withBoardFileOperation,
     ensureImportImageFolderExists,
   } = getBoardOps();
-
-  const {
-    cancelTextEdit,
-    cancelFlowNodeEdit,
-    cancelFileMemoEdit,
-    cancelImageMemoEdit,
-    finishImageEdit,
-  } = getEditApi();
 
   async function ensureDirectoryIfSupported(targetPath) {
     if (typeof globalThis?.desktopShell?.ensureDirectory !== "function") {
@@ -81,24 +69,31 @@ export function createCanvasWorkspaceManager(deps) {
     const sourceName = getFileName(source);
     const providedName = typeof nextName === "string" && nextName.trim() ? nextName.trim() : sourceName;
     const cleanName = ensureBoardFileExtension(providedName);
-    if (!cleanName || cleanName === sourceName) {
-      return { ok: false, filePath: source, error: "" };
-    }
+    if (!cleanName) return { ok: false, filePath: source, error: "画布名称为空" };
+    if (cleanName === sourceName) return { ok: true, filePath: source, error: "" };
+    if (/[\\/:"*?<>|]/.test(cleanName)) return { ok: false, filePath: source, error: "画布名称包含路径符号" };
     const separator = source.includes("\\") ? "\\" : "/";
     const parts = source.split(/[\\/]/);
     parts[parts.length - 1] = cleanName;
     const nextPath = parts.join(separator);
+    if (typeof globalThis?.desktopShell?.pathExists === "function" && await globalThis.desktopShell.pathExists(nextPath)) {
+      return { ok: false, filePath: source, error: "同名画布已存在，请使用其他名称" };
+    }
     if (typeof globalThis?.desktopShell?.renamePath !== "function") {
       setStatus("当前环境不支持重命名", "warning");
       return { ok: false, filePath: "", error: "当前环境不支持重命名" };
     }
-    const result = await globalThis.desktopShell.renamePath(source, nextPath);
+    const rename = async () => {
+      const result = await globalThis.desktopShell.renamePath(source, nextPath);
+      if (result?.ok && source === state.boardFilePath) await setBoardFilePath(nextPath, { updateSettings: true });
+      return result;
+    };
+    const result = source === currentPath
+      ? await withBoardFileOperation(rename, { saveFirst: false })
+      : await rename();
     if (!result?.ok) {
       setStatus(result?.error || "画布重命名失败", "warning");
       return { ok: false, filePath: "", error: result?.error || "画布重命名失败" };
-    }
-    if (source === currentPath) {
-      await setBoardFilePath(nextPath, { updateSettings: true });
     }
     setStatus("画布已重命名");
     return { ok: true, filePath: nextPath, error: "" };
@@ -148,6 +143,25 @@ export function createCanvasWorkspaceManager(deps) {
     }
     setStatus("画布已删除");
     return { ok: true, filePath: targetPath };
+  }
+
+  async function duplicateBoardAtPath(filePath) {
+    const source = String(filePath || "").trim();
+    if (!source || !useLocalFileSystem) return { ok: false, error: "当前画布不能复制" };
+    return withBoardFileOperation(async () => {
+      const read = await globalThis.desktopShell.readFile(source);
+      if (!read?.ok) return { ok: false, error: read?.error || "读取画布失败" };
+      const payload = parseBoardFileText(read.text).payload;
+      const board = payload.kind === "structured-host-board" ? payload.board : payload;
+      if (!Array.isArray(board?.items)) return { ok: false, error: "文件不是有效画布" };
+      const target = await resolveUniqueBoardFilePathByBaseName(resolveBoardFolderPath(source), `${sanitizeBoardFileBaseName(getFileName(source))} 副本`);
+      const boardId = globalThis.crypto.randomUUID();
+      board.boardId = boardId;
+      if (payload.boardId) payload.boardId = boardId;
+      if (payload.meta) payload.meta.boardFilePath = target;
+      const result = await globalThis.desktopShell.writeFile(target, JSON.stringify(wrapFreeFlowBoardPayload(payload), null, 2));
+      return result?.ok ? { ok: true, filePath: target } : { ok: false, error: result?.error || "复制画布失败" };
+    }, { saveFirst: source === state.boardFilePath });
   }
 
   function revealCanvasImageSavePath() {
@@ -231,24 +245,10 @@ export function createCanvasWorkspaceManager(deps) {
     if (!nextFolder) {
       return "";
     }
+    const listing = await listCanvasBoards(nextFolder);
+    if (!listing.ok) throw new Error(listing.error || "工作区无法读取");
     await updateCanvasWorkspaceFolderSetting(nextFolder);
-    await ensureDirectoryIfSupported(nextFolder);
-    const currentName = isBoardFileName(getFileName(state.boardFilePath)) ? getFileName(state.boardFilePath) : DEFAULT_BOARD_FILE_NAME;
-    let nextFilePath = joinPath(nextFolder, currentName);
-    if (typeof globalThis?.desktopShell?.pathExists === "function") {
-      const exists = await globalThis.desktopShell.pathExists(nextFilePath);
-      if (exists && nextFilePath !== state.boardFilePath) {
-        nextFilePath = await resolveUniqueBoardFilePath(nextFolder);
-      }
-    }
-    await setBoardFilePath(nextFilePath, { emit: false, updateSettings: true });
-    setBoardDirty(true, { emit: false });
-    const imageFolder = joinPath(nextFolder, "Images");
-    setCanvasImageSavePath(imageFolder, { updateSettings: true });
-    await ensureDirectoryIfSupported(imageFolder);
-    await saveBoard({ silent: true, exactPath: true });
     setStatus("画布工作区已切换");
-    store.emit();
     return nextFolder;
   }
 
@@ -287,45 +287,33 @@ export function createCanvasWorkspaceManager(deps) {
     };
   }
 
-  async function createBoardInWorkspace(folderPath, nextName) {
+  async function createBoardInWorkspace(folderPath, nextName, { saveBeforeSwitch = true } = {}) {
     const targetFolder = resolveBoardFolderPath(folderPath) || (await getCanvasBoardWorkspace());
     if (!targetFolder) {
       setStatus("请先选择画布工作区", "warning");
       return { ok: false, filePath: "", error: "请先选择画布工作区" };
     }
-    await updateCanvasWorkspaceFolderSetting(targetFolder);
     const ensured = await ensureDirectoryIfSupported(targetFolder);
     if (ensured && !ensured.ok) {
       const error = ensured.error || "工作区创建失败";
       setStatus(error, "warning");
       return { ok: false, filePath: "", error };
     }
-    const ok = await maybeSaveBeforeSwitch();
+    const ok = !saveBeforeSwitch || await maybeSaveBeforeSwitch();
     if (!ok) {
       return { ok: false, filePath: "", error: "当前画布保存失败，已取消切换" };
     }
     const cleanBaseName = sanitizeBoardFileBaseName(nextName);
     const nextPath = await resolveUniqueBoardFilePathByBaseName(targetFolder, cleanBaseName);
-    setSuppressDirtyTracking(true);
-    state.board = createEmptyBoard();
-    state.board.selectedIds = [];
-    state.history = createHistoryState();
-    markHistoryStateBaseline(state.history, state);
-    cancelTextEdit();
-    cancelFlowNodeEdit();
-    cancelFileMemoEdit();
-    cancelImageMemoEdit();
-    finishImageEdit();
-    syncBoard({ persist: false, emit: true, markDirty: false });
-    setSuppressDirtyTracking(false);
-    await setBoardFilePath(nextPath, { emit: false, updateSettings: true });
-    setBoardDirty(true, { emit: false });
-    const saved = await saveBoard({ silent: true, exactPath: true });
-    if (!saved) {
+    // Write before replacing the active board so a failed write preserves its edits.
+    const payload = buildBoardFilePayload(nextPath, createEmptyBoard());
+    const saved = await globalThis.desktopShell.writeFile(nextPath, JSON.stringify(payload, null, 2));
+    if (!saved?.ok) {
       setStatus("新建画布写入失败", "warning");
-      store.emit();
-      return { ok: false, filePath: nextPath, error: "新建画布写入失败" };
+      return { ok: false, filePath: nextPath, error: saved?.error || "新建画布写入失败" };
     }
+    if (!(await loadBoardFromPath(nextPath))) return { ok: false, filePath: nextPath, error: "新文件已创建，但加载失败；当前画布已保留" };
+    await updateCanvasWorkspaceFolderSetting(targetFolder);
     setStatus("已新建画布");
     return { ok: true, filePath: nextPath, error: "" };
   }
@@ -334,6 +322,7 @@ export function createCanvasWorkspaceManager(deps) {
     renameBoard,
     renameBoardAtPath,
     deleteBoardAtPath,
+    duplicateBoardAtPath,
     revealBoardInFolder,
     revealBoardPathInFolder,
     revealCanvasImageSavePath,

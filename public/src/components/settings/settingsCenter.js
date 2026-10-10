@@ -142,6 +142,7 @@ export function mountSettingsCenter(host, options = {}) {
     agentClient = null,
     prepareGitHubSyncBoard = null,
     prepareGitHubSyncWorkspace = null,
+    runGitHubBoardFileOperation = (task) => task(),
   } = options;
   let snapshot = null;
   let draft = null;
@@ -814,6 +815,7 @@ export function mountSettingsCenter(host, options = {}) {
       agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
       agentBackupError = String(backupsResult?.error || "");
       githubSyncStatus = githubResult;
+      window.dispatchEvent(new CustomEvent("freeflow:github-sync-status"));
       githubClientId = String(githubResult?.auth?.clientId || "");
       githubAppType = githubResult?.auth?.appType === "oauth-app" ? "oauth-app" : "github-app";
       githubAuthMethod = githubResult?.auth?.method === "device-flow" ? "device-flow" : "token";
@@ -1145,7 +1147,7 @@ export function mountSettingsCenter(host, options = {}) {
       } else if (action === "sync") {
         if (!prepareGitHubSyncBoard) throw new Error("当前画布尚未就绪，请稍后重试");
         const boardPath = await prepareGitHubSyncBoard();
-        await client.sync({ boardPath });
+        await runGitHubBoardFileOperation(() => client.sync({ boardPath }));
         githubSyncStatus = await client.getStatus();
         setMessage("当前画布已同步到 GitHub", "success");
         await refreshGithubWorkspace();
@@ -1153,11 +1155,11 @@ export function mountSettingsCenter(host, options = {}) {
         if (!prepareGitHubSyncWorkspace) throw new Error("当前工作区尚未就绪，请稍后重试");
         const context = await prepareGitHubSyncWorkspace();
         const payload = { rootPath: context?.workspaceRoot || "", boardPath: context?.boardPath || "" };
-        const result = action === "workspace-plan"
-          ? await client.planWorkspace(payload)
+        const result = await runGitHubBoardFileOperation(() => action === "workspace-plan"
+          ? client.planWorkspace(payload)
           : action === "workspace-sync"
-            ? await client.syncWorkspace(payload)
-            : await client.pullWorkspace(payload);
+            ? client.syncWorkspace(payload)
+            : client.pullWorkspace(payload));
         githubWorkspacePlan = result?.refreshed || result;
         githubSyncStatus = await client.getStatus();
         await refreshGithubWorkspace();
@@ -1194,10 +1196,10 @@ export function mountSettingsCenter(host, options = {}) {
         const payload = { boardId, boardPath };
         let result;
         if (action === "pull") {
-          result = typeof client.pull === "function" ? await client.pull(payload) : await client.download(payload);
+          result = await runGitHubBoardFileOperation(() => typeof client.pull === "function" ? client.pull(payload) : client.download(payload));
         } else {
           if (typeof client.reconcile !== "function") throw new Error("当前版本暂不支持远程冲突合并，请更新桌面应用");
-          result = await client.reconcile({ ...payload, resolution });
+          result = await runGitHubBoardFileOperation(() => client.reconcile({ ...payload, resolution }));
         }
         githubSyncStatus = await client.getStatus();
         await refreshGithubWorkspace();
@@ -1250,6 +1252,7 @@ export function mountSettingsCenter(host, options = {}) {
       }
     } finally {
       githubSyncAction = "";
+      window.dispatchEvent(new CustomEvent("freeflow:github-sync-status"));
       render();
     }
   }
