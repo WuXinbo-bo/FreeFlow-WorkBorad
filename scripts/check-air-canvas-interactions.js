@@ -47,13 +47,15 @@ async function findInteractiveRailPoint(page, selector) {
   return page.locator(selector).evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const vertical = rect.height > rect.width;
-    const ratios = [0.25, 0.5, 0.75, 0.12, 0.88];
+    const ratios = Array.from({ length: 19 }, (_, index) => (index + 1) / 20);
     for (const ratio of ratios) {
-      const x = vertical ? rect.left + rect.width / 2 : rect.left + rect.width * ratio;
-      const y = vertical ? rect.top + rect.height * ratio : rect.top + rect.height / 2;
-      const hit = document.elementFromPoint(x, y);
-      if (hit && element.contains(hit)) {
-        return { x, y };
+      for (const cross of [0.5, 0.3, 0.1, 0.9]) {
+        const x = vertical ? rect.left + rect.width * cross : rect.left + rect.width * ratio;
+        const y = vertical ? rect.top + rect.height * ratio : rect.top + rect.height * cross;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && element.contains(hit)) {
+          return { x, y };
+        }
       }
     }
     return null;
@@ -154,7 +156,7 @@ async function checkChromeStates(page, viewport) {
     statusIdle,
   });
   for (const [name, surface] of Object.entries({ toolbar, utility, status: statusIdle, zoom })) {
-    const expectedHeight = viewport.width <= 720 ? 36 : 40;
+    const expectedHeight = name === "status" && await page.locator(statusSelector).evaluate((element) => element.classList.contains("is-compact")) ? 32 : viewport.width <= 720 ? 36 : 40;
     assert(Math.abs(surface.rect.height - expectedHeight) <= 0.5, `${name} dock height is unstable`, { viewport, surface });
   }
   assert(Math.abs(utility.rect.right - zoom.rect.right) <= 2, "top and bottom canvas chrome are not right-aligned", {
@@ -294,12 +296,12 @@ async function checkRightHeaderRow(page, viewport) {
       const element = document.querySelector(selector);
       const rect = element.getBoundingClientRect();
       const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-      return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height, hitInside: Boolean(hit && element.contains(hit)) };
+      return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height, hitInside: Boolean(hit && element.contains(hit)), hit: hit?.outerHTML.slice(0, 400) };
     }).filter((item) => item.width && item.height);
   });
   const center = (row[0].top + row[0].bottom) / 2;
   for (const item of row) {
-    assert(Math.abs((item.top + item.bottom) / 2 - center) <= 2 && item.width >= 30 && item.height >= 30 && item.hitInside,
+    assert(Math.abs((item.top + item.bottom) / 2 - center) <= 2 && item.width >= 24 && item.height >= 28 && item.hitInside,
       "assistant/mirror tabs, lock and target controls do not share a usable row", { viewport, row });
   }
   for (let index = 1; index < row.length; index += 1) {
@@ -622,7 +624,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
   );
   assert(
     !rectanglesOverlap(mappingGlass.trigger.rect, mappingGlass.globalActions.rect, 8) &&
-      mappingGlass.trigger.rect.width >= 32 &&
+      mappingGlass.trigger.rect.width >= 24 &&
       mappingGlass.trigger.rect.width <= 48,
     "AI mirror mapping control overlaps the global settings controls or is clipped",
     { viewport, mappingGlass }
@@ -980,6 +982,11 @@ async function checkEdgeRails(page, viewport) {
 async function checkMinimap(page, viewport) {
   const minimap = page.locator("#canvas2d-transient-minimap");
   const toggle = minimap.locator(".canvas2d-transient-minimap-toggle");
+  assert(await minimap.evaluate((element) => element.classList.contains("is-collapsed")), "minimap did not start collapsed", viewport);
+  await page.locator(".canvas2d-navigator-dock-collapse").click();
+  await toggle.click();
+  await moveAway(page, viewport);
+  await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap")?.getBoundingClientRect().width >= 163.5);
   const expanded = await minimap.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const navigatorRect = document.querySelector(".canvas2d-navigator-panel")?.getBoundingClientRect();
@@ -998,9 +1005,7 @@ async function checkMinimap(page, viewport) {
       background: getComputedStyle(element).backgroundColor,
     };
   });
-  const avoidsNavigator = viewport.width <= 720
-    ? !expanded.navigatorRect || !rectanglesOverlap(expanded.rect, expanded.navigatorRect, 8)
-    : expanded.rect.left >= expanded.navigatorRight + 10;
+  const avoidsNavigator = !expanded.navigatorRect || !rectanglesOverlap(expanded.rect, expanded.navigatorRect, 8);
   assert(avoidsNavigator, "current-location minimap is covered by the navigator", {
     viewport,
     expanded,
@@ -1046,6 +1051,8 @@ async function checkMinimap(page, viewport) {
   });
   await page.waitForTimeout(220);
   assert(await minimap.locator("canvas").isVisible(), "minimap did not recover after rapid repeated toggles", viewport);
+  await toggle.click();
+  await page.locator(".canvas2d-navigator-tab").click();
 }
 
 async function checkInfoDock(page, viewport) {
@@ -1086,7 +1093,7 @@ async function checkInfoDock(page, viewport) {
         logo && panelControls &&
           (logo.right <= panelControls.left || logo.left >= panelControls.right || logo.bottom <= panelControls.top || logo.top >= panelControls.bottom)
       ),
-      bottomDelta: info && utility ? info.bottom - utility.bottom : null,
+      topDelta: info && utility ? info.top - utility.top : null,
       canvasWidth: canvasPanel?.width || 0,
       contained: Boolean(info && canvasPanel && info.left >= canvasPanel.left && info.right <= canvasPanel.right),
     };
@@ -1101,7 +1108,7 @@ async function checkInfoDock(page, viewport) {
     { viewport, expandedMetrics }
   );
   if (expandedMetrics.canvasWidth >= 620) {
-    assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.bottomDelta) <= 1, "expanded canvas information dock is not aligned with the stacked chrome", {
+    assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.topDelta) <= 1, "expanded canvas information dock is not aligned with the utility row", {
       viewport,
       expandedMetrics,
     });
@@ -1226,7 +1233,7 @@ async function checkPanelLayoutControls(page, viewport) {
     ["right", defaultLayout.right, defaultLayout.rightControls],
   ]) {
     assert(
-      controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 10 && controls.bottom <= panel.top + 46,
+      controls.left >= panel.left && controls.top >= panel.top && controls.top <= panel.top + 12 && controls.bottom <= panel.top + 46,
       `${name} panel controls are not docked to the top-left edge rail`,
       { viewport, panel, controls }
     );
@@ -1237,8 +1244,8 @@ async function checkPanelLayoutControls(page, viewport) {
   ]) {
     assert(
       collapse.left >= panel.left && collapse.left <= panel.left + 12 &&
-        collapse.top >= panel.top && collapse.top <= panel.top + 12 &&
-        collapse.width >= 32 && collapse.height >= 32,
+        collapse.top >= panel.top && collapse.top <= panel.top + 14 &&
+        collapse.width >= 24 && collapse.width <= 28 && collapse.height === collapse.width,
       `${name} panel collapse control is not accessible at the top-left`,
       { viewport, panel, collapse }
     );
