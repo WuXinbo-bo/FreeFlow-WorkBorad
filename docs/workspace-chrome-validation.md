@@ -12,6 +12,7 @@
 - 小地图展开且空间足够时绘制；收起、遮挡或页面隐藏时停止绘制。编辑期间失效的快照在展开、空间恢复或页面可见时补绘。
 - 临时遮挡只改变可见性，不覆盖用户的展开偏好。收起外壳不拦截底层点击，展开按钮仍可操作。
 - 桌面工作区与独立画布使用各自最近的画布容器定位小地图，避开缩放栏与目录。
+- 结构化画布替换入口显式失效场景索引与显示快照，防止相同元素 ID 保留旧锁定状态或旧小地图；该刷新不保存、不新增脏状态。
 
 ## 验证
 
@@ -21,5 +22,6 @@
 - `scripts/check-desktop-canvas-smoke.js`：独立临时数据与 Chromium profile，在本机原生 macOS Electron 验证启动、画布、撤销重做、可信捏合事件、反向捏合及工作区控件恢复。
 - `scripts/check-panel-resize-performance.js`：面板尺寸调整检查通过，无持续长任务；小地图收起和遮挡态没有场景或视口绘制。
 - `scripts/check-generated-bundles.js`、macOS 前端兼容检查、共享穿透恢复检查、`git diff --check` 均通过。
+- `scripts/check-canvas-desktop-ui-contract.js`：连续替换同 ID 元素、锁定与撤销后解锁、组合与撤销、对齐与层级、搜索和编辑退出恢复通过；已接入完整套件。
 
 Windows 原生窗口和物理触控板操作无法在本机执行，需在 Windows 机器补验。自动化捏合为 Electron/Chromium 可信事件，不等同于人工物理触控板测试。
