@@ -95,6 +95,7 @@ async function checkAutosaveRecovery() {
       useLocalFileSystem: true,
       state: { boardFilePath: "tutorial.freeflow", boardAutosaveEnabled: true },
       boardSaveInFlight: Promise.resolve(),
+      boardFileOperationActive: false,
       stopAutosaveTimer: () => calls.push("pause"),
       startAutosaveTimer: () => calls.push("resume"),
       setStatus() {},

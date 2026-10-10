@@ -402,10 +402,9 @@ export function createTransientMinimap({
       if (observedZoom) sizeObserver.observe(observedZoom);
     }
     const hostRect = host.getBoundingClientRect();
-    const navigator = stage?.querySelector(".canvas2d-navigator-panel");
-    const navigatorRect = navigator instanceof HTMLElement && getComputedStyle(navigator).display !== "none"
-      ? navigator.getBoundingClientRect()
-      : null;
+    const obstacles = Array.from(stage?.querySelectorAll(".canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open") || [])
+      .filter((element) => getComputedStyle(element).display !== "none")
+      .map((element) => element.getBoundingClientRect());
     const zoomRect = zoom?.getBoundingClientRect();
     const width = collapsed ? 38 : DEFAULT_WIDTH;
     const height = collapsed ? 38 : DEFAULT_HEIGHT + 38;
@@ -414,7 +413,7 @@ export function createTransientMinimap({
     const left = host.clientWidth - width - right;
     const top = host.clientHeight - height - bottom;
     const wasOccluded = occluded;
-    occluded = top < 90 || left < 8 || Boolean(navigatorRect &&
+    occluded = top < 90 || left < 8 || obstacles.some((navigatorRect) =>
       navigatorRect.left < hostRect.left + left + width + 8 && navigatorRect.right > hostRect.left + left - 8 &&
       navigatorRect.top < hostRect.top + top + height + 8 && navigatorRect.bottom > hostRect.top + top - 8);
     shell.style.visibility = occluded ? "hidden" : "visible";
@@ -495,7 +494,7 @@ export function createTransientMinimap({
       sizeObserver.observe(host);
       sizeObserver.observe(shell);
       const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host.parentElement;
-      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom";
+      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom, .canvas2d-workspace-panel";
       // React replaces directory DOM after the board update; measure that committed layout.
       placementObserver = new MutationObserver((records) => {
         if (records.some((record) => record.type === "attributes"
@@ -504,7 +503,7 @@ export function createTransientMinimap({
           schedulePlacement();
         }
       });
-      if (stage) placementObserver.observe(stage, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+      if (stage) placementObserver.observe(stage, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
       lastSceneRevision = -1;
       snapshotRenderCount = 0;
       viewportRenderCount = 0;

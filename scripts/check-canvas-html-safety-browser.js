@@ -109,7 +109,7 @@ async function main() {
     assert.doesNotMatch(savedHtml, /onerror|javascript:|background-image|srcdoc|<iframe/i);
     await page.evaluate(() => document.getElementById("html-safety-probe").remove());
     for (let cycle = 0; cycle < 3; cycle += 1) {
-      for (const [menu, label] of [["画布工作区", "画布工作区"], ["画布图片位置", "画布图片管理"]]) {
+      for (const [menu, label] of [["画布图片位置", "画布图片管理"]]) {
         await page.locator('[title="菜单"]').click();
         await page.getByRole("menuitem", { name: menu, exact: true }).click();
         const dialog = page.getByRole("dialog", { name: label, exact: true });

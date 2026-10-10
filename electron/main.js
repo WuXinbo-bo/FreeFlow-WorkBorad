@@ -31,6 +31,7 @@ const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTa
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
+const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { shouldIgnoreMacOSMouseEvents } = require("./macosWindowInteraction");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
@@ -136,6 +137,10 @@ let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
 const atomicBoardFileWriter = createAtomicBoardFileWriter();
+const boardWorkspaceWatcher = createBoardWorkspaceWatcher((detail) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop-shell:canvas-workspace-changed", detail);
+});
+app.on("before-quit", () => boardWorkspaceWatcher.close());
 
 function normalizeOpenBoardPath(filePath = "") {
   const normalizedPath = String(filePath || "").trim();
@@ -2202,6 +2207,7 @@ function createMainWindow() {
     stopMacOSShapeInteractionTracking();
     cleanupDesktopEmbeddedSurfaces("main-window-closed");
     if (mainWindow === window) {
+      boardWorkspaceWatcher.close();
       mainWindow = null;
     }
   });
@@ -3682,6 +3688,8 @@ ipcMain.handle("desktop-shell:list-canvas-boards", async (_event, payload) => {
     };
   }
 });
+
+ipcMain.handle("desktop-shell:watch-canvas-workspace", (_event, payload) => boardWorkspaceWatcher.watch(String(payload?.folderPath || "").trim()));
 
 ipcMain.handle("desktop-shell:list-canvas-images", async (_event, payload) => {
   const folderPath = String(payload?.folderPath || "").trim();

@@ -1814,6 +1814,11 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onStatus: setStatus,
   onRequestClose: requestSettingsDrawerClose,
   agentClient,
+  runGitHubBoardFileOperation: async (task) => {
+    const engine = getModernCanvas2DEngine();
+    if (!engine?.withBoardFileOperation) throw new Error("当前画布尚未就绪，请稍后重试");
+    return engine.withBoardFileOperation(task);
+  },
   prepareGitHubSyncBoard: async () => {
     const engine = getModernCanvas2DEngine();
     if (!engine?.saveBoard || !engine.getSnapshot) throw new Error("当前画布尚未就绪，请稍后重试");
@@ -1828,7 +1833,7 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
     if (!snapshot.boardFilePath) throw new Error("请先将当前画布保存到本机，再同步当前文件夹");
     if (!(await engine.saveBoard({ silent: true, exactPath: true }))) throw new Error("当前画布保存失败，已停止工作区同步");
     const boardPath = engine.getSnapshot().boardFilePath;
-    return { boardPath, workspaceRoot: boardPath.replace(/[\\/][^\\/]+$/, "") };
+    return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace() || boardPath.replace(/[\\/][^\\/]+$/, "") };
   },
 });
 agentController = createAgentController({
@@ -3803,6 +3808,10 @@ async function openSettingsCenterSection(section = "general") {
   }
   settingsCenter.openSection(section);
 }
+
+window.addEventListener("freeflow:open-settings", (event) => {
+  void openSettingsCenterSection(event.detail?.section === "github" ? "github" : "general");
+});
 
 function syncAgentRuntimeOverview(runtime, session) {
   const providerId = session?.provider === "claude" ? "claude" : runtime?.activeProvider === "claude" ? "claude" : "codex";

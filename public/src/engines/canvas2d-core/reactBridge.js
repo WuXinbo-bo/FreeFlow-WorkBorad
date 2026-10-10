@@ -154,11 +154,15 @@ export function createCanvas2DReactBridge(engine) {
     ensureTutorialBoard() {
       return engine?.ensureTutorialBoard?.();
     },
-    saveBoard() {
+    saveBoard(options) {
+      if (options) return engine?.saveBoard?.(options);
       return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.save") : engine?.saveBoard?.();
     },
     saveBoardAs() {
       return engine?.saveBoardAs?.();
+    },
+    withBoardFileOperation(task, options) {
+      return engine?.withBoardFileOperation?.(task, options);
     },
     renameBoard(name) {
       return engine?.renameBoard?.(name);
@@ -168,6 +172,9 @@ export function createCanvas2DReactBridge(engine) {
     },
     deleteBoardAtPath(filePath) {
       return engine?.deleteBoardAtPath?.(filePath);
+    },
+    duplicateBoardAtPath(filePath) {
+      return engine?.duplicateBoardAtPath?.(filePath);
     },
     revealBoardInFolder() {
       return engine?.revealBoardInFolder?.();
@@ -193,8 +200,8 @@ export function createCanvas2DReactBridge(engine) {
     listCanvasBoards(folderPath) {
       return engine?.listCanvasBoards?.(folderPath);
     },
-    createBoardInWorkspace(folderPath, name) {
-      return engine?.createBoardInWorkspace?.(folderPath, name);
+    createBoardInWorkspace(folderPath, name, options) {
+      return engine?.createBoardInWorkspace?.(folderPath, name, options);
     },
     revealCanvasImageSavePath() {
       return engine?.revealCanvasImageSavePath?.();

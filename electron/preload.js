@@ -60,6 +60,12 @@ contextBridge.exposeInMainWorld("desktopShell", {
   pickCanvasBoardOpenPath: (payload) => ipcRenderer.invoke("desktop-shell:pick-canvas-board-open", payload),
   pickDirectory: (payload) => ipcRenderer.invoke("desktop-shell:pick-directory", payload),
   listCanvasBoards: (payload) => ipcRenderer.invoke("desktop-shell:list-canvas-boards", payload),
+  watchCanvasWorkspace: (payload) => ipcRenderer.invoke("desktop-shell:watch-canvas-workspace", payload),
+  onCanvasWorkspaceChanged: (listener) => {
+    const handler = (_event, detail) => listener(detail);
+    ipcRenderer.on("desktop-shell:canvas-workspace-changed", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:canvas-workspace-changed", handler);
+  },
   listCanvasImages: (payload) => ipcRenderer.invoke("desktop-shell:list-canvas-images", payload),
   ensureDirectory: (targetPath) => ipcRenderer.invoke("desktop-shell:ensure-directory", targetPath),
   pickImageSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-image-save-path", payload),

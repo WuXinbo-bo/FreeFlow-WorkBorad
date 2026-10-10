@@ -40,6 +40,7 @@ const CHECKS = [
   "scripts/check-canvas-state-history.js",
   "scripts/check-canvas-runtime-hardening.js",
   "scripts/check-canvas-file-paths.js",
+  "scripts/check-board-workspace-recovery.js",
   "scripts/check-workbench-shared-recovery.js",
   "scripts/check-secret-storage-concurrency.js",
   "scripts/check-canvas-copy-integrity.js",
