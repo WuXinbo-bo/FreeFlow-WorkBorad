@@ -290,6 +290,7 @@ async function measureGesture(page, { side, deltaX, label }) {
     shapeCalls: result.shapeCalls,
   });
   assert(!result.bodyResizing, "panel resize state did not recover", { label, result });
+  await page.waitForFunction((selector) => Number(getComputedStyle(document.querySelector(selector)).opacity) >= 0.9, resizerSelector);
   const finalGeometry = await page.evaluate(({ side, panelSelector, contentSelector, resizerSelector }) => {
     const panelElement = document.querySelector(panelSelector);
     const panel = panelElement.getBoundingClientRect();
