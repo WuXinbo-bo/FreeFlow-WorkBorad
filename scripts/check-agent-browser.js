@@ -670,7 +670,7 @@ async function main() {
       return viewport && viewport.scrollHeight > viewport.clientHeight + 100;
     });
     await page.locator("#thread-viewport").evaluate((viewport) => {
-      viewport.scrollTop = 0;
+      viewport.scrollTo({ top: 0, behavior: "instant" });
       viewport.dispatchEvent(new Event("scroll"));
     });
     current.messages.find((message) => message.id === "history-assistant-13").content += " 新的流式内容。";
@@ -685,6 +685,16 @@ async function main() {
       return viewport && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 3;
     });
     assert(await page.locator("#agent-scroll-bottom:not(.is-hidden)").count() === 0, "return-to-bottom did not restore scroll following");
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const marker = `连续流式刷新 ${cycle + 1}`;
+      current.messages.find((message) => message.id === "history-assistant-13").content += `\n\n${Array.from({ length: 12 }, () => `${marker}，保持跟随最新回复。`).join("\n\n")}`;
+      current.revision += 1;
+      await page.evaluate((event) => window.__emitAgentEvent(event.sessionId, event), { sessionId: current.id, revision: current.revision, type: "activity", payload: {}, createdAt: Date.now() });
+      await page.waitForFunction((marker) => document.querySelector("#chat-log")?.textContent.includes(marker), marker);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const bottomGap = await page.locator("#thread-viewport").evaluate((viewport) => viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight);
+      assert(bottomGap < 3 && await page.locator("#agent-scroll-bottom:not(.is-hidden)").count() === 0, "continuous stream refresh interrupted restored scroll following", { cycle, bottomGap });
+    }
     const latestProcess = page.locator(".agent-turn-process").last();
     await latestProcess.locator(":scope > summary").click();
     await page.locator("#prompt-input").fill("拖拽过程中保留的草稿");
