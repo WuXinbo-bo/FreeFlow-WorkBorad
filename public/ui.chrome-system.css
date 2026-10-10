@@ -148,15 +148,15 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock,
 }
 
 .conversation-header {
-  --right-header-shift: 46px !important;
+  --right-header-shift: 0px !important;
 }
 
 .conversation-panel.screen-view-active .conversation-header {
-  --right-header-shift: 44px !important;
+  --right-header-shift: 0px !important;
 }
 
 .conversation-panel[data-workspace-dock="right"] .conversation-header {
-  padding-right: var(--chrome-global-actions-reserve) !important;
+  padding-right: 0 !important;
 }
 
 .conversation-header-topline .right-panel-window-controls {
@@ -169,24 +169,25 @@ body:has(#insight-drawer.is-open) .canvas-chrome-status-dock,
 }
 
 body.desktop-mode .stage-panel-controls {
-  top: 2px !important;
+  top: 6px !important;
   bottom: auto !important;
-  left: 2px !important;
+  left: 6px !important;
   z-index: 32;
   gap: 2px !important;
-  min-height: 28px;
+  min-height: 36px;
   padding: 2px !important;
   box-sizing: border-box;
-  opacity: 0.56;
+  opacity: 0.84;
+  transform: none !important;
 }
 
 body.desktop-mode .stage-panel-orb {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px !important;
-  min-width: 24px !important;
-  height: 24px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
 }
 
 body.desktop-mode .stage-panel-orb::before {
@@ -195,12 +196,11 @@ body.desktop-mode .stage-panel-orb::before {
 }
 
 body.desktop-mode .stage-panel-collapse-handle {
-  position: absolute;
-  top: 50%;
+  position: static;
   z-index: 33;
-  width: 12px !important;
-  min-width: 12px !important;
-  height: 72px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
   padding: 0 !important;
   border: 1px solid var(--chrome-glass-border) !important;
   color: var(--chrome-ink-muted) !important;
@@ -208,7 +208,8 @@ body.desktop-mode .stage-panel-collapse-handle {
   background-image: var(--chrome-glass-sheen) !important;
   box-shadow: 0 2px 8px rgba(26, 32, 39, 0.12) !important;
   opacity: 0.62;
-  transform: translateY(-50%) !important;
+  border-radius: 6px !important;
+  transform: none !important;
   transition:
     color 140ms ease,
     background-color 140ms ease,
@@ -220,25 +221,9 @@ body.desktop-mode .stage-panel-collapse-handle {
 
 body.desktop-mode .stage-panel-collapse-handle .ui-control-icon,
 body.desktop-mode .stage-panel-collapse-handle .ui-control-icon svg {
-  width: 10px;
-  height: 18px;
-  flex-basis: 10px;
-}
-
-body.desktop-mode [data-workspace-dock="left"] > .stage-panel-collapse-handle {
-  left: 0;
-  right: auto;
-  border-radius: 0 5px 5px 0;
-}
-
-body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle {
-  right: 0;
-  left: auto;
-  border-radius: 5px 0 0 5px;
-}
-
-body.desktop-mode [data-workspace-dock="right"] > .stage-panel-collapse-handle .stage-panel-collapse-icon {
-  transform: rotate(180deg);
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
 }
 
 body.desktop-mode .stage-panel-collapse-handle:hover,
@@ -248,7 +233,7 @@ body.desktop-mode .stage-panel-collapse-handle:active {
   background-color: var(--chrome-glass-active) !important;
   box-shadow: 0 2px 7px rgba(26, 32, 39, 0.16) !important;
   opacity: 1;
-  transform: translateY(-50%) !important;
+  transform: none !important;
 }
 
 .ui-control-icon,
@@ -284,7 +269,52 @@ body.desktop-mode .stage-panel-collapse-handle:active {
 }
 
 .conversation-panel .conversation-header {
-  padding-left: 58px !important;
+  padding-left: 0 !important;
+  padding-top: 36px !important;
+}
+
+.conversation-header-topline {
+  flex-wrap: nowrap !important;
+}
+
+.conversation-header-topline .right-panel-window-controls {
+  display: flex !important;
+  width: 100%;
+  max-width: 100% !important;
+  min-height: 36px;
+  overflow: visible !important;
+}
+
+.right-panel-window-strip,
+.right-panel-window-strip.is-compact,
+.right-panel-window-strip.is-tight {
+  align-self: center !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1 1 0 !important;
+}
+
+.right-panel-window-tab,
+.right-panel-window-strip.is-compact .right-panel-window-tab,
+.right-panel-window-strip.is-tight .right-panel-window-tab {
+  min-width: 0 !important;
+  height: 32px !important;
+  min-height: 32px !important;
+}
+
+.right-panel-switch-lock-btn,
+.screen-source-header-slot {
+  align-self: center !important;
+  flex: 0 0 32px !important;
+  width: 32px !important;
+}
+
+.screen-source-header-slot .ui-chrome-trigger,
+.right-panel-window-controls.is-tight .screen-source-header-slot .ui-chrome-trigger {
+  width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
 }
 
 .right-panel-window-controls.is-tight {
@@ -909,26 +939,26 @@ body.desktop-mode .composer.ui-chrome-composer {
 #restore-left-pane-btn,
 #restore-right-pane-btn {
   position: absolute !important;
-  top: 50% !important;
+  top: 8px !important;
   bottom: auto !important;
   z-index: 28;
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  width: 16px !important;
-  min-width: 16px !important;
-  max-width: 16px;
-  height: 88px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px;
+  height: 36px !important;
   box-sizing: border-box;
   flex: 0 0 auto;
-  min-height: 88px !important;
+  min-height: 36px !important;
   padding: 0 !important;
   color: var(--chrome-ink-muted) !important;
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
   letter-spacing: 0 !important;
   white-space: nowrap;
-  transform: translateY(-50%) !important;
+  transform: none !important;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
@@ -940,16 +970,16 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn:not(.pane-restore-btn-right),
 #restore-right-pane-btn:not(.pane-restore-btn-right) {
-  left: 0 !important;
+  left: 8px !important;
   right: auto !important;
-  border-radius: 0 6px 6px 0 !important;
+  border-radius: 6px !important;
 }
 
 #restore-left-pane-btn.pane-restore-btn-right,
 #restore-right-pane-btn.pane-restore-btn-right {
   left: auto !important;
-  right: 0 !important;
-  border-radius: 6px 0 0 6px !important;
+  right: calc(var(--canvas-chrome-status-dock-width) + 26px) !important;
+  border-radius: 6px !important;
 }
 
 .pane-restore-btn:hover,
@@ -975,10 +1005,10 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn.ui-icon-only,
 #restore-right-pane-btn.ui-icon-only {
-  width: 16px !important;
-  min-width: 16px !important;
-  height: 88px !important;
-  min-height: 88px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
 }
 
 #restore-left-pane-btn .ui-control-icon,
@@ -996,6 +1026,15 @@ body.desktop-full-pass-through .canvas-chrome-surface {
   pointer-events: none !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .stage-panel-controls,
+  .stage-panel-orb,
+  .pane-restore-btn,
+  .right-panel-window-slider {
+    transition: none !important;
+  }
+}
+
 @media (max-width: 720px) {
   :root {
     --chrome-control-size: 30px;
@@ -1008,7 +1047,7 @@ body.desktop-full-pass-through .canvas-chrome-surface {
   }
 
   .conversation-panel .conversation-header {
-    padding-top: 34px !important;
+    padding-top: 36px !important;
     padding-left: 0 !important;
   }
 
