@@ -187,7 +187,7 @@ async function runScenario({
   assert(uiSettings.defaultChatPanelSide === "right", `${name}: 习惯设置默认对话侧未兼容`);
   assert(uiSettings.defaultCanvasPanelVisible === true, `${name}: 习惯设置默认画布开关未兼容`);
   assert(uiSettings.defaultChatPanelVisible === true, `${name}: 习惯设置默认对话开关未兼容`);
-  assert(uiSettings.defaultLaunchFullscreen === false, `${name}: 习惯设置默认全屏开关未兼容`);
+  assert(uiSettings.defaultLaunchFullscreen === true, `${name}: 习惯设置默认全屏开关未兼容`);
   assert(startupContext.workbenchPreferences.defaultCanvasPanelSide === uiSettings.defaultCanvasPanelSide, `${name}: 启动习惯画布侧不一致`);
   assert(startupContext.workbenchPreferences.defaultChatPanelSide === uiSettings.defaultChatPanelSide, `${name}: 启动习惯对话侧不一致`);
   assert(startupContext.workbenchPreferences.defaultCanvasPanelVisible === uiSettings.defaultCanvasPanelVisible, `${name}: 启动习惯画布开关不一致`);

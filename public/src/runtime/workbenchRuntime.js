@@ -176,7 +176,7 @@ const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
   defaultChatPanelSide: "right",
   defaultCanvasPanelVisible: true,
   defaultChatPanelVisible: true,
-  defaultLaunchFullscreen: false,
+  defaultLaunchFullscreen: true,
 });
 const DEFAULT_UPDATE_DOWNLOAD_PAGE_URL = "https://wuxinbo-bo.github.io/";
 const PANEL_LAYOUT_MIN_HEIGHT = 320;
@@ -300,7 +300,7 @@ function normalizeWorkbenchPreferences(input = {}) {
     defaultChatPanelSide: defaultCanvasPanelSide === "left" ? "right" : "left",
     defaultCanvasPanelVisible: input?.defaultCanvasPanelVisible === false ? false : true,
     defaultChatPanelVisible: input?.defaultChatPanelVisible === false ? false : true,
-    defaultLaunchFullscreen: input?.defaultLaunchFullscreen === true,
+    defaultLaunchFullscreen: input?.defaultLaunchFullscreen !== false,
   };
 }
 

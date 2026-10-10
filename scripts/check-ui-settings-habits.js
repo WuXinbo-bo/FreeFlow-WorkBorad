@@ -34,7 +34,8 @@ async function checkNormalization() {
   assert.strictEqual(legacy.defaultChatPanelSide, "right", "legacy chat side default mismatch");
   assert.strictEqual(legacy.defaultCanvasPanelVisible, true, "legacy canvas visible default mismatch");
   assert.strictEqual(legacy.defaultChatPanelVisible, true, "legacy chat visible default mismatch");
-  assert.strictEqual(legacy.defaultLaunchFullscreen, false, "legacy fullscreen default mismatch");
+  assert.strictEqual(legacy.defaultLaunchFullscreen, true, "legacy fullscreen default mismatch");
+  assert.strictEqual(normalizeUiSettings({ defaultLaunchFullscreen: false }).defaultLaunchFullscreen, false, "explicit windowed preference should be preserved");
 
   const custom = normalizeUiSettings({
     defaultCanvasPanelSide: "right",

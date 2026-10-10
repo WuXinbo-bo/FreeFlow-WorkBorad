@@ -28,14 +28,23 @@ async function main() {
     FREEFLOW_PORT: "0",
   };
   delete env.ELECTRON_RUN_AS_NODE;
+  const launchOptions = { executablePath: require("electron"), args: [bootstrap], cwd: ROOT, env, timeout: 30000 };
   let application;
   try {
-    application = await electron.launch({ executablePath: require("electron"), args: [bootstrap], cwd: ROOT, env, timeout: 30000 });
+    application = await electron.launch(launchOptions);
     const page = await application.firstWindow();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.waitForFunction(() => window.__canvas2dEngine && window.desktopShell?.isDesktop, null, { timeout: 30000 });
     assert.equal(await page.evaluate(() => window.desktopShell.platform), process.platform);
+    await page.waitForFunction(() => !document.body.classList.contains("app-booting"));
+    assert.equal((await page.evaluate(() => window.desktopShell.getState())).fullscreen, true, "fresh desktop profile should launch fullscreen");
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      await page.evaluate(() => window.desktopShell.toggleFullscreen());
+      await page.waitForFunction(async () => !(await window.desktopShell.getState()).fullscreen);
+      await page.evaluate(() => window.desktopShell.toggleFullscreen());
+      await page.waitForFunction(async () => (await window.desktopShell.getState()).fullscreen);
+    }
     const result = await page.evaluate(async () => {
       const engine = window.__canvas2dEngine;
       await engine.whenReady();
@@ -95,7 +104,20 @@ async function main() {
       await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "native-electron.png") });
     }
     assert.deepEqual(errors, []);
-    console.log(`[check-desktop-canvas-smoke] native Electron startup, canvas, trusted pinch/reverse and recovery passed (${process.platform})`);
+    for (const fullscreen of [false, true]) {
+      await application.evaluate(({ app }) => app.exit(0));
+      await application.close();
+      application = null;
+      const settingsPath = path.join(data, "ui-settings.json");
+      const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+      settings.defaultLaunchFullscreen = fullscreen;
+      await fs.writeFile(settingsPath, JSON.stringify(settings));
+      application = await electron.launch(launchOptions);
+      const restartedPage = await application.firstWindow();
+      await restartedPage.waitForFunction(() => window.__canvas2dEngine && !document.body.classList.contains("app-booting"));
+      assert.equal((await restartedPage.evaluate(() => window.desktopShell.getState())).fullscreen, fullscreen, "relaunch did not preserve the selected fullscreen preference");
+    }
+    console.log(`[check-desktop-canvas-smoke] native Electron startup, fullscreen exit/recovery/relaunch, canvas, trusted pinch/reverse and recovery passed (${process.platform})`);
   } finally {
     if (application) {
       // Test data is disposable; exit without the app's interactive save flow.
