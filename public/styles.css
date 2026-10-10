@@ -15093,6 +15093,50 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   color: #0f172a;
 }
 
+.canvas-office-page .canvas-chrome-minimap {
+  position: absolute;
+  z-index: 52;
+  display: flex;
+  flex-direction: column;
+  width: 164px;
+  height: 134px;
+  padding: 8px;
+  gap: 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgba(207, 216, 231, 0.92);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.canvas-office-page .canvas-chrome-minimap.is-collapsed {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.canvas-office-page .canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-label,
+.canvas-office-page .canvas-chrome-minimap.is-collapsed canvas {
+  display: none;
+}
+
+.canvas-office-page .canvas2d-transient-minimap-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.canvas-office-page .canvas2d-transient-minimap.is-collapsed .canvas2d-transient-minimap-toggle {
+  top: 5px !important;
+  right: 5px !important;
+}
+
 .canvas2d-transient-minimap-toggle {
   transition:
     background-color 140ms ease,

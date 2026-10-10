@@ -954,6 +954,8 @@ async function runPanRealtimeCheck(browser) {
   ]);
   const session = await createPage(browser, { board });
   try {
+    await session.page.locator("#canvas2d-transient-minimap button").click();
+    await session.page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.viewportRenderCount > 0);
     const rect = await session.page.locator(MAIN_CANVAS_SELECTOR).boundingBox();
     const centerX = rect.x + rect.width / 2;
     const centerY = rect.y + rect.height / 2;

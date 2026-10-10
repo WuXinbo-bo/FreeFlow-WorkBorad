@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
 const { checkCanvasTrackpad } = require("./fixtures/check-canvas-trackpad");
+const { checkWorkspaceChrome } = require("./fixtures/check-workspace-chrome");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -88,6 +89,7 @@ async function main() {
     const recoveredScale = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view.scale);
     assert(Math.abs(recoveredScale / beforePinch - 1) < 0.03, "native reverse pinch did not recover the camera scale");
     await cdp.detach();
+    await checkWorkspaceChrome(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
     if (process.env.FREEFLOW_SCREENSHOT_DIR) {
       await fs.mkdir(process.env.FREEFLOW_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "native-electron.png") });

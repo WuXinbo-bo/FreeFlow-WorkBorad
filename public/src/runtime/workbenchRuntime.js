@@ -2663,18 +2663,26 @@ function syncRightPanelWindowControlsLayout() {
   if (!rightPanelWindowControlsEl || !rightPanelWindowStripEl) {
     return;
   }
+  if (rightPanelWindowControlsEl.clientWidth === 0) {
+    return;
+  }
 
   const overflowThreshold = 4;
-  const hasWidth = rightPanelWindowControlsEl.clientWidth > 0;
-
+  const panel = rightPanelWindowControlsEl.closest(".conversation-panel");
+  const compact = panel?.clientWidth < 460;
+  panel?.classList.toggle("is-header-compact", compact);
+  appGlobalShellActionsEl?.classList.toggle("is-compact", compact);
+  if (conversationHeaderToplineEl) {
+    const headerRect = conversationHeaderToplineEl.getBoundingClientRect();
+    const panelRect = panel?.getBoundingClientRect();
+    const actionsRect = appGlobalShellActionsEl?.getBoundingClientRect();
+    const overlaps = panelRect && actionsRect && actionsRect.width > 0 && actionsRect.bottom > panelRect.top && actionsRect.top < panelRect.top + 50;
+    const reserve = overlaps ? Math.max(0, headerRect.right - actionsRect.left + 6) : 0;
+    conversationHeaderToplineEl.style.setProperty("--right-global-actions-reserve", `${Math.round(reserve)}px`);
+  }
   conversationHeaderToplineEl?.classList.remove("is-compact", "is-tight");
   rightPanelWindowControlsEl.classList.remove("is-compact", "is-tight");
   rightPanelWindowStripEl.classList.remove("is-compact", "is-tight");
-
-  if (!hasWidth) {
-    scheduleRightPanelWindowSliderSync();
-    return;
-  }
 
   const isOverflowing = () => {
     const availableWidth = Math.min(
@@ -2683,13 +2691,13 @@ function syncRightPanelWindowControlsLayout() {
     );
     return rightPanelWindowControlsEl.scrollWidth > availableWidth + overflowThreshold;
   };
-  if (isOverflowing()) {
+  if (compact || isOverflowing()) {
     conversationHeaderToplineEl?.classList.add("is-compact");
     rightPanelWindowControlsEl.classList.add("is-compact");
     rightPanelWindowStripEl.classList.add("is-compact");
   }
 
-  if (isOverflowing()) {
+  if (compact || isOverflowing()) {
     conversationHeaderToplineEl?.classList.add("is-tight");
     rightPanelWindowControlsEl.classList.add("is-tight");
     rightPanelWindowStripEl.classList.add("is-tight");
@@ -6431,6 +6439,7 @@ function refreshPanelLayoutVisualState() {
 
   renderStageRestoreControl();
   syncPaneVisibility({ syncShape: false });
+  syncRightPanelWindowControlsLayout();
   syncEmbeddedWindowOverlayVisibility();
   scheduleConversationShellMenuLayoutSync();
   scheduleScreenSourceHeaderMenuLayoutSync();

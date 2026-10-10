@@ -66,7 +66,7 @@ body.is-pane-resizing .conversation-panel *::after {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto !important;
   gap: 8px 10px !important;
-  padding-top: 36px !important;
+  padding-top: 0 !important;
   padding-bottom: 10px !important;
   border-bottom: 1px solid var(--agent-border) !important;
 }
@@ -1207,7 +1207,7 @@ body.desktop-mode .conversation-panel.assistant-view-active .composer {
 
 @media (max-width: 720px) {
   .conversation-panel.assistant-view-active .conversation-header {
-    padding-top: 36px !important;
+    padding-top: 0 !important;
   }
 }
 
@@ -1229,7 +1229,7 @@ body.desktop-mode .conversation-panel.assistant-view-active .composer {
 
 .conversation-panel.assistant-view-active .conversation-header {
   gap: 6px 8px !important;
-  padding: 36px 8px 8px !important;
+  padding: 0 8px 8px !important;
   border-bottom-color: rgb(var(--app-pattern-rgb) / 0.18) !important;
 }
 
