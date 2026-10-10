@@ -33,6 +33,7 @@ async function main() {
     getBoardOps: () => ({
       maybeSaveBeforeSwitch: async () => saveAllowed,
       buildBoardFilePayload: (_path, board) => ({ board }),
+      getBoardEditRevision: () => 0,
       loadBoardFromPath: async (filePath) => { const payload = JSON.parse(await fs.readFile(filePath, "utf8")); state.board = payload.board; state.boardFilePath = filePath; state.boardDirty = false; return true; },
     }),
   });

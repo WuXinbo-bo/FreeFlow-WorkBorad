@@ -178,6 +178,32 @@ async function main() {
       if (!(await engine.saveBoard())) throw new Error("saving did not recover after a failed sync");
     });
 
+    await makeDirty();
+    await page.evaluate(() => window.__canvas2dEngine.saveBoard());
+    const beforeRead = await snapshot();
+    await app.evaluate(({ ipcMain }, target) => {
+      globalThis.__workspaceReadGate = null;
+      globalThis.__workspaceDelayRead = target;
+      ipcMain.removeHandler("desktop-shell:read-file");
+      ipcMain.handle("desktop-shell:read-file", async (_event, file) => {
+        if (file === globalThis.__workspaceDelayRead) await new Promise((resolve) => { globalThis.__workspaceReadGate = resolve; });
+        try { return { ok: true, text: await globalThis.__workspaceTestFs.readFile(file, "utf8") }; }
+        catch (error) { return { ok: false, error: error.message }; }
+      });
+    }, beta);
+    await page.evaluate((target) => { window.__workspaceOpen = window.__canvas2dEngine.openBoardAtPath(target); }, beta);
+    for (let attempt = 0; attempt < 30 && !(await app.evaluate(() => Boolean(globalThis.__workspaceReadGate))); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(await app.evaluate(() => Boolean(globalThis.__workspaceReadGate)), "delayed read did not start");
+    await page.evaluate(() => { const engine = window.__canvas2dEngine; engine.runCommand("selection.set-geometry", { x: engine.getSnapshot().board.items[0].x + 12 }); });
+    const editedWhileReading = await snapshot();
+    await app.evaluate(() => { globalThis.__workspaceDelayRead = ""; globalThis.__workspaceReadGate(); });
+    assert.equal(await page.evaluate(() => window.__workspaceOpen), false, "delayed open discarded edits made during the read");
+    assert.deepEqual(await snapshot(), editedWhileReading, "delayed open replaced the edited board");
+    assert.equal((await snapshot()).path, beforeRead.path);
+    await page.evaluate(() => window.__canvas2dEngine.saveBoard());
+    assert.equal(await page.evaluate((target) => window.__canvas2dEngine.openBoardAtPath(target), beta), true);
+    await page.evaluate((target) => window.__canvas2dEngine.openBoardAtPath(target), renamed);
+
     await app.evaluate(({ ipcMain }) => {
       globalThis.__workspaceWriteGate = null;
       globalThis.__workspaceDelayWrite = true;
@@ -198,12 +224,30 @@ async function main() {
     assert.equal((await snapshot()).dirty, true, "an in-flight save incorrectly cleared later edits");
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     assert.equal((await snapshot()).dirty, false, "saving did not recover after concurrent edits");
+    const beforeCreate = await snapshot();
+    await app.evaluate(() => { globalThis.__workspaceWriteGate = null; globalThis.__workspaceDelayWrite = true; });
+    await page.evaluate((root) => { window.__workspaceCreate = window.__canvas2dEngine.createBoardInWorkspace(root, "DeferredNew"); }, boards);
+    for (let attempt = 0; attempt < 30 && !(await app.evaluate(() => Boolean(globalThis.__workspaceWriteGate))); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(await app.evaluate(() => Boolean(globalThis.__workspaceWriteGate)), "delayed creation did not start");
+    await page.evaluate(() => { const engine = window.__canvas2dEngine; engine.runCommand("selection.set-geometry", { x: engine.getSnapshot().board.items[0].x + 12 }); });
+    const editedWhileCreating = await snapshot();
+    await app.evaluate(() => { globalThis.__workspaceDelayWrite = false; globalThis.__workspaceWriteGate(); });
+    assert.equal((await page.evaluate(() => window.__workspaceCreate)).ok, false, "delayed creation discarded later edits");
+    assert.deepEqual(await snapshot(), editedWhileCreating);
+    assert.equal((await snapshot()).path, beforeCreate.path);
+    await fs.access(path.join(boards, "DeferredNew.freeflow"));
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     const beforeFolder = await snapshot();
+    await panel.getByRole("button", { name: "收起画布工作区" }).click();
+    await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await app.evaluate(({ dialog }, target) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] }); }, second);
     await panel.locator(".canvas2d-workspace-folder > button").first().click();
     await row("Second").waitFor({ state: "visible" });
     assert.deepEqual(await snapshot(), beforeFolder, "browsing a workspace relocated the current board");
     assert.equal((await fs.readdir(second)).length, 1, "browsing copied the current board");
+    await page.evaluate(() => { window.dispatchEvent(new Event("focus")); window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed")); });
+    await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-list-head > span")?.textContent === "1 个画布");
+    assert(await row("Second").isVisible(), "focus refresh restored an old workspace folder");
     await makeDirty();
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     assert.equal((await snapshot()).path, renamed, "saving moved the current board into the browsed workspace");
@@ -242,7 +286,7 @@ async function main() {
     assert(bounds.width <= 360, "sidebar overflowed a narrow canvas pane");
     if (screenshotDir) await page.screenshot({ path: path.join(screenshotDir, "workspace-narrow.png") });
     assert.deepEqual(errors, []);
-    console.log(`[check-board-workspace-desktop] ${process.platform}: native files, switch recovery, rename collision, delete/cancel, pull reload, stale-memory protection, failed-sync recovery, workspace browsing/save, keyboard, collapse/reload and narrow panel passed`);
+    console.log(`[check-board-workspace-desktop] ${process.platform}: native files, switch recovery, rename collision, delete/cancel, pull reload, stale-memory protection, delayed read/create edit protection, failed-sync recovery, workspace browsing/save/focus recovery, keyboard, collapse/reload and narrow panel passed`);
   } finally {
     if (app) { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); await app.close(); }
     await fs.rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

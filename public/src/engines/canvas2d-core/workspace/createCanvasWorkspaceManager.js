@@ -32,6 +32,7 @@ export function createCanvasWorkspaceManager(deps) {
     maybeSaveBeforeSwitch,
     buildBoardFilePayload,
     loadBoardFromPath,
+    getBoardEditRevision,
     withBoardFileOperation,
     ensureImportImageFolderExists,
   } = getBoardOps();
@@ -303,6 +304,7 @@ export function createCanvasWorkspaceManager(deps) {
     if (!ok) {
       return { ok: false, filePath: "", error: "当前画布保存失败，已取消切换" };
     }
+    const expectedEditRevision = getBoardEditRevision();
     const cleanBaseName = sanitizeBoardFileBaseName(nextName);
     const nextPath = await resolveUniqueBoardFilePathByBaseName(targetFolder, cleanBaseName);
     // Write before replacing the active board so a failed write preserves its edits.
@@ -312,7 +314,7 @@ export function createCanvasWorkspaceManager(deps) {
       setStatus("新建画布写入失败", "warning");
       return { ok: false, filePath: nextPath, error: saved?.error || "新建画布写入失败" };
     }
-    if (!(await loadBoardFromPath(nextPath))) return { ok: false, filePath: nextPath, error: "新文件已创建，但加载失败；当前画布已保留" };
+    if (!(await loadBoardFromPath(nextPath, { expectedEditRevision }))) return { ok: false, filePath: nextPath, error: "新文件已创建，但未切换；当前画布及期间的新编辑已保留" };
     await updateCanvasWorkspaceFolderSetting(targetFolder);
     setStatus("已新建画布");
     return { ok: true, filePath: nextPath, error: "" };
