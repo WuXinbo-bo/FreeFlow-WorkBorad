@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
-const { parseBoardFileText } = require("../models/canvasBoardFileFormat");
+const { parseBoardFileText, checkFileSizeSafe } = require("../models/canvasBoardFileFormat");
 const { atomicWriteFile } = require("../utils/atomicWrite");
 const { addChecksumToEnvelope } = require("../utils/checksum");
 const { evaluateAttachment, createPlaceholderMetadata, normalizePolicy } = require("./attachmentPolicyService");
@@ -65,7 +65,7 @@ function itemType(item = {}) {
 
 function attachmentInput(item = {}) {
   const type = itemType(item);
-  if (!["image", "file", "filecard", "file-card"].includes(type)) return null;
+  if (!["image", "file", "filecard", "file-card", "video", "video-card", "videocard"].includes(type)) return null;
   return {
     name: item.name || item.fileName || item.title || "附件",
     mime: item.mime || item.mimeType || item.detectedMimeType || "",
@@ -96,6 +96,11 @@ function replaceWithPlaceholder(item, input, evaluation) {
   delete next.dataUrl;
   delete next.sourcePath;
   delete next.filePath;
+  delete next.resourcePath;
+  delete next.resourceSha256;
+  delete next._relative;
+  delete next.resourceStatus;
+  delete next.syncable;
   return {
     ...next,
     ...createPlaceholderMetadata(input, evaluation),
@@ -103,12 +108,20 @@ function replaceWithPlaceholder(item, input, evaluation) {
 }
 
 async function buildSyncBundleFromFile(filePath, options = {}) {
-  const policy = normalizePolicy(options.policy);
+  const stat = await fs.stat(filePath);
+  checkFileSizeSafe(stat.size);
   const raw = await fs.readFile(filePath, "utf8");
   const parsed = parseBoardFileText(raw);
-  const payload = clone(parsed.payload || {});
+  return buildSyncBundleFromPayload(parsed.payload, { ...options, baseDir: path.dirname(filePath) });
+}
+
+async function buildSyncBundleFromPayload(inputPayload, options = {}) {
+  const policy = normalizePolicy(options.policy);
+  const payload = clone(inputPayload || {});
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const resources = [];
+  const resourcesByPath = new Map();
+  const resourcesByHash = new Map();
   let skippedCount = 0;
   let assetBytes = 0;
 
@@ -117,9 +130,18 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
       const item = board.items[index];
       const input = attachmentInput(item);
       if (!input) continue;
-      const bytes = await readAttachmentBytes(input, path.dirname(filePath));
+      const bytes = await readAttachmentBytes(input, options.baseDir || "");
       const sizeBytes = bytes?.bytes?.length || input.sizeBytes || 0;
-      const evaluation = evaluateAttachment({ ...input, mime: bytes?.mime || input.mime, sizeBytes }, { policy, repositoryBytes: assetBytes });
+      const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
+      const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";
+      const computedAssetPath = sha256 ? `.freeflow/assets/${sha256}.${extension}` : "";
+      const assetPath = (sha256 && resourcesByHash.get(sha256)?.path) || computedAssetPath;
+      const duplicateResource = Boolean(assetPath && resourcesByPath.has(assetPath));
+      const uniqueBytes = duplicateResource ? 0 : (bytes?.bytes?.length || 0);
+      const evaluation = evaluateAttachment({ ...input, mime: bytes?.mime || input.mime, sizeBytes }, {
+        policy,
+        repositoryBytes: duplicateResource ? Math.max(0, assetBytes - sizeBytes) : assetBytes,
+      });
       if (!evaluation.syncable) {
         board.items[index] = replaceWithPlaceholder(item, input, evaluation);
         skippedCount += 1;
@@ -130,16 +152,18 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
         skippedCount += 1;
         continue;
       }
-      if (assetBytes + bytes.bytes.length > policy.batchMaxBytes) {
+      if (assetBytes + uniqueBytes > policy.batchMaxBytes) {
         board.items[index] = replaceWithPlaceholder(item, { ...input, sizeBytes: bytes.bytes.length }, { ...evaluation, reason: "batch-quota" });
         skippedCount += 1;
         continue;
       }
-      const sha256 = crypto.createHash("sha256").update(bytes.bytes).digest("hex");
-      const extension = extensionFor(input.name, bytes.mime || input.mime);
-      const assetPath = `.freeflow/assets/${sha256}.${extension}`;
-      resources.push({ path: assetPath, sha256, sizeBytes: bytes.bytes.length, mime: bytes.mime || input.mime, bytes: bytes.bytes });
-      assetBytes += bytes.bytes.length;
+      if (!resourcesByPath.has(assetPath)) {
+        const resource = { path: assetPath, sha256, sizeBytes: bytes.bytes.length, mime: bytes.mime || input.mime, bytes: bytes.bytes };
+        resourcesByPath.set(assetPath, resource);
+        if (sha256) resourcesByHash.set(sha256, resource);
+        resources.push(resource);
+        assetBytes += bytes.bytes.length;
+      }
       board.items[index] = {
         ...item,
         dataUrl: "",
@@ -200,5 +224,6 @@ module.exports = {
   ensureBoardIdInFile,
   parseDataUrl,
   buildSyncBundleFromFile,
+  buildSyncBundleFromPayload,
   writeDownloadedBoard,
 };

@@ -33,6 +33,7 @@ async function main() {
         { id: "small", type: "image", name: "small.png", mime: "image/png", dataUrl: `data:image/png;base64,${smallData}` },
         { id: "large", type: "image", name: "large.png", mime: "image/png", dataUrl: `data:image/png;base64,${largeData}` },
         { id: "video", type: "fileCard", name: "clip.mp4", mime: "video/mp4", sourcePath: path.join(root, "clip.mp4"), size: 1024 },
+        { id: "video-node", type: "video", name: "inline.mp4", mime: "video/mp4", dataUrl: `data:video/mp4;base64,${smallData}` },
         { id: "text", type: "text", text: "keep me" },
       ],
     },
@@ -40,14 +41,30 @@ async function main() {
   await ensureBoardIdInFile(boardPath);
   const bundle = await buildSyncBundleFromFile(boardPath);
   assert.equal(bundle.boardId.length > 0, true);
-  assert.equal(bundle.manifest.skippedCount, 2);
+  assert.equal(bundle.manifest.skippedCount, 3);
   assert.equal(bundle.files.some((file) => file.path.startsWith(".freeflow/assets/")), true);
   const serialized = JSON.parse(bundle.boardText);
   const items = serialized.board.items;
   assert.equal(items[0].resourceStatus, "synced");
   assert.equal(items[1].resourceStatus, "placeholder");
   assert.equal(items[2].syncReason, "video-disabled");
+  assert.equal(items[3].syncReason, "video-disabled");
   assert.equal(hashJson({ updatedAt: 1, value: "same" }), hashJson({ updatedAt: 2, value: "same" }));
+
+  const duplicateAssetPath = path.join(root, "duplicate-assets.freeflow");
+  await fsPromises.writeFile(duplicateAssetPath, JSON.stringify({
+    kind: "structured-host-board",
+    board: {
+      boardId: "duplicate-assets",
+      items: [
+        { id: "png", type: "image", name: "same.png", mime: "image/png", dataUrl: `data:image/png;base64,${smallData}` },
+        { id: "jpg", type: "image", name: "same.jpg", mime: "image/jpeg", dataUrl: `data:image/jpeg;base64,${smallData}` },
+      ],
+    },
+  }), "utf8");
+  const duplicateBundle = await buildSyncBundleFromFile(duplicateAssetPath);
+  assert.equal(duplicateBundle.manifest.resources.length, 1, "same attachment content should be stored once");
+  assert.equal(duplicateBundle.manifest.assetBytes, Buffer.from("small-image").length);
 
   const envelopePath = path.join(root, "checksummed.freeflow");
   const envelope = addChecksumToEnvelope({ kind: "freeflow-board", formatVersion: 1, payload: { kind: "structured-host-board", board: { items: [] } } });
