@@ -143,6 +143,9 @@ async function main() {
     await runNodeScript("scripts/check-canvas-command-integration.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
+    await runNodeScript("scripts/check-canvas-desktop-ui-contract.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
     await runNodeScript("scripts/check-canvas-compact-presentation.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });

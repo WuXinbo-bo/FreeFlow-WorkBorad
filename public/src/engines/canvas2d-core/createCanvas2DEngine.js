@@ -27924,7 +27924,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (options?.resetView === true) {
         store.resetView();
       }
-      store.emit();
+      syncBoard({ persist: false, emit: true, markDirty: false, reason: "structured-board-load" });
       return true;
     },
     getStructuredExportRuntime() {

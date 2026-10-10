@@ -22,7 +22,6 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
       items: [...board.items, { id, type: "shape", shapeType: "rect", x: 800, y: 300, width: 120, height: 80 }],
       selectedIds: [id],
     });
-    engine.runCommand("selection.nudge", 20, 10);
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }, id);
   const setDirectory = async (collapsed) => {
