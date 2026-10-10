@@ -1013,7 +1013,7 @@ body.desktop-mode .composer.ui-chrome-composer {
 #restore-left-pane-btn,
 #restore-right-pane-btn {
   position: absolute !important;
-  top: 8px !important;
+  top: 50% !important;
   bottom: auto !important;
   z-index: 28;
   display: inline-flex !important;
@@ -1032,7 +1032,7 @@ body.desktop-mode .composer.ui-chrome-composer {
   text-orientation: mixed !important;
   letter-spacing: 0 !important;
   white-space: nowrap;
-  transform: none !important;
+  transform: translateY(-50%) !important;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
@@ -1052,7 +1052,7 @@ body.desktop-mode .composer.ui-chrome-composer {
 #restore-left-pane-btn.pane-restore-btn-right,
 #restore-right-pane-btn.pane-restore-btn-right {
   left: auto !important;
-  right: calc(var(--canvas-chrome-status-dock-width) + 26px) !important;
+  right: 8px !important;
   border-radius: 6px !important;
 }
 

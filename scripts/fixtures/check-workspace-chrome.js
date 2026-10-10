@@ -123,7 +123,7 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
           const hit = await page.locator(id).evaluate((button) => {
             const r = button.getBoundingClientRect();
             const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-            return { width: r.width, inside: button.contains(hit), target: hit?.outerHTML.slice(0, 400) };
+            return { rect: r.toJSON(), width: r.width, inside: button.contains(hit), target: hit?.outerHTML.slice(0, 400), rail: button.closest(".conversation-panel")?.querySelector(".workspace-drag-band.is-top")?.getBoundingClientRect().toJSON() };
           });
           assert(hit.width >= 24 && hit.inside, `header button is not hittable: ${width}/${mode}/${id}: ${JSON.stringify(hit)}`);
         }

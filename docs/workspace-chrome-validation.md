@@ -5,6 +5,7 @@
 ## 行为与恢复规则
 
 - 左上面板控制键为 28px，窄 AI 面板为 24px；悬停与按下不移动按钮位置。
+- 默认启动进入全屏，保留显式关闭全屏启动的设置；左右面板收起后，恢复入口位于对应屏幕边缘的垂直中点，展开控件仍在左上角。
 - 画布工具栏上移，顶部拖动区保留 12px，避免挡住工具按钮；边缘拖动、取消、失焦后恢复。
 - AI 助手、镜像、切换锁定、映射入口保持同一行；隐藏面板保留紧凑状态，恢复立即重算。全局设置按钮的占位参与布局。
 - 目录展开状态为本机偏好。切换只更新界面，不修改画布内容、脏状态或触发同步。无本机偏好时读取旧画布的默认状态，兼容旧文件。
@@ -20,7 +21,7 @@
 - `scripts/run-test-suite.js`：整套检查通过，包括安全、同步、历史、画布元素、粘贴、后台恢复、触控板、工作区布局、设置和 AI 会话。
 - `scripts/check-workspace-chrome.js`：实际调整面板到 320 / 360 / 420 / 600px，切换助手与镜像，检查按钮命中、重载偏好、目录与画布隔离；在收起和遮挡期间编辑后验证补绘，连续快速开关后状态恢复。
 - `scripts/check-air-canvas-interactions.js`：1600 / 900 / 680px 窗口，控件点击、半屏与全屏、收起与恢复、边缘拖动与取消、弹层和穿透恢复。
-- `scripts/check-desktop-canvas-smoke.js`：独立临时数据与 Chromium profile，在本机原生 macOS Electron 验证启动、画布、撤销重做、可信捏合事件、反向捏合及工作区控件恢复。
+- `scripts/check-desktop-canvas-smoke.js`：独立临时数据与 Chromium profile，在本机原生 macOS Electron 验证默认全屏启动、退出与恢复、窗口/全屏偏好分别重启、画布、撤销重做、可信捏合事件、反向捏合及工作区控件恢复。
 - `scripts/check-panel-resize-performance.js`：面板尺寸调整检查通过，无持续长任务；小地图收起和遮挡态没有场景或视口绘制。
 - `scripts/check-generated-bundles.js`、macOS 前端兼容检查、共享穿透恢复检查、`git diff --check` 均通过。
 - `scripts/check-canvas-desktop-ui-contract.js`：连续替换同 ID 元素、锁定与撤销后解锁、组合与撤销、对齐与层级、搜索和编辑退出恢复通过；已接入完整套件。

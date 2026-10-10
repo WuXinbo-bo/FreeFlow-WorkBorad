@@ -14,7 +14,7 @@ const DEFAULT_WORKBENCH_PREFERENCES = Object.freeze({
   defaultChatPanelSide: "right",
   defaultCanvasPanelVisible: true,
   defaultChatPanelVisible: true,
-  defaultLaunchFullscreen: false,
+  defaultLaunchFullscreen: true,
 });
 
 function normalizeWorkbenchPanelSide(value, fallback = "left") {
@@ -34,7 +34,7 @@ function normalizeWorkbenchPreferences(payload = {}) {
       payload.defaultCanvasPanelVisible === false ? false : DEFAULT_WORKBENCH_PREFERENCES.defaultCanvasPanelVisible,
     defaultChatPanelVisible:
       payload.defaultChatPanelVisible === false ? false : DEFAULT_WORKBENCH_PREFERENCES.defaultChatPanelVisible,
-    defaultLaunchFullscreen: payload.defaultLaunchFullscreen === true,
+    defaultLaunchFullscreen: payload.defaultLaunchFullscreen !== false,
   };
 }
 
