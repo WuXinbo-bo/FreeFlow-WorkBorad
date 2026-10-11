@@ -70,13 +70,28 @@ async function storeConnection({ accessToken, refreshToken = "", method, user, c
   return mutateConnection(async () => {
     if (generation !== connectionGeneration) throw new Error("GitHub 连接操作已取消，请重试");
     const settings = await readSettings();
-    await saveTokens({ accessToken, refreshToken });
-    if (!refreshToken) await secretStorageService.clearSecret(REFRESH_TOKEN_SECRET);
-    await writeSettings({
-      ...settings,
-      ...(settings.owner && settings.owner !== user.login ? { owner: "", repo: "", branch: "main", boardPath: "" } : {}),
-      auth: { ...settings.auth, ...(clientId ? { clientId, appType } : {}), method, user },
-    });
+    const previousAccessToken = await getAccessToken();
+    const previousRefreshToken = await secretStorageService.readSecret(REFRESH_TOKEN_SECRET);
+    if (generation !== connectionGeneration) throw new Error("GitHub 连接操作已取消，请重试");
+    try {
+      await saveTokens({ accessToken, refreshToken });
+      if (!refreshToken) await secretStorageService.clearSecret(REFRESH_TOKEN_SECRET);
+      await writeSettings({
+        ...settings,
+        ...(settings.owner && settings.owner !== user.login ? { owner: "", repo: "", branch: "main", boardPath: "" } : {}),
+        auth: { ...settings.auth, ...(clientId ? { clientId, appType } : {}), method, user },
+      });
+      if (generation !== connectionGeneration) throw new Error("GitHub 连接操作已取消，请重试");
+    } catch (error) {
+      // All connection/configuration mutations use the same queue. Restore the
+      // last complete connection before the next intent can write credentials.
+      await Promise.all([
+        previousAccessToken ? secretStorageService.writeSecret(ACCESS_TOKEN_SECRET, previousAccessToken) : secretStorageService.clearSecret(ACCESS_TOKEN_SECRET),
+        previousRefreshToken ? secretStorageService.writeSecret(REFRESH_TOKEN_SECRET, previousRefreshToken) : secretStorageService.clearSecret(REFRESH_TOKEN_SECRET),
+      ]);
+      await writeSettings(settings);
+      throw error;
+    }
     deviceFlows.clear();
     return { connected: true, user };
   });
@@ -126,10 +141,11 @@ async function requestDeviceAuthorization(pathname, payload, { fetchImpl, github
 }
 
 async function beginDeviceFlow({ clientId, appType, fetchImpl = globalThis.fetch, githubHost = DEFAULT_GITHUB_HOST } = {}) {
-  const { clientId: cleanClientId, appType: resolvedAppType } = await getPublicAuthStatus({ clientId, appType });
-  if (!cleanClientId) throw new Error("尚未配置 GitHub Client ID，可使用个人访问令牌连接，或填写启用了 Device Flow 的授权应用 Client ID");
   const generation = ++connectionGeneration;
   deviceFlows.clear();
+  const { clientId: cleanClientId, appType: resolvedAppType } = await mutateConnection(() => getPublicAuthStatus({ clientId, appType }));
+  if (generation !== connectionGeneration) throw new Error("GitHub 连接操作已取消，请重试");
+  if (!cleanClientId) throw new Error("尚未配置 GitHub Client ID，可使用个人访问令牌连接，或填写启用了 Device Flow 的授权应用 Client ID");
   const body = await requestDeviceAuthorization("/login/device/code", {
     client_id: cleanClientId,
     ...(resolvedAppType === "oauth-app" ? { scope: "repo" } : {}),
@@ -172,6 +188,7 @@ async function pollDeviceFlow({ deviceCode, fetchImpl = globalThis.fetch, github
 }
 
 module.exports = {
+  withConnectionOperation: mutateConnection,
   ACCESS_TOKEN_SECRET,
   REFRESH_TOKEN_SECRET,
   DEFAULT_GITHUB_HOST,

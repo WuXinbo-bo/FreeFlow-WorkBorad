@@ -74,6 +74,37 @@ async function main() {
     assert.equal(await auth.getAccessToken(), "");
     assert.equal((await auth.getPublicAuthStatus()).user, null);
 
+    // Superseding an operation while its credential write is in flight must
+    // restore the previous connection and retain the newer device flow.
+    await auth.connectWithToken({ token: "previous-fixture", fetchImpl: fakeFetch });
+    const secrets = require("../src/backend/services/secretStorageService");
+    const originalWrite = secrets.writeSecret;
+    let releaseWrite;
+    let enteredWrite;
+    const writeEntered = new Promise((resolve) => { enteredWrite = resolve; });
+    secrets.writeSecret = async (...args) => {
+      if (args[1] === "storage-race-fixture") {
+        enteredWrite();
+        await new Promise((resolve) => { releaseWrite = resolve; });
+      }
+      return originalWrite(...args);
+    };
+    try {
+      const oldConnection = auth.connectWithToken({ token: "storage-race-fixture", fetchImpl: fakeFetch });
+      const oldOutcome = oldConnection.then(() => "connected", () => "cancelled");
+      await writeEntered;
+      const newFlowPromise = auth.beginDeviceFlow({ clientId: "fixture", fetchImpl: fakeFetch });
+      await new Promise((resolve) => setImmediate(resolve));
+      releaseWrite();
+      const newFlow = await newFlowPromise;
+      assert.equal(await oldOutcome, "cancelled", "superseded storage reported a successful connection");
+      assert.equal(await auth.getAccessToken(), "previous-fixture", "superseded storage replaced the previous credential");
+      assert.equal((await auth.pollDeviceFlow({ deviceCode: newFlow.device_code, fetchImpl: fakeFetch })).pending, true);
+      await auth.clearTokens();
+    } finally {
+      secrets.writeSecret = originalWrite;
+    }
+
     const flow = await auth.beginDeviceFlow({ clientId: "fixture", appType: "oauth-app", fetchImpl: fakeFetch });
     assert.equal(calls.at(-1).body.scope, "repo");
     const count = calls.length;
