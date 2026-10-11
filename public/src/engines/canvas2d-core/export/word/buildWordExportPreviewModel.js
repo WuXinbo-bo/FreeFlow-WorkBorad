@@ -23,7 +23,6 @@ function getItemTypeLabel(type = "") {
   if (normalized === "mathBlock" || normalized === "mathInline") return "数学公式";
   if (normalized === "image") return "图片";
   if (normalized === "shape") return "图形";
-  if (normalized === "frame") return "板块";
   if (normalized === "mindNode" || normalized === "mindSummary") return "思维导图";
   if (normalized === "fileCard") return "文件卡";
   return normalized || "元素";

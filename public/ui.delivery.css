@@ -1,23 +1,4 @@
-/* Collection and delivery share the canvas glass surface. */
-.canvas2d-engine-topbar.is-delivery-open { z-index: 260; }
-.canvas2d-engine-topbar.is-delivery-open .canvas-chrome-utility-dock { opacity: 1; }
-.canvas2d-delivery-wrap { position: relative; }
-.canvas-chrome-utility-dock .canvas2d-delivery-wrap { width: var(--canvas-chrome-control-size); height: var(--canvas-chrome-control-size); flex: none; }
-.canvas2d-delivery-panel { position: absolute; right: 0; top: calc(100% + 10px); width: min(360px, calc(100vw - 40px)); max-height: min(70vh, 640px); overflow: auto; padding: 14px; border-radius: 18px; display: grid; gap: 12px; pointer-events: auto; }
-.canvas2d-delivery-panel { box-sizing: border-box; }
-.canvas2d-delivery-actions { flex-wrap: wrap; }
-.canvas2d-engine-topbar .canvas2d-engine-search-stack .canvas2d-delivery-panel.canvas-chrome-surface { color: var(--air-ink, #334155); background-color: var(--canvas2d-panel-glass-bg, rgba(248,250,252,.96)) !important; opacity: 1; backdrop-filter: blur(16px) saturate(135%) !important; -webkit-backdrop-filter: blur(16px) saturate(135%) !important; box-shadow: var(--air-shadow-float, 0 10px 30px rgba(15,23,42,.12)); }
-.canvas2d-delivery-panel header, .canvas2d-delivery-actions { display: flex; align-items: center; gap: 6px; }
-.canvas2d-delivery-panel header { justify-content: space-between; }
-.canvas2d-delivery-panel button, .canvas2d-delivery-panel select, .canvas2d-delivery-panel input:not([type=checkbox]) { font: inherit; color: inherit; background: rgba(255,255,255,.18); border: 1px solid var(--canvas-chrome-border, rgba(148,163,184,.25)); border-radius: 7px; padding: 5px 7px; min-width: 0; }
-.canvas2d-delivery-panel button { cursor: pointer; }
-.canvas2d-delivery-panel button:disabled { opacity: .45; cursor: default; }
-.canvas2d-delivery-panel input:not([type=checkbox]) { flex: 1; width: 90px; }
-.canvas2d-delivery-panel small { opacity: .75; line-height: 1.6; }
-.canvas2d-delivery-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.canvas2d-delivery-list li { display: grid; gap: 6px; }
-.canvas2d-delivery-panel p { font-size: 12px; margin: 0; line-height: 1.6; }
-
+/* Retained Word reading order and workspace search controls. */
 .canvas2d-word-reading-order { max-height: 180px; overflow: auto; padding: 0; list-style: none; }
 .canvas2d-word-reading-order li { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
 .canvas2d-word-reading-order span { flex: 1; }
