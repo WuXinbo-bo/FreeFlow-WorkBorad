@@ -14,6 +14,7 @@ class GitHubApiClient {
     this.apiBaseUrl = String(options.apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl || globalThis.fetch;
     this.lastResponseMeta = null;
+    this.retryDelay = options.retryDelay || ((delay) => new Promise((resolve) => setTimeout(resolve, delay)));
     if (typeof this.fetchImpl !== "function") throw new Error("当前运行环境不支持 fetch");
   }
 
@@ -28,15 +29,15 @@ class GitHubApiClient {
     const value = this.getHeader(headers, "retry-after");
     if (!value) return 0;
     const seconds = Number(value);
-    if (Number.isFinite(seconds)) return Math.max(0, Math.min(30_000, seconds * 1000));
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
     const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) ? Math.max(0, Math.min(30_000, timestamp - Date.now())) : 0;
+    return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
   }
 
   async waitBeforeRetry(delayMs) {
-    const delay = Math.max(0, Math.min(30_000, Number(delayMs) || 0));
+    const delay = Math.max(0, Number(delayMs) || 0);
     if (!delay) return;
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await this.retryDelay(delay);
   }
 
   async requestWithMeta(pathname, options = {}) {
@@ -52,8 +53,19 @@ class GitHubApiClient {
     };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     for (let attempt = 0; ; attempt += 1) {
-      const response = await this.fetchImpl(`${this.apiBaseUrl}${pathname}`, { signal: AbortSignal.timeout(20000), ...requestOptions, headers });
-      const text = await response.text();
+      let response;
+      let text;
+      try {
+        response = await this.fetchImpl(`${this.apiBaseUrl}${pathname}`, { signal: AbortSignal.timeout(20000), ...requestOptions, headers });
+        text = await response.text();
+      } catch (cause) {
+        if (requestOptions.signal?.aborted) throw cause;
+        if (["GET", "HEAD"].includes(method) && attempt < retryLimit) {
+          await this.waitBeforeRetry(250 * (2 ** attempt));
+          continue;
+        }
+        throw new GitHubApiError("GitHub 网络请求中断，请检查连接后重试", { code: "NETWORK_ERROR", cause });
+      }
       let body = null;
       try { body = text ? JSON.parse(text) : null; } catch { body = text; }
       const meta = {
@@ -66,7 +78,7 @@ class GitHubApiClient {
         sunset: this.getHeader(response.headers, "sunset"),
         rateLimit: {
           limit: Number(this.getHeader(response.headers, "x-ratelimit-limit")) || null,
-          remaining: Number(this.getHeader(response.headers, "x-ratelimit-remaining")) || null,
+          remaining: this.getHeader(response.headers, "x-ratelimit-remaining") === "" ? null : Number(this.getHeader(response.headers, "x-ratelimit-remaining")),
           resetAt: Number(this.getHeader(response.headers, "x-ratelimit-reset")) || null,
           used: Number(this.getHeader(response.headers, "x-ratelimit-used")) || null,
         },
@@ -76,17 +88,24 @@ class GitHubApiClient {
       const message = String(body?.message || "").toLowerCase();
       const rateLimited = response.status === 429 ||
         (response.status === 403 && (meta.rateLimit.remaining === 0 || message.includes("rate limit") || message.includes("secondary")));
-      const transient = [502, 503, 504].includes(response.status);
+      const transient = [500, 502, 503, 504].includes(response.status);
+      const backoff = meta.retryAfterMs || (rateLimited
+        ? (meta.rateLimit.remaining === 0 && meta.rateLimit.resetAt ? Math.max(0, meta.rateLimit.resetAt * 1000 - Date.now()) + 1000 : 60_000)
+        : 250 * (2 ** attempt));
       if (attempt < retryLimit && (rateLimited || transient)) {
-        const backoff = meta.retryAfterMs || Math.min(5_000, 250 * (2 ** attempt));
-        await this.waitBeforeRetry(backoff);
-        continue;
+        // Long server-directed waits are surfaced to the caller; retrying early
+        // would extend the limit and block the connection/sync operation queue.
+        if (backoff <= 30_000) {
+          await this.waitBeforeRetry(backoff);
+          continue;
+        }
       }
       throw new GitHubApiError(body?.message || `GitHub API 请求失败 (${response.status})`, {
         status: response.status,
         response: body,
         headers: response.headers,
         meta,
+        retryAfterMs: rateLimited ? backoff : meta.retryAfterMs,
       });
     }
   }
@@ -113,7 +132,7 @@ class GitHubApiClient {
         body: JSON.stringify({ name, description, private: true, auto_init: true }),
       });
     } catch (error) {
-      if (!error.status || error.status < 500) throw error;
+      if (error.code !== "NETWORK_ERROR" && (!error.status || error.status < 500)) throw error;
       const user = await this.getUser();
       try {
         const existing = await this.getRepository(user.login, name);
@@ -246,8 +265,28 @@ class GitHubApiClient {
         body: JSON.stringify({ sha: commit.sha, force: false }),
       });
     } catch (error) {
-      if (error.status === 409 || error.status === 422) error.code = "REMOTE_CHANGED";
-      throw error;
+      if (error.status === 409 || error.status === 422) {
+        error.code = "REMOTE_CHANGED";
+        throw error;
+      }
+      if (error.code !== "NETWORK_ERROR" && !(error.status >= 500)) throw error;
+      // PATCH may have succeeded even if its response was lost. Check before
+      // retrying, and retain fast-forward protection if another device won.
+      const current = await this.getBranchHead(owner, repo, branch);
+      const currentSha = current?.object?.sha;
+      if (currentSha !== commit.sha) {
+        if (currentSha !== baseCommitSha) {
+          const comparison = await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commit.sha)}...${encodeURIComponent(currentSha)}`);
+          if (!["ahead", "identical"].includes(comparison?.status)) {
+            throw new GitHubApiError("远端分支已变化，请先拉取并处理冲突", { status: 409, code: "REMOTE_CHANGED", currentBaseSha: currentSha });
+          }
+        } else {
+          await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeURIComponent(branch)}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sha: commit.sha, force: false }),
+          });
+        }
+      }
     }
     return { commitSha: commit.sha, baseCommitSha, treeSha: tree.sha, meta: this.lastResponseMeta };
   }

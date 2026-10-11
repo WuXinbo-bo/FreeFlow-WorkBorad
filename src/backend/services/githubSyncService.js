@@ -236,6 +236,15 @@ async function getConfig() {
 async function setConfig(config) {
   const next = cleanRepoConfig(config);
   if (!next.owner || !next.repo) throw new Error("GitHub 仓库配置不完整");
+  const identity = await auth.getPublicAuthStatus();
+  if (identity.user && identity.user.login !== next.owner) throw new Error("账号已变化，请重新加载自己的私有仓库");
+  await updateLedger((current) => {
+    const previous = current.repository || {};
+    if (["owner", "repo", "branch"].every((key) => previous[key] === next[key])) return current;
+    // A different repository/branch has no shared sync baseline. Keeping old
+    // hashes here would misclassify a new remote as an already trusted copy.
+    return { ...current, repository: next, workspaceId: "", remoteWorkspace: null, boards: {} };
+  }, SYNC_LEDGER_FILE);
   await auth.writeSettings({ ...(await auth.readSettings(GITHUB_SYNC_SETTINGS_FILE)), ...next }, GITHUB_SYNC_SETTINGS_FILE);
   return next;
 }
@@ -529,7 +538,7 @@ async function getWorkspacePlan({ rootPath = "", boardPath = "", policy } = {}) 
   const root = normalizeWorkspaceRoot(rootPath || config.boardPath, boardPath);
   const client = await getClient();
   const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
-  const remoteResult = await listBoards({ includeDeleted: true });
+  const remoteResult = await listBoards({ includeDeleted: true, context: { client, config, snapshot } });
   const localResult = await scanLocalWorkspace({ rootPath: root, policy });
   const ledger = await readLedger(SYNC_LEDGER_FILE);
   const localById = new Map(localResult.boards.map((board) => [board.boardId, board]));
@@ -867,11 +876,11 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   } finally { await fs.rm(stagingRoot, { recursive: true, force: true }); }
 }
 
-async function listBoards({ includeDeleted = false } = {}) {
-  const config = await getConfig();
+async function listBoards({ includeDeleted = false, context } = {}) {
+  const config = context?.config || await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
-  const client = await getClient();
-  const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
+  const client = context?.client || await getClient();
+  const snapshot = context?.snapshot || await client.getBranchSnapshot(config.owner, config.repo, config.branch);
   const ledger = await readLedger(SYNC_LEDGER_FILE);
   const workspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
   const boards = Object.values(workspace.boards).filter((board) => includeDeleted || !board.deletedAt);
@@ -1034,3 +1043,11 @@ module.exports = {
   readLocalSyncHash,
   validateRemoteResources,
 };
+
+// Serialize public operations with credential and repository mutations. Internal
+// calls use the functions above directly, so nested pull/merge operations do not
+// re-enter the queue. A failed operation does not poison subsequent retries.
+for (const name of ["getConfig", "setConfig", "getStatus", "syncBoard", "downloadBoard", "listBoards", "getWorkspace", "getBoardState", "pullBoard", "reconcileBoard", "getWorkspacePlan", "syncWorkspace", "pullWorkspace"]) {
+  const operation = module.exports[name];
+  module.exports[name] = (...args) => auth.withConnectionOperation(() => operation(...args));
+}
