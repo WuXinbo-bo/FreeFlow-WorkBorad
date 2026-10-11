@@ -8515,7 +8515,7 @@ let tablePointerSelectionState = {
 
   function getMindMapHistoryItemIds() {
     return state.board.items
-      .filter((item) => isMindMapNode(item))
+      .filter((item) => isMindMapNode(item) || item?.type === "mindSummary")
       .map((item) => String(item?.id || "").trim())
       .filter(Boolean);
   }
@@ -9190,11 +9190,16 @@ let tablePointerSelectionState = {
     const itemIds = Array.isArray(entry.itemIds) && entry.itemIds.length
       ? entry.itemIds.map((itemId) => String(itemId || "").trim()).filter(Boolean)
       : [String(entry.itemId || entry[`${targetKey}Item`]?.id || "").trim()].filter(Boolean);
-    const patchItems = Array.isArray(entry[`${targetKey}Items`]) && entry[`${targetKey}Items`].length
-      ? entry[`${targetKey}Items`].map((item) => normalizeElement(clone(item)))
+    const sourceItems = Array.isArray(entry[`${targetKey}Items`]) && entry[`${targetKey}Items`].length
+      ? entry[`${targetKey}Items`]
       : entry[`${targetKey}Item`]
-        ? [normalizeElement(clone(entry[`${targetKey}Item`]))]
+        ? [entry[`${targetKey}Item`]]
         : [];
+    // History already holds internal node state. Re-normalizing after a depth
+    // change would rewrite its recorded font size and text layout on redo.
+    const patchItems = sourceItems.map((item) => isMindMapNode(item) || item?.type === "mindSummary"
+      ? clone(item)
+      : normalizeElement(clone(item)));
     const patchItemMap = new Map(
       patchItems
         .map((item) => [String(item?.id || "").trim(), item])
@@ -10481,11 +10486,12 @@ let tablePointerSelectionState = {
       };
     }
     const fallbackPlainText = preserveEmpty
-      ? String(item.plainText || item.text || item.title || "")
+      ? String(item.plainText ?? item.text ?? item.title ?? "")
       : String(item.plainText || item.text || item.title || "").trim();
     const content = normalizeTextContentModel(
       {
         ...item,
+        fontSize: fixedFontSize,
         plainText: fallbackPlainText,
         text: fallbackPlainText,
         html: item.html || "",
@@ -10497,7 +10503,7 @@ let tablePointerSelectionState = {
         plainText: fallbackPlainText,
         text: fallbackPlainText,
         html: item.html || "",
-        fontSize: item.fontSize || DEFAULT_MIND_NODE_FONT_SIZE,
+        fontSize: fixedFontSize,
       }
     );
     const richTextDocument = normalizeMindNodeRichTextDocumentForLevel(content.richTextDocument, item);
@@ -20637,7 +20643,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!parent) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     const side =
       normalizeMindBranchSide(options.branchSide, MIND_BRANCH_AUTO) === MIND_BRANCH_AUTO
         ? (!parent.parentId
@@ -20652,10 +20658,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       String(options.title || "")
     );
     appendMindChild(parent, child, { branchSide: side });
+    applyMindNodeTextContent(child, normalizeMindNodeTextContentForEditor(child));
     parent.collapsed = false;
     relayoutMindMapFromNode(parent);
     state.board.selectedIds = [child.id];
-    commitHistory(before, "创建思维子节点");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "创建思维子节点", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     refs.canvas?.focus?.();
     beginMindNodeEdit(child.id);
     return true;
@@ -20667,7 +20677,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node || !parent) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     const sibling = createMindNodeElement(
       {
         x: Number(node.x || 0),
@@ -20676,9 +20686,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       String(options.title || "")
     );
     appendMindChild(parent, sibling, { branchSide: node.branchSide });
+    applyMindNodeTextContent(sibling, normalizeMindNodeTextContentForEditor(sibling));
     relayoutMindMapFromNode(parent);
     state.board.selectedIds = [sibling.id];
-    commitHistory(before, "创建思维同级节点");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "创建思维同级节点", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     refs.canvas?.focus?.();
     beginMindNodeEdit(sibling.id);
     return true;
@@ -20702,7 +20716,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (summaryTargetIds.length < 2) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     const summary = createMindSummaryElement(node, {
       label: String(options.title || ""),
       siblingIds: summaryTargetIds,
@@ -20713,9 +20727,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       order: node.order,
     });
     state.board.items.push(summary);
+    applyMindNodeTextContent(summary, normalizeMindNodeTextContentForEditor(summary));
     relayoutMindMapFromNode(parent);
     state.board.selectedIds = [summary.id];
-    commitHistory(before, "创建思维摘要节点");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "创建思维摘要节点", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     refs.canvas?.focus?.();
     beginMindNodeEdit(summary.id);
     return true;
@@ -20728,7 +20746,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node || !parent || !grandParent) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     parent.childrenIds = (Array.isArray(parent.childrenIds) ? parent.childrenIds : []).filter((childId) => childId !== node.id);
     const grandChildren = Array.isArray(grandParent.childrenIds) ? grandParent.childrenIds.slice() : [];
     const parentIndex = grandChildren.indexOf(parent.id);
@@ -20740,7 +20758,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     node.branchSide = parent.branchSide;
     relayoutMindMapFromNode(node);
     state.board.selectedIds = [node.id];
-    commitHistory(before, "提升思维节点层级");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "提升思维节点层级", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus("已提升分支层级");
     refs.canvas?.focus?.();
     return true;
@@ -20752,11 +20773,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     const nextSide = normalizeMindBranchSide(side, MIND_BRANCH_AUTO);
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     node.branchSide = nextSide;
     relayoutMindMapFromNode(node);
     state.board.selectedIds = [node.id];
-    commitHistory(before, "调整分支方向");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "调整分支方向", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus(nextSide === MIND_BRANCH_LEFT ? "已切换到左侧分支" : nextSide === MIND_BRANCH_RIGHT ? "已切换到右侧分支" : "已恢复自动分支");
     refs.canvas?.focus?.();
     return true;
@@ -20767,10 +20791,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     relayoutMindMapFromNode(node);
     state.board.selectedIds = [node.id];
-    commitHistory(before, "整理思维导图");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "整理思维导图", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus("已整理思维导图");
     refs.canvas?.focus?.();
     return true;
@@ -20781,11 +20808,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     node.collapsed = !node.collapsed;
     Object.assign(node, syncMindNodeTextMetrics(node));
     relayoutMindMapFromNode(node);
-    commitHistory(before, node.collapsed ? "折叠思维节点" : "展开思维节点");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), node.collapsed ? "折叠思维节点" : "展开思维节点", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus(node.collapsed ? "已折叠分支" : "已展开分支");
     refs.canvas?.focus?.();
     return true;
@@ -20807,7 +20837,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!previousSibling) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     siblings.splice(nodeIndex, 1);
     parent.childrenIds = siblings;
     previousSibling.childrenIds = [...(Array.isArray(previousSibling.childrenIds) ? previousSibling.childrenIds : []), node.id];
@@ -20822,7 +20852,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     relayoutMindMapFromNode(parent);
     relayoutMindMapFromNode(previousSibling);
     state.board.selectedIds = [node.id];
-    commitHistory(before, "降级思维节点层级");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "降级思维节点层级", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus("已降级到上一个同级节点下");
     refs.canvas?.focus?.();
     return true;
@@ -20834,7 +20867,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node || !parent) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     const subtreeNodeIds = getMindSubtreeNodeIds(node.id);
     const previousDepth = Math.max(0, Number(node.depth || 0) || 0);
     parent.childrenIds = (Array.isArray(parent.childrenIds) ? parent.childrenIds : []).filter((childId) => childId !== node.id);
@@ -20860,7 +20893,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     relayoutMindMapFromNode(parent);
     relayoutMindMapFromNode(node);
     state.board.selectedIds = [node.id];
-    commitHistory(before, "拆分思维分支");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "拆分思维分支", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     setStatus("已拆分为独立分支");
     refs.canvas?.focus?.();
     return true;
@@ -20872,7 +20908,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!node || !parent) {
       return false;
     }
-    const before = takeHistorySnapshot(state);
+    const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
     const bridge = createMindNodeElement(
       {
         x: Number(node.x || 0) - 64,
@@ -20899,9 +20935,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     node.depth = Math.max(0, Number(bridge.depth || 0) + 1);
     node.order = 0;
     state.board.items.push(bridge);
+    applyMindNodeTextContent(bridge, normalizeMindNodeTextContentForEditor(bridge));
     relayoutMindMapFromNode(parent);
     state.board.selectedIds = [bridge.id];
-    commitHistory(before, "插入思维中间节点");
+    commitItemsPatchHistory(before, getMindMapPatchItemIds(before), "插入思维中间节点", "mind-structure", {
+      beforeOrderIds: before.orderIds,
+      afterOrderIds: state.board.items.map((item) => String(item?.id || "")).filter(Boolean),
+    });
     refs.canvas?.focus?.();
     beginMindNodeEdit(bridge.id);
     return true;

@@ -179,16 +179,6 @@ export function createTileSceneCache({
     return `${sceneKey}|${scaleBucket}|${tileX}|${tileY}|${getExcludeSignature(excludeIds)}`;
   }
 
-  function invalidateTilesForBounds(sceneKey, bounds) {
-    if (!bounds) return 0;
-    let invalidated = 0;
-    for (const [key, entry] of Array.from(cache.entries())) {
-      if (entry?.sceneKey !== sceneKey || !intersectsBounds(entry?.tileBounds, bounds)) continue;
-      if (cache.delete(key)) invalidated += 1;
-    }
-    return invalidated;
-  }
-
   function syncBoundsSnapshot(sceneIndex, itemIds = []) {
     const normalizedItemIds = normalizeIds(itemIds);
     if (!normalizedItemIds.length) {
@@ -219,13 +209,17 @@ export function createTileSceneCache({
       const currentBounds = sceneIndex?.recordById?.get(itemId)?.queryBounds || null;
       if (previousBounds) {
         dirtyBounds.push(previousBounds);
-        invalidated += invalidateTilesForBounds(sceneKey, previousBounds);
       }
       if (currentBounds) {
         dirtyBounds.push(currentBounds);
-        invalidated += invalidateTilesForBounds(sceneKey, currentBounds);
       }
     });
+    // Iterate the bounded cache once per change batch. Deleting from the Map
+    // during iteration is safe; every old/new bound and every scale is checked.
+    for (const [key, entry] of cache.entries()) {
+      if (entry?.sceneKey !== sceneKey || !dirtyBounds.some((bounds) => intersectsBounds(entry.tileBounds, bounds))) continue;
+      if (cache.delete(key)) invalidated += 1;
+    }
     syncBoundsSnapshot(sceneIndex, normalizedItemIds);
     return { invalidated, dirtyBounds };
   }
