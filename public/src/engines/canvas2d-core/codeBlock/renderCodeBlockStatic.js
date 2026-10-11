@@ -1,4 +1,5 @@
 import { sanitizeText, sanitizeDiagramSvg } from "../utils.js";
+import { createWorkerLifetime } from "../runtime/workerLifetime.js";
 import { getCodeBlockSceneMetrics } from "./measureCodeBlockLayout.js";
 import { isMermaidCodeBlock } from "../elements/codeBlock.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
@@ -29,6 +30,18 @@ let highlightWorkerState = {
   nextRequestId: 0,
   requestsById: new Map(),
 };
+const highlightWorkerLifetime = createWorkerLifetime({
+  requests: highlightWorkerState.requestsById,
+  onTimeout: () => {
+    highlightRuntimeStats.workerFailures += 1;
+    markWorkerUnavailable();
+    flushPendingWorkerRequestsToMainThread();
+  },
+  onIdle: () => {
+    highlightWorkerState.worker?.terminate();
+    highlightWorkerState.worker = null;
+  },
+});
 let mermaidInitialized = false;
 let mermaidRenderSequence = 0;
 let mermaidModulePromise = null;
@@ -271,7 +284,7 @@ function markWorkerUnavailable() {
 
 function flushPendingWorkerRequestsToMainThread() {
   const pendingRequests = Array.from(highlightWorkerState.requestsById.entries());
-  highlightWorkerState.requestsById.clear();
+  highlightWorkerLifetime.clear();
   pendingRequests.forEach(([requestId, request]) => {
     const subscribers = workerSubscribersByCacheKey.get(request.cacheKey) || [];
     workerSubscribersByCacheKey.delete(request.cacheKey);
@@ -295,7 +308,7 @@ function settleWorkerRequest(requestId, response = {}) {
   if (!request) {
     return;
   }
-  highlightWorkerState.requestsById.delete(requestId);
+  highlightWorkerLifetime.finish(requestId);
   const { cacheKey, code, prismLanguage } = request;
   const subscribers = workerSubscribersByCacheKey.get(cacheKey);
   workerSubscribersByCacheKey.delete(cacheKey);
@@ -649,6 +662,7 @@ function scheduleWorkerHighlight(node, markupSignature, highlightCacheKey, prism
           workerSubscribersByCacheKey.set(highlightCacheKey, nextSubscribers);
         } else {
           workerSubscribersByCacheKey.delete(highlightCacheKey);
+          highlightWorkerLifetime.cancel(highlightCacheKey);
         }
       },
     });
@@ -657,7 +671,7 @@ function scheduleWorkerHighlight(node, markupSignature, highlightCacheKey, prism
     return true;
   }
   const requestId = ++highlightWorkerState.nextRequestId;
-  highlightWorkerState.requestsById.set(requestId, {
+  highlightWorkerLifetime.begin(requestId, {
     cacheKey: highlightCacheKey,
     code: safeCode,
     prismLanguage,
@@ -677,6 +691,7 @@ function scheduleWorkerHighlight(node, markupSignature, highlightCacheKey, prism
         workerSubscribersByCacheKey.set(highlightCacheKey, nextSubscribers);
       } else {
         workerSubscribersByCacheKey.delete(highlightCacheKey);
+        highlightWorkerLifetime.cancel(highlightCacheKey);
       }
     },
   });
@@ -693,10 +708,11 @@ function scheduleWorkerHighlight(node, markupSignature, highlightCacheKey, prism
     return true;
   } catch {
     highlightRuntimeStats.workerFailures += 1;
-    highlightWorkerState.requestsById.delete(requestId);
+    highlightWorkerLifetime.finish(requestId);
     workerSubscribersByCacheKey.delete(highlightCacheKey);
     pendingHighlightTasks.delete(node);
     markWorkerUnavailable();
+    flushPendingWorkerRequestsToMainThread();
     return false;
   }
 }

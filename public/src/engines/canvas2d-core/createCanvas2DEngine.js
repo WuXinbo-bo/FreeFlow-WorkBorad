@@ -1,3 +1,4 @@
+import { createWorkerLifetime } from "./runtime/workerLifetime.js";
 import { createClipboardDataTransferSnapshot, createClipboardDataTransferFacade } from "./brokers/clipboardSnapshot.js";
 import { normalizeCanvasWheelInput } from "./runtime/wheelInput.js";
 import {
@@ -2376,6 +2377,18 @@ const mathOverlayRenderQueue = createIdleBatchQueue({
   },
 });
 
+const mathWorkerLifetime = createWorkerLifetime({
+  requests: mathWorkerState.requestsById,
+  onTimeout: () => {
+    markMathWorkerUnavailable();
+    flushPendingMathWorkerRequestsToMainThread();
+  },
+  onIdle: () => {
+    mathWorkerState.worker?.terminate();
+    mathWorkerState.worker = null;
+  },
+});
+
 function markMathWorkerUnavailable() {
   mathWorkerState.disabled = true;
   if (mathWorkerState.worker) {
@@ -2390,7 +2403,7 @@ function markMathWorkerUnavailable() {
 
 function flushPendingMathWorkerRequestsToMainThread() {
   const pendingRequests = Array.from(mathWorkerState.requestsById.entries());
-  mathWorkerState.requestsById.clear();
+  mathWorkerLifetime.clear();
   pendingRequests.forEach(([, request]) => {
     const entry = pendingMathRenderByCacheKey.get(request.cacheKey);
     if (!entry) {
@@ -2409,7 +2422,7 @@ function settleMathWorkerRequest(requestId, response = {}) {
   if (!request) {
     return;
   }
-  mathWorkerState.requestsById.delete(requestId);
+  mathWorkerLifetime.finish(requestId);
   const entry = pendingMathRenderByCacheKey.get(request.cacheKey);
   if (!entry) {
     return;
@@ -2461,7 +2474,7 @@ function scheduleMathWorkerRender(cacheKey, entry) {
     return false;
   }
   const requestId = ++mathWorkerState.nextRequestId;
-  mathWorkerState.requestsById.set(requestId, {
+  mathWorkerLifetime.begin(requestId, {
     cacheKey,
     formula: entry.formula,
     displayMode: entry.displayMode === true,
@@ -2480,8 +2493,9 @@ function scheduleMathWorkerRender(cacheKey, entry) {
     });
     return true;
   } catch {
-    mathWorkerState.requestsById.delete(requestId);
+    mathWorkerLifetime.finish(requestId);
     markMathWorkerUnavailable();
+    flushPendingMathWorkerRequestsToMainThread();
     return false;
   }
 }
@@ -2540,6 +2554,7 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
         if (!entry.subscribers.length) {
           pendingMathRenderByCacheKey.delete(cacheKey);
           mathOverlayRenderQueue.remove(cacheKey);
+          mathWorkerLifetime.cancel(cacheKey);
         }
       },
     });
@@ -2565,6 +2580,7 @@ function scheduleMathMarkupUpgrade(node, { cacheKey = "", formula = "", displayM
       if (!activeEntry.subscribers.length) {
         pendingMathRenderByCacheKey.delete(cacheKey);
         mathOverlayRenderQueue.remove(cacheKey);
+        mathWorkerLifetime.cancel(cacheKey);
       }
     },
   });
@@ -7518,6 +7534,12 @@ let tablePointerSelectionState = {
     return String(result.filePath || "").trim();
   }
 
+  function reportBoardSaveFailure(message) {
+    state.boardSaveError = String(message || "画布保存失败");
+    setStatus(`保存失败，修改仍保留在内存：${state.boardSaveError}`, "warning");
+    store.emit();
+  }
+
   async function saveBoard({ saveAs = false, autosave = false, silent = false, exactPath = true, fileOperation = false } = {}) {
     if (!useLocalFileSystem) {
       if (!silent) {
@@ -7587,12 +7609,11 @@ let tablePointerSelectionState = {
       const payload = JSON.stringify(buildBoardFilePayload(targetPath, copiedBoardId ? { ...state.board, boardId: copiedBoardId } : state.board), null, 2);
       const result = await globalThis.desktopShell.writeFile(targetPath, payload);
       if (!result?.ok) {
-        if (!silent) {
-          setStatus(result?.error || "画布保存失败", "warning");
-        }
+        if (state.board === savedBoard) reportBoardSaveFailure(result?.error);
         return false;
       }
       if (state.board !== savedBoard) return false;
+      state.boardSaveError = "";
       if (copiedBoardId) { state.board.boardId = copiedBoardId; state.boardRevision += 1; }
       await setBoardFilePath(targetPath, { emit: false, updateSettings: true });
       if (savedRevision === boardDirtyRevision) setBoardDirty(false, { emit: false });
@@ -7616,9 +7637,7 @@ let tablePointerSelectionState = {
       return true;
     })()
       .catch((error) => {
-        if (!silent) {
-          setStatus(error?.message || "画布保存失败", "warning");
-        }
+        reportBoardSaveFailure(error?.message);
         return false;
       })
       .finally(() => {
@@ -7785,6 +7804,7 @@ let tablePointerSelectionState = {
         clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
         cancelClipboardImports();
         state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
+        state.boardSaveError = "";
         loadMetrics.mark("repair-board");
         state.board.selectedIds = [];
         state.history = createHistoryState();
@@ -7949,6 +7969,7 @@ let tablePointerSelectionState = {
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
     cancelClipboardImports();
     state.board = createEmptyBoard();
+    state.boardSaveError = "";
     state.board.selectedIds = [];
     state.history = createHistoryState();
     markHistoryStateBaseline(state.history, state);
@@ -9918,14 +9939,6 @@ let tablePointerSelectionState = {
       refs.fileImportInput.type = "file";
       refs.fileImportInput.multiple = true;
       refs.fileImportInput.style.display = "none";
-      refs.fileImportInput.addEventListener("change", (event) => {
-        const files = Array.from(event.target.files || []);
-        if (files.length) {
-          void importFiles(files, pendingImportAnchor || getCenterScenePoint());
-        }
-        pendingImportAnchor = null;
-        event.target.value = "";
-      });
       refs.surface.appendChild(refs.fileImportInput);
     }
 
@@ -9938,14 +9951,6 @@ let tablePointerSelectionState = {
       refs.imageImportInput.accept = "image/*";
       refs.imageImportInput.multiple = true;
       refs.imageImportInput.style.display = "none";
-      refs.imageImportInput.addEventListener("change", (event) => {
-        const files = Array.from(event.target.files || []);
-        if (files.length) {
-          void importFiles(files, pendingImportAnchor || getCenterScenePoint());
-        }
-        pendingImportAnchor = null;
-        event.target.value = "";
-      });
       refs.surface.appendChild(refs.imageImportInput);
     }
 
@@ -10894,39 +10899,25 @@ let tablePointerSelectionState = {
       syncBoard({ persist: false, emit, sceneChange: false, viewChange: true, fullOverlayRescan: false });
     };
     applyJumpState();
-    requestAnimationFrame(() => {
-      if (
-        state.board.selectedIds.length === 1 &&
-        state.board.selectedIds[0] === item.id &&
-        Number(state.board.view.offsetX || 0) === Number(nextView.offsetX || 0) &&
-        Number(state.board.view.offsetY || 0) === Number(nextView.offsetY || 0)
-      ) {
-        return;
-      }
-      applyJumpState();
-    });
-    setTimeout(() => {
-      if (
-        state.board.selectedIds.length === 1 &&
-        state.board.selectedIds[0] === item.id &&
-        Number(state.board.view.offsetX || 0) === Number(nextView.offsetX || 0) &&
-        Number(state.board.view.offsetY || 0) === Number(nextView.offsetY || 0)
-      ) {
-        return;
-      }
-      applyJumpState();
-    }, 80);
     setStatus("已跳转到画布链接目标");
     return true;
   }
 
+  let pendingCanvasLinkJumpFrame = 0;
+
+  function cancelPendingCanvasLinkJump() {
+    if (pendingCanvasLinkJumpFrame) cancelAnimationFrame(pendingCanvasLinkJumpFrame);
+    pendingCanvasLinkJumpFrame = 0;
+  }
+
   function scheduleFocusCanvasLinkTarget(itemId = "") {
     const targetId = String(itemId || "").trim();
-    if (!targetId) {
-      return;
-    }
-    requestAnimationFrame(() => {
-      focusCanvasLinkTarget(targetId);
+    cancelPendingCanvasLinkJump();
+    if (!targetId) return;
+    const board = state.board;
+    pendingCanvasLinkJumpFrame = requestAnimationFrame(() => {
+      pendingCanvasLinkJumpFrame = 0;
+      if (mounted && state.board === board) focusCanvasLinkTarget(targetId);
     });
   }
 
@@ -26516,7 +26507,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cleanupFns.push(() => target?.removeEventListener?.(type, handler, optionsValue));
   }
 
+  function onImportInputChange(event) {
+    const files = Array.from(event.target.files || []);
+    if (files.length) void importFiles(files, pendingImportAnchor || getCenterScenePoint());
+    pendingImportAnchor = null;
+    event.target.value = "";
+  }
+
   function bindEvents() {
+    bind(refs.fileImportInput, "change", onImportInputChange);
+    bind(refs.imageImportInput, "change", onImportInputChange);
     bind(document, "visibilitychange", onCanvasVisibilityChange);
     bind(window, "keydown", onCanvasModifierKey, true);
     bind(window, "keyup", onCanvasModifierKey, true);
@@ -26735,6 +26735,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function unmount() {
+    cancelPendingCanvasLinkJump();
+    cancelContextSubmenuClose();
+    cancelMindNodeLinkMenuCloseTimer();
     finishPendingWheelSession({ persist: true });
     cancelFocusAnimation();
     cancelClipboardImports();
@@ -26983,6 +26986,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const before = takeHistorySnapshot(state);
     cancelClipboardImports();
     state.board = createEmptyBoard();
+    state.boardSaveError = "";
     pushHistory(state.history, before, takeHistorySnapshot(state), "清空白板");
     syncBoard({ persist: true, emit: true });
     setStatus("已清空白板");
