@@ -36,11 +36,12 @@ function createIpcEventValidator({ expectedOrigin, getAllowedWebContents }) {
   };
 }
 
-function createSecuredIpcMain({ ipcMain, validate, onRejected = () => {} }) {
+function createSecuredIpcMain({ ipcMain, validate, authorize = () => {}, onRejected = () => {} }) {
   return {
     handle(channel, listener) {
       ipcMain.handle(channel, (event, ...args) => {
         validate(event, channel);
+        authorize(channel, args);
         return listener(event, ...args);
       });
     },

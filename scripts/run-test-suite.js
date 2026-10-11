@@ -20,6 +20,7 @@ const CHECKS = [
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
+  "scripts/check-file-access-registry.js",
   "scripts/check-github-sync-core.js",
   "scripts/check-github-sync-auth.js",
   "scripts/check-github-failure-recovery.js",
