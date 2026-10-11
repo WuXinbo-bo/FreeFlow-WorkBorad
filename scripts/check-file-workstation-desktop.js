@@ -21,13 +21,27 @@ async function main() {
   const textPath = path.join(boards, "Notes.md"); await fs.writeFile(textPath, "# 中文资料\n文件工作台测试\nResearch notes and <script>plain text</script>");
   const sheetPath = path.join(boards, "报价.xlsx"); const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["项目", "报价"], ["同步服务", 199], ["安全内容", "<script>alert(1)</script>"]]), "报价"); XLSX.writeFile(book, sheetPath);
   const bootstrap = path.join(temp, "bootstrap.cjs");
-  await fs.writeFile(bootstrap, `const { app } = require("electron"); app.setPath("userData", ${JSON.stringify(profile)}); app.getAppPath = () => ${JSON.stringify(ROOT)}; require(${JSON.stringify(path.join(ROOT, "electron/main.js"))});`);
+  await fs.writeFile(bootstrap, `const { app, ipcMain } = require("electron"); app.setPath("userData", ${JSON.stringify(profile)}); app.getAppPath = () => ${JSON.stringify(ROOT)};
+    const handle = ipcMain.handle.bind(ipcMain); global.__fileTestHandlers = new Map();
+    ipcMain.handle = (channel, listener) => { global.__fileTestHandlers.set(channel, listener); handle(channel, (...args) => { if (channel === "desktop-shell:set-window-shape") global.__fileTestShape = args[1]; return listener(...args); }); };
+    require(${JSON.stringify(path.join(ROOT, "electron/main.js"))});`);
   const env = { ...process.env, FREEFLOW_HOME_DIR: temp, FREEFLOW_USER_DATA_DIR: data, FREEFLOW_CANVAS_BOARD_DIR: boards, FREEFLOW_LEGACY_PROJECT_DATA_DIR: path.join(temp, "Legacy"), FREEFLOW_PORT: "0" }; delete env.ELECTRON_RUN_AS_NODE;
   let app;
   try {
     app = await electron.launch({ executablePath: require("electron"), args: [bootstrap], cwd: ROOT, env, timeout: 30000 });
     const page = await app.firstWindow(); const errors = []; page.on("pageerror", (error) => errors.push(error.message));
+    await page.addInitScript(() => { window.__fileUnhandledErrors = []; window.addEventListener("unhandledrejection", (event) => window.__fileUnhandledErrors.push(String(event.reason))); });
     await page.waitForFunction(() => window.__canvas2dEngine && window.desktopShell?.isDesktop && !document.body.classList.contains("app-booting")); await page.evaluate(() => window.__canvas2dEngine.whenReady());
+    await page.evaluate(() => { window.__fileUnhandledErrors ||= []; window.addEventListener("unhandledrejection", (event) => window.__fileUnhandledErrors.push(String(event.reason))); });
+    const assertModalShape = async (full) => {
+      const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const matches = await app.evaluate((_electron, { width, height, full }) => Boolean(global.__fileTestShape?.some((rect) => rect.x === 0 && rect.y === 0 && rect.width === width && rect.height === height)) === full, { ...viewport, full });
+        if (matches) return;
+        await page.waitForTimeout(100);
+      }
+      assert.fail(`native modal shape did not restore: full=${full}`);
+    };
     // Real native picker grant; test profile never reads user data.
     await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, boards);
     await page.evaluate(() => window.desktopShell.pickDirectory({}));
@@ -45,6 +59,7 @@ async function main() {
     const initialView = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view);
     await page.getByRole("button", { name: "放大阅读", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".file-workstation-reader")?.dataset.renderState === "ready");
+    await assertModalShape(true);
     await page.locator(".canvas2d-file-preview-react").getByRole("button", { name: "文件工具", exact: true }).click();
     await page.getByRole("textbox", { name: "搜索文件内容" }).fill("unique-page-7"); await page.getByRole("button", { name: "查找", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".file-workstation-tools [role='status']")?.textContent.includes("第 7 页"));
@@ -64,6 +79,7 @@ async function main() {
     await page.evaluate(() => window.__canvas2dEngine.undo());
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.querySelector(".canvas2d-file-preview-react")?.dataset.renderState === "ready" && !document.querySelector(".file-workstation-reader"));
+    await assertModalShape(false);
     assert.deepEqual(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view), initialView);
     await page.waitForFunction(() => {
       const scroll = document.querySelector(".canvas2d-file-preview-react-scroll")?.getBoundingClientRect();
@@ -112,6 +128,34 @@ async function main() {
     await load(docxPath, "docx");
     const dimensions = await page.locator("iframe.canvas2d-file-preview-react-content").evaluate((frame) => { const paper = frame.contentDocument.querySelector("section"); return { width: paper.getBoundingClientRect().width, height: paper.getBoundingClientRect().height }; }); assert(dimensions.width > dimensions.height, JSON.stringify(dimensions));
     await page.getByRole("button", { name: "放大阅读", exact: true }).click(); await page.waitForFunction(() => document.querySelector(".file-workstation-reader")?.dataset.renderState === "ready"); await page.frameLocator("iframe.canvas2d-file-preview-react-content").locator("article").click(); await page.keyboard.press("Escape"); await page.waitForFunction(() => document.querySelector(".canvas2d-file-preview-react")?.dataset.renderState === "ready" && !document.querySelector(".file-workstation-reader"));
+    // Old desktop main + new renderer: IPC rejection must not trap a modal or leak keyboard ownership.
+    await app.evaluate(({ ipcMain }) => { global.__fileOriginalRun = global.__fileTestHandlers.get("desktop-shell:file-workstation-run"); global.__fileOriginalCancel = global.__fileTestHandlers.get("desktop-shell:file-workstation-cancel"); ipcMain.removeHandler("desktop-shell:file-workstation-run"); });
+    const openConversion = async () => { await page.evaluate(() => { const engine = window.__canvas2dEngine; engine.openFileConversion([engine.getSnapshotData().items[0]]); }); await page.getByRole("dialog", { name: "文件转换", exact: true }).waitFor(); await assertModalShape(true); };
+    for (const exit of ["close", "done", "escape"]) {
+      await openConversion(); await page.getByRole("button", { name: "检测转换引擎", exact: true }).click();
+      await page.waitForFunction(() => document.querySelector(".file-conversion-status")?.textContent.includes("完整退出并重新启动"));
+      assert(await page.getByRole("button", { name: "选择文件夹并转换", exact: true }).isDisabled());
+      if (exit === "escape") await page.keyboard.press("Escape"); else await page.getByRole("button", { name: exit === "done" ? "完成" : "关闭文件转换", exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog") && !window.__canvas2dEngine.getSnapshot().fileConversionRequest); await assertModalShape(false);
+    }
+    // Conversion layered over reading: Esc only dismisses the top dialog, then returns to the reader.
+    await page.getByRole("button", { name: "放大阅读", exact: true }).click(); await page.waitForFunction(() => document.querySelector(".file-workstation-reader")?.dataset.renderState === "ready");
+    await openConversion(); await page.keyboard.press("Tab"); assert(await page.locator(".file-conversion-dialog").evaluate((element) => element.contains(document.activeElement)));
+    await page.keyboard.press("Escape"); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog") && document.querySelector(".file-workstation-reader")); await assertModalShape(true);
+    await page.keyboard.press("Escape"); await page.waitForFunction(() => !document.querySelector(".file-workstation-reader")); await assertModalShape(false);
+    // Missing cancellation service while running: close immediately, ignore late results, reopen safely.
+    await app.evaluate(({ ipcMain }) => { ipcMain.handle("desktop-shell:file-workstation-run", () => new Promise((resolve) => { global.__fileResolveRun = resolve; })); ipcMain.removeHandler("desktop-shell:file-workstation-cancel"); });
+    await openConversion(); await page.getByRole("button", { name: "检测转换引擎", exact: true }).click(); await page.getByRole("button", { name: "取消任务", exact: true }).waitFor();
+    await page.getByRole("button", { name: "取消任务", exact: true }).click(); await page.waitForFunction(() => document.querySelector(".file-conversion-status")?.textContent.includes("完整退出并重新启动"));
+    await page.getByRole("button", { name: "关闭文件转换", exact: true }).click(); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog")); await assertModalShape(false);
+    await openConversion(); await app.evaluate(() => { global.__fileResolveRun({ ok: true, office: true, engine: "stale-result" }); });
+    assert(!await page.locator(".file-conversion-status").textContent().then((text) => text.includes("stale-result"))); await page.keyboard.press("Escape");
+    for (let i = 0; i < 5; i++) { await openConversion(); await page.keyboard.press("Escape"); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog")); }
+    await assertModalShape(false);
+    await app.evaluate(({ ipcMain }) => { ipcMain.removeHandler("desktop-shell:file-workstation-run"); ipcMain.handle("desktop-shell:file-workstation-run", global.__fileOriginalRun); ipcMain.handle("desktop-shell:file-workstation-cancel", global.__fileOriginalCancel); });
+    if (process.env.FREEFLOW_NATIVE_CLOSE_CHECK) { await openConversion(); console.log("[file-workstation-desktop] native-close-ready"); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog"), null, { timeout: 60000 }); await assertModalShape(false); }
+    assert.deepEqual(await page.evaluate(() => window.__fileUnhandledErrors), []);
+    console.log("[file-workstation-desktop] missing IPC/error/close/done/Esc, nested focus, failed cancel, late results and repeated recovery passed");
     await load(sheetPath, "xlsx"); assert(await page.locator(".file-workstation-table").textContent().then((text) => text.includes("同步服务"))); assert.equal(await page.locator(".file-workstation-table script").count(), 0);
     // Native text print produces a readable/selectable PDF.
     const textPdf = await page.evaluate(({ source, output }) => window.desktopShell.runFileWorkstation({ taskId: "text-pdf", operation: "text-pdf", sources: [source], outputDir: output }), { source: textPath, output }); assert.equal(textPdf.ok, true, JSON.stringify(textPdf)); assert.equal((await PDFDocument.load(await fs.readFile(textPdf.files[0].filePath))).getPageCount(), 1);
