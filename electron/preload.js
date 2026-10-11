@@ -8,7 +8,7 @@ async function invokeGitHubSync(channel, payload) {
     const result = await ipcRenderer.invoke(channel, payload);
     if (result?.ok === false) {
       const wrapped = new Error(String(result.error || "GitHub 同步失败"));
-      for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+      for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs"]) {
         if (result[key] !== undefined) wrapped[key] = result[key];
       }
       throw wrapped;
@@ -23,8 +23,9 @@ async function invokeGitHubSync(channel, payload) {
     let details = {};
     try { details = detailsText ? JSON.parse(detailsText) : {}; } catch { details = {}; }
     const wrapped = new Error(message || "GitHub 同步失败");
-    for (const key of ["status", "code", "conflicts", "artifacts", "state"]) {
+    for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs"]) {
       if (details[key] !== undefined) wrapped[key] = details[key];
+      else if (error?.[key] !== undefined) wrapped[key] = error[key];
     }
     throw wrapped;
   }

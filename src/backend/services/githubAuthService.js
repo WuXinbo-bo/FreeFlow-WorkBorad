@@ -104,7 +104,7 @@ async function validateToken(token, fetchImpl) {
     return { login: user.login, id: user.id };
   } catch (error) {
     if (error.status === 401) throw new Error("GitHub 凭证无效或已过期，请重新授权");
-    if (error.status === 403) throw new Error("GitHub 拒绝了此凭证，请检查令牌权限或接口限流");
+    if (error.status === 403 && error.code !== "RATE_LIMITED") throw new Error("GitHub 拒绝了此凭证，请检查令牌权限或接口限流");
     throw error;
   }
 }
