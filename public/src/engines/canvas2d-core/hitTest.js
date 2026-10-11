@@ -1,4 +1,3 @@
-import { isFrame } from "./frames/frameModel.js";
 import { getElementBounds, getElementDefinition } from "./elements/index.js";
 import { getFileCardMemoBounds } from "./elements/fileCard.js";
 import { getImageMemoBounds } from "./elements/media.js";
@@ -84,11 +83,6 @@ export function hitTestElement(items, point, scale = 1) {
       continue;
     }
     const bounds = candidate.baseBounds || getElementBounds(item);
-    if (isFrame(item) && pointInBounds(point, bounds, tolerance)) {
-      const onBorder = point.x <= bounds.left + tolerance || point.x >= bounds.right - tolerance || point.y <= bounds.top + 36 / Math.max(0.1, scale) || point.y >= bounds.bottom - tolerance;
-      if (onBorder) return item;
-      continue;
-    }
     if (pointInBounds(point, bounds, tolerance)) {
       return item;
     }
@@ -114,7 +108,7 @@ export function hitTestHandle(item, point, scale = 1) {
   }
   const tolerance = Math.min(48, Math.max(8, 12 / Math.max(0.1, scale)));
   const handlePolicy = getElementDefinition(item)?.capabilities?.handles || "bounds";
-  if (isFrame(item) || handlePolicy === "none") {
+  if (handlePolicy === "none") {
     return null;
   }
   if (handlePolicy === "mind-node") {
@@ -140,7 +134,7 @@ export function hitTestHandle(item, point, scale = 1) {
       }
     }
   }
-  if (handlePolicy === "shape" && item.shapeType === "rect" && !isFrame(item)) {
+  if (handlePolicy === "shape" && item.shapeType === "rect") {
     const bounds = getElementBounds(item);
     const inset = Math.max(6, 10 / Math.max(0.1, scale));
     const handles = {

@@ -1,4 +1,3 @@
-import { getFrames, isFrame } from "../../frames/frameModel.js";
 import {
   ensureRichTextDocumentFields,
   createRichTextDocumentFromHtml,
@@ -747,7 +746,7 @@ function sortVisualSelectionEntries(entries = []) {
 }
 
 function createSelectionPlanEntry(item, originalIndex) {
-  const type = isFrame(item) ? "frame" : normalizeSelectionType(item?.type || "");
+  const type = normalizeSelectionType(item?.type || "");
   return {
     item,
     id: String(item?.id || "").trim(),
@@ -779,24 +778,13 @@ export function buildSelectionWordExportPlan(items = [], options = {}) {
       skippedEntries.push({ ...entry, reason: "missing-id" });
       return;
     }
-    if (!SUPPORTED_SELECTION_ITEM_TYPES.has(entry.type) && entry.type !== "frame") {
+    if (!SUPPORTED_SELECTION_ITEM_TYPES.has(entry.type)) {
       skippedEntries.push({ ...entry, reason: "unsupported-type" });
       return;
     }
     sortableEntries.push(entry);
   });
-  let orderedEntries = sortVisualSelectionEntries(sortableEntries);
-  const frames = getFrames(normalizedItems);
-  if (frames.length) {
-    const byId = new Map(orderedEntries.map((entry) => [entry.id, entry]));
-    const claimed = new Set();
-    const sections = [];
-    for (const frame of frames) {
-      sections.push(byId.get(frame.id)); claimed.add(frame.id);
-      for (const entry of orderedEntries) if (entry.item.frameId === frame.id) { sections.push(entry); claimed.add(entry.id); }
-    }
-    orderedEntries = [...sections, ...orderedEntries.filter((entry) => !claimed.has(entry.id))].filter(Boolean);
-  }
+  const orderedEntries = sortVisualSelectionEntries(sortableEntries);
   if (Array.isArray(options.orderedItemIds)) {
     const rank = new Map(options.orderedItemIds.map((id, index) => [id, index]));
     orderedEntries.sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
@@ -814,7 +802,6 @@ function convertSelectionEntryToAstNodes(entry, context) {
   if (!item || !type) {
     return [];
   }
-  if (type === "frame") return [{ type: "heading", level: 1, children: [{ type: "text", text: item.title || "未命名板块" }] }];
   if (type === "image") return [{ type: "paragraph", children: [{ type: "image", src: item.dataUrl || item.sourcePath || "", alt: item.title || item.name || "图片", width: item.width, height: item.height }] }];
   if (type === "mindNode" || type === "mindSummary") return [{ type: "paragraph", children: [{ type: "text", text: item.plainText || item.text || item.title || "节点" }] }];
   if (type === "text") {
@@ -892,7 +879,6 @@ export function buildWordExportAstFromCanvasSelection(items = [], options = {}) 
       ...(nestedItems.length ? [{ type: "list", ordered: false, items: nestedItems }] : []),
     ] };
   }
-  let chapter = false;
   plan.orderedEntries.forEach((entry, index) => {
     context.footnoteNamespace = entry.id;
     let nextChildren;
@@ -903,8 +889,6 @@ export function buildWordExportAstFromCanvasSelection(items = [], options = {}) 
       nextChildren = tree ? [{ type: "list", ordered: false, items: [tree] }] : [];
     } else nextChildren = convertSelectionEntryToAstNodes(entry, context);
     if (!nextChildren.length) { plan.skippedEntries.push({ ...entry, reason: "empty-content" }); return; }
-    if (entry.type === "frame") chapter = true;
-    else if (chapter) nextChildren = nextChildren.map((node) => node.type === "heading" ? { ...node, level: Math.min(6, (node.level || 1) + 1) } : node);
     if (children.length && index > 0) children.push(createSeparatorParagraph());
     children.push(...nextChildren);
   });

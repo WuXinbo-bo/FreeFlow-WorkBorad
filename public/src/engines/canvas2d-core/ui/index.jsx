@@ -1,4 +1,3 @@
-import { InboxPanel } from "./InboxPanel.jsx";
 import { createWorkspaceSearchIndex } from "../search/workspaceSearchIndex.js";
 import React, { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -10,7 +9,6 @@ import {
 } from "../tutorial-system/canvasTutorialIndex.js";
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
-import { DeliveryPanel } from "./DeliveryPanel.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
 import { FolderOpen } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
@@ -1760,8 +1758,6 @@ function Canvas2DControls({ engine }) {
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [infoPanelAutoCollapsed, setInfoPanelAutoCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [deliveryOpen, setDeliveryOpen] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [searchRange, setSearchRange] = useState("current");
   const [workspaceSearch, setWorkspaceSearch] = useState({ results: [], warnings: [], loading: false });
   const [workspaceSearchEpoch, setWorkspaceSearchEpoch] = useState(0);
@@ -2462,7 +2458,7 @@ function Canvas2DControls({ engine }) {
       />
       </div></div>
       <div
-        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${deliveryOpen || inboxOpen ? " is-delivery-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
+        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >
       <div
         ref={infoPanelRef}
@@ -3232,10 +3228,8 @@ function Canvas2DControls({ engine }) {
           </div>
         </div>
       </div>
-      <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen || deliveryOpen || inboxOpen ? " is-overlay-active" : ""}`}>
+      <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen ? " is-overlay-active" : ""}`}>
         <div className="canvas2d-engine-search-row canvas-chrome-surface canvas-chrome-utility-dock">
-          <InboxPanel engine={engine} snapshot={snapshot} onOpenChange={setInboxOpen} />
-          <DeliveryPanel engine={engine} snapshot={snapshot} onOpenChange={setDeliveryOpen} />
           <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
             <CanvasSearchOverlay
               isOpen={searchOpen}

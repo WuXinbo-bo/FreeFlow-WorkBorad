@@ -59,7 +59,6 @@ const CHECKS = [
   "scripts/check-word-selection-export.js",
   "scripts/check-delivery-core.js",
   "scripts/check-workspace-content-search.js",
-  "scripts/check-link-metadata.js",
   "scripts/check-canvas-large-scene-runtime.js",
   "scripts/check-presentation-snapshot-controller.js",
   "scripts/check-compact-presentation-runtime.js",

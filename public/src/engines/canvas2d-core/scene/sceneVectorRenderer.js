@@ -7,7 +7,6 @@ import {
   MIND_BRANCH_LEFT,
 } from "../elements/mindMap.js";
 import { getMindRelationshipGeometry, isMindRelationshipItem } from "../elements/mindRelationship.js";
-import { isFrame } from "../frames/frameModel.js";
 import { getMindNodeStyle, MIND_CONNECTION_STYLE, getMindCollapsedBadgeBounds } from "../elements/mindStyle.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -106,19 +105,8 @@ function syncShapeNode(node, item) {
     setAttribute(body, "y", Number(item.y || 0));
     setAttribute(body, "width", Math.max(1, Number(item.width || 1)));
     setAttribute(body, "height", Math.max(1, Number(item.height || 1)));
-    setAttribute(body, "rx", isFrame(item) ? 0 : shapeType === "highlight" ? 16 : Math.max(0, Number(item.radius || 18)));
+    setAttribute(body, "rx", shapeType === "highlight" ? 16 : Math.max(0, Number(item.radius || 18)));
   }
-  let label = node.querySelector(".canvas2d-scene-frame-title");
-  if (isFrame(item)) {
-    if (!label) { label = createSvgElement("text", "canvas2d-scene-frame-title"); node.appendChild(label); }
-    setAttribute(label, "x", Number(item.x || 0) + 12);
-    setAttribute(label, "y", Number(item.y || 0) + 28);
-    setAttribute(label, "fill", "#64748b");
-    setAttribute(label, "font-size", 18);
-    setAttribute(label, "font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif");
-    setAttribute(label, "pointer-events", "none");
-    label.textContent = `${(Number(item.frame.order) || 0) + 1}. ${item.title || "板块"}`;
-  } else label?.remove();
   return true;
 }
 
