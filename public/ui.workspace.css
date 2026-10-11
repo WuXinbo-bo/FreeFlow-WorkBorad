@@ -44,6 +44,10 @@
 .canvas2d-workspace-row { display: flex; align-items: center; height: 34px; border-radius: 4px; }
 .canvas2d-workspace-row:hover { background: #f2f5f6; }
 .canvas2d-workspace-row.is-current { color: var(--air-accent, #256c92); background: var(--air-active, #e9f1f6); }
+.canvas2d-workspace-row.is-keyboard-selected { outline: 2px solid var(--air-accent, #347eac); outline-offset: -2px; }
+.canvas2d-workspace-quick { display: flex; gap: 4px; padding: 6px 12px 0; overflow-x: auto; flex: none; }
+.canvas2d-workspace-quick button { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--air-line, #e1e5e9); background: transparent; border-radius: 4px; padding: 3px 7px; font-size: 11px; }
+.canvas2d-workspace-quick button[aria-current="page"] { background: var(--air-active, #e9f1f6); border-color: var(--air-accent, #347eac); }
 .canvas2d-workspace-open { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0 8px; text-align: left; }
 .canvas2d-workspace-open > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas2d-workspace-open > small { flex: none; font-size: 10px; color: var(--air-ink-muted, #69747b); }
@@ -57,6 +61,9 @@
 .canvas2d-workspace-sync > div:first-child { display: flex; align-items: center; gap: 6px; }
 .canvas2d-workspace-sync span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas2d-workspace-sync-actions { display: flex; gap: 5px; padding-top: 4px; }
+.canvas2d-workspace-sync.is-stale { background: #fff9ec; }
+.canvas2d-workspace-sync-summary { padding-top: 3px; color: var(--air-ink-muted, #69747b); font-size: 10px; }
+.canvas2d-workspace-sync-time { display: block; color: var(--air-ink-muted, #69747b); font-size: 10px; }
 .canvas2d-workspace-error, .canvas2d-workspace-notice { padding: 7px 12px; overflow-wrap: anywhere; font-size: 11px; }
 .canvas2d-workspace-error { color: #b13b42; background: #fff0f1; }
 .canvas2d-workspace-notice { color: #277052; background: #edf8f2; }
@@ -85,10 +92,17 @@
 .canvas2d-workspace-menu button { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 3px; background: transparent; text-align: left; }
 .canvas2d-workspace-menu button:hover:not(:disabled) { background: #edf3f6; }
 .canvas2d-workspace-confirm-backdrop { position: fixed; inset: 0; z-index: 3100; display: flex; align-items: center; justify-content: center; padding: 20px; background: #1115; pointer-events: auto; }
-.canvas2d-workspace-confirm { width: min(420px, 100%); padding: 20px; border: 1px solid #dce2e6; border-radius: 8px; background: #fff; color: #252b31; font: 13px/1.6 system-ui, sans-serif; overflow-wrap: anywhere; }
+.canvas2d-workspace-confirm { width: min(420px, 100%); max-height: calc(100vh - 40px); overflow: auto; padding: 20px; border: 1px solid #dce2e6; border-radius: 8px; background: #fff; color: #252b31; font: 13px/1.6 system-ui, sans-serif; overflow-wrap: anywhere; }
 .canvas2d-workspace-confirm strong { font-size: 15px; }
 .canvas2d-workspace-confirm p { color: #69747b; margin: 8px 0 18px; }
 .canvas2d-workspace-confirm > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .canvas2d-workspace-confirm button { padding: 6px 10px; border: 1px solid #dce2e6; border-radius: 4px; background: #f7f9fa; }
+.canvas2d-workspace-recovery-list { max-height: 260px; overflow: auto; margin: 10px 0 16px; border: 1px solid var(--air-line, #dce2e6); border-radius: 6px; }
+.canvas2d-workspace-recovery-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 5px 8px; border-bottom: 1px solid var(--air-line, #e9edef); }
+.canvas2d-workspace-recovery-row:last-child { border-bottom: 0; }
+.canvas2d-workspace-recovery-row > div { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: hidden; }
+.canvas2d-workspace-recovery-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.canvas2d-workspace-recovery-row small { color: var(--air-ink-muted, #69747b); }
+.canvas2d-workspace-recovery-preview ul { max-height: 180px; overflow: auto; padding-left: 18px; }
 @media (max-width: 720px) { .canvas2d-workspace-panel { top: 60px; bottom: 38px; } }
 @media (prefers-reduced-motion: no-preference) { .canvas2d-workspace-panel .canvas2d-workspace-icon { transition: background-color 120ms; } }

@@ -23,6 +23,7 @@ const { acquireFileLock, withFileLock } = require("../utils/fileLock");
 const { addChecksumToEnvelope, verifyEnvelopeChecksum, CHECKSUM_ALGORITHMS } = require("../utils/checksum");
 
 const BOARD_FILE_CHECKSUM_ALGORITHM = CHECKSUM_ALGORITHMS.CRC32;
+const { snapshotBoardHistory } = require("./boardRecoveryService");
 
 function resolveCanvasBoardFilePath(input = "") {
   const raw = String(input || "").trim();
@@ -189,6 +190,7 @@ async function readCanvasBoard(explicitPath = "") {
 async function writeCanvasBoard(payload = {}, explicitPath = "") {
   const requestedPath = await getConfiguredCanvasBoardFilePath(explicitPath);
   const filePath = ensureFreeFlowBoardFileName(requestedPath || CANVAS_BOARD_FILE);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
 
   // 使用文件锁保护写入操作
   return await withFileLock(filePath, async () => {
@@ -212,6 +214,7 @@ async function writeCanvasBoard(payload = {}, explicitPath = "") {
 
     // 使用原子写入：先写入临时文件，然后原子重命名
     const serialized = JSON.stringify(envelope, null, 2);
+    await snapshotBoardHistory(filePath, { reason: "save", nextData: serialized });
     const atomicResult = await atomicWriteFile(filePath, serialized, {
       fsync: true,
       preserveTempOnFailure: false,

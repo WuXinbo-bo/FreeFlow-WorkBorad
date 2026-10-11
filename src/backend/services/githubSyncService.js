@@ -15,6 +15,8 @@ const {
 const { parseBoardFileText } = require("../models/canvasBoardFileFormat");
 const { readLedger, updateLedger } = require("./syncLedgerService");
 const { atomicWriteFile } = require("../utils/atomicWrite");
+const { snapshotBoardHistory } = require("./boardRecoveryService");
+const { withFileLock } = require("../utils/fileLock");
 
 const WORKSPACE_PATH = ".freeflow/workspace.json";
 const WORKSPACE_SCHEMA_VERSION = 1;
@@ -574,6 +576,7 @@ async function getWorkspacePlan({ rootPath = "", boardPath = "", policy } = {}) 
     items,
     counts,
     total: items.length,
+    checkedAt: Date.now(),
   };
 }
 
@@ -763,7 +766,9 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   const resourcePaths = resources.map((resource) => String(resource?.path || ""));
   const files = await client.getFilesAtSnapshot(config.owner, config.repo, snapshot, resourcePaths);
   const targetRoot = path.dirname(targetPath);
+  await fs.mkdir(targetRoot, { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(targetRoot, `.freeflow-download-${id}-`));
+  try {
   const localAssetRoot = path.join(stagingRoot, "assets");
   const available = new Set();
   const missingResources = [];
@@ -818,40 +823,22 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     await fs.rm(stagingRoot, { recursive: true, force: true });
     throw new GitHubApiError("下载后的画布校验和不一致，已阻止覆盖本地文件", { status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: id });
   }
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const backupPath = `${targetPath}.freeflow-backup-${Date.now()}`;
-  let hadTarget = false;
-  try {
-    await fs.rename(targetPath, backupPath);
-    hadTarget = true;
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-  try {
-    await fs.rename(stagedBoardPath, targetPath);
-  } catch (error) {
-    if (hadTarget) await fs.rename(backupPath, targetPath).catch(() => {});
-    throw error;
-  }
-  if (hadTarget) await fs.rm(backupPath, { force: true });
-  const stagedAssets = path.join(stagingRoot, "assets");
-  const finalAssets = path.join(targetRoot, "assets");
-  const backupAssets = `${finalAssets}.freeflow-backup-${Date.now()}`;
-  let hadAssets = false;
-  try {
-    await fs.rename(finalAssets, backupAssets);
-    hadAssets = true;
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-  try {
-    await fs.rename(stagedAssets, finalAssets);
-  } catch (error) {
-    if (hadAssets) await fs.rename(backupAssets, finalAssets).catch(() => {});
-    throw error;
-  }
-  if (hadAssets) await fs.rm(backupAssets, { recursive: true, force: true });
-  await fs.rm(stagingRoot, { recursive: true, force: true });
+  return await withFileLock(targetPath, async () => {
+    const latest = await readLocalSyncHash(targetPath);
+    if (latest.exists !== local.exists || latest.hash !== local.hash || latest.errorCode !== local.errorCode) {
+      throw new GitHubApiError("下载期间本地画布已变化，已停止覆盖，请重新检查同步状态", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", boardId: id });
+    }
+    await snapshotBoardHistory(targetPath, { reason: "pull" });
+    const stagedAssets = path.join(stagingRoot, "assets");
+    const finalAssets = path.join(targetRoot, "assets");
+    // Publish verified content-addressed assets first. Existing boards and history retain their assets.
+    await fs.mkdir(finalAssets, { recursive: true });
+    for (const name of await fs.readdir(stagedAssets)) {
+      const written = await atomicWriteFile(path.join(finalAssets, name), await fs.readFile(path.join(stagedAssets, name)), { fsync: true });
+      if (!written.ok) throw new Error(written.error || "附件保存失败，当前画布已保留");
+    }
+    const published = await atomicWriteFile(targetPath, await fs.readFile(stagedBoardPath), { fsync: true });
+    if (!published.ok) throw new Error(published.error || "画布保存失败，当前画布已保留");
   const syncState = "synced";
   const ledger = await updateLedger((current) => ({
     ...current,
@@ -869,12 +856,15 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
         baseRemoteCommit: snapshot.commitSha,
         ancestorSha: snapshot.commitSha,
         syncState,
+        updatedAt: new Date().toISOString(),
         skippedCount: Number(manifest?.skippedCount) || missingResources.length,
         assetBytes: Number(manifest?.assetBytes) || 0,
       },
     },
   }), SYNC_LEDGER_FILE);
-  return { ...result, boardId: id, manifest, remoteCommit: snapshot.commitSha, missingResources, syncState, ledger };
+  return { ...result, filePath: targetPath, boardId: id, manifest, remoteCommit: snapshot.commitSha, missingResources, syncState, ledger };
+  });
+  } finally { await fs.rm(stagingRoot, { recursive: true, force: true }); }
 }
 
 async function listBoards({ includeDeleted = false } = {}) {

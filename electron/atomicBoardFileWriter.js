@@ -1,7 +1,10 @@
 const path = require("path");
+const fs = require("node:fs/promises");
+const { withFileLock } = require("../src/backend/utils/fileLock");
 const { atomicWriteFile } = require("../src/backend/utils/atomicWrite");
 const { addChecksumToEnvelope, CHECKSUM_ALGORITHMS } = require("../src/backend/utils/checksum");
 const { FREEFLOW_BOARD_FILE_KIND } = require("../src/backend/models/canvasBoardFileFormat");
+const { snapshotBoardHistory } = require("../src/backend/services/boardRecoveryService");
 
 function isFreeFlowBoardPath(targetPath = "") {
   return String(targetPath || "").trim().toLowerCase().endsWith(".freeflow");
@@ -30,18 +33,18 @@ function createAtomicBoardFileWriter(options = {}) {
       .catch(() => {})
       .then(async () => {
         const buffer = serializeBoardFile(data);
-        const result = await writeAtomically(resolvedPath, buffer, {
-          fsync: true,
-          preserveTempOnFailure: false,
+        await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+        return withFileLock(resolvedPath, async () => {
+          await snapshotBoardHistory(resolvedPath, { reason: "save", nextData: buffer });
+          const result = await writeAtomically(resolvedPath, buffer, {
+            fsync: true,
+            preserveTempOnFailure: false,
+          });
+          if (!result?.ok) {
+            throw new Error(result?.error || "Atomic board write failed");
+          }
+          return { ok: true, filePath: resolvedPath, size: result.bytesWritten };
         });
-        if (!result?.ok) {
-          throw new Error(result?.error || "Atomic board write failed");
-        }
-        return {
-          ok: true,
-          filePath: resolvedPath,
-          size: result.bytesWritten,
-        };
       });
     queues.set(resolvedPath, queued);
     void queued.finally(() => {

@@ -298,6 +298,7 @@ async function main() {
   // Pull the remote board into device B through the actual sync service.
   const pulled = await sync.downloadBoard({ boardId, boardPath: boardBPath });
   assert.equal(pulled.boardId, boardId);
+  assert.equal(pulled.filePath, boardBPath, "download returned its deleted staging path");
   const downloadedBoard = JSON.parse(await fsPromises.readFile(boardBPath, "utf8"));
   assert.equal(downloadedBoard.board.items[0].text, "Windows change");
   assert.equal(downloadedBoard.board.items[1].resourceStatus, "synced");
@@ -314,11 +315,36 @@ async function main() {
   await fsPromises.writeFile(boardA2Path, JSON.stringify(fixtureBoard("Windows second change", false)), "utf8");
   const bundleA2 = await buildSyncBundleFromFile(boardA2Path);
   const committedA2 = await clientA.createCommit({ owner, repo, branch, message: "Windows second commit", files: bundleA2.files });
+  const anotherCanvasAsset = path.join(path.dirname(localAssetPath), "another-canvas.txt");
+  await fsPromises.writeFile(anotherCanvasAsset, "used by another canvas");
   const pulledRemote = await sync.pullBoard({ boardId, boardPath: boardBPath });
   assert.equal(pulledRemote.pulled, true, "pull did not apply a newer remote snapshot");
   assert.equal(pulledRemote.state.state, "up-to-date");
   assert.equal((await fsPromises.readFile(boardBPath, "utf8")).includes("Windows second change"), true);
   assert.equal((await readLedger(SYNC_LEDGER_FILE)).boards[boardId].remoteHeadSha, committedA2.commitSha);
+  assert.equal(await fsPromises.readFile(anotherCanvasAsset, "utf8"), "used by another canvas", "pull removed an unrelated canvas attachment");
+  assert.equal(crypto.createHash("sha256").update(await fsPromises.readFile(localAssetPath)).digest("hex"), largeSha, "pull removed an attachment referenced by history");
+  const recovery = require("../src/backend/services/boardRecoveryService");
+  const history = await recovery.listCanvasHistory(boardBPath);
+  assert(history.entries.some((entry) => entry.reason === "pull"), "remote pull did not preserve previous local version");
+
+  const beforeConcurrentPull = await fsPromises.readFile(boardBPath, "utf8");
+  let localEditInjected = false;
+  globalThis.fetch = async (url, options = {}) => {
+    const response = await remote.fetchImpl(url, options);
+    if (!localEditInjected && new URL(url).pathname.includes("/git/commits/")) {
+      localEditInjected = true;
+      const updated = JSON.parse(beforeConcurrentPull);
+      updated.board.items[0].text = "local edited during download";
+      await fsPromises.writeFile(boardBPath, JSON.stringify(updated));
+    }
+    return response;
+  };
+  await assert.rejects(sync.downloadBoard({ boardId, boardPath: boardBPath }), (error) => error.code === "LOCAL_CHANGED_DURING_SYNC");
+  assert.equal(JSON.parse(await fsPromises.readFile(boardBPath, "utf8")).board.items[0].text, "local edited during download");
+  assert.equal((await fsPromises.readdir(path.dirname(boardBPath))).some((name) => name.startsWith(".freeflow-download-")), false, "failed download left staging files");
+  globalThis.fetch = remote.fetchImpl;
+  await fsPromises.writeFile(boardBPath, beforeConcurrentPull);
 
   // Workspace-level sync discovers every canvas in the active folder and can
   // publish a local-only canvas without asking for a second path.

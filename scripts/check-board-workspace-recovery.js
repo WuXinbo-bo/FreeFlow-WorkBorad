@@ -61,7 +61,8 @@ async function main() {
     watcher = createBoardWorkspaceWatcher((event) => events.push(event));
     assert.equal(watcher.watch(temp).ok, true);
     await fs.writeFile(path.join(temp, "External.freeflow"), "{}");
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    const deadline = Date.now() + 3000;
+    while (!events.length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(events.length, 1, "watcher did not coalesce file changes");
     watcher.close();
     await fs.writeFile(path.join(temp, "Hidden.freeflow"), "{}");
