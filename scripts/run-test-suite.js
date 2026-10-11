@@ -43,6 +43,7 @@ const CHECKS = [
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
   "scripts/check-canvas-runtime-hardening.js",
+  "scripts/check-worker-lifetime.js",
   "scripts/check-canvas-file-paths.js",
   "scripts/check-board-workspace-recovery.js",
   "scripts/check-canvas-recovery.js",
@@ -161,6 +162,9 @@ async function main() {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas-presentation-performance.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
+    await runNodeScript("scripts/check-canvas-async-lifecycle-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas-background-lifecycle.js", {
