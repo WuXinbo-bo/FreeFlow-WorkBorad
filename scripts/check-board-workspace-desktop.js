@@ -352,6 +352,52 @@ async function main() {
     await row("Renamed").waitFor({ state: "visible" });
     await panel.getByRole("tab", { name: "工作区", exact: true }).click();
     assert.equal(await row("Renamed").count(), 0, "recent boards leaked into the workspace list");
+    const directory = page.getByRole("region", { name: "画布目录", exact: true });
+    await page.evaluate(() => window.__canvas2dEngine.setCanvasNavigatorCollapsed(false));
+    await directory.waitFor({ state: "visible" });
+    assert.equal(await panel.locator(".canvas2d-navigator-panel, .canvas2d-navigator-tab").count(), 0, "directory is still nested in the file workspace");
+    const navigationSnapshot = await snapshot();
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      await panel.getByRole("button", { name: "收起画布工作区" }).click();
+      assert(await directory.isVisible(), "collapsing files hid the canvas directory");
+      await directory.getByRole("button", { name: "收起画布目录", exact: true }).click();
+      assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible());
+      await page.getByRole("button", { name: "展开画布目录", exact: true }).click();
+      assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "opening the directory also opened files");
+      await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    }
+    assert.deepEqual(await snapshot(), navigationSnapshot, "independent panel toggles changed the canvas");
+    await directory.getByLabel("新建文件夹", { exact: true }).click();
+    const folderEntry = directory.locator(".canvas2d-navigator-entry.is-folder").first();
+    await folderEntry.waitFor();
+    await directory.getByRole("button", { name: "搜索目录", exact: true }).click();
+    await directory.getByPlaceholder("搜索目录...").fill("no-directory-match");
+    assert.equal(await directory.locator(".canvas2d-navigator-entry").count(), 0);
+    await directory.getByPlaceholder("搜索目录...").press("Escape");
+    await folderEntry.waitFor();
+    await folderEntry.hover();
+    await folderEntry.getByRole("button", { name: "更多操作", exact: true }).click();
+    await directory.getByRole("button", { name: "重命名", exact: true }).click();
+    await directory.locator(".canvas2d-navigator-title-input").fill("独立目录测试");
+    await directory.locator(".canvas2d-navigator-title-input").press("Enter");
+    await directory.getByText("独立目录测试", { exact: true }).waitFor();
+    for (let index = 0; index < 16; index += 1) await directory.getByLabel("新建文件夹", { exact: true }).click();
+    assert(await directory.locator(".canvas2d-navigator-list").evaluate((list) => list.scrollHeight > list.clientHeight), "long directories do not scroll within their own card");
+    await directory.locator(".canvas2d-navigator-entry").last().scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
+    const widthBefore = (await panel.boundingBox()).width;
+    await panel.getByRole("separator", { name: "调整工作区宽度" }).press("ArrowRight");
+    assert((await panel.boundingBox()).width > widthBefore, "independent workspace width control stopped working");
+    await panel.getByRole("separator", { name: "调整工作区宽度" }).press("ArrowLeft");
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.mouse.move(1200, 100);
+    await page.waitForTimeout(200);
+    const glass = await page.evaluate(() => {
+      const read = (selector) => { const style = getComputedStyle(document.querySelector(selector)); return { background: style.backgroundColor, blur: style.backdropFilter, radius: style.borderRadius }; };
+      return { files: read(".canvas2d-workspace-panel"), directory: read(".canvas2d-navigator-panel"), toolbar: read(".canvas2d-engine-toolbar") };
+    });
+    assert.deepEqual(glass.files, glass.toolbar, "file workspace does not use the shared frosted glass");
+    assert.deepEqual(glass.directory, glass.toolbar, "directory does not use the shared frosted glass");
     for (let cycle = 0; cycle < 4; cycle += 1) {
       await panel.getByRole("button", { name: "收起画布工作区" }).click();
       await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
@@ -360,6 +406,7 @@ async function main() {
     await page.reload();
     await page.waitForFunction(() => window.__canvas2dEngine && !document.body.classList.contains("app-booting"));
     assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "sidebar collapsed preference lost on reload");
+    assert(await directory.isVisible(), "directory open state was coupled to the collapsed workspace on reload");
     await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     const screenshotDir = process.env.FREEFLOW_SCREENSHOT_DIR;
     if (screenshotDir) {
@@ -377,6 +424,24 @@ async function main() {
     await page.mouse.up();
     const bounds = await panel.boundingBox();
     assert(bounds.width <= 360, "sidebar overflowed a narrow canvas pane");
+    const directoryBounds = await directory.boundingBox();
+    const narrowStage = await page.locator(".desktop-clear-stage").boundingBox();
+    assert(directoryBounds.y >= bounds.y + bounds.height + 8, "narrow file and directory panels overlap");
+    assert(directoryBounds.x + directoryBounds.width <= narrowStage.x + narrowStage.width, "directory overflowed the narrow canvas");
+    assert(await directory.getByLabel("新建文件夹", { exact: true }).isVisible(), "directory controls are not reachable in the narrow canvas");
+    await directory.getByRole("button", { name: "收起画布目录", exact: true }).click();
+    await panel.getByRole("button", { name: "收起画布工作区" }).click();
+    const map = page.locator("#canvas2d-transient-minimap");
+    if (await map.evaluate((element) => element.classList.contains("is-collapsed"))) await map.locator("button").click();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
+    await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "hidden");
+    await panel.getByRole("button", { name: "收起画布工作区" }).click();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
+    assert.equal(await map.evaluate((element) => element.classList.contains("is-collapsed")), false, "temporary panel overlap changed the minimap preference");
+    await map.locator("button").click();
+    await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    await page.getByRole("button", { name: "展开画布目录", exact: true }).click();
     if (screenshotDir) await page.screenshot({ path: path.join(screenshotDir, "workspace-narrow.png") });
     assert.deepEqual(errors, []);
     console.log(`[check-board-workspace-desktop] ${process.platform}: native files, switch recovery, rename collision, delete/cancel, pull reload, stale-memory protection, delayed read/create edit protection, failed-sync recovery, workspace browsing/save/focus recovery, keyboard, collapse/reload and narrow panel passed`);

@@ -1,22 +1,47 @@
-.canvas2d-workspace-panel {
+.canvas2d-navigation-panels {
   position: absolute;
   z-index: 230;
-  top: 52px;
-  bottom: 14px;
-  left: 0;
+  inset: 52px 16px 68px;
+  container: canvas-navigation / inline-size;
+  pointer-events: none;
+}
+.canvas2d-navigation-docks { display: flex; align-items: stretch; gap: 12px; height: 100%; pointer-events: none; }
+.canvas2d-navigation-docks > .canvas-chrome-surface,
+.canvas2d-workspace-menu.canvas-chrome-surface,
+.canvas2d-workspace-confirm.canvas-chrome-surface,
+.canvas2d-navigator-context-menu.canvas-chrome-surface {
+  border: 1px solid var(--chrome-glass-border, rgba(255, 255, 255, .78)) !important;
+  border-radius: var(--chrome-radius, 10px) !important;
+  background-color: var(--chrome-glass-idle, rgba(255, 255, 255, .58)) !important;
+  background-image: var(--chrome-glass-sheen, linear-gradient(135deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .06) 52%, rgba(181, 204, 224, .12))) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78), var(--chrome-shadow, 0 8px 24px rgba(31, 38, 46, .08)) !important;
+  backdrop-filter: blur(16px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(125%) !important;
+}
+.canvas2d-navigation-docks > .canvas-chrome-surface:hover,
+.canvas2d-navigation-docks > .canvas-chrome-surface:focus-within {
+  border-color: var(--chrome-glass-border-active, rgba(255, 255, 255, .94)) !important;
+  background-color: var(--chrome-glass-active, rgba(255, 255, 255, .8)) !important;
+  background-image: var(--chrome-glass-sheen-active, linear-gradient(135deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, .1) 52%, rgba(181, 204, 224, .16))) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .94), var(--chrome-shadow-active, 0 12px 30px rgba(31, 38, 46, .13)) !important;
+}
+.canvas2d-workspace-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(var(--workspace-width, 288px), calc(100% - 40px));
+  flex: none;
+  width: var(--workspace-width, 288px);
+  max-width: 100%;
+  height: 100%;
   min-width: 0;
-  border-right: 1px solid var(--air-line, #e1e5e9);
-  background: var(--air-surface, #fff);
+  min-height: 0;
   color: var(--air-ink, #252b31);
   pointer-events: auto;
   font: 12px/1.5 system-ui, sans-serif;
   letter-spacing: 0;
 }
 .canvas2d-workspace-panel *, .canvas2d-workspace-menu *, .canvas2d-workspace-confirm * { box-sizing: border-box; letter-spacing: 0; }
-.canvas2d-workspace-files { display: flex; flex-direction: column; min-height: 180px; flex: 1; overflow: auto; }
+.canvas2d-workspace-files { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; border-radius: inherit; }
 .canvas2d-workspace-head, .canvas2d-workspace-folder, .canvas2d-workspace-current, .canvas2d-workspace-list-head { display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
 .canvas2d-workspace-head { height: 40px; flex: none; justify-content: space-between; }
 .canvas2d-workspace-head strong { font-size: 13px; }
@@ -42,7 +67,7 @@
 .canvas2d-workspace-list-head select { max-width: 120px; border: 0; color: inherit; background: transparent; font: inherit; }
 .canvas2d-workspace-list { flex: 1; min-height: 72px; overflow: auto; padding: 0 6px 8px; }
 .canvas2d-workspace-row { display: flex; align-items: center; height: 34px; border-radius: 4px; }
-.canvas2d-workspace-row:hover { background: #f2f5f6; }
+.canvas2d-workspace-row:hover { background: var(--chrome-hover, rgba(32, 37, 43, .055)); }
 .canvas2d-workspace-row.is-current { color: var(--air-accent, #256c92); background: var(--air-active, #e9f1f6); }
 .canvas2d-workspace-row.is-keyboard-selected { outline: 2px solid var(--air-accent, #347eac); outline-offset: -2px; }
 .canvas2d-workspace-quick { display: flex; gap: 4px; padding: 6px 12px 0; overflow-x: auto; flex: none; }
@@ -55,34 +80,31 @@
 .canvas2d-workspace-row:hover > .canvas2d-workspace-icon, .canvas2d-workspace-row:focus-within > .canvas2d-workspace-icon { opacity: 1; }
 .canvas2d-workspace-empty { padding: 18px 8px; color: var(--air-ink-muted, #69747b); }
 .canvas2d-workspace-editor { display: flex; gap: 4px; padding: 6px 12px; }
-.canvas2d-workspace-editor input { width: 100%; min-width: 0; border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; padding: 4px 6px; font: inherit; }
+.canvas2d-workspace-editor input { width: 100%; min-width: 0; border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; padding: 4px 6px; font: inherit; color: inherit; background: rgba(255, 255, 255, .3); }
 .canvas2d-workspace-editor > button:not(.canvas2d-workspace-icon), .canvas2d-workspace-sync-actions button, .canvas2d-workspace-repair { border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; padding: 4px 7px; white-space: nowrap; background: transparent; }
 .canvas2d-workspace-sync { border-top: 1px solid var(--air-line, #e1e5e9); padding: 6px 12px; }
 .canvas2d-workspace-sync > div:first-child { display: flex; align-items: center; gap: 6px; }
 .canvas2d-workspace-sync span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas2d-workspace-sync-actions { display: flex; gap: 5px; padding-top: 4px; }
-.canvas2d-workspace-sync.is-stale { background: #fff9ec; }
+.canvas2d-workspace-sync.is-stale { background: rgba(255, 239, 202, .28); }
 .canvas2d-workspace-sync-summary { padding-top: 3px; color: var(--air-ink-muted, #69747b); font-size: 10px; }
 .canvas2d-workspace-sync-time { display: block; color: var(--air-ink-muted, #69747b); font-size: 10px; }
 .canvas2d-workspace-error, .canvas2d-workspace-notice { padding: 7px 12px; overflow-wrap: anywhere; font-size: 11px; }
-.canvas2d-workspace-error { color: #b13b42; background: #fff0f1; }
-.canvas2d-workspace-notice { color: #277052; background: #edf8f2; }
+.canvas2d-workspace-error { color: #b13b42; background: rgba(255, 220, 223, .32); }
+.canvas2d-workspace-notice { color: #277052; background: rgba(218, 244, 230, .32); }
 .canvas2d-workspace-repair { margin: 4px 12px; }
-.canvas2d-workspace-directory { flex: none; max-height: 36%; display: flex; flex-direction: column; border-top: 1px solid var(--air-line, #e1e5e9); min-height: 34px; }
-.canvas2d-workspace-directory .canvas2d-navigator-panel {
-  position: relative !important; inset: auto !important; width: 100% !important; min-width: 0 !important;
-  max-height: none !important; min-height: 0 !important; padding: 8px 10px !important;
-  border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: transparent !important;
+.canvas2d-navigation-docks > .canvas2d-navigator-panel {
+  position: relative !important; inset: auto !important; flex: none; width: 252px !important; max-width: 100%;
+  align-self: flex-start; height: auto; max-height: min(100%, 440px) !important; min-height: 140px; min-width: 0; padding: 12px !important; box-sizing: border-box;
 }
-.canvas2d-workspace-directory .canvas2d-navigator-head { padding: 0 0 6px !important; min-height: 30px !important; }
-.canvas2d-workspace-directory .canvas2d-navigator-head strong { font-size: 12px !important; }
-.canvas2d-workspace-directory .canvas2d-navigator-brand-mark { display: none; }
-.canvas2d-workspace-directory .canvas2d-navigator-dock-collapse { top: 22px !important; right: 6px !important; width: 22px !important; height: 22px !important; }
-.canvas2d-workspace-directory .canvas2d-navigator-head-actions { padding-right: 24px; }
-.canvas2d-workspace-directory .canvas2d-navigator-list { min-height: 0; overflow: auto; }
-.canvas2d-workspace-directory .canvas2d-navigator-tab { position: relative !important; inset: auto !important; width: 100% !important; min-height: 34px !important; transform: none !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
-.canvas2d-workspace-panel.is-collapsed { top: 50%; bottom: auto; left: 24px; width: 34px; height: 70px; border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; transform: translateY(-50%); }
-.canvas2d-workspace-panel.is-collapsed .canvas2d-workspace-files, .canvas2d-workspace-panel.is-collapsed .canvas2d-workspace-directory { display: none; }
+.canvas2d-navigation-docks .canvas2d-navigator-head { flex: none; padding: 0 28px 8px 0 !important; min-height: 30px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-brand { min-width: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-head strong { font-size: 13px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-dock-collapse { top: 12px !important; right: 10px !important; width: 26px !important; height: 26px !important; transform: none; }
+.canvas2d-navigation-docks .canvas2d-navigator-list { flex: 1; min-height: 0; overflow: auto; align-content: start; }
+.canvas2d-navigation-docks > .canvas2d-navigator-tab { position: relative; inset: auto !important; flex: none; align-self: center; width: 34px !important; height: 40px; min-height: 40px !important; padding: 0; transform: none; box-sizing: border-box; }
+.canvas2d-workspace-panel.is-collapsed { align-self: center; width: 34px; height: 40px; }
+.canvas2d-workspace-panel.is-collapsed .canvas2d-workspace-files { display: none; }
 .canvas2d-workspace-rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; }
 .canvas2d-workspace-resizer { position: absolute; right: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; touch-action: none; }
 .canvas2d-workspace-resizer:hover, .canvas2d-workspace-resizer:focus-visible { background: var(--air-accent, #347eac); }
@@ -90,7 +112,7 @@
 .canvas2d-workspace-menu { position: fixed; z-index: 3000; width: 170px; padding: 5px; background: #fff; border: 1px solid #dce2e6; border-radius: 6px; box-shadow: 0 6px 20px #0002; font: 12px/1.5 system-ui, sans-serif; color: #252b31; }
 .canvas2d-workspace-menu { pointer-events: auto; }
 .canvas2d-workspace-menu button { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 3px; background: transparent; text-align: left; }
-.canvas2d-workspace-menu button:hover:not(:disabled) { background: #edf3f6; }
+.canvas2d-workspace-menu button:hover:not(:disabled) { background: var(--chrome-hover, rgba(32, 37, 43, .055)); }
 .canvas2d-workspace-confirm-backdrop { position: fixed; inset: 0; z-index: 3100; display: flex; align-items: center; justify-content: center; padding: 20px; background: #1115; pointer-events: auto; }
 .canvas2d-workspace-confirm { width: min(420px, 100%); max-height: calc(100vh - 40px); overflow: auto; padding: 20px; border: 1px solid #dce2e6; border-radius: 8px; background: #fff; color: #252b31; font: 13px/1.6 system-ui, sans-serif; overflow-wrap: anywhere; }
 .canvas2d-workspace-confirm strong { font-size: 15px; }
@@ -104,5 +126,15 @@
 .canvas2d-workspace-recovery-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .canvas2d-workspace-recovery-row small { color: var(--air-ink-muted, #69747b); }
 .canvas2d-workspace-recovery-preview ul { max-height: 180px; overflow: auto; padding-left: 18px; }
-@media (max-width: 720px) { .canvas2d-workspace-panel { top: 60px; bottom: 38px; } }
+@container canvas-navigation (max-width: 640px) {
+  .canvas2d-navigation-docks { flex-direction: column; align-items: flex-start; padding-top: 52px; box-sizing: border-box; }
+  .canvas2d-workspace-panel.is-open { flex: 1; height: auto; }
+  .canvas2d-navigation-docks > .canvas2d-navigator-panel { flex: 0 1 auto; width: 288px !important; height: auto; }
+  .canvas2d-navigation-docks:has(.canvas2d-workspace-panel.is-open) > .canvas2d-navigator-panel { max-height: 38% !important; }
+  .canvas2d-workspace-panel.is-collapsed, .canvas2d-navigation-docks > .canvas2d-navigator-tab { align-self: flex-start; }
+  .canvas2d-navigation-docks:has(.canvas2d-workspace-panel.is-collapsed):has(.canvas2d-navigator-tab),
+  .canvas2d-navigation-docks:has(> .canvas2d-navigator-tab:only-child) { flex-direction: row; align-items: center; }
+  .canvas2d-navigation-docks:has(.canvas2d-workspace-panel.is-collapsed):has(.canvas2d-navigator-tab) > *,
+  .canvas2d-navigation-docks > .canvas2d-navigator-tab:only-child { align-self: center; }
+}
 @media (prefers-reduced-motion: no-preference) { .canvas2d-workspace-panel .canvas2d-workspace-icon { transition: background-color 120ms; } }
