@@ -4385,6 +4385,7 @@ async function githubSyncRequest(pathname, options = {}) {
       conflicts: data?.conflicts,
       artifacts: data?.artifacts,
       state: data?.state,
+      retryAfterMs: data?.retryAfterMs,
     };
     const error = new Error(`${data?.error || `GitHub 同步请求失败 (${response.status})`}${detailsMarker}${JSON.stringify(details)}`);
     error.status = response.status;
@@ -4392,6 +4393,7 @@ async function githubSyncRequest(pathname, options = {}) {
     error.conflicts = data?.conflicts;
     error.artifacts = data?.artifacts;
     error.state = data?.state;
+    error.retryAfterMs = data?.retryAfterMs;
     throw error;
   }
   if (data?.ok !== true) throw new Error("GitHub 同步接口返回了无效响应，请重启桌面应用");
@@ -4404,6 +4406,7 @@ function serializeGithubSyncError(error) {
     error: String(error?.message || "GitHub 同步请求失败"),
     status: Number(error?.status) || 0,
     code: String(error?.code || ""),
+    retryAfterMs: Math.max(0, Number(error?.retryAfterMs) || 0),
     conflicts: Array.isArray(error?.conflicts) ? error.conflicts : undefined,
     artifacts: error?.artifacts && typeof error.artifacts === "object" ? error.artifacts : undefined,
     state: error?.state && typeof error.state === "object" ? error.state : undefined,

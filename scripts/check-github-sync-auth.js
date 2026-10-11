@@ -24,6 +24,7 @@ let oauthResult = { error: "authorization_pending" };
 let beginError = "";
 let pendingUser = null;
 let deviceIndex = 0;
+let limitRepositories = false;
 const privateRepo = { name: "workspace", private: true, owner: user, default_branch: "trunk", permissions: { push: true } };
 
 async function fakeFetch(url, options = {}) {
@@ -39,7 +40,10 @@ async function fakeFetch(url, options = {}) {
     if (pendingUser) return pendingUser;
     return Response.json(user);
   }
-  if (pathname === "/user/repos") return Response.json([privateRepo, { ...privateRepo, name: "public", private: false }, { ...privateRepo, name: "foreign", owner: { login: "other" } }]);
+  if (pathname === "/user/repos") {
+    if (limitRepositories) return Response.json({ message: "API rate limit exceeded" }, { status: 403, headers: { "retry-after": "120", "x-ratelimit-remaining": "0" } });
+    return Response.json([privateRepo, { ...privateRepo, name: "public", private: false }, { ...privateRepo, name: "foreign", owner: { login: "other" } }]);
+  }
   if (pathname === "/repos/fixture-user/workspace") return Response.json(privateRepo);
   if (pathname === "/repos/fixture-user/public") return Response.json({ ...privateRepo, private: false });
   throw new Error(`Unexpected fixture request ${pathname}`);
@@ -173,6 +177,18 @@ async function main() {
     await assert.rejects(request("/html"), /无效响应/);
     const repositories = await request("/repositories");
     assert.deepEqual(repositories.repositories.map((repo) => repo.name), ["workspace"]);
+    limitRepositories = true;
+    let limitedError;
+    await assert.rejects(request("/repositories"), (error) => {
+      limitedError = error;
+      return error.retryAfterMs === 120000 && /120 秒后重试/.test(error.message);
+    });
+    const preloadSource = fs.readFileSync(path.join(__dirname, "../electron/preload.js"), "utf8");
+    const preloadStart = preloadSource.indexOf("async function invokeGitHubSync(");
+    const preloadEnd = preloadSource.indexOf('\nipcRenderer.on(', preloadStart);
+    const invoke = vm.runInNewContext(`${preloadSource.slice(preloadStart, preloadEnd)}\ninvokeGitHubSync`, { ipcRenderer: { invoke: async () => ({ ok: false, error: limitedError.message.split("\n")[0], retryAfterMs: 120000 }) } });
+    await assert.rejects(invoke("fixture"), (error) => error.retryAfterMs === 120000);
+    limitRepositories = false;
     await assert.rejects(request("/repository", { method: "POST", body: { owner: user.login, repo: "public" } }), /自己账号下的私有仓库/);
     assert.equal((await request("/repository", { method: "POST", body: { owner: user.login, repo: "workspace" } })).repository.branch, "trunk");
     assert.equal((await request("/status")).auth.user.login, user.login, "repository binding erased auth metadata");
