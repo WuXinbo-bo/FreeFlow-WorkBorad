@@ -27,7 +27,7 @@ async function main() {
   const reset = new GitHubApiClient({ fetchImpl: async () => Response.json({}, { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Math.ceil(Date.now() / 1000) + 120) } }) });
   await assert.rejects(reset.getUser(), (e) => e.retryAfterMs >= 120000);
 
-  for (const published of [true, false]) {
+  for (const mode of ["published", "retry", "retry-response-lost", "concurrent"]) {
     let head = "base";
     let patches = 0;
     const client = new GitHubApiClient({ retryDelay: async () => {}, fetchImpl: async (url, options = {}) => {
@@ -40,17 +40,26 @@ async function main() {
       if (options.method === "PATCH") {
         patches++;
         if (patches === 1) {
-          if (published) head = "new";
+          if (mode === "published") head = "new";
+          if (mode === "concurrent") head = "other";
           throw new TypeError("lost response");
         }
         assert.equal(JSON.parse(options.body).force, false);
         head = "new";
+        if (mode === "retry-response-lost") throw new TypeError("second response lost");
         return Response.json({ object: { sha: head } });
       }
+      if (route.includes("/compare/")) return Response.json({ status: "diverged" });
       throw new Error(route);
     } });
+    if (mode === "concurrent") {
+      await assert.rejects(client.createCommit({ owner: "fixture", repo: "test", files: [{ path: "board", content: "hello" }] }), (error) => error.code === "REMOTE_CHANGED");
+      assert.equal(patches, 1);
+      assert.equal(head, "other");
+      continue;
+    }
     assert.equal((await client.createCommit({ owner: "fixture", repo: "test", files: [{ path: "board", content: "hello" }] })).commitSha, "new");
-    assert.equal(patches, published ? 1 : 2);
+    assert.equal(patches, mode === "published" ? 1 : 2);
     assert.equal(head, "new");
   }
 

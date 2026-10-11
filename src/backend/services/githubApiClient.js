@@ -100,12 +100,13 @@ class GitHubApiClient {
           continue;
         }
       }
-      throw new GitHubApiError(body?.message || `GitHub API 请求失败 (${response.status})`, {
+      throw new GitHubApiError(rateLimited ? `GitHub 请求受到限流，请约 ${Math.ceil(backoff / 1000)} 秒后重试` : body?.message || `GitHub API 请求失败 (${response.status})`, {
         status: response.status,
         response: body,
         headers: response.headers,
         meta,
         retryAfterMs: rateLimited ? backoff : meta.retryAfterMs,
+        code: rateLimited ? "RATE_LIMITED" : "",
       });
     }
   }
@@ -258,34 +259,34 @@ class GitHubApiClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: String(message || "Update FreeFlow workspace"), tree: tree.sha, parents: [baseCommitSha] }),
     });
-    try {
-      await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeURIComponent(branch)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sha: commit.sha, force: false }),
-      });
-    } catch (error) {
-      if (error.status === 409 || error.status === 422) {
-        error.code = "REMOTE_CHANGED";
-        throw error;
-      }
-      if (error.code !== "NETWORK_ERROR" && !(error.status >= 500)) throw error;
-      // PATCH may have succeeded even if its response was lost. Check before
-      // retrying, and retain fast-forward protection if another device won.
-      const current = await this.getBranchHead(owner, repo, branch);
-      const currentSha = current?.object?.sha;
-      if (currentSha !== commit.sha) {
-        if (currentSha !== baseCommitSha) {
-          const comparison = await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commit.sha)}...${encodeURIComponent(currentSha)}`);
-          if (!["ahead", "identical"].includes(comparison?.status)) {
-            throw new GitHubApiError("远端分支已变化，请先拉取并处理冲突", { status: 409, code: "REMOTE_CHANGED", currentBaseSha: currentSha });
-          }
-        } else {
-          await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeURIComponent(branch)}`, {
-            method: "PATCH", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sha: commit.sha, force: false }),
-          });
+    for (let refAttempt = 0; refAttempt < 2; refAttempt += 1) {
+      try {
+        await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeURIComponent(branch)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sha: commit.sha, force: false }),
+        });
+        break;
+      } catch (error) {
+        if (error.status === 409 || error.status === 422) {
+          error.code = "REMOTE_CHANGED";
+          throw error;
         }
+        if (error.code !== "NETWORK_ERROR" && !(error.status >= 500)) throw error;
+        // PATCH may have succeeded even if its response was lost. Check before
+        // retrying, and retain fast-forward protection if another device won.
+        const current = await this.getBranchHead(owner, repo, branch);
+        const currentSha = current?.object?.sha;
+        if (currentSha !== commit.sha) {
+          if (currentSha !== baseCommitSha) {
+            const comparison = await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commit.sha)}...${encodeURIComponent(currentSha)}`);
+            if (!["ahead", "identical"].includes(comparison?.status)) {
+              throw new GitHubApiError("远端分支已变化，请先拉取并处理冲突", { status: 409, code: "REMOTE_CHANGED", currentBaseSha: currentSha });
+            }
+          } else if (refAttempt === 0) continue;
+          else throw error;
+        }
+        break;
       }
     }
     return { commitSha: commit.sha, baseCommitSha, treeSha: tree.sha, meta: this.lastResponseMeta };

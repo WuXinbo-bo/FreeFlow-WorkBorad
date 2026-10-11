@@ -11,34 +11,34 @@ function createGitHubSyncRouter(options = {}) {
 
   router.get("/status", async (_req, res) => {
     try { res.json({ ok: true, ...(await sync.getStatus()), auth: await auth.getPublicAuthStatus({ clientId, appType }) }); }
-    catch (error) { res.status(500).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.post("/device-flow/start", async (req, res) => {
     try { res.json({ ok: true, ...(await auth.beginDeviceFlow({ clientId: req.body?.clientId || clientId, appType: req.body?.appType || appType })) }); }
-    catch (error) { res.status(400).json({ ok: false, error: error.message, code: error.code || "" }); }
+    catch (error) { res.status(400).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "" }); }
   });
 
   router.post("/token", async (req, res) => {
     try { res.json({ ok: true, ...(await auth.connectWithToken({ token: req.body?.token })) }); }
-    catch (error) { res.status(400).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(400).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.post("/device-flow/poll", async (req, res) => {
     try { res.json({ ok: true, ...(await auth.pollDeviceFlow({ deviceCode: req.body?.deviceCode })) }); }
-    catch (error) { res.status(400).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(400).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.post("/disconnect", async (_req, res) => {
     try {
       await auth.clearTokens();
       res.json({ ok: true });
-    } catch (error) { res.status(500).json({ ok: false, error: error.message }); }
+    } catch (error) { res.status(500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.get("/user", async (_req, res) => {
     try { res.json({ ok: true, user: (await sync.getStatus()).connected ? await (new GitHubApiClient({ token: await auth.getAccessToken() })).getUser() : null }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.get("/repositories", async (_req, res) => {
@@ -48,7 +48,7 @@ function createGitHubSyncRouter(options = {}) {
       const repositories = (await client.listRepositories()).filter((repository) => repository.private === true && repository.owner?.login === user.login);
       res.json({ ok: true, repositories, user: { login: user.login, id: user.id } });
     }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.post("/repository", async (req, res) => {
@@ -62,19 +62,19 @@ function createGitHubSyncRouter(options = {}) {
       if (repository.permissions?.push === false) throw new Error("此仓库没有写入权限，请检查 GitHub 应用或令牌的 Contents 权限");
       res.json({ ok: true, repository: await sync.setConfig({ ...config, branch: req.body?.branch || repository.default_branch || "main" }) });
     }
-    catch (error) { res.status(400).json({ ok: false, error: error.message }); }
+    catch (error) { res.status(400).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.post("/repository/create", async (req, res) => {
     try {
       const repository = await (new GitHubApiClient({ token: await auth.getAccessToken() })).createPrivateRepository(req.body?.name || "freeflow-workspace", req.body?.description);
       res.json({ ok: true, repository });
-    } catch (error) { res.status(error.status || 400).json({ ok: false, error: error.message }); }
+    } catch (error) { res.status(error.status || 400).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs }); }
   });
 
   router.get("/workspace", async (_req, res) => {
     try { res.json({ ok: true, ...(await sync.getWorkspace({ includeDeleted: String(_req.query?.includeDeleted || "") === "true" })) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "" }); }
   });
 
   router.post("/attachment-policy/evaluate", (req, res) => {
@@ -83,47 +83,47 @@ function createGitHubSyncRouter(options = {}) {
 
   router.post("/sync", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.syncBoard(req.body || {})) }); }
-    catch (error) { res.status(error.code === "REMOTE_CHANGED" ? 409 : error.status || 500).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+    catch (error) { res.status(error.code === "REMOTE_CHANGED" ? 409 : error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   router.post("/workspace/plan", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.getWorkspacePlan(req.body || {})) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "" }); }
   });
 
   router.post("/workspace/sync", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.syncWorkspace(req.body || {})) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", state: error.state || undefined }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", state: error.state || undefined }); }
   });
 
   router.post("/workspace/pull", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.pullWorkspace(req.body || {})) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", state: error.state || undefined }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", state: error.state || undefined }); }
   });
 
   router.post("/download", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.downloadBoard(req.body || {})) }); }
-    catch (error) { res.status(error.status || (error.code === "REMOTE_CHANGED" || error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+    catch (error) { res.status(error.status || (error.code === "REMOTE_CHANGED" || error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   router.get("/boards", async (_req, res) => {
     try { res.json({ ok: true, ...(await sync.listBoards({ includeDeleted: String(_req.query?.includeDeleted || "") === "true" })) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "" }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "" }); }
   });
 
   router.get("/boards/:boardId/state", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.getBoardState({ boardId: req.params.boardId, boardPath: req.query?.boardPath || "" })) }); }
-    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+    catch (error) { res.status(error.status || 500).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   router.post("/pull", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.pullBoard(req.body || {})) }); }
-    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" ? 409 : 500)).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   router.post("/reconcile", async (req, res) => {
     try { res.json({ ok: true, ...(await sync.reconcileBoard(req.body || {})) }); }
-    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" || error.code === "SYNC_MERGE_REQUIRED" ? 409 : 500)).json({ ok: false, error: error.message, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
+    catch (error) { res.status(error.status || (error.code === "SYNC_CONFLICT" || error.code === "SYNC_MERGE_REQUIRED" ? 409 : 500)).json({ ok: false, error: error.message, retryAfterMs: error.retryAfterMs, code: error.code || "", conflicts: error.conflicts || undefined, artifacts: error.artifacts || undefined, state: error.state || undefined }); }
   });
 
   return router;
