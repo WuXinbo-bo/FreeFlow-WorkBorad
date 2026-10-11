@@ -56,7 +56,7 @@ export function CanvasRecoveryDialog({ recovery, busy, error, onClose, onRestore
   useEffect(() => {
     if (!blocked && !rootRef.current?.contains(document.activeElement)) rootRef.current?.querySelector("button:not(:disabled)")?.focus();
   }, [blocked, Boolean(selected)]);
-  return <div className="canvas2d-workspace-confirm-backdrop" data-shape-include="true"><section ref={rootRef} className="canvas2d-workspace-confirm canvas2d-workspace-recovery" role="dialog" aria-modal="true" aria-label={history ? "历史版本" : "回收站"} onKeyDown={(event) => {
+  return <div className="canvas2d-workspace-confirm-backdrop" data-shape-include="true"><section ref={rootRef} className="canvas2d-workspace-confirm canvas2d-workspace-recovery canvas-chrome-surface" role="dialog" aria-modal="true" aria-label={history ? "历史版本" : "回收站"} onKeyDown={(event) => {
     event.stopPropagation();
     if (event.key === "Escape" && !blocked) { event.preventDefault(); if (selected) setSelected(null); else onClose(); }
   }}>

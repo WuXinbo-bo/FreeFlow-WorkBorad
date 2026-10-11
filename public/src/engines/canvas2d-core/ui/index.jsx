@@ -552,7 +552,7 @@ function CanvasNavigatorPanel({
     return (
       <button
         type="button"
-        className="canvas2d-navigator-tab"
+        className="canvas2d-navigator-tab canvas-chrome-surface"
         onClick={() => onCollapse?.(false)}
         aria-label="展开画布目录"
         title="展开画布目录"
@@ -860,7 +860,7 @@ function CanvasNavigatorPanel({
           <button
             type="button"
             className="canvas2d-navigator-entry-main"
-            aria-disabled={!canFocus}
+            aria-disabled={!canFocus && !isFolder && editingId !== entry.id}
             title={canFocus ? "定位到画布元素" : isFolder ? "独立目录文件夹" : "目标元素已不存在"}
           >
             <span className="canvas2d-navigator-entry-index" aria-hidden="true">
@@ -919,7 +919,7 @@ function CanvasNavigatorPanel({
   return (
     <section
       ref={panelRef}
-      className="canvas2d-navigator-panel"
+      className="canvas2d-navigator-panel canvas-chrome-surface"
       aria-label="画布目录"
       tabIndex={0}
       onKeyDown={handleNavigatorKeyDown}
@@ -999,7 +999,7 @@ function CanvasNavigatorPanel({
       </div>
       {menuState ? (
         <div
-          className="canvas2d-navigator-context-menu"
+          className="canvas2d-navigator-context-menu canvas-chrome-surface"
           style={{ left: menuState.x, top: menuState.y }}
           onClick={(event) => event.stopPropagation()}
         >
@@ -2405,7 +2405,8 @@ function Canvas2DControls({ engine }) {
         "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
       }}
     >
-      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} onShowDirectory={() => bridge.setCanvasNavigatorCollapsed?.(false)}>
+      <div className="canvas2d-navigation-panels"><div className="canvas2d-navigation-docks">
+      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} />
       <CanvasNavigatorPanel
         key={snapshot.boardFilePath}
         navigator={navigatorView}
@@ -2421,7 +2422,7 @@ function Canvas2DControls({ engine }) {
         onCancelPickFolderTarget={() => bridge.cancelCanvasNavigatorFolderTargetPick?.()}
         pendingTargetFolderId={navigatorPendingTargetFolderId}
       />
-      </BoardWorkspacePanel>
+      </div></div>
       <div
         className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >
