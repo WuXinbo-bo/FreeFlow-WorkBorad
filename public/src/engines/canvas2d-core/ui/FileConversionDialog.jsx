@@ -12,7 +12,7 @@ function ConversionSession({ request, engine }) {
   const [files, setFiles] = useState([]);
   const [inserted, setInserted] = useState(false);
   const [serviceUnavailable, setServiceUnavailable] = useState(false);
-  const taskRef = useRef(""); const mounted = useRef(true); const busyRef = useRef(false);
+  const taskRef = useRef(""); const mounted = useRef(true); const busyRef = useRef(false); const pollRef = useRef(null);
   const rootRef = useRef(null);
   const shell = globalThis.desktopShell;
   const setOption = (key, value) => setOptions((current) => ({ ...current, [key]: value }));
@@ -31,6 +31,7 @@ function ConversionSession({ request, engine }) {
   function close() {
     if (!mounted.current) return;
     mounted.current = false;
+    clearInterval(pollRef.current);
     const taskId = taskRef.current; taskRef.current = "";
     engine.closeFileConversion();
     void cancelTask(taskId);
@@ -47,7 +48,7 @@ function ConversionSession({ request, engine }) {
       }
     };
     document.addEventListener("keydown", key, true);
-    return () => { mounted.current = false; document.removeEventListener("keydown", key, true); void cancelTask(); if (previous?.isConnected) previous.focus?.(); };
+    return () => { mounted.current = false; clearInterval(pollRef.current); document.removeEventListener("keydown", key, true); void cancelTask(); if (previous?.isConnected) previous.focus?.(); };
   }, []);
   async function run(capabilities = false) {
     if (busyRef.current || serviceUnavailable || !shell?.runFileWorkstation) return;
@@ -58,7 +59,7 @@ function ConversionSession({ request, engine }) {
       if (!mounted.current || (!capabilities && (directory?.canceled || !directory?.filePath))) { if (mounted.current) setMessage("已取消选择，原文件未改变"); return; }
       const taskId = `convert-${Date.now()}-${Math.random().toString(36).slice(2)}`; taskRef.current = taskId;
       if (!capabilities) { setFiles([]); setInserted(false); }
-      poll = setInterval(() => { void shell.getFileWorkstationStatus(taskId).then((status) => { if (mounted.current && taskRef.current === taskId && status.ok) setMessage(`${status.message} (${status.done}/${status.total})`); }).catch(() => {}); }, 400);
+      poll = pollRef.current = setInterval(() => { void shell.getFileWorkstationStatus(taskId).then((status) => { if (mounted.current && taskRef.current === taskId && status.ok) setMessage(`${status.message} (${status.done}/${status.total})`); }).catch(() => {}); }, 400);
       const result = await shell.runFileWorkstation({ taskId, operation: capabilities ? "capabilities" : operation, sources: sources.map((source) => source.filePath), outputDir: directory?.filePath || "", options });
       if (!mounted.current) return;
       if (!result.ok) { setMessage(result.canceled ? "已取消，临时文件已清理" : result.error || "转换失败"); return; }
