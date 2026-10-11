@@ -1,3 +1,4 @@
+import { isFrame } from "./frames/frameModel.js";
 import { getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
 import { sceneToScreen } from "./camera.js";
@@ -56,7 +57,7 @@ export function drawShapeElement(ctx, element, view, selected, hover, helpers) {
       ctx.fill();
     }
   } else {
-    drawRoundedRect(ctx, x, y, width, height, element.shapeType === "highlight" ? 16 : Number(element.radius || 18));
+    drawRoundedRect(ctx, x, y, width, height, isFrame(element) ? 0 : element.shapeType === "highlight" ? 16 : Number(element.radius || 18));
     if (element.shapeType === "highlight") {
       ctx.globalAlpha = 0.95;
       ctx.fill();
@@ -68,10 +69,15 @@ export function drawShapeElement(ctx, element, view, selected, hover, helpers) {
     }
   }
 
+  if (isFrame(element)) {
+    ctx.fillStyle = "#64748b";
+    ctx.font = `${Math.max(10, scaleSceneValue(view, 18))}px sans-serif`;
+    ctx.fillText(`${(Number(element.frame.order) || 0) + 1}. ${element.title || "板块"}`, x + 12, y + Math.max(22, scaleSceneValue(view, 28)), Math.max(1, width - 24));
+  }
   helpers?.drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
   if (selected) {
-    helpers?.drawHandles?.(ctx, element, view);
-    drawRotateHandle(ctx, x, y, width, height);
+    if (!isFrame(element)) helpers?.drawHandles?.(ctx, element, view);
+    if (!isFrame(element)) drawRotateHandle(ctx, x, y, width, height);
   }
   ctx.restore();
 }

@@ -56,6 +56,10 @@ const CHECKS = [
   "scripts/check-canvas-semantic-transfer.js",
   "scripts/check-selection-dependency-closure.js",
   "scripts/check-export-image-hydration.js",
+  "scripts/check-word-selection-export.js",
+  "scripts/check-delivery-core.js",
+  "scripts/check-workspace-content-search.js",
+  "scripts/check-link-metadata.js",
   "scripts/check-canvas-large-scene-runtime.js",
   "scripts/check-presentation-snapshot-controller.js",
   "scripts/check-compact-presentation-runtime.js",
@@ -148,6 +152,9 @@ async function main() {
   try {
     await waitForServer(server);
     await runNodeScript("scripts/check-canvas-html-safety-browser.js", {
+      CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
+    });
+    await runNodeScript("scripts/check-delivery-features-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
     await runNodeScript("scripts/check-canvas-command-integration.js", {

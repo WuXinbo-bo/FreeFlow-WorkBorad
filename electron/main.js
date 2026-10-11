@@ -150,6 +150,11 @@ const BACKGROUND_EXPORT_IPC_CHANNELS = new Set([
 const assertTrustedIpcEvent = createIpcEventValidator({
   expectedOrigin: () => APP_URL,
   getAllowedWebContents(channel) {
+    if (channel === "desktop-shell:read-file-base64") {
+      return [mainWindow, backgroundExportWindow]
+        .filter((window) => window && !window.isDestroyed())
+        .map((window) => window.webContents);
+    }
     const window = BACKGROUND_EXPORT_IPC_CHANNELS.has(channel) ? backgroundExportWindow : mainWindow;
     return window && !window.isDestroyed() ? [window.webContents] : [];
   },
