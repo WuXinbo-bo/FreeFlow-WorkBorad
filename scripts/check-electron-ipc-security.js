@@ -33,11 +33,17 @@ const backgroundChannels = new Set([
 const validate = createIpcEventValidator({
   expectedOrigin: "http://127.0.0.1:3000/",
   getAllowedWebContents(channel) {
+    if (channel === "desktop-shell:read-file-base64") return [mainSender, backgroundSender];
     return backgroundChannels.has(channel) ? [backgroundSender] : [mainSender];
   },
 });
 
 validate({ sender: mainSender, senderFrame: mainSender.mainFrame }, "desktop-shell:get-state");
+validate({ sender: mainSender, senderFrame: mainSender.mainFrame }, "desktop-shell:read-file-base64");
+assertThrows(
+  () => validate({ sender: mainSender, senderFrame: mainSender.mainFrame }, "desktop-shell:background-export-result"),
+  "main window could impersonate the background export worker"
+);
 validate(
   { sender: backgroundSender, senderFrame: backgroundSender.mainFrame },
   "desktop-shell:background-export-result"
@@ -52,6 +58,10 @@ assertThrows(
   "background window could invoke a main-window channel"
 );
 const foreignSender = createWebContents("http://127.0.0.1:3000/");
+assertThrows(
+  () => validate({ sender: foreignSender, senderFrame: foreignSender.mainFrame }, "desktop-shell:read-file-base64"),
+  "foreign sender could read image bytes"
+);
 assertThrows(
   () => validate({ sender: foreignSender, senderFrame: foreignSender.mainFrame }, "desktop-shell:get-state"),
   "foreign sender was accepted"

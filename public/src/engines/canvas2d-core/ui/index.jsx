@@ -1,3 +1,5 @@
+import { InboxPanel } from "./InboxPanel.jsx";
+import { createWorkspaceSearchIndex } from "../search/workspaceSearchIndex.js";
 import React, { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createCanvas2DReactBridge } from "../reactBridge.js";
@@ -8,6 +10,7 @@ import {
 } from "../tutorial-system/canvasTutorialIndex.js";
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
+import { DeliveryPanel } from "./DeliveryPanel.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
 import { FolderOpen } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
@@ -1757,6 +1760,19 @@ function Canvas2DControls({ engine }) {
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [infoPanelAutoCollapsed, setInfoPanelAutoCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [searchRange, setSearchRange] = useState("current");
+  const [workspaceSearch, setWorkspaceSearch] = useState({ results: [], warnings: [], loading: false });
+  const [workspaceSearchEpoch, setWorkspaceSearchEpoch] = useState(0);
+  const workspaceIndex = useMemo(() => createWorkspaceSearchIndex({ listBoards: (root) => engine.listCanvasBoards(root), readBoard: (path) => globalThis.desktopShell.readFile(path) }), [engine]);
+  useEffect(() => {
+    const changed = () => { workspaceIndex.invalidate(); setWorkspaceSearchEpoch((value) => value + 1); };
+    const stop = globalThis.desktopShell?.onCanvasWorkspaceChanged?.(changed);
+    window.addEventListener("freeflow:workspace-files-changed", changed);
+    return () => { stop?.(); window.removeEventListener("freeflow:workspace-files-changed", changed); workspaceIndex.dispose(); };
+  }, [workspaceIndex]);
+
   const [exportHistoryOpen, setExportHistoryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
@@ -1995,7 +2011,7 @@ function Canvas2DControls({ engine }) {
     () => buildCanvasSearchIndex(snapshot?.board?.items || []),
     [snapshot?.board?.items]
   );
-  const searchResults = useMemo(
+  const currentSearchResults = useMemo(
     () =>
       buildCanvasSearchResults(searchIndexEntries, deferredSearchQuery, {
         limit: 12,
@@ -2003,6 +2019,21 @@ function Canvas2DControls({ engine }) {
       }),
     [searchIndexEntries, deferredSearchQuery, searchFilterKey]
   );
+  useEffect(() => {
+    if (!searchOpen || searchRange !== "workspace" || !deferredSearchQuery.trim()) { setWorkspaceSearch({ results: [], warnings: [], loading: false }); return; }
+    const controller = new AbortController();
+    setWorkspaceSearch((previous) => ({ ...previous, results: [], loading: true }));
+    const timer = setTimeout(async () => {
+      try {
+        const root = await engine.getCanvasBoardWorkspace();
+        if (controller.signal.aborted) return;
+        const result = await workspaceIndex.search(root, deferredSearchQuery, { currentPath: boardFilePath, currentItems: snapshot.board.items, filterKey: searchFilterKey, limit: 80, signal: controller.signal });
+        if (!controller.signal.aborted && !result.canceled) setWorkspaceSearch({ ...result, loading: false });
+      } catch (error) { if (!controller.signal.aborted) setWorkspaceSearch({ results: [], warnings: [error.message], loading: false }); }
+    }, 180);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [engine, workspaceIndex, searchOpen, searchRange, deferredSearchQuery, searchFilterKey, boardFilePath, snapshot?.board?.items, workspaceSearchEpoch]);
+  const searchResults = searchRange === "workspace" ? workspaceSearch.results : currentSearchResults;
   const boardSearchStats = useMemo(() => {
     const items = Array.isArray(snapshot?.board?.items) ? snapshot.board.items : [];
     return collectCanvasSearchStats(items);
@@ -2275,16 +2306,19 @@ function Canvas2DControls({ engine }) {
     bridge.openExternalUrl?.(value);
   };
 
-  const focusSearchResult = (result) => {
+  const focusSearchResult = async (result) => {
     if (!result?.id) {
       return;
     }
-    const items = snapshot?.board?.items || [];
-    const item = items.find((entry) => entry.id === result.id);
-    if (!item) {
-      return;
+    if (result.boardPath && result.boardPath !== engine.getSnapshot().boardFilePath) {
+      const opened = await engine.openBoardAtPath(result.boardPath);
+      if (!opened) { showToast("未能切换画布；当前修改已保留，请检查保存或文件状态"); return; }
     }
-    const bounds = getElementBounds(item);
+    const item = engine.getSnapshot()?.board?.items?.find((entry) => entry.id === result.id);
+    if (!item) { showToast("搜索目标已删除，请重新搜索"); workspaceIndex.invalidate([result.boardPath]); setWorkspaceSearchEpoch((value) => value + 1); return; }
+    engine.revealSearchItem?.(item.id);
+    const revealed = engine.getSnapshot()?.board?.items?.find((entry) => entry.id === item.id) || item;
+    const bounds = getElementBounds(revealed);
     if (!bounds) {
       return;
     }
@@ -2428,7 +2462,7 @@ function Canvas2DControls({ engine }) {
       />
       </div></div>
       <div
-        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
+        className={`canvas2d-engine-topbar${searchOpen ? " is-search-open" : ""}${deliveryOpen || inboxOpen ? " is-delivery-open" : ""}${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-info-collapsed" : ""}`}
       >
       <div
         ref={infoPanelRef}
@@ -3198,8 +3232,10 @@ function Canvas2DControls({ engine }) {
           </div>
         </div>
       </div>
-      <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen ? " is-overlay-active" : ""}`}>
+      <div className={`canvas2d-engine-search-stack${searchOpen || exportHistoryOpen || deliveryOpen || inboxOpen ? " is-overlay-active" : ""}`}>
         <div className="canvas2d-engine-search-row canvas-chrome-surface canvas-chrome-utility-dock">
+          <InboxPanel engine={engine} snapshot={snapshot} onOpenChange={setInboxOpen} />
+          <DeliveryPanel engine={engine} snapshot={snapshot} onOpenChange={setDeliveryOpen} />
           <div ref={searchRef} className="canvas2d-engine-search-wrap" aria-label="画布内容搜索入口">
             <CanvasSearchOverlay
               isOpen={searchOpen}
@@ -3207,6 +3243,11 @@ function Canvas2DControls({ engine }) {
               results={searchResults}
               stats={boardSearchStats}
               scopeItems={searchScopeItems}
+              range={searchRange}
+              onRangeChange={(value) => { setSearchRange(value); setSearchActiveIndex(0); }}
+              workspaceSupported={typeof globalThis.desktopShell?.listCanvasBoards === "function"}
+              loading={workspaceSearch.loading}
+              warnings={workspaceSearch.warnings}
               activeFilterKey={searchFilterKey}
               activeIndex={searchActiveIndex}
               highlightQuery={searchQuery}
@@ -3362,6 +3403,7 @@ function Canvas2DControls({ engine }) {
       <WordExportPreviewDialog
         request={wordExportPreviewRequest}
         exporting={Boolean(wordExportPreviewRequest?.exporting)}
+        onReorder={(id, direction) => engine.reorderWordExportPreview(wordExportPreviewRequest?.id, id, direction)}
         onClose={() => bridge.closeWordExportPreview(wordExportPreviewRequest?.id)}
         onConfirm={() => {
           void bridge.confirmWordExportPreview(wordExportPreviewRequest?.id);

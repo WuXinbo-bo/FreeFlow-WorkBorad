@@ -1,3 +1,4 @@
+import { getFrames, isFrame } from "../../frames/frameModel.js";
 import {
   ensureRichTextDocumentFields,
   createRichTextDocumentFromHtml,
@@ -16,7 +17,7 @@ const WORD_EXPORT_AST_KIND = "freeflow-word-export";
 const WORD_EXPORT_AST_VERSION = 1;
 const EXPORT_FONT_POLICY_MODE = "restricted";
 const SELECTION_SORT_STRATEGY_VERSION = 1;
-const SUPPORTED_SELECTION_ITEM_TYPES = new Set(["text", "flowNode", "table", "codeBlock", "mathBlock", "mathInline"]);
+const SUPPORTED_SELECTION_ITEM_TYPES = new Set(["text", "flowNode", "table", "codeBlock", "mathBlock", "mathInline", "image", "mindNode", "mindSummary"]);
 
 const EXPORT_FONT_FAMILIES = Object.freeze({
   latinBody: "Arial",
@@ -746,7 +747,7 @@ function sortVisualSelectionEntries(entries = []) {
 }
 
 function createSelectionPlanEntry(item, originalIndex) {
-  const type = normalizeSelectionType(item?.type || "");
+  const type = isFrame(item) ? "frame" : normalizeSelectionType(item?.type || "");
   return {
     item,
     id: String(item?.id || "").trim(),
@@ -778,13 +779,28 @@ export function buildSelectionWordExportPlan(items = [], options = {}) {
       skippedEntries.push({ ...entry, reason: "missing-id" });
       return;
     }
-    if (!SUPPORTED_SELECTION_ITEM_TYPES.has(entry.type)) {
+    if (!SUPPORTED_SELECTION_ITEM_TYPES.has(entry.type) && entry.type !== "frame") {
       skippedEntries.push({ ...entry, reason: "unsupported-type" });
       return;
     }
     sortableEntries.push(entry);
   });
-  const orderedEntries = sortVisualSelectionEntries(sortableEntries);
+  let orderedEntries = sortVisualSelectionEntries(sortableEntries);
+  const frames = getFrames(normalizedItems);
+  if (frames.length) {
+    const byId = new Map(orderedEntries.map((entry) => [entry.id, entry]));
+    const claimed = new Set();
+    const sections = [];
+    for (const frame of frames) {
+      sections.push(byId.get(frame.id)); claimed.add(frame.id);
+      for (const entry of orderedEntries) if (entry.item.frameId === frame.id) { sections.push(entry); claimed.add(entry.id); }
+    }
+    orderedEntries = [...sections, ...orderedEntries.filter((entry) => !claimed.has(entry.id))].filter(Boolean);
+  }
+  if (Array.isArray(options.orderedItemIds)) {
+    const rank = new Map(options.orderedItemIds.map((id, index) => [id, index]));
+    orderedEntries.sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+  }
   return {
     orderedEntries,
     skippedEntries,
@@ -798,6 +814,9 @@ function convertSelectionEntryToAstNodes(entry, context) {
   if (!item || !type) {
     return [];
   }
+  if (type === "frame") return [{ type: "heading", level: 1, children: [{ type: "text", text: item.title || "未命名板块" }] }];
+  if (type === "image") return [{ type: "paragraph", children: [{ type: "image", src: item.dataUrl || item.sourcePath || "", alt: item.title || item.name || "图片", width: item.width, height: item.height }] }];
+  if (type === "mindNode" || type === "mindSummary") return [{ type: "paragraph", children: [{ type: "text", text: item.plainText || item.text || item.title || "节点" }] }];
   if (type === "text") {
     return buildSelectionTextChildren(item, context);
   }
@@ -857,18 +876,43 @@ export function buildWordExportAstFromCanvasSelection(items = [], options = {}) 
   });
   const context = createCompilerContext();
   const children = [];
+  const nodes = plan.orderedEntries.filter((entry) => entry.type === "mindNode");
+  const nodeMap = new Map(nodes.map((entry) => [entry.id, entry]));
+  const emitted = new Set();
+  function mindList(entry, ancestors = new Set()) {
+    if (ancestors.has(entry.id) || emitted.has(entry.id)) return null;
+    emitted.add(entry.id);
+    const nextAncestors = new Set([...ancestors, entry.id]);
+    const childIds = Array.isArray(entry.item.childrenIds) ? entry.item.childrenIds : [];
+    const childrenEntries = nodes.filter((child) => child.item.parentId === entry.id || childIds.includes(child.id))
+      .sort((a, b) => (childIds.indexOf(a.id) < 0 ? 9999 : childIds.indexOf(a.id)) - (childIds.indexOf(b.id) < 0 ? 9999 : childIds.indexOf(b.id)) || (a.item.order || 0) - (b.item.order || 0));
+    const nestedItems = childrenEntries.map((child) => mindList(child, nextAncestors)).filter(Boolean);
+    return { children: [
+      { type: "paragraph", children: [{ type: "text", text: entry.item.plainText || entry.item.text || entry.item.title || "节点" }] },
+      ...(nestedItems.length ? [{ type: "list", ordered: false, items: nestedItems }] : []),
+    ] };
+  }
+  let chapter = false;
   plan.orderedEntries.forEach((entry, index) => {
     context.footnoteNamespace = entry.id;
-    const nextChildren = convertSelectionEntryToAstNodes(entry, context);
-    if (!nextChildren.length) {
-      plan.skippedEntries.push({ ...entry, reason: "empty-content" });
-      return;
-    }
-    if (children.length && index > 0) {
-      children.push(createSeparatorParagraph());
-    }
+    let nextChildren;
+    if (entry.type === "mindNode") {
+      if (emitted.has(entry.id)) return;
+      if (nodeMap.has(entry.item.parentId) && !emitted.has(entry.item.parentId)) return;
+      const tree = mindList(entry);
+      nextChildren = tree ? [{ type: "list", ordered: false, items: [tree] }] : [];
+    } else nextChildren = convertSelectionEntryToAstNodes(entry, context);
+    if (!nextChildren.length) { plan.skippedEntries.push({ ...entry, reason: "empty-content" }); return; }
+    if (entry.type === "frame") chapter = true;
+    else if (chapter) nextChildren = nextChildren.map((node) => node.type === "heading" ? { ...node, level: Math.min(6, (node.level || 1) + 1) } : node);
+    if (children.length && index > 0) children.push(createSeparatorParagraph());
     children.push(...nextChildren);
   });
+  // Recover orphaned/cyclic nodes once, without losing content or recursing forever.
+  for (const entry of nodes) if (!emitted.has(entry.id)) {
+    const tree = mindList(entry);
+    if (tree) children.push({ type: "list", ordered: false, items: [tree] });
+  }
   const finalPlanMeta = buildSelectionPlanMeta(plan.orderedEntries, plan.skippedEntries);
   const footnotes = Array.from(context.footnotes.values());
   return {

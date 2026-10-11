@@ -71,6 +71,8 @@ async function readBootCoverage(page) {
 
 async function assertAtomicBoot(page, label) {
   await page.waitForSelector(".boot-splash");
+  // Navigation at "commit" may paint the splash before the rest of the body is parsed.
+  await page.waitForSelector(".page-shell", { state: "attached" });
   const coverage = await readBootCoverage(page);
   assert(
     coverage.booting &&

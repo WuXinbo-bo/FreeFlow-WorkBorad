@@ -5,6 +5,7 @@ const {
   ExternalHyperlink,
   FootnoteReferenceRun,
   HeadingLevel,
+  ImageRun,
   HighlightColor,
   LevelFormat,
   LevelSuffix,
@@ -1356,6 +1357,8 @@ function compileInlineNodes(nodes = [], state, inlineContext = {}) {
       return new FootnoteReferenceRun(footnote.number);
     }
     if (node.type === "image") {
+      const asset = state.imageAssets?.get(node.src);
+      if (asset) return new ImageRun({ type: "png", data: asset.bytes, transformation: { width: asset.width, height: asset.height }, altText: { title: String(node.alt || "图片"), description: String(node.title || node.alt || "图片"), name: "FreeFlow image" } });
       const altText = String(node.alt || node.title || node.src || "图片").trim();
       return new TextRun({
         text: `[图片：${altText}]`,
@@ -1975,11 +1978,41 @@ function buildWordPackageOverrides(doc, theme) {
   ];
 }
 
+async function buildWordImageAssets(ast) {
+  const sources = new Set();
+  function visit(value) {
+    if (!value || typeof value !== "object") return;
+    if (value.type === "image" && typeof value.src === "string") sources.add(value.src);
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) child.forEach(visit);
+      else if (child && typeof child === "object") visit(child);
+    }
+  }
+  visit(ast.sections);
+  const assets = new Map();
+  let total = 0;
+  const sharp = require("sharp");
+  for (const source of sources) {
+    const match = /^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/i.exec(source);
+    if (!match || match[2].length > 12 * 1024 * 1024) continue;
+    const data = Buffer.from(match[2], "base64");
+    total += data.length;
+    if (total > 24 * 1024 * 1024) throw new Error("Word 图片总量超过导出限制，请分批导出");
+    try {
+      const { data: bytes, info } = await sharp(data, { limitInputPixels: 40000000 }).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer({ resolveWithObject: true });
+      const ratio = Math.min(1, 560 / info.width, 760 / info.height);
+      assets.set(source, { bytes, width: Math.max(1, Math.round(info.width * ratio)), height: Math.max(1, Math.round(info.height * ratio)) });
+    } catch { /* Invalid image remains an explicit placeholder. */ }
+  }
+  return assets;
+}
+
 async function compileWordExportAstToDocxBuffer(ast) {
   const normalizedAst = normalizeAst(ast);
   const theme = normalizeTheme(normalizedAst);
   const state = createCompilerState(normalizedAst, theme);
   state.mathCache = await buildWordMathCache(normalizedAst);
+  state.imageAssets = await buildWordImageAssets(normalizedAst);
   const doc = new Document({
     title: String(normalizedAst?.meta?.title || "文本").trim() || "文本",
     creator: String(normalizedAst?.meta?.creator || "FreeFlow").trim() || "FreeFlow",

@@ -22,7 +22,11 @@
 }
 
 .canvas2d-engine-search-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   width: 100%;
+  min-width: 0;
 }
 
 .canvas2d-engine-toolbar.canvas-chrome-toolbar {
@@ -50,7 +54,7 @@
   min-height: var(--canvas-chrome-height);
   max-height: var(--canvas-chrome-height);
   align-items: center !important;
-  margin-left: auto;
+  margin-left: 0;
   padding: 2px !important;
   box-sizing: border-box;
 }

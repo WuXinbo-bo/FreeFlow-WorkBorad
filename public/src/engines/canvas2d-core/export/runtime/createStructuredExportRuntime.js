@@ -1,3 +1,6 @@
+import { prepareWordExportAssets } from "../word/prepareWordExportAssets.js";
+import { getFramePagePlans } from "../../frames/frameModel.js";
+import { exportFramePagesAsPdf } from "../exportFramePagesAsPdf.js";
 import { renderBoardToCanvas as renderExportBoardToCanvas } from "../renderBoardToCanvas.js";
 import { renderSnapshotToTileExports } from "../tileExport.js";
 import { exportBoardAsPdf as runPdfExport } from "../exportBoardAsPdf.js";
@@ -589,6 +592,7 @@ export function createStructuredExportRuntime({
       devicePixelRatio: options.devicePixelRatio ?? 1,
       exportBounds: hydratedSnapshot?.bounds || null,
       allowUnsafeSize: Boolean(options.allowUnsafeSize),
+      ...(options.exactBounds ? { minPadding: 0, paddingRatio: 0 } : {}),
     });
     if (renderResult && typeof renderResult === "object") {
       renderResult.exportImageFallbackCount = Math.max(
@@ -789,6 +793,13 @@ export function createStructuredExportRuntime({
   }
 
   async function exportBoardAsPdf(board, options = {}) {
+    if (options.paginateFrames) {
+      const pages = getFramePagePlans(board.items || [], getElementBounds, { includeOutside: options.includeOutsideFrames !== false });
+      if (pages.length) return exportFramePagesAsPdf(pages, async (page) => {
+        const snapshot = { ...buildSnapshot(board, { scope: "selection", items: page.items }), bounds: page.bounds };
+        return renderSnapshotToCanvasWithSafety(snapshot, { ...options, exactBounds: true, backgroundFill: "#ffffff", renderTextInCanvas: true });
+      }, options);
+    }
     if (options?.signal?.aborted) {
       return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
     }
@@ -994,11 +1005,11 @@ export function createStructuredExportRuntime({
   }
 
   async function exportRichTextItemAsWordFile(item, options = {}) {
-    const ast = buildWordExportAstFromRichTextItem(item, {
+    const ast = await prepareWordExportAssets(buildWordExportAstFromRichTextItem(item, {
       title: String(item?.name || item?.title || "文本"),
       creator: "FreeFlow",
       lastModifiedBy: "FreeFlow",
-    });
+    }));
     const astHasContent = Array.isArray(ast?.sections) && ast.sections.some((section) => Array.isArray(section?.children) && section.children.length);
     if (!astHasContent) {
       const html = buildRichTextWordExportDocumentHtml(item);
@@ -1084,11 +1095,11 @@ export function createStructuredExportRuntime({
     if (!normalizedItems.length) {
       return { ok: false, canceled: false, code: "WORD_EXPORT_EMPTY_SELECTION", message: "未选中可导出内容" };
     }
-    const ast = buildWordExportAstFromCanvasSelection(normalizedItems, {
+    const ast = options.ast && !options.ast.assetWarnings ? await prepareWordExportAssets(options.ast) : options.ast || await prepareWordExportAssets(buildWordExportAstFromCanvasSelection(normalizedItems, {
       title: String(options.title || "画布导出").trim() || "画布导出",
       creator: "FreeFlow",
       lastModifiedBy: "FreeFlow",
-    });
+    }));
     const astHasContent = Array.isArray(ast?.sections) && ast.sections.some((section) => Array.isArray(section?.children) && section.children.length);
     if (!astHasContent) {
       return { ok: false, canceled: false, code: "WORD_EXPORT_EMPTY", message: "所选元素暂时无法导出为 Word" };

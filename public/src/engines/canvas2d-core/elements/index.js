@@ -408,6 +408,7 @@ export function normalizeBoard(input = {}) {
       allowLocalFileAccess:
         typeof board.preferences?.allowLocalFileAccess === "boolean" ? board.preferences.allowLocalFileAccess : true,
       backgroundPattern: normalizeBoardBackgroundPattern(board.preferences?.backgroundPattern),
+      collectionMode: board.preferences?.collectionMode === true,
     },
     navigator: normalizeCanvasNavigator(board.navigator),
   };

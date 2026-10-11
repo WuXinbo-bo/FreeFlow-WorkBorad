@@ -292,20 +292,21 @@ export function WordExportPreviewDialog({
   exporting = false,
   onClose,
   onConfirm,
+  onReorder,
 }) {
   if (!request?.open) {
     return null;
   }
   const model = request.preview || {};
   const skippedItems = Array.isArray(model.skippedItems) ? model.skippedItems : [];
-  const canExport = Number(model.exportableCount || 0) > 0 && !exporting;
+  const canExport = Number(model.exportableCount || 0) > 0 && !exporting && request.previewStatus !== "loading";
   return (
     <div className="canvas2d-word-export-overlay" role="dialog" aria-modal="true" aria-label="Word 导出预览">
       <div className="canvas2d-word-export-dialog">
         <div className="canvas2d-word-export-head">
           <div className="canvas2d-word-export-head-copy">
             <strong>Word 导出预览</strong>
-            <span>排版顺序：从上到下，同一行从左到右</span>
+            <span>可调整阅读顺序；Word 按内容重新分页</span>
           </div>
           <button type="button" className="canvas2d-word-export-head-close" onClick={onClose} aria-label="关闭 Word 导出预览">
             ×
@@ -318,6 +319,11 @@ export function WordExportPreviewDialog({
           <span>跳过 {model.skippedCount || 0}</span>
         </div>
 
+        <details className="canvas2d-word-export-note"><summary>调整阅读顺序</summary><ol className="canvas2d-word-reading-order">{(model.orderedItemIds || []).map((id, index, ids) => {
+          const item = request.sourceItems?.find((entry) => entry.id === id);
+          return <li key={id}><span>{index + 1}. {String(item?.title || item?.plainText || item?.name || item?.type || id).slice(0, 60)}</span><button type="button" disabled={exporting || index === 0} aria-label={`上移段落 ${index + 1}`} onClick={() => onReorder?.(id, -1)}>↑</button><button type="button" disabled={exporting || index === ids.length - 1} aria-label={`下移段落 ${index + 1}`} onClick={() => onReorder?.(id, 1)}>↓</button></li>;
+        })}</ol></details>
+        {request.assetWarnings?.length > 0 && <div className="canvas2d-word-export-note" role="alert">以下图片将使用占位：{request.assetWarnings.join("；")}</div>}
         <TypeSummary summary={model.typeSummary || {}} />
 
         <div className="canvas2d-word-export-body" aria-label="Word 预览">
