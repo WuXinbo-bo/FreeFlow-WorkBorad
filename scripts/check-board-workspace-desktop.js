@@ -356,12 +356,24 @@ async function main() {
     await page.evaluate(() => window.__canvas2dEngine.setCanvasNavigatorCollapsed(false));
     await directory.waitFor({ state: "visible" });
     assert.equal(await panel.locator(".canvas2d-navigator-panel, .canvas2d-navigator-tab").count(), 0, "directory is still nested in the file workspace");
+    const navigation = page.locator(".canvas2d-navigation-docks");
+    assert.equal(await navigation.locator(":scope > .canvas-chrome-surface").count(), 0, "navigation sections still have duplicate glass surfaces");
+    const assertSharedLayout = async () => {
+      const files = await panel.boundingBox();
+      const entries = await directory.boundingBox();
+      const backing = await navigation.boundingBox();
+      assert(Math.abs(files.x - entries.x) < 1 && Math.abs(files.width - entries.width) < 1, "files and directory do not share one width");
+      assert(Math.abs(entries.y - files.y - files.height) < 1, "files and directory do not form a continuous vertical panel");
+      assert(entries.y + entries.height <= backing.y + backing.height + 1, "directory escaped the shared backing");
+    };
+    await assertSharedLayout();
     const navigationSnapshot = await snapshot();
     for (let cycle = 0; cycle < 4; cycle += 1) {
       await panel.getByRole("button", { name: "收起画布工作区" }).click();
       assert(await directory.isVisible(), "collapsing files hid the canvas directory");
       await directory.getByRole("button", { name: "收起画布目录", exact: true }).click();
       assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible());
+      assert((await navigation.boundingBox()).width <= 36, "fully collapsed navigation did not restore its compact rail");
       await page.getByRole("button", { name: "展开画布目录", exact: true }).click();
       assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "opening the directory also opened files");
       await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
@@ -382,22 +394,26 @@ async function main() {
     await directory.locator(".canvas2d-navigator-title-input").press("Enter");
     await directory.getByText("独立目录测试", { exact: true }).waitFor();
     for (let index = 0; index < 16; index += 1) await directory.getByLabel("新建文件夹", { exact: true }).click();
-    assert(await directory.locator(".canvas2d-navigator-list").evaluate((list) => list.scrollHeight > list.clientHeight), "long directories do not scroll within their own card");
+    assert(await directory.locator(".canvas2d-navigator-list").evaluate((list) => list.scrollHeight > list.clientHeight), "long directories do not scroll within their own section");
     await directory.locator(".canvas2d-navigator-entry").last().scrollIntoViewIfNeeded();
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     const widthBefore = (await panel.boundingBox()).width;
     await panel.getByRole("separator", { name: "调整工作区宽度" }).press("ArrowRight");
-    assert((await panel.boundingBox()).width > widthBefore, "independent workspace width control stopped working");
+    assert((await panel.boundingBox()).width > widthBefore, "shared workspace width control stopped working");
+    await assertSharedLayout();
     await panel.getByRole("separator", { name: "调整工作区宽度" }).press("ArrowLeft");
     await page.evaluate(() => document.activeElement?.blur());
     await page.mouse.move(1200, 100);
     await page.waitForTimeout(200);
     const glass = await page.evaluate(() => {
       const read = (selector) => { const style = getComputedStyle(document.querySelector(selector)); return { background: style.backgroundColor, blur: style.backdropFilter, radius: style.borderRadius }; };
-      return { files: read(".canvas2d-workspace-panel"), directory: read(".canvas2d-navigator-panel"), toolbar: read(".canvas2d-engine-toolbar") };
+      return { backing: read(".canvas2d-navigation-docks"), files: read(".canvas2d-workspace-panel"), directory: read(".canvas2d-navigator-panel"), toolbar: read(".canvas2d-engine-toolbar") };
     });
-    assert.deepEqual(glass.files, glass.toolbar, "file workspace does not use the shared frosted glass");
-    assert.deepEqual(glass.directory, glass.toolbar, "directory does not use the shared frosted glass");
+    assert.deepEqual(glass.backing, glass.toolbar, "navigation backing does not use the shared frosted glass");
+    for (const section of [glass.files, glass.directory]) {
+      assert.equal(section.background, "rgba(0, 0, 0, 0)", "navigation section obscures the shared backing");
+      assert.equal(section.blur, "none", "navigation section applies a second layer of blur");
+    }
     for (let cycle = 0; cycle < 4; cycle += 1) {
       await panel.getByRole("button", { name: "收起画布工作区" }).click();
       await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
@@ -408,6 +424,8 @@ async function main() {
     assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "sidebar collapsed preference lost on reload");
     assert(await directory.isVisible(), "directory open state was coupled to the collapsed workspace on reload");
     await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    await assertSharedLayout();
+    assert(Math.abs((await panel.boundingBox()).width - widthBefore) < 1, "shared width preference lost on reload");
     const screenshotDir = process.env.FREEFLOW_SCREENSHOT_DIR;
     if (screenshotDir) {
       await fs.mkdir(screenshotDir, { recursive: true });
@@ -426,7 +444,7 @@ async function main() {
     assert(bounds.width <= 360, "sidebar overflowed a narrow canvas pane");
     const directoryBounds = await directory.boundingBox();
     const narrowStage = await page.locator(".desktop-clear-stage").boundingBox();
-    assert(directoryBounds.y >= bounds.y + bounds.height + 8, "narrow file and directory panels overlap");
+    await assertSharedLayout();
     assert(directoryBounds.x + directoryBounds.width <= narrowStage.x + narrowStage.width, "directory overflowed the narrow canvas");
     assert(await directory.getByLabel("新建文件夹", { exact: true }).isVisible(), "directory controls are not reachable in the narrow canvas");
     await directory.getByRole("button", { name: "收起画布目录", exact: true }).click();

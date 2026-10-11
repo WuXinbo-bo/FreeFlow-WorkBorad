@@ -251,6 +251,7 @@ export function createTransientMinimap({
   let placementObserver = null;
   let sizeObserver = null;
   let observedZoom = null;
+  let observedNavigation = null;
   let placementFrame = 0;
 
   function schedulePlacement() {
@@ -401,8 +402,14 @@ export function createTransientMinimap({
       observedZoom = zoom || null;
       if (observedZoom) sizeObserver.observe(observedZoom);
     }
+    const navigation = stage?.querySelector(".canvas2d-navigation-docks");
+    if (sizeObserver && navigation !== observedNavigation) {
+      if (observedNavigation) sizeObserver.unobserve(observedNavigation);
+      observedNavigation = navigation || null;
+      if (observedNavigation) sizeObserver.observe(observedNavigation);
+    }
     const hostRect = host.getBoundingClientRect();
-    const obstacles = Array.from(stage?.querySelectorAll(".canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open") || [])
+    const obstacles = Array.from(stage?.querySelectorAll(".canvas2d-navigation-docks:has(.canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open), .canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open") || [])
       .filter((element) => getComputedStyle(element).display !== "none")
       .map((element) => element.getBoundingClientRect());
     const zoomRect = zoom?.getBoundingClientRect();
@@ -494,7 +501,7 @@ export function createTransientMinimap({
       sizeObserver.observe(host);
       sizeObserver.observe(shell);
       const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host.parentElement;
-      const placementSelector = ".canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom, .canvas2d-workspace-panel";
+      const placementSelector = ".canvas2d-navigation-docks, .canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom, .canvas2d-workspace-panel";
       // React replaces directory DOM after the board update; measure that committed layout.
       placementObserver = new MutationObserver((records) => {
         if (records.some((record) => record.type === "attributes"
@@ -520,6 +527,7 @@ export function createTransientMinimap({
       placementObserver = null;
       sizeObserver = null;
       observedZoom = null;
+      observedNavigation = null;
       if (placementFrame) cancelAnimationFrame(placementFrame);
       placementFrame = 0;
       lastSceneRevision = -1;

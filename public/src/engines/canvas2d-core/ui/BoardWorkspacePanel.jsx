@@ -13,7 +13,7 @@ function IconButton({ label, children, ...props }) {
   return <button type="button" className="canvas2d-workspace-icon" title={label} aria-label={label} {...props}>{children}</button>;
 }
 
-export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0 }) {
+export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width = 288, onWidthChange }) {
   const supported = typeof globalThis.desktopShell?.listCanvasBoards === "function";
   const [open, setOpen] = useState(() => readChromePreference("workspaceOpen", supported));
   const [folder, setFolder] = useState("");
@@ -42,9 +42,6 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0 }) {
   const [planStale, setPlanStale] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [width, setWidth] = useState(() => {
-    try { return Math.min(360, Math.max(260, Number(localStorage.getItem("freeflow.canvas.chrome.workspaceWidth")) || 288)); } catch { return 288; }
-  });
   const rootRef = useRef(null);
   const folderRef = useRef("");
   const searchRef = useRef(null);
@@ -398,8 +395,9 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0 }) {
   if (!supported) return null;
   const modal = pending || deleteTarget;
   return (
-    <aside ref={rootRef} className={`canvas2d-workspace-panel canvas-chrome-surface${open ? " is-open" : " is-collapsed"}`} style={{ "--workspace-width": `${width}px` }} aria-label="画布工作区" aria-busy={Boolean(busy)}>
+    <aside ref={rootRef} className={`canvas2d-workspace-panel${open ? " is-open" : " is-collapsed"}`} aria-label="画布工作区" aria-busy={Boolean(busy)}>
       {!open ? <div className="canvas2d-workspace-rail">
+        <strong>工作区</strong>
         <IconButton label="展开画布工作区" onClick={() => toggle(true)}><PanelLeft size={18} /></IconButton>
       </div> : null}
       <div className="canvas2d-workspace-files">
@@ -439,7 +437,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0 }) {
         {notice ? <div className="canvas2d-workspace-notice" role="status">{notice}</div> : null}
         {error ? <div className="canvas2d-workspace-error" role="alert">{error}</div> : null}
       </div>
-      {open ? <div className="canvas2d-workspace-resizer" role="separator" aria-label="调整工作区宽度" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={360} aria-valuenow={width} tabIndex={0} onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = Math.min(360, Math.max(260, width + (event.key === "ArrowLeft" ? -10 : 10))); setWidth(next); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", next); } catch {} } }} onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const left = rootRef.current.getBoundingClientRect().left; setWidth(Math.min(360, Math.max(260, event.clientX - left))); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", width); } catch {} }} /> : null}
+      {open ? <div className="canvas2d-workspace-resizer" role="separator" aria-label="调整工作区宽度" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={360} aria-valuenow={width} tabIndex={0} onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = Math.min(360, Math.max(260, width + (event.key === "ArrowLeft" ? -10 : 10))); onWidthChange(next); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", next); } catch {} } }} onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const left = rootRef.current.getBoundingClientRect().left; onWidthChange(Math.min(360, Math.max(260, event.clientX - left))); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", width); } catch {} }} /> : null}
       {menu ? createPortal(<div ref={menuRef} className="canvas2d-workspace-menu canvas-chrome-surface" role="menu" data-shape-include="true" style={{ left: menu.x, top: menu.y }}>
         <button role="menuitem" onClick={() => run("duplicate", async () => { const result = await bridge.duplicateBoardAtPath(menu.board.filePath); if (!result?.ok) throw new Error(result?.error || "复制失败"); setNotice("已创建独立画布副本"); setView("workspace"); await refresh(); })}>复制画布</button>
         <button role="menuitem" onClick={() => { setEditor({ kind: "rename", path: menu.board.filePath, name: displayName(menu.board.name) }); setMenu(null); }}>重命名</button>

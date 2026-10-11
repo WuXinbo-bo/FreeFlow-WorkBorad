@@ -552,7 +552,7 @@ function CanvasNavigatorPanel({
     return (
       <button
         type="button"
-        className="canvas2d-navigator-tab canvas-chrome-surface"
+        className="canvas2d-navigator-tab"
         onClick={() => onCollapse?.(false)}
         aria-label="展开画布目录"
         title="展开画布目录"
@@ -565,6 +565,7 @@ function CanvasNavigatorPanel({
             <circle cx="4" cy="17.5" r="1" />
           </svg>
         </span>
+        <span className="canvas2d-navigator-tab-label">画布目录</span>
       </button>
     );
   }
@@ -919,7 +920,7 @@ function CanvasNavigatorPanel({
   return (
     <section
       ref={panelRef}
-      className="canvas2d-navigator-panel canvas-chrome-surface"
+      className="canvas2d-navigator-panel"
       aria-label="画布目录"
       tabIndex={0}
       onKeyDown={handleNavigatorKeyDown}
@@ -1762,6 +1763,9 @@ function Canvas2DControls({ engine }) {
   const [searchFilterKey, setSearchFilterKey] = useState(CANVAS_SEARCH_FILTER_KEYS.ALL);
   const [searchHighlight, setSearchHighlight] = useState(null);
   const [uiViewport, setUiViewport] = useState({ width: 1440, height: 900 });
+  const [workspaceWidth, setWorkspaceWidth] = useState(() => {
+    try { return Math.min(360, Math.max(260, Number(localStorage.getItem("freeflow.canvas.chrome.workspaceWidth")) || 288)); } catch { return 288; }
+  });
   const rootRef = useRef(null);
   const toolbarRef = useRef(null);
   const infoPanelRef = useRef(null);
@@ -2405,8 +2409,8 @@ function Canvas2DControls({ engine }) {
         "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
       }}
     >
-      <div className="canvas2d-navigation-panels"><div className="canvas2d-navigation-docks">
-      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} />
+      <div className="canvas2d-navigation-panels"><div className="canvas2d-navigation-docks canvas-chrome-surface" style={{ "--workspace-width": `${workspaceWidth}px` }}>
+      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} width={workspaceWidth} onWidthChange={setWorkspaceWidth} />
       <CanvasNavigatorPanel
         key={snapshot.boardFilePath}
         navigator={navigatorView}
