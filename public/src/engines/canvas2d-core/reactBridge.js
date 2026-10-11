@@ -173,6 +173,18 @@ export function createCanvas2DReactBridge(engine) {
     deleteBoardAtPath(filePath) {
       return engine?.deleteBoardAtPath?.(filePath);
     },
+    listCanvasHistory(filePath) {
+      return engine?.listCanvasHistory?.(filePath);
+    },
+    restoreCanvasHistory(filePath, historyId) {
+      return engine?.restoreCanvasHistory?.(filePath, historyId);
+    },
+    listCanvasTrash(folderPath) {
+      return engine?.listCanvasTrash?.(folderPath);
+    },
+    restoreCanvasTrash(folderPath, item) {
+      return engine?.restoreCanvasTrash?.(folderPath, item);
+    },
     duplicateBoardAtPath(filePath) {
       return engine?.duplicateBoardAtPath?.(filePath);
     },

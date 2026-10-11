@@ -125,11 +125,89 @@ async function main() {
     await assert.rejects(fs.access(newPath), { code: "ENOENT" });
     assert.equal((await snapshot()).path, renamed);
 
+    // Real disk recovery: cancel, confirm, repeat, and restore without replacing the active canvas.
+    await panel.getByRole("button", { name: "打开回收站", exact: true }).click();
+    const trashDialog = page.getByRole("dialog", { name: "回收站", exact: true });
+    await trashDialog.waitFor();
+    const trashRow = trashDialog.locator(".canvas2d-workspace-recovery-row").filter({ hasText: "New Canvas.freeflow" });
+    await trashRow.getByRole("button", { name: "恢复", exact: true }).click();
+    await trashDialog.getByRole("button", { name: "取消恢复", exact: true }).click();
+    await assert.rejects(fs.access(newPath), { code: "ENOENT" });
+    await trashRow.getByRole("button", { name: "恢复", exact: true }).click();
+    await trashDialog.getByRole("button", { name: "确认恢复", exact: true }).click();
+    await trashDialog.waitFor({ state: "hidden" });
+    await row("New Canvas").waitFor();
+    await fs.access(newPath);
+    assert.equal((await snapshot()).path, renamed, "trash restore switched away from the active canvas");
+
+    await makeDirty();
+    await page.evaluate(() => window.__canvas2dEngine.saveBoard());
+    const historicalX = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x);
+    await makeDirty();
+    await page.evaluate(() => window.__canvas2dEngine.saveBoard());
+    const latestX = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x);
+    const historyDialog = page.getByRole("dialog", { name: "历史版本", exact: true });
+    async function showHistory() {
+      await panel.getByRole("button", { name: "当前画布操作", exact: true }).click();
+      await page.getByRole("menuitem", { name: "历史版本", exact: true }).click();
+      await historyDialog.waitFor();
+    }
+    await showHistory();
+    await historyDialog.getByRole("button", { name: "预览与恢复", exact: true }).first().click();
+    await historyDialog.getByText("1 个节点", { exact: true }).waitFor();
+    if (process.env.FREEFLOW_SCREENSHOT_DIR) {
+      await fs.mkdir(process.env.FREEFLOW_SCREENSHOT_DIR, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "workspace-history-preview.png") });
+    }
+    await page.keyboard.press("Tab");
+    assert(await historyDialog.evaluate((element) => element.contains(document.activeElement)), "recovery dialog focus escaped");
+    await historyDialog.getByRole("button", { name: "取消恢复", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x), latestX);
+    await historyDialog.getByRole("button", { name: "预览与恢复", exact: true }).first().click();
+    await historyDialog.getByRole("button", { name: "确认恢复", exact: true }).click();
+    await historyDialog.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x), historicalX, "history restore did not reload the active canvas");
+    assert.equal((await snapshot()).dirty, false);
+    await showHistory();
+    await historyDialog.getByRole("button", { name: "预览与恢复", exact: true }).first().click();
+    await historyDialog.getByRole("button", { name: "确认恢复", exact: true }).click();
+    await historyDialog.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x), latestX, "history restore could not be reversed through the UI");
+
+    // Keyboard quick switch keeps all of the ordinary dirty-board protection.
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+p" : "Control+p");
+    await panel.getByRole("textbox", { name: "搜索画布", exact: true }).fill("Alpha");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, alpha);
+    await panel.getByRole("button", { name: "切换到上一个画布", exact: true }).click();
+    await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, renamed);
+    await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+o" : "Control+Shift+o");
+    await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, alpha);
+    await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+o" : "Control+Shift+o");
+    await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, renamed);
+    await makeDirty();
+    await panel.getByRole("button", { name: "切换到上一个画布", exact: true }).click();
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal((await snapshot()).path, renamed);
+    assert.equal((await snapshot()).dirty, true);
+    await page.evaluate(() => window.__canvas2dEngine.saveBoard());
+    await panel.getByRole("textbox", { name: "搜索画布", exact: true }).fill("");
+
     // Replace only test-profile IPC endpoints; GitHub credentials and user repositories are never used.
     await app.evaluate(({ ipcMain }, text) => {
       const fs = globalThis.__workspaceTestFs;
       ipcMain.removeHandler("desktop-shell:github-sync-status");
       ipcMain.handle("desktop-shell:github-sync-status", () => ({ connected: true, repository: { owner: "fixture", repo: "test" }, ledger: { boards: {} } }));
+      ipcMain.removeHandler("desktop-shell:github-sync-workspace-plan");
+      globalThis.__workspacePlanFail = false;
+      ipcMain.handle("desktop-shell:github-sync-workspace-plan", (_event, payload) => {
+        if (globalThis.__workspacePlanFail) return { ok: false, error: "offline fixture" };
+        return { ok: true, rootPath: payload.rootPath, checkedAt: Date.now(), total: 3, counts: { "local-changed": 1, "remote-only": 1, "both-changed": 1 }, items: [{ localPath: payload.boardPath, state: "local-changed" }] };
+      });
       ipcMain.removeHandler("desktop-shell:github-sync-workspace-pull");
       ipcMain.handle("desktop-shell:github-sync-workspace-pull", async (_event, payload) => {
         await fs.writeFile(payload.boardPath, text);
@@ -137,6 +215,21 @@ async function main() {
       });
     }, boardText("remote"));
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("freeflow:github-sync-status")));
+    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.locator(".canvas2d-workspace-sync-summary").filter({ hasText: "待上传 1 · 待拉取 1 · 冲突 1" }).waitFor();
+    await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
+    if (process.env.FREEFLOW_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "workspace-sync-states.png") });
+    assert(await panel.locator(".canvas2d-workspace-sync-time").filter({ hasText: "检查于" }).isVisible());
+    const beforeOffline = await snapshot();
+    await app.evaluate(() => { globalThis.__workspacePlanFail = true; });
+    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("alert").filter({ hasText: "offline fixture" }).waitFor();
+    assert.deepEqual(await snapshot(), beforeOffline, "failed update check replaced local canvas");
+    await app.evaluate(() => { globalThis.__workspacePlanFail = false; });
+    await panel.getByRole("button", { name: "重试检查", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".canvas2d-workspace-sync .canvas2d-workspace-error"));
+    await makeDirty();
+    await panel.locator(".canvas2d-workspace-current").getByText("未保存 · 待上传", { exact: true }).waitFor();
     await panel.getByRole("button", { name: "拉取", exact: true }).click();
     await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().board.items[0]?.id === "remote");
     await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");

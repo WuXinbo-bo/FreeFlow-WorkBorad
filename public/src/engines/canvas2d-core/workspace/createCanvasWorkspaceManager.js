@@ -142,8 +142,28 @@ export function createCanvasWorkspaceManager(deps) {
       setStatus(result?.error || "删除画布失败", "warning");
       return { ok: false, error: result?.error || "删除画布失败" };
     }
-    setStatus("画布已删除");
-    return { ok: true, filePath: targetPath };
+    setStatus("画布已移入回收站");
+    return { ok: true, filePath: targetPath, trashId: result.trashId || "" };
+  }
+
+  async function listCanvasHistory(filePath = state.boardFilePath) {
+    if (!globalThis.desktopShell?.listCanvasHistory) return { ok: false, entries: [], error: "当前环境不支持历史记录" };
+    return globalThis.desktopShell.listCanvasHistory({ filePath: String(filePath || "").trim() });
+  }
+
+  async function restoreCanvasHistory(filePath, historyId) {
+    if (!globalThis.desktopShell?.restoreCanvasHistory) return { ok: false, error: "当前环境不支持历史恢复" };
+    return withBoardFileOperation(() => globalThis.desktopShell.restoreCanvasHistory({ filePath, historyId }), { saveFirst: filePath === state.boardFilePath });
+  }
+
+  async function listCanvasTrash(folderPath) {
+    if (!globalThis.desktopShell?.listCanvasTrash) return { ok: false, items: [], error: "当前环境不支持回收站" };
+    return globalThis.desktopShell.listCanvasTrash({ folderPath: folderPath || resolveBoardFolderPath(state.boardFilePath) });
+  }
+
+  async function restoreCanvasTrash(folderPath, item) {
+    if (!globalThis.desktopShell?.restoreCanvasTrash) return { ok: false, error: "当前环境不支持回收站恢复" };
+    return globalThis.desktopShell.restoreCanvasTrash({ folderPath, trashId: item?.id });
   }
 
   async function duplicateBoardAtPath(filePath) {
@@ -324,6 +344,10 @@ export function createCanvasWorkspaceManager(deps) {
     renameBoard,
     renameBoardAtPath,
     deleteBoardAtPath,
+    listCanvasHistory,
+    restoreCanvasHistory,
+    listCanvasTrash,
+    restoreCanvasTrash,
     duplicateBoardAtPath,
     revealBoardInFolder,
     revealBoardPathInFolder,
