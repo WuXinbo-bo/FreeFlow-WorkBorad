@@ -16171,3 +16171,45 @@ body.desktop-mode .workspace.left-collapsed.right-collapsed {
     justify-items: start;
   }
 }
+
+/* File workstation: reading and conversion only allocate resources while open. */
+.file-workstation-backdrop { position: fixed; inset: 0; z-index: 16000; display: grid; place-items: center; padding: 24px; background: rgba(15,23,42,.34); backdrop-filter: blur(5px); box-sizing: border-box; }
+.canvas2d-file-preview-react.file-workstation-reader { position: relative; width: min(1040px, 96vw); height: min(900px, 92vh); z-index: 1; }
+.canvas2d-file-preview-react-title { flex: 1; }
+.file-workstation-tools { position: absolute; top: 8px; right: 8px; z-index: 5; display: grid; gap: 8px; width: min(310px, calc(100% - 16px)); padding: 12px; border: 1px solid rgba(255,255,255,.8); border-radius: 10px; background: rgba(248,250,252,.95); box-shadow: 0 12px 30px rgba(15,23,42,.2); backdrop-filter: blur(18px); box-sizing: border-box; }
+.file-workstation-tools > div { display: flex; gap: 6px; align-items: center; }
+.file-workstation-tools input { min-width: 0; flex: 1; width: 70px; }
+.file-workstation-tools span { font-size: 11px; color: #64748b; }
+.file-workstation-tools button, .file-workstation-tools input, .file-workstation-tools select, .file-conversion-dialog button, .file-conversion-dialog input, .file-conversion-dialog select { border: 1px solid rgba(148,163,184,.5); border-radius: 6px; background: rgba(255,255,255,.8); color: #334155; padding: 6px 9px; font: inherit; font-size: 12px; box-sizing: border-box; }
+.file-workstation-tools button:focus-visible, .file-workstation-tools input:focus-visible, .file-conversion-dialog :is(button,input,select):focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.file-workstation-tools button, .file-conversion-dialog button { cursor: pointer; }
+.file-conversion-dialog button:disabled { opacity: .5; cursor: default; }
+.file-workstation-text { margin: 0; padding: 28px; white-space: pre-wrap; overflow-wrap: anywhere; font: 15px/1.75 ui-monospace, monospace; background: white; color: #172033; }
+.file-workstation-table { border-collapse: collapse; width: 100%; font: 13px/1.5 sans-serif; background: white; color: #172033; }
+.file-workstation-table td { border: 1px solid #cbd5e1; padding: 8px; max-width: 260px; overflow-wrap: anywhere; vertical-align: top; }
+.canvas2d-file-preview-react-pdf-page { position: relative; }
+.file-workstation-pdf-text { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; transform-origin: 0 0; text-size-adjust: none; }
+.file-workstation-pdf-text :is(span,br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+.file-workstation-pdf-text span.markedContent { top: 0; height: 0; }
+.file-workstation-pdf-text ::selection { background: rgba(37,99,235,.3); }
+.file-conversion-dialog { display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: min(680px, 96vw); max-height: 90vh; border: 1px solid rgba(255,255,255,.8); border-radius: 14px; background: rgba(248,250,252,.94); box-shadow: 0 24px 70px rgba(15,23,42,.28); backdrop-filter: blur(22px); overflow: hidden; color: #1e293b; }
+.file-conversion-dialog header, .file-conversion-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 18px; background: rgba(255,255,255,.6); }
+.file-conversion-dialog header > div { display: grid; gap: 4px; }
+.file-conversion-dialog header span { color: #64748b; font-size: 11px; }
+.file-conversion-body { padding: 18px; overflow: auto; display: grid; gap: 12px; }
+.file-conversion-body label { display: grid; gap: 6px; font-size: 12px; }
+.file-conversion-sources { list-style-position: inside; margin: 0; padding: 0; max-height: 180px; overflow: auto; }
+.file-conversion-sources li { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.file-conversion-sources li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.file-conversion-options { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.file-conversion-note, .file-conversion-status { margin: 0; font-size: 12px; line-height: 1.6; color: #64748b; overflow-wrap: anywhere; }
+.file-conversion-status { color: #334155; }
+.file-conversion-results { display: grid; gap: 6px; font-size: 12px; }
+.file-conversion-results button { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-workstation-region { position: absolute; border: 2px solid #2563eb; background: rgba(37,99,235,.15); pointer-events: none; z-index: 3; box-sizing: border-box; }
+.canvas2d-file-preview-react[data-region-mode="true"] .canvas2d-file-preview-react-pdf-page { cursor: crosshair; }
+.canvas2d-file-preview-react[data-region-mode="true"] .textLayer { pointer-events: none; }
+.canvas2d-file-preview-react-frame:is(.is-text,.is-table) { width: 100%; min-width: 100%; height: auto; min-height: 0; }
+.canvas2d-file-preview-react-content:is(.is-text,.is-table) { width: 100%; min-height: 0; transform: none; }
+.canvas2d-file-preview-react-content.is-text pre { padding: 16px; font-size: calc(15px * var(--file-card-preview-zoom, .82)); }
+.canvas2d-file-preview-react-content.is-table table { width: max-content; min-width: 100%; font-size: calc(14px * var(--file-card-preview-zoom, .82)); }

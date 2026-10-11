@@ -1,3 +1,5 @@
+import { getFileCapabilities } from "./documentPreview/fileCapabilities.js";
+import { readFileReadingPreference } from "./documentPreview/fileReadingPreferences.js";
 import { prepareWordExportAssets } from "./export/word/prepareWordExportAssets.js";
 import { createWorkerLifetime } from "./runtime/workerLifetime.js";
 import { createClipboardDataTransferSnapshot, createClipboardDataTransferFacade } from "./brokers/clipboardSnapshot.js";
@@ -38,7 +40,7 @@ import {
   normalizeElement,
   resizeElement,
 } from "./elements/index.js";
-import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds } from "./elements/fileCard.js";
+import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds, fitFilePreviewBounds, resolveFileCardTypeStyle } from "./elements/fileCard.js";
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
@@ -5311,7 +5313,7 @@ let tablePointerSelectionState = {
           node.style.visibility = "hidden";
           return;
         }
-        const bounds = getFileCardPreviewBounds(item, { expanded: node.dataset.expanded === "true" });
+        const bounds = fitFilePreviewBounds(getFileCardPreviewBounds(item, { expanded: node.dataset.expanded === "true" }), state.board.view, getCanvasRect());
         setStyleIfNeeded(node, "left", `${bounds.left}px`);
         setStyleIfNeeded(node, "top", `${bounds.top}px`);
         setStyleIfNeeded(node, "width", `${bounds.width}px`);
@@ -17413,6 +17415,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus("图片生成失败：无有效图像数据");
       return false;
     }
+    if (options.canInsert && !options.canInsert()) return false;
     const point = options.anchorPoint || getCenterScenePoint();
     const file = {
       name: String(options.name || "截图").trim() || "截图",
@@ -17434,6 +17437,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
       }
     }
+    if (options.canInsert && !options.canInsert()) return false;
+    if (options.sourceExcerpt) item.sourceExcerpt = { ...options.sourceExcerpt };
     pushItems([item], { reason: "插入截图", statusText: "截图已插入画布" });
     state.lastSelectionSource = "click";
     void refreshCanvasImageManager({ silent: true });
@@ -17651,12 +17656,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (item) item.memoVisible = true;
     }
     hydrationScheduler.remove(`file-preview-read:${requestId}`);
+    void globalThis.desktopShell?.cancelFileWorkstation?.(`inspect-${requestId}-${request.previewGeneration}`);
     documentPreviewRuntime.closeSession(String(request.previewSessionId || requestId).trim());
     return true;
   }
 
   function clearFileCardPreviewRequestsByItemIds(itemIds = [], { restoreMemo = false, emit = false } = {}) {
     const clearAll = itemIds == null;
+    if (clearAll) state.fileConversionRequest = null;
     const targets = new Set(
       (clearAll ? [] : (Array.isArray(itemIds) ? itemIds : [itemIds]))
         .map((itemId) => String(itemId || "").trim())
@@ -17742,7 +17749,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         badgeLabel: "PDF",
       };
     }
-    return null;
+    const capabilities = getFileCapabilities(ext);
+    return capabilities.previewKind ? { kind: capabilities.previewKind, mimeType: "application/octet-stream", readRoute: "", fileLabel: capabilities.previewKind === "table" ? "表格" : capabilities.previewKind === "image" ? "图片" : "文本", badgeLabel: ext.toUpperCase() } : null;
   }
 
   async function hydrateFileCardPreviewFile(requestId = "", filePath = "") {
@@ -17766,12 +17774,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const fileName = String(current?.fileName || "").trim();
       const mimeType = String(previewSpec?.mimeType || "").trim();
       let result = null;
+      let sourceMetadata = null;
       const isMissingFileForPreview =
         /^c:[/\\]missing[/\\]/i.test(targetPath) ||
         /^__ff_missing_preview__/i.test(targetPath);
       if (!isMissingFileForPreview && typeof globalThis?.desktopShell?.getFilePreviewMetadata === "function") {
         const metadata = await globalThis.desktopShell.getFilePreviewMetadata(targetPath).catch(() => null);
-        const cachedHandle = metadata?.ok && metadata?.contentKey
+        sourceMetadata = metadata;
+        const cachedHandle = !current.forceRead && metadata?.ok && metadata?.contentKey
           ? documentPreviewRuntime.attachCached(activeRequestId, previewGeneration, metadata.contentKey)
           : null;
         if (cachedHandle?.status === "ready") {
@@ -17796,7 +17806,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           return true;
         }
       }
-      if (typeof globalThis?.desktopShell?.readFilePreview === "function") {
+      if (previewSpec?.kind === "table") {
+        const taskId = `inspect-${activeRequestId}-${previewGeneration}`;
+        if (typeof globalThis.desktopShell?.runFileWorkstation !== "function") result = { ok: false, error: "表格预览需要桌面版" };
+        else {
+          const inspect = await globalThis.desktopShell.runFileWorkstation({ taskId, operation: "inspect", sources: [targetPath] }).catch((error) => ({ ok: false, error: error.message }));
+          const after = await globalThis.desktopShell.getFilePreviewMetadata(targetPath).catch(() => null);
+          result = inspect.ok && sourceMetadata?.contentKey && after?.contentKey === sourceMetadata.contentKey
+            ? { ok: true, data: new TextEncoder().encode(JSON.stringify(inspect)), contentKey: after.contentKey, mime: mimeType }
+            : { ok: false, error: inspect.error || "文件在解析时发生变化，请刷新预览" };
+        }
+      } else if (typeof globalThis?.desktopShell?.readFilePreview === "function") {
         result = await globalThis.desktopShell.readFilePreview(targetPath).catch(() => null);
       } else if (typeof globalThis?.desktopShell?.readFileBase64 === "function") {
         result = await globalThis.desktopShell.readFileBase64(targetPath).catch(() => null);
@@ -17809,7 +17829,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           mime: mimeType,
         };
       }
-      if (!result?.ok && !isMissingFileForPreview) {
+      if (!result?.ok && !isMissingFileForPreview && !globalThis?.desktopShell?.readFilePreview && ["pdf", "docx"].includes(previewSpec?.kind)) {
         const response = await fetch(previewSpec?.readRoute || API_ROUTES.filePreviewDocxBase64, {
           method: "POST",
           headers: {
@@ -17840,7 +17860,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           ? new Uint8Array(binaryData.buffer, binaryData.byteOffset, binaryData.byteLength)
           : null;
       const expectedMime = String(previewSpec?.mimeType || "").trim().toLowerCase();
-      const mimeAccepted = !mime || mime === expectedMime || mime === "application/octet-stream";
+      const mimeAccepted = expectedMime === "application/octet-stream" || !mime || mime === expectedMime || mime === "application/octet-stream";
       const previewHandle = result?.ok && (fileBytes?.byteLength || fileBase64) && mimeAccepted
         ? documentPreviewRuntime.commit(activeRequestId, previewGeneration, {
             bytes: fileBytes,
@@ -17848,6 +17868,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             kind: previewSpec?.kind,
             mime: expectedMime,
             contentKey: String(result?.contentKey || "").trim(),
+            forceReplace: Boolean(current.forceRead),
           })
         : documentPreviewRuntime.fail(
             activeRequestId,
@@ -17909,7 +17930,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     item = sceneRegistry.getItemById(String(item?.id || "").trim(), "fileCard") || item;
     const previewSpec = resolveFileCardPreviewSpec(item);
     if (!previewSpec) {
-      setStatus("当前仅支持 DOCX / PDF 文件卡预览", "warning");
+      setStatus("此格式暂不支持内置预览，请使用系统应用打开", "warning");
       return false;
     }
     const sourcePath = String(item?.sourcePath || "").trim();
@@ -17920,6 +17941,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const hasDesktopFileBridge =
       typeof globalThis?.desktopShell?.readFilePreview === "function" ||
       typeof globalThis?.desktopShell?.readFileBase64 === "function";
+    if (getFileCardPreviewRequests().length >= 3 && !getFileCardPreviewRequests().some((entry) => entry.itemId === item.id)) clearFileCardPreviewRequest(getFileCardPreviewRequests()[0].id);
     const requests = getFileCardPreviewRequests();
     const existingIndex = requests.findIndex((entry) => String(entry?.itemId || "").trim() === String(item.id || "").trim());
     const existingRequest = existingIndex >= 0 ? requests[existingIndex] : null;
@@ -17969,7 +17991,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       previewByteLength: 0,
       previewCacheHit: false,
       expanded: false,
-      previewZoom: 0.82,
+      previewZoom: readFileReadingPreference(sourcePath).zoom || 0.82,
       restoreMemoVisible,
     };
     if (existingIndex >= 0) {
@@ -18001,6 +18023,71 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
     );
     return true;
+  }
+
+  function openFileConversion(items = null) {
+    const sources = (Array.isArray(items) ? items : sceneRegistry.getSelectedItems()).filter((item) => ["fileCard", "image"].includes(item?.type) && item.sourcePath);
+    if (!sources.length) { setStatus("请先选择已关联本地文件的卡片", "warning"); return false; }
+    state.fileConversionRequest = { id: createId("file-convert"), boardPath: state.boardFilePath, sources: sources.map((item) => ({ itemId: item.id, filePath: item.sourcePath, fileName: item.fileName || item.name })) };
+    store.emit(); return true;
+  }
+
+  function closeFileConversion() { state.fileConversionRequest = null; store.emit(); }
+
+  async function relinkFileCard(itemId) {
+    const original = sceneRegistry.getItemById(itemId, "fileCard");
+    if (!original || isLockedItem(original) || !globalThis?.desktopShell?.pickWorkstationFiles) return false;
+    const originalPath = original.sourcePath;
+    let picked;
+    try { picked = await globalThis.desktopShell.pickWorkstationFiles({ multiple: false }); }
+    catch (error) { setStatus(error.message || "选择文件失败", "warning"); return false; }
+    const file = picked?.files?.[0];
+    const item = sceneRegistry.getItemById(itemId, "fileCard");
+    if (!file || item !== original || isLockedItem(item) || item.sourcePath !== originalPath) return false;
+    const before = takeItemsHistorySnapshot([itemId]);
+    clearFileCardPreviewRequestsByItemIds([itemId], { restoreMemo: true });
+    const replacementStyle = resolveFileCardTypeStyle(getFileExtension(file.fileName), "");
+    Object.assign(item, normalizeElement({ ...item, mime: "", fileCardKind: replacementStyle.kind, accentColor: replacementStyle.accent, accentSoftColor: replacementStyle.accentSoft, accentStrokeColor: replacementStyle.accentStroke, accentTextColor: replacementStyle.accentText, sourcePath: file.filePath, name: file.fileName, fileName: file.fileName, title: file.fileName.replace(/\.[^.]+$/, ""), ext: getFileExtension(file.fileName), fileId: "", size: file.size, sourceMissing: false }));
+    commitItemPatchHistory(before, itemId, item, "重新关联文件", "file-relink");
+    if (resolveFileCardPreviewSpec(item)) openFileCardPreview(item);
+    setStatus("文件已重新关联；位置、备忘录和连接已保留"); return true;
+  }
+
+  function insertFileExcerpt(requestId, text, page = 0) {
+    const request = findFileCardPreviewRequest(requestId);
+    const source = request && sceneRegistry.getItemById(request.itemId, "fileCard");
+    const value = String(text || "").trim().slice(0, 50000);
+    if (!source || !value) return false;
+    const label = `来源：${source.fileName}${page ? ` · 第 ${page} 页` : ""}`;
+    const item = createTextElement({ x: source.x + source.width + 32, y: source.y }, `${value}\n\n${label}`, "");
+    item.sourceExcerpt = { itemId: source.id, sourcePath: source.sourcePath, fileName: source.fileName, page, extractedAt: Date.now() };
+    pushItems([item], { reason: "摘取文件内容", statusText: "内容已插入画布，可撤销" }); return true;
+  }
+
+  async function insertFilePageImage(requestId, dataUrl, page = 0) {
+    const request = findFileCardPreviewRequest(requestId);
+    const source = request && sceneRegistry.getItemById(request.itemId, "fileCard");
+    if (!source || !String(dataUrl).startsWith("data:image/png")) return false;
+    return insertImageFromDataUrl(dataUrl, {
+      name: `${source.fileName} · 第 ${page} 页`,
+      anchorPoint: { x: source.x + source.width + 32, y: source.y },
+      sourceExcerpt: { itemId: source.id, sourcePath: source.sourcePath, fileName: source.fileName, page, extractedAt: Date.now() },
+      canInsert: () => findFileCardPreviewRequest(requestId) === request && sceneRegistry.getItemById(source.id, "fileCard") === source,
+    });
+  }
+
+  function insertWorkstationFiles(requestId, files) {
+    const request = state.fileConversionRequest;
+    if (!request || request.id !== requestId || request.boardPath !== state.boardFilePath || !Array.isArray(files) || !files.length) return false;
+    const source = sceneRegistry.getItemById(request.sources[0]?.itemId);
+    const point = source ? { x: source.x + source.width + 32, y: source.y } : getCenterScenePoint();
+    const items = files.slice(0, 50).map((file, index) => {
+      const anchor = { x: point.x + (index % 3) * 360, y: point.y + Math.floor(index / 3) * 220 };
+      const item = createFileCardElement({ name: file.fileName, path: file.filePath, size: file.size }, anchor);
+      item.sourceExcerpt = { itemId: request.sources[0]?.itemId, sourcePath: request.sources[0]?.filePath, extractedAt: Date.now() };
+      return item;
+    });
+    pushItems(items, { reason: "插入转换结果", statusText: `${items.length} 个转换文件已映射到画布，可预览或打开` }); return true;
   }
 
   function toggleFileCardPreviewExpanded(requestId = "") {
@@ -18066,6 +18153,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const expectedRequestId = String(requestId || "").trim();
     const request = findFileCardPreviewRequest(expectedRequestId);
     if (!request) return false;
+    void globalThis.desktopShell?.cancelFileWorkstation?.(`inspect-${request.id}-${request.previewGeneration}`);
     const session = documentPreviewRuntime.retry(String(request.previewSessionId || request.id || "").trim());
     if (!session) return false;
     patchFileCardPreviewRequest(expectedRequestId, {
@@ -18075,6 +18163,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       previewRenderMessage: "正在重新准备文件预览...",
       previewGeneration: session.generation,
       previewByteLength: 0,
+      forceRead: true,
     });
     store.emit();
     hydrationScheduler.remove(`file-preview-read:${expectedRequestId}`);
@@ -23755,6 +23844,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       hideContextMenu();
     }
+    if (action === "file-relink") { void relinkFileCard(getSingleSelectedItemFast("fileCard")?.id); hideContextMenu(); }
+    if (action === "file-convert" || action === "image-convert") { openFileConversion(); hideContextMenu(); }
     if (action === "file-preview") {
       runCommand("file.preview");
       hideContextMenu();
@@ -27808,6 +27899,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "image.finish-edit", label: "完成图片编辑", category: "image", elementTypes: ["image"], when: (context) => context.editingType === "image" }, () => finishImageEdit());
     register({ id: "file.open", label: "打开文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, () => openSelectedFileCard());
     register({ id: "file.preview", label: "预览文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, (context) => openFileCardPreview(context.selectedItems[0]));
+    register({ id: "file.convert", label: "转换文件格式", category: "file-card", when: hasSingleType("fileCard") }, () => openFileConversion());
     register({ id: "file.retry-preview", label: "重试预览", category: "file-card", elementTypes: ["fileCard"] }, (_context, requestId) => retryFileCardPreview(requestId));
     register({ id: "file.memo", label: "切换文件标签", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard", { mutable: true }) }, () => toggleSelectedMemo("fileCard"));
     register({ id: "code.copy", label: "复制代码", category: "code", elementTypes: ["codeBlock"] }, (_context, itemId) => {
@@ -27875,6 +27967,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     exportBoardAsPng,
     cancelActiveExport,
     openFileCardPreview,
+    openFileConversion,
+    closeFileConversion,
+    relinkFileCard,
+    insertFileExcerpt,
+    insertFilePageImage,
+    insertWorkstationFiles,
     confirmWordExportPreview,
     reorderWordExportPreview,
     closeWordExportPreview: clearWordExportPreviewRequest,
@@ -27882,9 +27980,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     toggleFileCardPreviewExpanded,
     setFileCardPreviewZoom,
     retryFileCardPreview,
-    getDocumentPreviewSessionData(sessionId, generation) {
-      return documentPreviewRuntime.getData(sessionId, generation);
+    getDocumentPreviewSessionData(sessionId, generation, options) {
+      return documentPreviewRuntime.getData(sessionId, generation, options);
     },
+    getDocumentPreviewViewport() { const rect = getCanvasRect(); return { width: rect.width, height: rect.height }; },
     getDocumentPreviewPortalHost() {
       return refs.documentPreviewLayer instanceof HTMLDivElement ? refs.documentPreviewLayer : null;
     },

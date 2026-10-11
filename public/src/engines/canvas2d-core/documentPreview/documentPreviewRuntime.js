@@ -161,7 +161,7 @@ export function createDocumentPreviewRuntime({
     });
   }
 
-  function commit(id = "", generation = 0, { bytes = null, base64 = "", mime = "", kind = "", contentKey = "" } = {}) {
+  function commit(id = "", generation = 0, { bytes = null, base64 = "", mime = "", kind = "", contentKey = "", forceReplace = false } = {}) {
     const session = sessions.get(normalizeId(id));
     if (!session || Number(generation) !== session.generation || session.abortController.signal.aborted) {
       staleCommitCount += 1;
@@ -171,6 +171,13 @@ export function createDocumentPreviewRuntime({
     if (!nextBytes?.byteLength) {
       return fail(id, generation, "预览文档为空");
     }
+    const incomingKey = createCacheKey(String(kind || session.kind), String(mime || session.mime), nextBytes, contentKey);
+    let retainedBytes = 0;
+    for (const [key, entry] of cache) {
+      const refs = entry.refs - (session.cacheKey === key ? 1 : 0);
+      if (refs > 0 && key !== incomingKey) retainedBytes += getCacheEntryBytes(entry);
+    }
+    if (nextBytes.byteLength + retainedBytes > maxBytes) return fail(id, generation, "预览内存预算不足，请关闭其他文件预览后重试");
     releaseSessionCache(session, { enforce: false });
     session.kind = String(kind || session.kind || "document").trim().toLowerCase();
     session.mime = String(mime || session.mime || "").trim().toLowerCase();
@@ -180,7 +187,7 @@ export function createDocumentPreviewRuntime({
       entry = { bytes: nextBytes, refs: 0, artifacts: new Map(), artifactByteSize: 0 };
       cache.set(cacheKey, entry);
       totalBytes += nextBytes.byteLength;
-    } else if (entry.bytes.byteLength !== nextBytes.byteLength) {
+    } else if (forceReplace || entry.bytes.byteLength !== nextBytes.byteLength) {
       totalBytes -= getCacheEntryBytes(entry);
       entry.bytes = nextBytes;
       entry.artifacts = new Map();
@@ -239,6 +246,9 @@ export function createDocumentPreviewRuntime({
     const previous = entry.artifacts.get(key);
     const previousBytes = estimateArtifactBytes(previous);
     const nextBytes = estimateArtifactBytes(value);
+    let activeBytes = 0;
+    for (const cached of cache.values()) if (cached.refs > 0) activeBytes += getCacheEntryBytes(cached);
+    if (activeBytes - previousBytes + nextBytes > maxBytes) return false;
     entry.artifacts.set(key, value);
     entry.artifactByteSize = Math.max(0, Number(entry.artifactByteSize || 0) - previousBytes + nextBytes);
     totalBytes = Math.max(0, totalBytes - previousBytes + nextBytes);
