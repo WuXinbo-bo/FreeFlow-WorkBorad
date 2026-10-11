@@ -42,3 +42,12 @@
 - Windows 分支执行共享自动化与 Windows 配置/打包静态检查；当前机器为 macOS，不能替代 Windows 真机对系统对话框、原生窗口与安装器的验证。
 
 未授权推送远程，本轮仅本地提交。源码通用提交以 cherry-pick 同步，各分支独立重建生成物。
+
+### 最终同步验收
+
+- 通用源码：mac `73bc044`、main `68b81e6`、win `df193f2`；三份提交的稳定 patch-id 完全一致。自动合并后复查了 Electron 平台逻辑、SVG 字体和 Word 的 Command / Ctrl 行为，保留原有差异。
+- main：独立重建后完整 `scripts/run-test-suite.js` 返回 `all checks passed`，另通过 Windows 打包静态检查。
+- win：独立重建后 15 项共享/安全/同步/升级/打包检查全部通过，额外通过新交付功能与工作区界面浏览器检查。
+- mac：完整回归各段、新布局专项、同步元数据专项和最终原生 Electron 实测通过。
+- 构建文件按各分支源码分别生成并单独提交；没有跨分支复制生成物。临时测试服务和测试依赖链接已清理，用户正在运行的 Electron 保留。
+- 演示模式未实施；原目录 feature/comprehensive-optimization 上已有的未提交内容未修改或纳入本轮提交。
