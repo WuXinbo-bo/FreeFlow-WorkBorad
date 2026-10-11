@@ -36,7 +36,10 @@
 - macOS 原生实测已通过：真实保存/重开、授权图片、原有单页 PDF、Word 图片/预览/顺序调整/保存、搜索切换前保存及打开后定位。
 - 保留的 DOCX 核心检查已通过：ZIP 中真实 PNG 字节、多级列表、富文本标题、失效图片占位及阅读顺序。
 - 回退专项覆盖入口移除、旧内容序列化保留、原有图形移动/撤销、普通 URL 粘贴不新增链接卡或收件箱元数据、不触发新抓取流程。
-- mac 整套 `scripts/run-test-suite.js` 已返回 `all checks passed`；额外通过 macOS 窗口/运行时与打包静态检查。main / win 同步验证完成后追加最终结果。
+- mac 整套 `scripts/run-test-suite.js` 已返回 `all checks passed`；额外通过 macOS 窗口/运行时与打包静态检查。
+- main / win 各自完成共享、安全、同步、升级及打包专项检查，以及回退功能与工作区交互浏览器检查，两份验证日志均返回 `all checks passed`。
+
+回退属于已同步通用改动，源码提交为 mac `844fc23`、main `efe670d`、win `0c7e539`，三份源码补丁的稳定 patch-id 一致。生成物由各分支独立构建并检查，构建提交为 mac `8f8d596`、main `74518f9`、win `053e9c1`。
 
 已建立 codex/safety-{mac,main,win}-before-feature-rollback-20261011 安全引用。通用源码通过 cherry-pick 同步，各分支独立重建生成物。原目录 feature/comprehensive-optimization 的未提交内容未修改；本轮仅本地提交，不推送远程。
 
