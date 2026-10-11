@@ -3,6 +3,8 @@ const fs = require("fs/promises");
 const path = require("path");
 const { parseBoardFileText, checkFileSizeSafe } = require("../models/canvasBoardFileFormat");
 const { atomicWriteFile } = require("../utils/atomicWrite");
+const { DATA_DIR } = require("../config/paths");
+const { createFileAccessRegistry, isWithinPath } = require("../../../electron/fileAccessRegistry");
 const { addChecksumToEnvelope } = require("../utils/checksum");
 const { evaluateAttachment, createPlaceholderMetadata, normalizePolicy } = require("./attachmentPolicyService");
 
@@ -76,7 +78,15 @@ function attachmentInput(item = {}) {
   };
 }
 
-async function readAttachmentBytes(input = {}, baseDir = "") {
+async function readAttachmentBytes(input = {}, baseDir = "", policy, access) {
+  const initial = evaluateAttachment(input, { policy });
+  if (!initial.syncable) return { blockedReason: initial.reason, sizeBytes: input.sizeBytes };
+  const encoded = String(input.dataUrl || "").match(/^data:([^;,]+)?;base64,(.*)$/is);
+  if (encoded) {
+    const sizeBytes = Math.floor(encoded[2].length * 3 / 4) - (encoded[2].endsWith("==") ? 2 : encoded[2].endsWith("=") ? 1 : 0);
+    const evaluation = evaluateAttachment({ ...input, mime: encoded[1] || input.mime, sizeBytes }, { policy });
+    if (!evaluation.syncable) return { blockedReason: evaluation.reason, sizeBytes };
+  }
   const data = parseDataUrl(input.dataUrl);
   if (data) return data;
   const rawSourcePath = String(input.sourcePath || "").trim();
@@ -85,7 +95,16 @@ async function readAttachmentBytes(input = {}, baseDir = "") {
     : rawSourcePath;
   if (!sourcePath || sourcePath.startsWith("file://")) return null;
   try {
-    return { mime: input.mime || "application/octet-stream", bytes: await fs.readFile(sourcePath) };
+    const realSource = await fs.realpath(sourcePath);
+    const realBase = baseDir ? await fs.realpath(baseDir) : "";
+    if (!realBase || !isWithinPath(realBase, realSource)) {
+      try { access.assert(realSource); }
+      catch { return { blockedReason: "local-file-not-authorized", sizeBytes: input.sizeBytes }; }
+    }
+    const stat = await fs.stat(realSource);
+    const evaluation = evaluateAttachment({ ...input, sizeBytes: stat.size }, { policy });
+    if (!stat.isFile() || !evaluation.syncable) return { blockedReason: evaluation.reason || "missing-local-file", sizeBytes: stat.size };
+    return { mime: input.mime || "application/octet-stream", bytes: await fs.readFile(realSource) };
   } catch {
     return null;
   }
@@ -117,6 +136,7 @@ async function buildSyncBundleFromFile(filePath, options = {}) {
 
 async function buildSyncBundleFromPayload(inputPayload, options = {}) {
   const policy = normalizePolicy(options.policy);
+  const access = createFileAccessRegistry({ storagePath: path.join(DATA_DIR, "file-access-grants.json") });
   const payload = clone(inputPayload || {});
   const board = payload?.kind === "structured-host-board" && payload.board ? payload.board : payload;
   const resources = [];
@@ -130,8 +150,8 @@ async function buildSyncBundleFromPayload(inputPayload, options = {}) {
       const item = board.items[index];
       const input = attachmentInput(item);
       if (!input) continue;
-      const bytes = await readAttachmentBytes(input, options.baseDir || "");
-      const sizeBytes = bytes?.bytes?.length || input.sizeBytes || 0;
+      const bytes = await readAttachmentBytes(input, options.baseDir || "", policy, access);
+      const sizeBytes = bytes?.bytes?.length || bytes?.sizeBytes || input.sizeBytes || 0;
       const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
       const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";
       const computedAssetPath = sha256 ? `.freeflow/assets/${sha256}.${extension}` : "";
@@ -142,6 +162,11 @@ async function buildSyncBundleFromPayload(inputPayload, options = {}) {
         policy,
         repositoryBytes: duplicateResource ? Math.max(0, assetBytes - sizeBytes) : assetBytes,
       });
+      if (bytes?.blockedReason) {
+        board.items[index] = replaceWithPlaceholder(item, { ...input, sizeBytes }, { ...evaluation, reason: bytes.blockedReason });
+        skippedCount += 1;
+        continue;
+      }
       if (!evaluation.syncable) {
         board.items[index] = replaceWithPlaceholder(item, input, evaluation);
         skippedCount += 1;

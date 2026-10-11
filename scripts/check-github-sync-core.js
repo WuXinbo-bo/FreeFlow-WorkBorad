@@ -75,6 +75,33 @@ async function main() {
   assert.equal(await ensureBoardIdInFile(envelopePath, stableId), stableId);
   assert.equal(verifyEnvelopeChecksum(JSON.parse(await fsPromises.readFile(envelopePath, "utf8"))).valid, true);
 
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "freeflow-private-"));
+  try {
+    const secret = path.join(outside, "private.txt");
+    await fsPromises.writeFile(secret, "private material");
+    await fsPromises.symlink(outside, path.join(root, "escape"), "dir");
+    const unsafeBoard = path.join(root, "unsafe.freeflow");
+    await fsPromises.writeFile(unsafeBoard, JSON.stringify({ boardId: "unsafe", items: [
+      { id: "absolute", type: "fileCard", name: "private.txt", sourcePath: secret },
+      { id: "relative", type: "fileCard", name: "private.txt", sourcePath: path.relative(root, secret) },
+      { id: "symlink", type: "fileCard", name: "private.txt", sourcePath: "escape/private.txt" },
+    ] }));
+    const safeBundle = await buildSyncBundleFromFile(unsafeBoard);
+    assert.equal(safeBundle.manifest.resources.length, 0, "unselected external files were uploaded");
+    assert(JSON.parse(safeBundle.boardText).items.every((item) => item.syncReason === "local-file-not-authorized"));
+    const bigFile = path.join(root, "too-large.png");
+    await fsPromises.writeFile(bigFile, Buffer.alloc(6 * MIB));
+    await fsPromises.writeFile(unsafeBoard, JSON.stringify({ boardId: "large", items: [{ id: "large", type: "image", name: "too-large.png", sourcePath: bigFile }] }));
+    const originalRead = fsPromises.readFile;
+    fsPromises.readFile = async (file, ...args) => {
+      assert.notEqual(file, bigFile, "oversized file was loaded before policy evaluation");
+      return originalRead(file, ...args);
+    };
+    try {
+      assert.equal(JSON.parse((await buildSyncBundleFromFile(unsafeBoard)).boardText).items[0].syncReason, "too-large");
+    } finally { fsPromises.readFile = originalRead; }
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+
   const calls = [];
   const fakeFetch = async (url, options = {}) => {
     calls.push({ url, options });
