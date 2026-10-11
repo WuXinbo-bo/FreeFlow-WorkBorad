@@ -66,6 +66,7 @@ const CHECKS = [
   "scripts/check-builtin-element-registry.js",
   "scripts/check-canvas-ui-runtime.js",
   "scripts/check-document-preview-runtime.js",
+  "scripts/check-file-workstation.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
   "scripts/structured-import/run-renderer-element-integration.cjs",
 ];

@@ -74,6 +74,10 @@ export function createCanvas2DReactBridge(engine) {
     closeWordExportPreview(requestId) {
       return engine?.closeWordExportPreview?.(requestId);
     },
+    relinkFileCard(itemId) { return engine?.relinkFileCard?.(itemId); },
+    insertFilePageImage(requestId, dataUrl, page) { return engine?.insertFilePageImage?.(requestId, dataUrl, page); },
+    insertFileExcerpt(requestId, text, page) { return engine?.insertFileExcerpt?.(requestId, text, page); },
+    openFileConversion(items) { return engine?.openFileConversion?.(items); },
     closeFileCardPreview(requestId) {
       return engine?.closeFileCardPreview?.(requestId);
     },
@@ -88,9 +92,10 @@ export function createCanvas2DReactBridge(engine) {
         ? engine.runCommand("file.retry-preview", requestId)
         : engine?.retryFileCardPreview?.(requestId);
     },
-    getDocumentPreviewSessionData(sessionId, generation) {
-      return engine?.getDocumentPreviewSessionData?.(sessionId, generation) || null;
+    getDocumentPreviewSessionData(sessionId, generation, options) {
+      return engine?.getDocumentPreviewSessionData?.(sessionId, generation, options) || null;
     },
+    getDocumentPreviewViewport() { return engine?.getDocumentPreviewViewport?.() || {}; },
     getDocumentPreviewPortalHost() {
       return engine?.getDocumentPreviewPortalHost?.() || null;
     },
