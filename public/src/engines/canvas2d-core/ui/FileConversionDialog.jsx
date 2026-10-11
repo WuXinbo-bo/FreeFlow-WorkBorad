@@ -11,12 +11,32 @@ function ConversionSession({ request, engine }) {
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState([]);
   const [inserted, setInserted] = useState(false);
+  const [serviceUnavailable, setServiceUnavailable] = useState(false);
   const taskRef = useRef(""); const mounted = useRef(true); const busyRef = useRef(false);
   const rootRef = useRef(null);
   const shell = globalThis.desktopShell;
   const setOption = (key, value) => setOptions((current) => ({ ...current, [key]: value }));
-  function close() { if (taskRef.current) void shell?.cancelFileWorkstation?.(taskRef.current); engine.closeFileConversion(); }
+  function taskError(error) {
+    if (/No handler registered.*desktop-shell:file-workstation/.test(String(error?.message || ""))) {
+      setServiceUnavailable(true);
+      return "桌面转换服务尚未更新。请完整退出并重新启动 FreeFlow（仅刷新页面无效），然后重试。当前窗口可以正常关闭，原文件未改变。";
+    }
+    return error?.message || "文件任务失败";
+  }
+  async function cancelTask(taskId = taskRef.current) {
+    if (!taskId) return;
+    try { await shell?.cancelFileWorkstation?.(taskId); }
+    catch (error) { if (mounted.current) setMessage(taskError(error)); }
+  }
+  function close() {
+    if (!mounted.current) return;
+    mounted.current = false;
+    const taskId = taskRef.current; taskRef.current = "";
+    engine.closeFileConversion();
+    void cancelTask(taskId);
+  }
   useEffect(() => {
+    mounted.current = true;
     const previous = document.activeElement; rootRef.current?.focus();
     const key = (event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); close(); }
@@ -27,10 +47,10 @@ function ConversionSession({ request, engine }) {
       }
     };
     document.addEventListener("keydown", key, true);
-    return () => { mounted.current = false; document.removeEventListener("keydown", key, true); if (taskRef.current) void shell?.cancelFileWorkstation?.(taskRef.current); if (previous?.isConnected) previous.focus?.(); };
+    return () => { mounted.current = false; document.removeEventListener("keydown", key, true); void cancelTask(); if (previous?.isConnected) previous.focus?.(); };
   }, []);
   async function run(capabilities = false) {
-    if (busyRef.current || !shell?.runFileWorkstation) return;
+    if (busyRef.current || serviceUnavailable || !shell?.runFileWorkstation) return;
     busyRef.current = true; setBusy(true); setMessage(capabilities ? "检测本地 Office 引擎…" : "请选择输出文件夹");
     let poll;
     try {
@@ -44,7 +64,7 @@ function ConversionSession({ request, engine }) {
       if (!result.ok) { setMessage(result.canceled ? "已取消，临时文件已清理" : result.error || "转换失败"); return; }
       if (capabilities) setMessage(result.office ? `可使用 ${result.engine} 转换` : result.reason);
       else { setFiles(result.files || []); setMessage(`转换完成：${result.files?.length || 0} 个文件。原文件保留，同名文件自动编号。`); }
-    } catch (error) { if (mounted.current) setMessage(error.message || "文件任务失败"); }
+    } catch (error) { if (mounted.current) setMessage(taskError(error)); }
     finally { clearInterval(poll); taskRef.current = ""; busyRef.current = false; if (mounted.current) setBusy(false); }
   }
   async function addSources() {
@@ -54,7 +74,7 @@ function ConversionSession({ request, engine }) {
     } catch (error) { if (mounted.current) setMessage(error.message); }
   }
   function changeOperation(value) { setOperation(value); setOption("format", value === "sheet-format" ? "csv" : "png"); setFiles([]); setInserted(false); }
-  return createPortal(<div className="file-workstation-backdrop" onPointerDown={(event) => event.stopPropagation()}>
+  return createPortal(<div className="file-workstation-backdrop" data-shape-include="true" onPointerDown={(event) => event.stopPropagation()}>
     <section className="file-conversion-dialog" role="dialog" aria-modal="true" aria-label="文件转换" tabIndex={-1} ref={rootRef} onKeyDown={(event) => event.stopPropagation()}>
       <header><div><strong>文件转换</strong><span>本机处理 · 原文件保留</span></div><button aria-label="关闭文件转换" onClick={close}>×</button></header>
       <div className="file-conversion-body">
@@ -70,13 +90,13 @@ function ConversionSession({ request, engine }) {
         </div>
         {operation === "sheet-format" ? <p className="file-conversion-note">CSV 只保留一张工作表的值；公式、样式和图片不会保留。可能触发公式的值会加单引号。CSV → XLSX 不会恢复这些信息。</p> : null}
         {["text-docx", "text-pdf"].includes(operation) ? <p className="file-conversion-note">支持 UTF-8 文本。Markdown → Word 保留标题与正文，PDF 为文字排版，代码和链接按文字保留；不加载外部图片。PDF 保留可选择的文字。</p> : null}
-        {operation === "office-pdf" ? <p className="file-conversion-note">使用已安装的 LibreOffice 保留原版式；字体缺失可能影响排版。<button disabled={busy} onClick={() => void run(true)}>检测转换引擎</button></p> : null}
+        {operation === "office-pdf" ? <p className="file-conversion-note">使用已安装的 LibreOffice 保留原版式；字体缺失可能影响排版。<button disabled={busy || serviceUnavailable} onClick={() => void run(true)}>检测转换引擎</button></p> : null}
         {!shell?.runFileWorkstation ? <p>转换需要桌面版。</p> : null}
         <p role="status" className="file-conversion-status">{message || "单个文件 ≤ 64 MB，总输入 ≤ 128 MB；图片逐张处理，PDF 每批最多 50 页。"}</p>
         {files.length ? <div className="file-conversion-results"><strong>已保存的结果</strong>{files.map((file) => <button key={file.filePath} onClick={() => void shell.revealPath(file.filePath)}>{file.fileName} ↗</button>)}</div> : null}
       </div>
-      <footer>{busy ? <button onClick={() => { void shell.cancelFileWorkstation(taskRef.current); setMessage("正在取消并清理…"); }}>取消任务</button> : <button disabled={!operation || !shell?.runFileWorkstation} onClick={() => void run()}>选择文件夹并转换</button>}{files.length ? <button disabled={busy || inserted} onClick={() => { if (engine.insertWorkstationFiles(request.id, files)) { setInserted(true); setMessage("结果已映射到画布；可撤销、预览和打开"); } }}>{inserted ? "已插入画布" : "将结果插入画布"}</button> : null}<button onClick={close}>完成</button></footer>
+      <footer>{busy ? <button onClick={() => { setMessage("正在取消并清理…"); void cancelTask(); }}>取消任务</button> : <button disabled={!operation || serviceUnavailable || !shell?.runFileWorkstation} onClick={() => void run()}>选择文件夹并转换</button>}{files.length ? <button disabled={busy || inserted} onClick={() => { if (engine.insertWorkstationFiles(request.id, files)) { setInserted(true); setMessage("结果已映射到画布；可撤销、预览和打开"); } }}>{inserted ? "已插入画布" : "将结果插入画布"}</button> : null}<button onClick={close}>完成</button></footer>
     </section>
-  </div>, document.body);
+  </div>, document.getElementById("global-overlay-layer") || document.body);
 }
 export function FileConversionDialog({ request, engine }) { return request ? <ConversionSession key={request.id} request={request} engine={engine} /> : null; }
