@@ -209,3 +209,13 @@ export function getFileCardPreviewBounds(element = {}, options = {}) {
     gap,
   };
 }
+
+export function fitFilePreviewBounds(bounds, view = {}, viewport = {}) {
+  const scale = Math.max(.1, Number(view.scale) || 1);
+  const width = Math.min(bounds.width, Math.max(260, (Number(viewport.width) || bounds.width * scale + 24) - 24) / scale);
+  const height = Math.min(bounds.height, Math.max(220, (Number(viewport.height) || bounds.height * scale + 24) - 24) / scale);
+  const offsetX = Number(view.offsetX) || 0; const offsetY = Number(view.offsetY) || 0;
+  const screenX = Math.max(12, Math.min(bounds.left * scale + offsetX, (viewport.width || width * scale + 24) - width * scale - 12));
+  const screenY = Math.max(12, Math.min(bounds.top * scale + offsetY, (viewport.height || height * scale + 24) - height * scale - 12));
+  return { ...bounds, left: (screenX - offsetX) / scale, top: (screenY - offsetY) / scale, width, height };
+}

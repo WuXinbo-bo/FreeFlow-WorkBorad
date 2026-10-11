@@ -1,3 +1,4 @@
+import { getFileCapabilities } from "../documentPreview/fileCapabilities.js";
 import {
   getCopyMenuItems,
   getElementTransferCapabilities,
@@ -205,6 +206,7 @@ export function createImageContextMenuSchema(item = {}, runtime = {}) {
   return [
     ...createElementTransferActionsSchema("image", { item, runtime }),
     action("轻量编辑图片", "image-edit"),
+    action("转换格式 / 合并 PDF", "image-convert"),
     action("恢复原图", "image-restore"),
     action("打开所在位置", "image-reveal"),
     action("标签与备忘录", "image-memo"),
@@ -221,15 +223,17 @@ export function buildImageContextMenuHtml(item = {}, runtime = {}) {
 export function createFileCardContextMenuSchema(item = {}, runtime = {}) {
   const lockLabel = item?.locked ? "解锁" : "锁定";
   const ext = String(item?.ext || "").trim().toLowerCase();
-  const previewSupported = ext === "docx" || ext === "pdf";
+  const previewSupported = Boolean(getFileCapabilities(ext).previewKind);
   return [
     ...createElementTransferActionsSchema("fileCard", { item, runtime }),
     action("预览", "file-preview", previewSupported
       ? {}
       : {
           className: "canvas2d-context-menu-item is-disabled",
-          attributes: { disabled: true, title: "当前仅支持 DOCX / PDF 预览" },
+          attributes: { disabled: true, title: "此格式请使用系统应用打开" },
         }),
+    ...(getFileCapabilities(ext).conversions.length ? [action("转换文件格式", "file-convert")] : []),
+    action("重新关联文件", "file-relink"),
     action("打开所在位置", "file-reveal"),
     action("标签与备忘录", "file-memo"),
     action("重点标记", "file-mark"),

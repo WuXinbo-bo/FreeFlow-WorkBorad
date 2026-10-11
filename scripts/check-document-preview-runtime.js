@@ -76,10 +76,10 @@ async function main() {
     bytes: new Uint8Array([1, 2, 3, 4]),
     contentKey: "constrained:4:1",
   });
-  constrainedRuntime.setArtifact(constrained.id, constrained.generation, "docx-html-v1", "0123456789");
-  assert(constrainedRuntime.getStats().byteSize > 8, "active preview data must not be evicted while referenced");
+  assert.strictEqual(constrainedRuntime.setArtifact(constrained.id, constrained.generation, "docx-html-v1", "0123456789"), false, "oversized artifacts must not exceed the active memory budget");
+  assert(constrainedRuntime.getStats().byteSize <= 8);
   constrainedRuntime.closeSession(constrained.id);
-  assert.strictEqual(constrainedRuntime.getStats().byteSize, 0, "closed previews must release over-budget artifacts");
+  assert(constrainedRuntime.getStats().byteSize <= 8, "closed previews must stay within the cache budget");
   constrainedRuntime.dispose();
 
   assert.deepStrictEqual(createVisiblePageWindow(1, 5, 2), [1, 2, 3]);
@@ -99,6 +99,17 @@ async function main() {
   assert.deepStrictEqual(completedTasks, ["preview"], "explicit preview sessions must survive viewport generations");
   assert.strictEqual(scheduler.getStats().queued, 0);
 
+  const limited = createDocumentPreviewRuntime({ maxBytes: 8 });
+  const activeA = limited.createSession({ id: "limit-a" });
+  limited.commit(activeA.id, activeA.generation, { bytes: new Uint8Array([1, 2, 3, 4, 5, 6]), contentKey: "same-stat" });
+  limited.setArtifact(activeA.id, activeA.generation, "html", "x");
+  const activeB = limited.createSession({ id: "limit-b" });
+  assert.strictEqual(limited.commit(activeB.id, activeB.generation, { bytes: new Uint8Array(6) }).status, "failed", "active sessions must honor combined budget");
+  const refreshed = limited.retry(activeA.id);
+  limited.commit(activeA.id, refreshed.generation, { bytes: new Uint8Array([6, 5, 4, 3, 2, 1]), contentKey: "same-stat", forceReplace: true });
+  assert.deepStrictEqual(Array.from(limited.getData(activeA.id, refreshed.generation).bytes), [6, 5, 4, 3, 2, 1], "forced refresh must update content with identical stat metadata");
+  assert.strictEqual(limited.getArtifact(activeA.id, refreshed.generation, "html"), null);
+  limited.dispose();
   runtime.dispose();
   console.log("[check-document-preview-runtime] ok");
 }

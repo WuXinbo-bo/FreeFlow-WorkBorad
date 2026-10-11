@@ -34,6 +34,8 @@ const recoveryService = require("../src/backend/services/boardRecoveryService");
 const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { createFileAccessRegistry, assertFileIpcAccess } = require("./fileAccessRegistry");
+const { assertArchiveBudget } = require("./filePreviewLimits");
+const { createFileWorkstationService } = require("./fileWorkstationService");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
 const { resolveServerPort } = require("../src/backend/config/serverPort");
 const { ensureAppStartupState } = require("../src/backend/services/appStartupService");
@@ -132,6 +134,21 @@ let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
 const fileAccess = createFileAccessRegistry({ storagePath: path.join(DATA_DIR, "file-access-grants.json") });
+async function printWorkstationDocument(html, signal) {
+  if (signal.aborted || typeof html !== "string" || html.length > 4 * 1024 * 1024) throw new Error("文字排版已取消或内容过大");
+  const reader = new BrowserWindow({ show: false, width: 794, height: 1123, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, javascript: false } });
+  const abort = () => { if (!reader.isDestroyed()) reader.destroy(); };
+  signal.addEventListener("abort", abort, { once: true });
+  reader.webContents.on("will-navigate", (event) => event.preventDefault());
+  reader.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  try {
+    await reader.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(html, "utf8").toString("base64")}`);
+    if (signal.aborted) throw new Error("转换已取消");
+    return await reader.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true });
+  } finally { signal.removeEventListener("abort", abort); abort(); }
+}
+const fileWorkstation = createFileWorkstationService({ fileAccess, printDocument: printWorkstationDocument });
+app.on("before-quit", () => fileWorkstation.dispose());
 fileAccess.grant(CANVAS_BOARD_DIR, { directory: true, write: true });
 fileAccess.grant(TEMP_DRAG_DIR, { directory: true, write: true });
 let restoredFileAccess = false;
@@ -3790,6 +3807,24 @@ function buildFilePreviewMetadata(targetPath, stat) {
   };
 }
 
+ipcMain.handle("desktop-shell:pick-workstation-files", async (_event, payload = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: payload.multiple ? "选择文件（可多选）" : "重新关联文件",
+    properties: payload.multiple ? ["openFile", "multiSelections"] : ["openFile"],
+  });
+  if (result.canceled) return { canceled: true, files: [] };
+  const files = [];
+  for (const filePath of (result.filePaths || []).slice(0, 24)) {
+    fileAccess.grant(filePath);
+    const stat = await fs.promises.stat(filePath);
+    if (stat.isFile()) files.push({ filePath, fileName: path.basename(filePath), size: stat.size });
+  }
+  return { canceled: false, files };
+});
+ipcMain.handle("desktop-shell:file-workstation-run", (event, payload) => fileWorkstation.run(event.sender, payload));
+ipcMain.handle("desktop-shell:file-workstation-cancel", (event, taskId) => fileWorkstation.cancel(event.sender, taskId));
+ipcMain.handle("desktop-shell:file-workstation-status", (event, taskId) => fileWorkstation.status(event.sender, taskId));
+
 ipcMain.handle("desktop-shell:get-file-preview-metadata", async (_event, targetPath) => {
   const normalizedPath = String(targetPath || "").trim();
   if (!normalizedPath) {
@@ -3812,10 +3847,21 @@ ipcMain.handle("desktop-shell:read-file-preview", async (_event, targetPath) => 
     return { ok: false, error: "路径不能为空", data: null, contentKey: "", mime: "" };
   }
   try {
-    const [buffer, stat] = await Promise.all([
-      fs.promises.readFile(normalizedPath),
-      fs.promises.stat(normalizedPath),
-    ]);
+    const handle = await fs.promises.open(normalizedPath, "r");
+    let buffer;
+    let stat;
+    try {
+      stat = await handle.stat();
+      if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error("预览支持 32 MB 以内文件，请使用系统应用打开大文件");
+      await assertArchiveBudget(normalizedPath, 32 * 1024 * 1024);
+      if (/\.(png|jpe?g|webp)$/i.test(normalizedPath)) {
+        const metadata = await sharp(normalizedPath).metadata();
+        if (!metadata.width || !metadata.height || metadata.width * metadata.height > 16000000) throw new Error("图片超过 1600 万像素，请用系统应用打开或先缩小图片");
+      }
+      buffer = await handle.readFile();
+      const after = await handle.stat();
+      if (buffer.length > 32 * 1024 * 1024 || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error("文件在读取时变化，请刷新预览");
+    } finally { await handle.close(); }
     const bytes = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     return { ok: true, data: bytes, ...buildFilePreviewMetadata(normalizedPath, stat) };
   } catch (error) {

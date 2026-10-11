@@ -163,6 +163,7 @@ export function createCanvas2DStore({
     exportHistoryUpdatedAt: 0,
     wordExportPreviewRequest: null,
     fileCardPreviewRequests: [],
+    fileConversionRequest: null,
   };
 
   let cachedBoardSnapshotRevision = -1;
@@ -329,6 +330,7 @@ export function createCanvas2DStore({
               previewAst: undefined,
             }))
           : null,
+      fileConversionRequest: state.fileConversionRequest ? { ...state.fileConversionRequest } : null,
       fileCardPreviewRequests: Array.isArray(state.fileCardPreviewRequests)
         ? state.fileCardPreviewRequests
             .filter((entry) => entry && typeof entry === "object")
