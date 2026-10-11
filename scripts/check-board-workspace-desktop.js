@@ -309,6 +309,7 @@ async function main() {
       ipcMain.removeHandler("desktop-shell:write-file");
       ipcMain.handle("desktop-shell:write-file", async (_event, file, data) => {
         if (!/\.freeflow$/i.test(file)) { await globalThis.__workspaceTestFs.mkdir(file.replace(/[\\/][^\\/]+$/, ""), { recursive: true }); await globalThis.__workspaceTestFs.writeFile(file, data); return { ok: true, filePath: file }; }
+        if (globalThis.__workspaceFailWrite) return { ok: false, error: "ENOSPC fixture" };
         if (globalThis.__workspaceDelayWrite) await new Promise((resolve) => { globalThis.__workspaceWriteGate = resolve; });
         return globalThis.__workspaceTestWriter.write(file, data);
       });
@@ -323,6 +324,19 @@ async function main() {
     assert.equal((await snapshot()).dirty, true, "an in-flight save incorrectly cleared later edits");
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     assert.equal((await snapshot()).dirty, false, "saving did not recover after concurrent edits");
+    await makeDirty();
+    const beforeFailedSave = await snapshot();
+    const diskBeforeFailure = await fs.readFile(renamed, "utf8");
+    await app.evaluate(() => { globalThis.__workspaceFailWrite = true; });
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard({ autosave: true, silent: true })), false);
+    assert.deepEqual(await snapshot(), beforeFailedSave);
+    assert.equal(await fs.readFile(renamed, "utf8"), diskBeforeFailure);
+    assert.match(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().boardSaveError), /ENOSPC/);
+    await panel.getByRole("alert").filter({ hasText: "保存失败" }).waitFor();
+    await app.evaluate(() => { globalThis.__workspaceFailWrite = false; });
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().boardSaveError), "");
+    assert.equal((await snapshot()).dirty, false);
     const beforeCreate = await snapshot();
     await app.evaluate(() => { globalThis.__workspaceWriteGate = null; globalThis.__workspaceDelayWrite = true; });
     await page.evaluate((root) => { window.__workspaceCreate = window.__canvas2dEngine.createBoardInWorkspace(root, "DeferredNew"); }, boards);
