@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeftRight, ChevronLeft, Cloud, FilePlus2, FolderOpen, ListTree, MoreHorizontal, PanelLeft, RefreshCw, Save, Search, Settings, Trash2, X } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, Cloud, FilePlus2, FolderOpen, MoreHorizontal, PanelLeft, RefreshCw, Save, Search, Settings, Trash2, X } from "lucide-react";
 import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
 import { CanvasRecoveryDialog } from "./CanvasRecoveryDialog.jsx";
 import { boardSyncLabel, summarizeSyncPlan } from "../workspace/syncPresentation.js";
@@ -13,7 +13,7 @@ function IconButton({ label, children, ...props }) {
   return <button type="button" className="canvas2d-workspace-icon" title={label} aria-label={label} {...props}>{children}</button>;
 }
 
-export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirectory, openRequest = 0 }) {
+export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0 }) {
   const supported = typeof globalThis.desktopShell?.listCanvasBoards === "function";
   const [open, setOpen] = useState(() => readChromePreference("workspaceOpen", supported));
   const [folder, setFolder] = useState("");
@@ -395,13 +395,12 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
     });
   }
 
-  if (!supported) return children;
+  if (!supported) return null;
   const modal = pending || deleteTarget;
   return (
-    <aside ref={rootRef} className={`canvas2d-workspace-panel${open ? " is-open" : " is-collapsed"}`} style={{ "--workspace-width": `${width}px` }} aria-label="画布工作区" aria-busy={Boolean(busy)}>
+    <aside ref={rootRef} className={`canvas2d-workspace-panel canvas-chrome-surface${open ? " is-open" : " is-collapsed"}`} style={{ "--workspace-width": `${width}px` }} aria-label="画布工作区" aria-busy={Boolean(busy)}>
       {!open ? <div className="canvas2d-workspace-rail">
         <IconButton label="展开画布工作区" onClick={() => toggle(true)}><PanelLeft size={18} /></IconButton>
-        <IconButton label="展开当前画布目录" onClick={() => { toggle(true); onShowDirectory?.(); }}><ListTree size={18} /></IconButton>
       </div> : null}
       <div className="canvas2d-workspace-files">
         <header className="canvas2d-workspace-head"><strong>工作区</strong><div>
@@ -440,9 +439,8 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
         {notice ? <div className="canvas2d-workspace-notice" role="status">{notice}</div> : null}
         {error ? <div className="canvas2d-workspace-error" role="alert">{error}</div> : null}
       </div>
-      <div className="canvas2d-workspace-directory">{children}</div>
       {open ? <div className="canvas2d-workspace-resizer" role="separator" aria-label="调整工作区宽度" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={360} aria-valuenow={width} tabIndex={0} onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = Math.min(360, Math.max(260, width + (event.key === "ArrowLeft" ? -10 : 10))); setWidth(next); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", next); } catch {} } }} onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const left = rootRef.current.getBoundingClientRect().left; setWidth(Math.min(360, Math.max(260, event.clientX - left))); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", width); } catch {} }} /> : null}
-      {menu ? createPortal(<div ref={menuRef} className="canvas2d-workspace-menu" role="menu" data-shape-include="true" style={{ left: menu.x, top: menu.y }}>
+      {menu ? createPortal(<div ref={menuRef} className="canvas2d-workspace-menu canvas-chrome-surface" role="menu" data-shape-include="true" style={{ left: menu.x, top: menu.y }}>
         <button role="menuitem" onClick={() => run("duplicate", async () => { const result = await bridge.duplicateBoardAtPath(menu.board.filePath); if (!result?.ok) throw new Error(result?.error || "复制失败"); setNotice("已创建独立画布副本"); setView("workspace"); await refresh(); })}>复制画布</button>
         <button role="menuitem" onClick={() => { setEditor({ kind: "rename", path: menu.board.filePath, name: displayName(menu.board.name) }); setMenu(null); }}>重命名</button>
         <button role="menuitem" onClick={() => { bridge.revealBoardPathInFolder(menu.board.filePath); setMenu(null); }}>显示文件位置</button>
@@ -452,7 +450,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, children, onShowDirector
         <button role="menuitem" onClick={() => openRecovery("trash")}>打开回收站</button>
       </div>, portalHost) : null}
       {recovery ? createPortal(<CanvasRecoveryDialog recovery={recovery} busy={busy} error={error} onClose={() => { setRecovery(null); setError(""); searchRef.current?.focus(); }} onRestore={restoreRecovery} onRefresh={() => openRecovery(recovery.kind, { filePath: recovery.target })} />, portalHost) : null}
-      {modal ? createPortal(<div className="canvas2d-workspace-confirm-backdrop" data-shape-include="true"><section ref={switchDialogRef} className="canvas2d-workspace-confirm" role="alertdialog" aria-modal="true" aria-label={pending ? "切换前保存画布" : "删除画布确认"} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape" && !busy) { setPending(null); setDeleteTarget(null); } }}>
+      {modal ? createPortal(<div className="canvas2d-workspace-confirm-backdrop" data-shape-include="true"><section ref={switchDialogRef} className="canvas2d-workspace-confirm canvas-chrome-surface" role="alertdialog" aria-modal="true" aria-label={pending ? "切换前保存画布" : "删除画布确认"} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape" && !busy) { setPending(null); setDeleteTarget(null); } }}>
         <strong>{pending ? `「${currentName}」有未保存内容` : `删除「${displayName(deleteTarget.name)}」？`}</strong><p>{pending ? snapshot?.boardFileReloadRequired ? "磁盘已有新版本，保存会另存本次修改，再载入磁盘版本。" : "保存后切换，或放弃本次未保存修改。" : "画布会移入当前工作区的回收站，可以恢复。远程副本不会自动删除。"}</p>
         {error ? <div role="alert" className="canvas2d-workspace-error">{error}</div> : null}
         <div><button autoFocus type="button" disabled={Boolean(busy)} onClick={() => { setPending(null); setDeleteTarget(null); setError(""); }}>取消</button>{pending ? <><button type="button" disabled={Boolean(busy)} onClick={() => confirmSwitch("discard")}>放弃并切换</button><button type="button" disabled={Boolean(busy)} onClick={() => confirmSwitch("save")}>保存并切换</button></> : <button type="button" disabled={Boolean(busy)} onClick={() => run("delete", async () => { const result = await bridge.deleteBoardAtPath(deleteTarget.filePath); if (!result?.ok) throw new Error(result?.error || "删除失败"); setRecent((previous) => previous.filter((entry) => entry.filePath !== deleteTarget.filePath)); setDeleteTarget(null); await refresh(); })}>删除</button>}</div>
