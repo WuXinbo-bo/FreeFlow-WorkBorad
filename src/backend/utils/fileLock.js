@@ -89,6 +89,12 @@ function isLockOwnedByCurrentProcess(lockInfo) {
   );
 }
 
+function isLockOwnerAlive(lockInfo) {
+  if (!lockInfo || lockInfo.hostname !== os.hostname()) return false;
+  try { process.kill(lockInfo.processId, 0); return true; }
+  catch (error) { return error.code === "EPERM"; }
+}
+
 /**
  * 创建锁文件
  */
@@ -101,12 +107,11 @@ async function createLockFile(lockPath, lockId) {
     lockPath,
   };
 
-  try {
-    await fs.writeFile(lockPath, JSON.stringify(lockInfo, null, 2), "utf8");
-    return lockInfo;
-  } catch (error) {
-    throw new Error(`创建锁文件失败: ${error.message}`);
-  }
+  const handle = await fs.open(lockPath, "wx", 0o600);
+  try { await handle.writeFile(JSON.stringify(lockInfo, null, 2), "utf8"); }
+  catch (error) { await fs.unlink(lockPath).catch(() => {}); throw error; }
+  finally { await handle.close(); }
+  return lockInfo;
 }
 
 /**
@@ -148,11 +153,15 @@ async function acquireFileLock(targetPath, options = {}) {
         lockPath,
         release: () => releaseFileLock(lockPath, lockId),
       };
-    } catch {
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
       // 锁文件已存在，检查是否过期
       const existingLock = await readLockInfo(lockPath);
 
-      if (isLockExpired(existingLock, opts.lockExpiryMs)) {
+      // A newly created lock can briefly be empty while its owner writes metadata.
+      const lockStat = await fs.stat(lockPath).catch(() => null);
+      if (!lockStat) continue;
+      if (existingLock ? isLockExpired(existingLock, opts.lockExpiryMs) && !isLockOwnerAlive(existingLock) : Date.now() - lockStat.mtimeMs > opts.lockExpiryMs) {
         // 锁已过期，尝试删除
         try {
           await fs.unlink(lockPath);
@@ -162,16 +171,6 @@ async function acquireFileLock(targetPath, options = {}) {
         } catch {
           // 删除失败，可能是其他进程正在操作
         }
-      }
-
-      // 检查是否由当前进程持有
-      if (isLockOwnedByCurrentProcess(existingLock)) {
-        // 已经持有锁，直接返回
-        return {
-          lockId: existingLock.lockId,
-          lockPath,
-          release: () => releaseFileLock(lockPath, existingLock.lockId),
-        };
       }
 
       // 检查是否超时

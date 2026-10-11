@@ -30,6 +30,7 @@ const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTa
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
+const recoveryService = require("../src/backend/services/boardRecoveryService");
 const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
@@ -3833,6 +3834,10 @@ ipcMain.handle("desktop-shell:rename-path", async (_event, sourcePath, targetPat
     const dir = path.dirname(toPath);
     await fs.promises.mkdir(dir, { recursive: true });
     await fs.promises.rename(fromPath, toPath);
+    if (/\.(freeflow|json)$/i.test(fromPath) && /\.(freeflow|json)$/i.test(toPath)) {
+      try { await recoveryService.moveCanvasHistory(fromPath, toPath); }
+      catch (error) { await fs.promises.rename(toPath, fromPath); throw error; }
+    }
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error.message || "重命名失败" };
@@ -3846,15 +3851,41 @@ ipcMain.handle("desktop-shell:remove-path", async (_event, targetPath) => {
   }
   try {
     const resolvedPath = path.resolve(normalizedPath);
-    const stat = await fs.promises.stat(resolvedPath);
-    if (!stat.isFile()) {
-      return { ok: false, error: "仅支持删除文件" };
-    }
-    await fs.promises.unlink(resolvedPath);
-    return { ok: true, filePath: resolvedPath };
+    return await recoveryService.trashCanvasBoard(resolvedPath);
   } catch (error) {
     return { ok: false, error: error.message || "删除失败" };
   }
+});
+
+ipcMain.handle("desktop-shell:list-canvas-history", async (_event, payload) => {
+  try { return await recoveryService.listCanvasHistory(payload?.filePath); }
+  catch (error) { return { ok: false, error: error.message || "读取历史失败", entries: [] }; }
+});
+
+ipcMain.handle("desktop-shell:restore-canvas-history", async (_event, payload) => {
+  try {
+    return await recoveryService.restoreCanvasHistory(payload?.filePath, String(payload?.historyId || "").trim());
+  } catch (error) { return { ok: false, error: error.message || "恢复历史失败" }; }
+});
+
+ipcMain.handle("desktop-shell:preview-canvas-history", async (_event, payload) => {
+  try { return await recoveryService.previewCanvasHistory(payload?.filePath, payload?.historyId); }
+  catch (error) { return { ok: false, error: error.message || "预览历史失败" }; }
+});
+
+ipcMain.handle("desktop-shell:list-canvas-trash", async (_event, payload) => {
+  try { return await recoveryService.listCanvasTrash(payload?.folderPath); }
+  catch (error) { return { ok: false, error: error.message || "读取回收站失败", items: [] }; }
+});
+
+ipcMain.handle("desktop-shell:restore-canvas-trash", async (_event, payload) => {
+  try { return await recoveryService.restoreCanvasTrash(payload?.folderPath, String(payload?.trashId || "").trim()); }
+  catch (error) { return { ok: false, error: error.message || "恢复画布失败" }; }
+});
+
+ipcMain.handle("desktop-shell:purge-canvas-trash", async (_event, payload) => {
+  try { return await recoveryService.purgeCanvasTrash(payload?.folderPath, payload?.trashId); }
+  catch (error) { return { ok: false, error: error.message || "清理回收站失败" }; }
 });
 
 ipcMain.handle("desktop-shell:read-clipboard-files", async () => {
