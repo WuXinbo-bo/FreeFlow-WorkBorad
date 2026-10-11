@@ -34,6 +34,7 @@ const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBo
 const recoveryService = require("../src/backend/services/boardRecoveryService");
 const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
+const { createFileAccessRegistry, assertFileIpcAccess } = require("./fileAccessRegistry");
 const { shouldIgnoreMacOSMouseEvents } = require("./macosWindowInteraction");
 const { constrainWindowBoundsToWorkArea } = require("./windowBounds");
 const { resolveServerPort } = require("../src/backend/config/serverPort");
@@ -137,6 +138,10 @@ let backgroundExportReady = false;
 let backgroundExportTaskSequence = 0;
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
+const fileAccess = createFileAccessRegistry({ storagePath: path.join(DATA_DIR, "file-access-grants.json") });
+fileAccess.grant(CANVAS_BOARD_DIR, { directory: true, write: true });
+fileAccess.grant(TEMP_DRAG_DIR, { directory: true, write: true });
+let restoredFileAccess = false;
 const atomicBoardFileWriter = createAtomicBoardFileWriter();
 const boardWorkspaceWatcher = createBoardWorkspaceWatcher((detail) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop-shell:canvas-workspace-changed", detail);
@@ -160,6 +165,7 @@ function queueOpenBoardPath(filePath = "") {
   if (!normalizedPath) {
     return false;
   }
+  fileAccess.grant(path.dirname(normalizedPath), { directory: true, write: true });
   if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.__freeflowRendererReady) {
     if (!pendingOpenBoardPaths.includes(normalizedPath)) {
       pendingOpenBoardPaths.push(normalizedPath);
@@ -203,6 +209,7 @@ const assertTrustedIpcEvent = createIpcEventValidator({
 const ipcMain = createSecuredIpcMain({
   ipcMain: electronIpcMain,
   validate: assertTrustedIpcEvent,
+  authorize: (channel, args) => assertFileIpcAccess(fileAccess, channel, args),
   onRejected: (error) => console.warn(error.message),
 });
 
@@ -1273,6 +1280,14 @@ async function ensureDesktopStartupContext({ force = false } = {}) {
   startupContextCache = await ensureAppStartupState({
     ensureTutorialBoardFile,
   });
+  if (!restoredFileAccess) {
+    restoredFileAccess = true;
+    const settings = startupContextCache?.uiSettings || {};
+    for (const key of ["canvasBoardSavePath", "canvasWorkspaceFolderPath", "canvasImageSavePath"]) {
+      if (settings[key]) fileAccess.grant(settings[key], { directory: true, write: true });
+    }
+    if (settings.canvasLastOpenedBoardPath) fileAccess.grant(path.dirname(settings.canvasLastOpenedBoardPath), { directory: true, write: true });
+  }
   return startupContextCache;
 }
 
@@ -3612,6 +3627,8 @@ ipcMain.handle("desktop-shell:pick-canvas-board-path", async (_event, payload) =
     properties: ["showOverwriteConfirmation"],
   });
 
+  if (!result.canceled && result.filePath) fileAccess.grant(path.dirname(result.filePath), { directory: true, write: true });
+
   return {
     canceled: result.canceled,
     filePath: result.filePath || "",
@@ -3625,6 +3642,8 @@ ipcMain.handle("desktop-shell:pick-directory", async (_event, payload) => {
     defaultPath: defaultPath || CANVAS_BOARD_DIR,
     properties: ["openDirectory", "createDirectory"],
   });
+
+  if (!result.canceled && result.filePaths?.[0]) fileAccess.grant(result.filePaths?.[0], { directory: true, write: true });
 
   return {
     canceled: result.canceled,
@@ -3644,6 +3663,8 @@ ipcMain.handle("desktop-shell:pick-canvas-board-open", async (_event, payload) =
     ],
     properties: ["openFile"],
   });
+
+  if (!result.canceled && result.filePaths?.[0]) fileAccess.grant(path.dirname(result.filePaths?.[0]), { directory: true, write: true });
 
   return {
     canceled: result.canceled,
@@ -3765,6 +3786,8 @@ ipcMain.handle("desktop-shell:pick-image-save-path", async (_event, payload) => 
     properties: ["showOverwriteConfirmation"],
   });
 
+  if (!result.canceled && result.filePath) fileAccess.grant(result.filePath, { directory: false, write: true });
+
   return {
     canceled: result.canceled,
     filePath: result.filePath || "",
@@ -3794,6 +3817,8 @@ ipcMain.handle("desktop-shell:pick-text-save-path", async (_event, payload) => {
     properties: ["showOverwriteConfirmation"],
   });
 
+  if (!result.canceled && result.filePath) fileAccess.grant(result.filePath, { directory: false, write: true });
+
   return {
     canceled: result.canceled,
     filePath: result.filePath || "",
@@ -3812,6 +3837,8 @@ ipcMain.handle("desktop-shell:pick-pdf-save-path", async (_event, payload) => {
     ],
     properties: ["showOverwriteConfirmation"],
   });
+
+  if (!result.canceled && result.filePath) fileAccess.grant(result.filePath, { directory: false, write: true });
 
   return {
     canceled: result.canceled,
@@ -4031,6 +4058,11 @@ ipcMain.handle("desktop-shell:preview-word-docx", async (_event, payload) => {
   }
 });
 
+ipcMain.on("desktop-shell:grant-dropped-file", (event, targetPath) => {
+  try { fileAccess.grant(targetPath); event.returnValue = true; }
+  catch { event.returnValue = false; }
+});
+
 ipcMain.handle("desktop-shell:read-file", async (_event, targetPath) => {
   const normalizedPath = String(targetPath || "").trim();
   if (!normalizedPath) {
@@ -4193,7 +4225,9 @@ ipcMain.handle("desktop-shell:purge-canvas-trash", async (_event, payload) => {
 
 ipcMain.handle("desktop-shell:read-clipboard-files", async () => {
   try {
-    return await readClipboardFiles();
+    const result = await readClipboardFiles();
+    for (const value of result.paths || []) fileAccess.grant(value);
+    return result;
   } catch (error) {
     return {
       ok: false,
@@ -4431,6 +4465,7 @@ if (!gotSingleInstanceLock) {
 } else {
   const initialBoardPath = process.argv.slice(1).map((value) => normalizeOpenBoardPath(value)).find(Boolean);
   if (initialBoardPath) {
+    fileAccess.grant(path.dirname(initialBoardPath), { directory: true, write: true });
     pendingOpenBoardPaths.push(initialBoardPath);
   }
   app.on("open-file", (event, filePath) => {

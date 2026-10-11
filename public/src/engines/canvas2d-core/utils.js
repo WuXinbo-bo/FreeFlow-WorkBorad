@@ -87,6 +87,30 @@ export function sanitizeHtml(value = "") {
   return template.innerHTML;
 }
 
+export function sanitizeDiagramSvg(value = "") {
+  if (typeof document === "undefined") return "";
+  const cleaned = getHtmlPurifier().sanitize(String(value || ""), {
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
+    ADD_TAGS: ["foreignObject"],
+    HTML_INTEGRATION_POINTS: { foreignobject: true },
+    ADD_ATTR: ["target"],
+    FORBID_TAGS: ["script", "iframe", "object", "embed"],
+    FORBID_ATTR: ["srcdoc"],
+  });
+  const template = document.createElement("template");
+  template.innerHTML = cleaned;
+  for (const node of template.content.querySelectorAll("[href], [xlink\\:href], [src]")) {
+    for (const attr of ["href", "xlink:href", "src"]) {
+      const value = node.getAttribute(attr);
+      if (value && !/^(?:https?:|mailto:|tel:|#|data:image\/(?:png|jpeg|gif|webp);base64,)/i.test(value)) node.removeAttribute(attr);
+    }
+  }
+  for (const style of template.content.querySelectorAll("style")) {
+    if (/@import|url\s*\(\s*["']?(?!#)/i.test(style.textContent || "")) style.remove();
+  }
+  return template.innerHTML;
+}
+
 const RICH_TEXT_BLOCK_TAGS = new Set([
   "div",
   "p",

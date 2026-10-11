@@ -118,6 +118,30 @@ async function main() {
         await dialog.waitFor({ state: "hidden" });
       }
     }
+    const diagrams = await page.evaluate(async () => {
+      const { sanitizeDiagramSvg } = await import("/src/engines/canvas2d-core/utils.js");
+      const { renderCodeBlockStatic } = await import("/src/engines/canvas2d-core/codeBlock/renderCodeBlockStatic.js");
+      const payload = '<svg xmlns="http://www.w3.org/2000/svg" onload="window.__svgAttack=1"><script>window.__svgAttack=2</script><a href="javascript:window.__svgAttack=3"><text>bad</text></a><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><b>Label</b><img src="bad" onerror="window.__svgAttack=4"></div></foreignObject><defs><marker id="arrow"><path d="M0,0 L10,5"/></marker></defs><path marker-end="url(#arrow)" d="M0,0 L50,50"/><a href="https://example.com" target="_blank"><text>safe</text></a></svg>';
+      const sanitized = sanitizeDiagramSvg(payload);
+      const probe = document.createElement("div");
+      probe.innerHTML = sanitized;
+      document.body.append(probe);
+      const node = document.createElement("div");
+      node.id = "mermaid-safety-probe";
+      document.body.append(node);
+      renderCodeBlockStatic(node, { id: "diagram", type: "codeBlock", language: "mermaid", code: 'flowchart LR\n A["<b>Rich label</b>"] --> B[Safe]\n click B href "https://example.com" "Open"', width: 500, height: 300 });
+      return sanitized;
+    });
+    assert.doesNotMatch(diagrams, /onload|onerror|<script|javascript:/i);
+    assert.match(diagrams, /foreignObject/i);
+    assert.match(diagrams, /marker-end="url\(#arrow\)"/);
+    assert.match(diagrams, /https:\/\/example.com/);
+    await page.waitForFunction(() => document.querySelector("#mermaid-safety-probe")?.dataset.mermaidState === "ready");
+    assert(await page.locator("#mermaid-safety-probe svg path").count() > 0);
+    assert(await page.evaluate(() => [...document.querySelectorAll("#mermaid-safety-probe a")].some((a) => (a.getAttribute("href") || a.getAttribute("xlink:href")) === "https://example.com")));
+    assert(await page.locator("#mermaid-safety-probe").textContent().then((text) => text.includes("Rich label")));
+    assert.equal(await page.evaluate(() => Boolean(window.__svgAttack)), false);
+    await page.evaluate(() => document.getElementById("mermaid-safety-probe").remove());
     await checkWordPreviewRecovery(page);
     assert.deepEqual(errors, []);
     console.log("[check-canvas-html-safety-browser] HTML safety, saved content, repeated dialogs and delayed Word close/reopen passed");

@@ -40,6 +40,12 @@ async function main() {
     await page.waitForFunction(() => !document.body.classList.contains("boot-shape-lock"));
     await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus(); });
     await page.evaluate((target) => window.__canvas2dEngine.openBoardAtPath(target), alpha);
+    const denied = await page.evaluate(async (target) => {
+      try { return await window.desktopShell.readFile(target); }
+      catch (error) { return { ok: false, error: error.message }; }
+    }, path.join(data, "ui-settings.json"));
+    assert.equal(denied.ok, false, "renderer read an unselected settings file");
+    assert.match(denied.error, /尚未授权/);
     const panel = page.getByRole("complementary", { name: "画布工作区" });
     await panel.waitFor({ state: "visible" });
     const row = (name) => panel.locator(".canvas2d-workspace-open").filter({ has: page.locator("span", { hasText: new RegExp(`^${name}$`) }) });

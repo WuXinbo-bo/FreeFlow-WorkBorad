@@ -98,7 +98,9 @@ contextBridge.exposeInMainWorld("desktopShell", {
   stopAiMirrorTarget: (payload) => ipcRenderer.invoke("desktop-shell:stop-ai-mirror-target", payload),
   getPathForFile: (file) => {
     try {
-      return webUtils.getPathForFile(file) || "";
+      const filePath = webUtils.getPathForFile(file) || "";
+      if (filePath && !ipcRenderer.sendSync("desktop-shell:grant-dropped-file", filePath)) return "";
+      return filePath;
     } catch {
       return "";
     }

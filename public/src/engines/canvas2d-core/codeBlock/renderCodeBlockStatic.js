@@ -1,4 +1,4 @@
-import { sanitizeText } from "../utils.js";
+import { sanitizeText, sanitizeDiagramSvg } from "../utils.js";
 import { getCodeBlockSceneMetrics } from "./measureCodeBlockLayout.js";
 import { isMermaidCodeBlock } from "../elements/codeBlock.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
@@ -243,8 +243,7 @@ async function renderMermaidSvg(code = "", renderId = "") {
   const mermaidRuntime = await ensureMermaidRuntime();
   const result = await mermaidRuntime.render(renderId, sanitizeText(code || ""));
   return {
-    svg: String(result?.svg || ""),
-    bindFunctions: typeof result?.bindFunctions === "function" ? result.bindFunctions : null,
+    svg: sanitizeDiagramSvg(result?.svg || ""),
   };
 }
 
@@ -416,7 +415,7 @@ export function buildCodeBlockStaticMarkup(item = {}, options = {}) {
   `;
 }
 
-function applyMermaidPreviewResult(node, markupSignature, mermaidCacheKey, { svg = "", bindFunctions = null } = {}) {
+function applyMermaidPreviewResult(node, markupSignature, mermaidCacheKey, { svg = "" } = {}) {
   if (!(node instanceof HTMLDivElement)) {
     return;
   }
@@ -438,13 +437,8 @@ function applyMermaidPreviewResult(node, markupSignature, mermaidCacheKey, { svg
     tabSize: Number(node.dataset.tabSize || 2) || 2,
   };
   syncMermaidPreviewSizing(node, itemForScale, scale);
-  if (typeof bindFunctions === "function") {
-    try {
-      bindFunctions(previewNode);
-    } catch {
-      // Ignore optional binding failures; SVG preview remains usable.
-    }
-  }
+  // Native sanitized links remain usable. Diagram-authored global callbacks
+  // are never bound to the privileged canvas document.
 }
 
 function applyMermaidPreviewError(node, markupSignature, mermaidCacheKey, error) {
