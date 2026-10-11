@@ -574,6 +574,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
     if (!reading) return undefined;
     const previous = document.activeElement;
     const handleKey = (event) => {
+      if (document.querySelector(".file-conversion-dialog")) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); setReading(false); }
       if (event.key === "Tab") {
         const focusable = Array.from(document.querySelector(".file-workstation-reader")?.querySelectorAll("button, input, select, [tabindex='0']") || []).filter((node) => !node.disabled);
@@ -801,6 +802,6 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
       </div>
     </div>
   );
-  return reading ? createPortal(<div className="file-workstation-backdrop" onClick={() => setReading(false)}>{React.cloneElement(previewElement, { onClick: (event) => event.stopPropagation() })}</div>, document.body) : portalHost instanceof HTMLElement ? createPortal(previewElement, portalHost) : previewElement;
+  return reading ? createPortal(<div className="file-workstation-backdrop" data-shape-include="true" onClick={() => setReading(false)}>{React.cloneElement(previewElement, { onClick: (event) => event.stopPropagation() })}</div>, document.getElementById("global-overlay-layer") || document.body) : portalHost instanceof HTMLElement ? createPortal(previewElement, portalHost) : previewElement;
 }
 
