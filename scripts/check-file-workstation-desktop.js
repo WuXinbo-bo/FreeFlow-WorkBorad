@@ -23,7 +23,7 @@ async function main() {
   const bootstrap = path.join(temp, "bootstrap.cjs");
   await fs.writeFile(bootstrap, `const { app, ipcMain } = require("electron"); app.setPath("userData", ${JSON.stringify(profile)}); app.getAppPath = () => ${JSON.stringify(ROOT)};
     const handle = ipcMain.handle.bind(ipcMain); global.__fileTestHandlers = new Map();
-    ipcMain.handle = (channel, listener) => { global.__fileTestHandlers.set(channel, listener); handle(channel, (...args) => { if (channel === "desktop-shell:set-window-shape") global.__fileTestShape = args[1]; return listener(...args); }); };
+    ipcMain.handle = (channel, listener) => { global.__fileTestHandlers.set(channel, listener); handle(channel, (...args) => { if (channel === "desktop-shell:set-window-shape") global.__fileTestShape = args[1]; if (channel === "desktop-shell:file-workstation-status") global.__fileStatusReads = (global.__fileStatusReads || 0) + 1; return listener(...args); }); };
     require(${JSON.stringify(path.join(ROOT, "electron/main.js"))});`);
   const env = { ...process.env, FREEFLOW_HOME_DIR: temp, FREEFLOW_USER_DATA_DIR: data, FREEFLOW_CANVAS_BOARD_DIR: boards, FREEFLOW_LEGACY_PROJECT_DATA_DIR: path.join(temp, "Legacy"), FREEFLOW_PORT: "0" }; delete env.ELECTRON_RUN_AS_NODE;
   let app;
@@ -148,6 +148,7 @@ async function main() {
     await openConversion(); await page.getByRole("button", { name: "检测转换引擎", exact: true }).click(); await page.getByRole("button", { name: "取消任务", exact: true }).waitFor();
     await page.getByRole("button", { name: "取消任务", exact: true }).click(); await page.waitForFunction(() => document.querySelector(".file-conversion-status")?.textContent.includes("完整退出并重新启动"));
     await page.getByRole("button", { name: "关闭文件转换", exact: true }).click(); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog")); await assertModalShape(false);
+    const statusReads = await app.evaluate(() => global.__fileStatusReads || 0); await page.waitForTimeout(900); assert.equal(await app.evaluate(() => global.__fileStatusReads || 0), statusReads, "closing a pending task must stop status polling immediately");
     await openConversion(); await app.evaluate(() => { global.__fileResolveRun({ ok: true, office: true, engine: "stale-result" }); });
     assert(!await page.locator(".file-conversion-status").textContent().then((text) => text.includes("stale-result"))); await page.keyboard.press("Escape");
     for (let i = 0; i < 5; i++) { await openConversion(); await page.keyboard.press("Escape"); await page.waitForFunction(() => !document.querySelector(".file-conversion-dialog")); }
