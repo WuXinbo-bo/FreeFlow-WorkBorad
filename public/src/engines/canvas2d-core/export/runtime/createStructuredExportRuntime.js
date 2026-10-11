@@ -1,6 +1,4 @@
 import { prepareWordExportAssets } from "../word/prepareWordExportAssets.js";
-import { getFramePagePlans } from "../../frames/frameModel.js";
-import { exportFramePagesAsPdf } from "../exportFramePagesAsPdf.js";
 import { renderBoardToCanvas as renderExportBoardToCanvas } from "../renderBoardToCanvas.js";
 import { renderSnapshotToTileExports } from "../tileExport.js";
 import { exportBoardAsPdf as runPdfExport } from "../exportBoardAsPdf.js";
@@ -592,7 +590,6 @@ export function createStructuredExportRuntime({
       devicePixelRatio: options.devicePixelRatio ?? 1,
       exportBounds: hydratedSnapshot?.bounds || null,
       allowUnsafeSize: Boolean(options.allowUnsafeSize),
-      ...(options.exactBounds ? { minPadding: 0, paddingRatio: 0 } : {}),
     });
     if (renderResult && typeof renderResult === "object") {
       renderResult.exportImageFallbackCount = Math.max(
@@ -793,13 +790,6 @@ export function createStructuredExportRuntime({
   }
 
   async function exportBoardAsPdf(board, options = {}) {
-    if (options.paginateFrames) {
-      const pages = getFramePagePlans(board.items || [], getElementBounds, { includeOutside: options.includeOutsideFrames !== false });
-      if (pages.length) return exportFramePagesAsPdf(pages, async (page) => {
-        const snapshot = { ...buildSnapshot(board, { scope: "selection", items: page.items }), bounds: page.bounds };
-        return renderSnapshotToCanvasWithSafety(snapshot, { ...options, exactBounds: true, backgroundFill: "#ffffff", renderTextInCanvas: true });
-      }, options);
-    }
     if (options?.signal?.aborted) {
       return createEmptyBinaryExportResult("PDF_EXPORT_CANCELED");
     }

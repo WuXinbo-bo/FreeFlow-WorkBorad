@@ -1,5 +1,4 @@
 import { clone, createId as defaultCreateId } from "../utils.js";
-import { getFrames } from "../frames/frameModel.js";
 
 const INTERNAL_LINK_PREFIX = "freeflow://canvas/item/";
 const RELATION_TYPES = new Set(["flowEdge", "mindRelationship"]);
@@ -14,7 +13,6 @@ export function prepareElementDuplicateBatch(items = [], options = {}) {
     sourceItems.map((item) => [String(item.id), createId(String(item.type || "item"))])
   );
   const groupIdMap = new Map();
-  const frameOrders = new Map(getFrames(sourceItems).map((frame, index) => [frame.id, (Number(options.frameOrderStart) || 0) + index]));
 
   sourceItems.forEach((item) => {
     const groupId = String(item.groupId || "").trim();
@@ -28,8 +26,6 @@ export function prepareElementDuplicateBatch(items = [], options = {}) {
     .map((item) => {
       const duplicated = remapInternalLinkValues(clone(item), idMap);
       duplicated.id = idMap.get(String(item.id));
-      if (frameOrders.has(item.id)) duplicated.frame = { ...duplicated.frame, order: frameOrders.get(item.id) };
-      if (duplicated.frameId) duplicated.frameId = idMap.get(String(item.frameId)) || "";
       if (duplicated.groupId) {
         duplicated.groupId = groupIdMap.get(String(duplicated.groupId)) || "";
       }
