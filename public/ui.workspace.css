@@ -56,7 +56,7 @@
   top: 50%;
   width: 34px;
   height: auto;
-  transform: translateY(-50%);
+  transform: translateY(-50%) !important;
 }
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel.is-open, .canvas2d-navigator-panel)) .canvas2d-workspace-rail strong,
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel.is-open, .canvas2d-navigator-panel)) .canvas2d-navigator-tab-label { display: none; }

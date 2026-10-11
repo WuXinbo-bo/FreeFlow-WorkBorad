@@ -374,6 +374,9 @@ async function main() {
       await directory.getByRole("button", { name: "收起画布目录", exact: true }).click();
       assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible());
       assert((await navigation.boundingBox()).width <= 36, "fully collapsed navigation did not restore its compact rail");
+      const compact = await navigation.boundingBox();
+      await navigation.hover();
+      assert(Math.abs((await navigation.boundingBox()).y - compact.y) < 1, "hover moved the centered compact rail");
       await page.getByRole("button", { name: "展开画布目录", exact: true }).click();
       assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "opening the directory also opened files");
       await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
