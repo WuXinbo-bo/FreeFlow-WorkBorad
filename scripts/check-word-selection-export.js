@@ -98,7 +98,7 @@ async function main() {
     displayMode: true,
   };
 
-  const skippedImage = {
+  const missingImage = {
     id: "image-a",
     type: "image",
     x: 20,
@@ -107,16 +107,17 @@ async function main() {
     height: 80,
   };
 
-  const selection = [richTextItem, codeBlockItem, tableItem, mathItem, skippedImage];
+  const unsupportedShape = { id: "shape-a", type: "shape", x: 0, y: 0, width: 30, height: 30 };
+  const selection = [richTextItem, codeBlockItem, tableItem, mathItem, missingImage, unsupportedShape];
   const plan = builderModule.buildSelectionWordExportPlan(selection);
 
   assert.deepStrictEqual(
     plan.orderedEntries.map((entry) => entry.id),
-    ["code-a", "text-a", "table-a", "math-a"],
+    ["image-a", "code-a", "text-a", "table-a", "math-a"],
     "selection reading order is incorrect"
   );
   assert.strictEqual(plan.skippedEntries.length, 1, "unsupported items should be skipped");
-  assert.strictEqual(plan.skippedEntries[0].id, "image-a", "image item should be skipped");
+  assert.strictEqual(plan.skippedEntries[0].id, "shape-a", "unsupported shape should be skipped");
 
   const ast = builderModule.buildWordExportAstFromCanvasSelection(selection, {
     title: "多选导出测试",
@@ -125,7 +126,7 @@ async function main() {
   assert.strictEqual(ast.kind, "freeflow-word-export");
   assert.strictEqual(ast.version, 1);
   assert.strictEqual(ast.meta.title, "多选导出测试");
-  assert.deepStrictEqual(ast.meta.orderedItemIds, ["code-a", "text-a", "table-a", "math-a"]);
+  assert.deepStrictEqual(ast.meta.orderedItemIds, ["image-a", "code-a", "text-a", "table-a", "math-a"]);
   assert.strictEqual(ast.meta.skippedItems.length, 1, "AST metadata should preserve skipped items");
   assert.ok(Array.isArray(ast.sections) && ast.sections.length === 1, "AST should contain a single section");
   assert.ok(Array.isArray(ast.sections[0].children) && ast.sections[0].children.length > 0, "AST should contain children");

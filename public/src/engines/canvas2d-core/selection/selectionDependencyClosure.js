@@ -1,3 +1,4 @@
+import { isFrame } from "../frames/frameModel.js";
 const RELATION_TYPES = new Set(["flowEdge", "mindRelationship"]);
 
 function normalizeId(value = "") {
@@ -45,6 +46,8 @@ export function resolveSelectionDependencyClosure(selectedItems = [], boardItems
       });
     }
 
+    const frameIds = new Set(selectedSnapshot.filter(isFrame).map((item) => item.id));
+    for (const item of allItems) if (frameIds.has(item.frameId)) changed = addById(item.id, selectedIds, itemById) || changed;
     selectedSnapshot.forEach((item) => {
       if (item.type === "mindNode") {
         (Array.isArray(item.childrenIds) ? item.childrenIds : []).forEach((id) => {

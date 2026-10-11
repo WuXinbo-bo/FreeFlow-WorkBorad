@@ -1,3 +1,6 @@
+import { parseStandaloneUrls, collectionMetadata, createLinkCard } from "./collection/collectionModel.js";
+import { prepareWordExportAssets } from "./export/word/prepareWordExportAssets.js";
+import { createFrame, isFrame, getFrames, expandFrameSelection, normalizeFrameOrders } from "./frames/frameModel.js";
 import { createWorkerLifetime } from "./runtime/workerLifetime.js";
 import { createClipboardDataTransferSnapshot, createClipboardDataTransferFacade } from "./brokers/clipboardSnapshot.js";
 import { normalizeCanvasWheelInput } from "./runtime/wheelInput.js";
@@ -6349,6 +6352,8 @@ let tablePointerSelectionState = {
 
   function cancelClipboardImports() {
     clipboardImportEpoch += 1;
+    linkMetadataQueue.length = 0;
+    linkMetadataControllers.forEach((controller) => controller.abort());
     clipboardImportQueue = Promise.resolve();
     structuredImportControllers.forEach((controller) => controller.abort());
     structuredImportControllers.clear();
@@ -8615,11 +8620,11 @@ let tablePointerSelectionState = {
     });
   }
 
-  function pushItems(items = [], { reason = "", statusText = "" } = {}) {
+  function pushItems(items = [], { reason = "", statusText = "", collection = null } = {}) {
     if (!Array.isArray(items) || !items.length) {
       return false;
     }
-    const insertItems = normalizeImportedPasteFrameItems(items);
+    const insertItems = normalizeImportedPasteFrameItems(items).map((item) => collection ? { ...item, collection } : item);
     const before = takeHistoryMetadataSnapshot(state);
     state.board.items.push(...insertItems);
     state.board.selectedIds = insertItems.map((item) => item.id);
@@ -10870,6 +10875,26 @@ let tablePointerSelectionState = {
     syncCanvasLinkBindingUi();
     closeRichToolbarSubmenus();
     setStatus("画布链接模式：请在画布中点击目标元素（Esc 取消）");
+  }
+
+  function revealSearchItem(itemId) {
+    const item = state.board.items.find((entry) => entry.id === itemId);
+    if (!item) return false;
+    const ancestors = new Set();
+    let parentId = item.parentId;
+    while (parentId && !ancestors.has(parentId)) {
+      ancestors.add(parentId);
+      parentId = state.board.items.find((entry) => entry.id === parentId)?.parentId;
+    }
+    const folded = state.board.items.filter((entry) => ancestors.has(entry.id) && entry.collapsed).map((entry) => entry.id);
+    if (folded.length) {
+      const before = takeItemsHistorySnapshot(folded);
+      state.board.items = state.board.items.map((entry) => folded.includes(entry.id) ? { ...entry, collapsed: false } : entry);
+      commitItemsPatchHistory(before, folded, "展开搜索目标", "item-search-reveal");
+    }
+    state.board.selectedIds = [itemId];
+    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: true });
+    return true;
   }
 
   function focusCanvasLinkTarget(itemId = "") {
@@ -17074,7 +17099,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         backgroundPattern: resolveExportBackgroundPattern(options),
       };
       const result =
-        typeof globalThis?.desktopShell?.exportBoardInBackground === "function"
+        typeof globalThis?.desktopShell?.exportBoardInBackground === "function" && !options.paginateFrames
           ? await globalThis.desktopShell.exportBoardInBackground({
               kind: "pdf",
               board: clone(state.board),
@@ -18086,9 +18111,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   async function hydrateWordExportPreviewDocx(requestId = "", ast = null, options = {}) {
     const activeRequestId = String(requestId || "").trim();
+    const generation = Number(state.wordExportPreviewRequest?.previewGeneration || 0);
     if (!activeRequestId || !ast || typeof globalThis?.desktopShell?.previewWordDocx !== "function") {
       const current = state.wordExportPreviewRequest;
-      if (current && String(current.id || "") === activeRequestId) {
+      if (current && String(current.id || "") === activeRequestId && Number(current.previewGeneration || 0) === generation) {
         state.wordExportPreviewRequest = {
           ...current,
           previewStatus: "unavailable",
@@ -18099,12 +18125,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return false;
     }
     try {
+      const preparedAst = await prepareWordExportAssets(ast);
+      if (state.wordExportPreviewRequest?.id !== activeRequestId || Number(state.wordExportPreviewRequest?.previewGeneration || 0) !== generation) return false;
       const result = await globalThis.desktopShell.previewWordDocx({
-        ast,
+        ast: preparedAst,
         defaultName: options.defaultName || "freeflow-word-preview",
       });
       const current = state.wordExportPreviewRequest;
-      if (!current || String(current.id || "") !== activeRequestId) {
+      if (!current || String(current.id || "") !== activeRequestId || Number(current.previewGeneration || 0) !== generation) {
         return false;
       }
       const docxBase64 = String(result?.docxBase64 || "").trim();
@@ -18114,6 +18142,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         previewMessage: String(result?.message || (result?.ok ? "Word 预览已生成" : "Word 预览生成失败")).trim(),
         previewDocxBase64: docxBase64,
         previewDocxSize: Number(result?.size || 0) || 0,
+        previewAst: preparedAst,
+        assetWarnings: preparedAst.assetWarnings,
       };
       store.emit();
       return Boolean(result?.ok && docxBase64);
@@ -18121,7 +18151,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const rawMessage = String(error?.message || error || "").trim();
       const handlerMissing = /No handler registered/i.test(rawMessage) && /preview-word-docx/i.test(rawMessage);
       const current = state.wordExportPreviewRequest;
-      if (current && String(current.id || "") === activeRequestId) {
+      if (current && String(current.id || "") === activeRequestId && Number(current.previewGeneration || 0) === generation) {
         state.wordExportPreviewRequest = {
           ...current,
           previewStatus: handlerMissing ? "unavailable" : "failed",
@@ -18140,6 +18170,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const selectedItems = (Array.isArray(items) ? items : []).filter((entry) => entry && typeof entry === "object");
     const requestId = createId("word-export-preview");
     const preview = buildWordExportPreviewModel(selectedItems, {
+      ...options,
       title: options.title || "导出 Word",
     });
     const ast = preview.ast && typeof preview.ast === "object" ? preview.ast : null;
@@ -18153,6 +18184,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       createdAt: Date.now(),
       mode: selectedItems.length === 1 ? "rich-text" : "selection",
       title: String(options.title || "导出 Word").trim() || "导出 Word",
+      sourceItems: clone(selectedItems),
+      previewGeneration: 0,
       itemIds: selectedItems.map((entry) => String(entry.id || "").trim()).filter(Boolean),
       preview: previewModel,
       previewStatus: ast ? "loading" : "failed",
@@ -18192,6 +18225,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
   }
 
+  function reorderWordExportPreview(requestId, itemId, direction) {
+    const request = state.wordExportPreviewRequest;
+    if (!request || request.id !== requestId || request.exporting) return false;
+    const order = (request.preview?.orderedItemIds || []).slice();
+    const index = order.indexOf(itemId);
+    const target = index + (direction < 0 ? -1 : 1);
+    if (index < 0 || target < 0 || target >= order.length) return false;
+    [order[index], order[target]] = [order[target], order[index]];
+    const preview = buildWordExportPreviewModel(request.sourceItems || [], { title: request.title, orderedItemIds: order });
+    state.wordExportPreviewRequest = { ...request, preview: { ...preview, ast: undefined }, previewAst: preview.ast, previewGeneration: (request.previewGeneration || 0) + 1, previewStatus: "loading", previewDocxBase64: "" };
+    store.emit();
+    void hydrateWordExportPreviewDocx(requestId, preview.ast);
+    return true;
+  }
+
   async function confirmWordExportPreview(requestId = "") {
     const request = state.wordExportPreviewRequest;
     const expectedRequestId = String(requestId || "").trim();
@@ -18199,23 +18247,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!request || (expectedRequestId && expectedRequestId !== activeRequestId)) {
       return false;
     }
-    const itemIdSet = new Set((Array.isArray(request.itemIds) ? request.itemIds : []).map((id) => String(id || "").trim()));
-    const items = state.board.items.filter((item) => itemIdSet.has(String(item?.id || "").trim()));
-    if (!items.length) {
-      setStatus("可导出内容已不存在", "warning");
-      notifyExportToast("可导出内容已不存在");
-      clearWordExportPreviewRequest(activeRequestId);
-      return false;
-    }
-    state.wordExportPreviewRequest = {
-      ...request,
-      exporting: true,
-    };
+    if (request.exporting || request.previewStatus === "loading") return false;
+    state.wordExportPreviewRequest = { ...request, exporting: true };
     store.emit();
-    const success =
-      request.mode === "rich-text" && items.length === 1
-        ? await exportRichTextItem(items[0], "word", { skipPreview: true })
-        : await exportSelectionAsWord(items, { skipPreview: true });
+    const success = await exportSelectionAsWord(request.sourceItems || [], { skipPreview: true, ast: request.previewAst });
     if (success) {
       clearWordExportPreviewRequest(activeRequestId);
       return true;
@@ -18394,6 +18429,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const result = await structuredExportRuntime.exportSelectionAsWordFile(selectedItems, {
         defaultName: "freeflow-selection-word",
         title: "导出 Word",
+        ast: options.ast,
       });
       if (result?.ok) {
         recordExportHistory(
@@ -19520,7 +19556,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       .filter((item) => remove.has(item.id) && !isLockedItem(item))
       .map((item) => item.id);
     clearFileCardPreviewRequestsByItemIds(removableIds, { restoreMemo: true, emit: false });
-    const before = takeItemsHistorySnapshot(state.board.selectedIds, { includeOrder: true });
+    const removedFrames = new Set(state.board.items.filter((item) => remove.has(item.id) && isFrame(item) && !isLockedItem(item)).map((item) => item.id));
+    const affectedIds = [...state.board.selectedIds, ...state.board.items.filter((item) => removedFrames.has(item.frameId) || (removedFrames.size && isFrame(item))).map((item) => item.id)];
+    const before = takeItemsHistorySnapshot(affectedIds, { includeOrder: true });
     const nextItems = [];
     let removedCount = 0;
     let lockedCount = 0;
@@ -19543,13 +19581,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return false;
     }
-    state.board.items = nextItems;
+    state.board.items = normalizeFrameOrders(nextItems.map((item) => removedFrames.has(item.frameId) ? { ...item, frameId: "" } : item));
     state.board.selectedIds = state.board.selectedIds.filter((id) => {
       const item = nextItems.find((entry) => entry.id === id);
       return Boolean(item);
     });
     state.board.navigator = pruneCanvasNavigator(state.board.navigator, state.board.items);
-    commitItemsPatchHistory(before, Array.from(remove), "删除元素", "item-delete-batch", {
+    commitItemsPatchHistory(before, affectedIds, "删除元素", "item-delete-batch", {
       beforeOrderIds: Array.isArray(before.orderIds) ? before.orderIds : [],
       afterOrderIds: nextItems.map((item) => item.id),
     });
@@ -19679,7 +19717,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function duplicateElementsWithDelta(items = [], deltaX = 0, deltaY = 0, options = {}) {
-    const prepared = prepareElementDuplicateBatch(items, { createId });
+    const prepared = prepareElementDuplicateBatch(items, { createId, frameOrderStart: getFrames(state.board.items).length });
     return finalizeDuplicatedElementsWithDelta(prepared.items, deltaX, deltaY, options);
   }
 
@@ -19691,7 +19729,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (list.length < PASTE_BATCH_YIELD_ITEM_THRESHOLD) {
       return duplicateElementsWithDelta(list, deltaX, deltaY, options);
     }
-    const prepared = prepareElementDuplicateBatch(list, { createId }).items;
+    const prepared = prepareElementDuplicateBatch(list, { createId, frameOrderStart: getFrames(state.board.items).length }).items;
     const duplicatedItems = [];
     const chunkSize = Math.max(1, Number(options?.chunkSize) || PASTE_BATCH_YIELD_CHUNK_SIZE);
     for (let index = 0; index < prepared.length; index += chunkSize) {
@@ -20123,14 +20161,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
   }
 
-  async function applyStructuredCommitResult(commitResult, { reason = "", statusText = "" } = {}) {
+  async function applyStructuredCommitResult(commitResult, { reason = "", statusText = "", collection = null } = {}) {
     if (!commitResult?.ok || !Array.isArray(commitResult.items) || !commitResult.items.length) {
       return false;
     }
     const committedItems = stabilizeImportedBatchLayout(
       normalizeImportedPasteFrameItems(Array.isArray(commitResult.items) ? commitResult.items : []),
       { remeasure: false }
-    );
+    ).map((item) => collection ? { ...item, collection } : item);
     if (getImportedBatchLayoutIssues(committedItems).length) {
       return false;
     }
@@ -20176,7 +20214,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       });
       if (controller.signal.aborted || state.board !== board || epoch !== clipboardImportEpoch) return true;
       if (result?.pipeline === "structured" && result?.commitResult?.ok) {
-        return applyStructuredCommitResult(result.commitResult, { reason, statusText });
+        return applyStructuredCommitResult(result.commitResult, { reason, statusText, collection: context.collection });
       }
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -21597,7 +21635,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
         return;
       }
-      const selectedIds = state.board.selectedIds.slice();
+      const selectedIds = Array.from(expandFrameSelection(state.board.items, state.board.selectedIds));
+      const carriedFrameIds = selectedIds.filter((id) => !state.board.selectedIds.includes(id));
       const selectedItems = sceneRegistry.getItemsByIds(selectedIds);
       const allText = selectedItems.length && selectedItems.every((item) => item.type === "text");
       const rightButtonPressed = event.button === 2 && (event.buttons & 2) === 2;
@@ -21632,6 +21671,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           : [],
         baseSelectedIds: selectedIds.slice(),
         baseItems,
+        carriedFrameIds,
         moveHistoryItemIds,
         mindHistoryItemIds,
         mindSubtreeRootId: target?.type === "mindNode" ? String(target.id || "").trim() : "",
@@ -21842,7 +21882,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         if (!base) {
           return item;
         }
-        if (isLockedItem(base)) {
+        if (isLockedItem(base) && !pointer.carriedFrameIds?.includes(item.id)) {
           return base;
         }
         const pairId = getCardPairId(base, itemMap);
@@ -26230,7 +26270,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  async function importClipboardSnapshot(snapshot, anchor, { channel = "paste", isCurrent = () => true } = {}) {
+  async function importClipboardSnapshot(snapshot, anchor, { channel = "paste", isCurrent = () => true, inbox = state.board.preferences?.collectionMode === true } = {}) {
+    if (inbox) anchor = getInboxAnchor();
+    const sourceKind = channel === "drop" ? "drop" : "clipboard";
+    const collection = collectionMetadata(sourceKind, inbox);
+    const urls = parseStandaloneUrls(snapshot);
+    if (urls.length) {
+      const cards = urls.map((url, index) => createLinkCard(url, { x: anchor.x + index % 3 * 390, y: anchor.y + Math.floor(index / 3) * 160 }, { ...collection, sourceUrl: url }));
+      if (!isCurrent()) return false;
+      pushItems(cards, { reason: "收集链接", statusText: `已收集 ${cards.length} 个链接`, collection: null });
+      for (const card of cards) queueLinkMetadata(card.id);
+      return true;
+    }
     const facade = createClipboardDataTransferFacade(snapshot);
     const dropping = channel === "drop";
     const reason = dropping ? "拖拽导入" : "粘贴内容";
@@ -26242,7 +26293,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (!isCurrent()) return true;
       if (!result?.handled) return false;
       if (result.items?.length) {
-        pushItems(result.items, { reason, statusText: `已导入 ${result.items.length} 个内容` });
+        pushItems(result.items, { reason, statusText: `已导入 ${result.items.length} 个内容`, collection });
         scheduleDeferredImportedAssetPersistence(result.items, { reason: "clipboard-asset-persist" });
         if (degraded) setStatus("已导入内容，部分结构或格式已简化", "warning");
       }
@@ -26263,7 +26314,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!dropping && await runHandlers(pasteHandlers)) return true;
     if (!isCurrent()) return false;
     const handled = await tryStructuredImportDescriptor(descriptor, anchor, {
-      reason, statusText: "已导入内容", context: { origin },
+      reason, statusText: "已导入内容", context: { origin, collection },
     });
     if (handled || !isCurrent()) return handled;
     if (dropping && await runHandlers(dragHandlers)) return true;
@@ -26358,6 +26409,94 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (internalPayload) return pasteInternalClipboardAsync(anchor, { payload: internalPayload });
       return importClipboardSnapshot(snapshot, anchor, { isCurrent });
     });
+  }
+
+  function getInboxAnchor() {
+    const normal = state.board.items.filter((item) => !item.collection?.inbox);
+    const bounds = getBoardBounds(normal);
+    const count = state.board.items.filter((item) => item.collection?.inbox).length;
+    return { x: (bounds?.right || 0) + 100 + count % 3 * 390, y: (bounds?.top || 0) + Math.floor(count / 3) * 180 };
+  }
+
+  function setCollectionMode(enabled) {
+    state.board.preferences = { ...state.board.preferences, collectionMode: Boolean(enabled) };
+    syncBoard({ persist: true, emit: true, sceneChange: false, markDirty: true });
+    return true;
+  }
+
+  function collectClipboardToInbox() {
+    const snapshotPromise = clipboardBroker.readSystemClipboardSnapshot();
+    return runClipboardImportWithStatus("粘贴处理中…", async (isCurrent) => {
+      const snapshot = await snapshotPromise;
+      if (!isCurrent()) return false;
+      return importClipboardSnapshot(snapshot, getInboxAnchor(), { channel: "menu", isCurrent, inbox: true });
+    });
+  }
+
+  function organizeInboxItems(itemIds, targetId = "", targetKind = "group") {
+    const selected = resolveSelectionDependencyClosure(state.board.items.filter((item) => itemIds.includes(item.id) && !item.locked && !isFrame(item)), state.board.items);
+    if (!selected.length) return false;
+    const frame = targetKind === "frame" ? state.board.items.find((item) => item.id === targetId && isFrame(item) && !item.locked) : null;
+    if (targetKind === "frame" && !frame) return false;
+    const groupId = targetKind === "group" ? targetId || createId("group") : "";
+    if (targetId && targetKind === "group" && !state.board.items.some((item) => item.groupId === targetId)) return false;
+    const bounds = getBoardBounds(selected);
+    const destination = frame || state.board.items.find((item) => item.groupId === groupId);
+    const dx = destination ? destination.x + 40 - bounds.left : getCenterScenePoint().x - bounds.left;
+    const dy = destination ? destination.y + 56 - bounds.top : getCenterScenePoint().y - bounds.top;
+    const ids = selected.map((item) => item.id);
+    const before = takeItemsHistorySnapshot(ids);
+    state.board.items = state.board.items.map((item) => !ids.includes(item.id) ? item : {
+      ...moveElement(item, dx, dy), ...(groupId ? { groupId, frameId: "" } : { groupId: "", frameId: frame.id }),
+      collection: { ...(item.collection || {}), inbox: false },
+    });
+    commitItemsPatchHistory(before, ids, "整理收件箱", "item-inbox-organize");
+    setStatus("已整理，来源信息已保留；可撤销恢复收件箱");
+    return true;
+  }
+
+  const linkMetadataQueue = [];
+  const linkMetadataControllers = new Map();
+  let linkMetadataActive = 0;
+  function queueLinkMetadata(itemId) {
+    const board = state.board;
+    const epoch = clipboardImportEpoch;
+    linkMetadataQueue.push({ itemId, board, epoch });
+    drainLinkMetadata();
+  }
+  function drainLinkMetadata() {
+    while (linkMetadataActive < 2 && linkMetadataQueue.length) {
+      const task = linkMetadataQueue.shift();
+      if (task.board !== state.board || task.epoch !== clipboardImportEpoch) continue;
+      const original = state.board.items.find((item) => item.id === task.itemId);
+      if (!original?.linkCard || linkMetadataControllers.has(task.itemId)) continue;
+      const controller = new AbortController();
+      linkMetadataControllers.set(task.itemId, controller);
+      linkMetadataActive += 1;
+      const timer = setTimeout(() => controller.abort(), 6000);
+      fetch(`/api/url-meta?url=${encodeURIComponent(original.linkCard.url)}`, { signal: controller.signal }).then(async (response) => {
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "链接读取失败");
+        return result.meta;
+      }).then((meta) => finish(meta, "ready"), () => finish(null, "failed")).finally(() => {
+        clearTimeout(timer); linkMetadataControllers.delete(task.itemId); linkMetadataActive -= 1; drainLinkMetadata();
+      });
+      function finish(meta, fetchState) {
+        if (task.board !== state.board || task.epoch !== clipboardImportEpoch) return;
+        const current = state.board.items.find((item) => item.id === task.itemId);
+        if (!current || current.linkCard?.url !== original.linkCard.url) return;
+        const before = takeItemsHistorySnapshot([current.id]);
+        const next = { ...current, linkCard: { ...current.linkCard, fetchState, title: meta?.title || current.linkCard.title } };
+        // Preserve user edits made while metadata was being fetched.
+        if (meta?.title && current.text === original.text && current.html === original.html && current.richTextDocument === original.richTextDocument) {
+          const card = createLinkCard(current.linkCard.url, { x: current.x, y: current.y }, current.collection, meta.title);
+          Object.assign(next, { title: card.title, text: card.text, plainText: card.plainText, html: card.html, richTextDocument: card.richTextDocument });
+        }
+        state.board.items = state.board.items.map((item) => item.id === current.id ? next : item);
+        if (mergeDeferredItemIntoInsertionHistory(current.id, next)) syncBoard({ persist: true, emit: true, itemIds: [current.id], sceneChange: true, markDirty: true });
+        else commitItemsPatchHistory(before, [current.id], "更新链接信息", "item-link-metadata");
+      }
+    }
   }
 
   function pasteFromSystemClipboard(anchorPoint = getCenterScenePoint()) {
@@ -27113,13 +27252,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.selectedIds.length) {
       return false;
     }
-    const selectedIds = new Set(state.board.selectedIds);
+    const selectedIds = expandFrameSelection(state.board.items, state.board.selectedIds);
     const before = takeItemsHistorySnapshot(selectedIds);
     state.board.items = state.board.items.map((item) => {
       if (!selectedIds.has(item.id)) {
         return item;
       }
-      if (isLockedItem(item)) {
+      if (isLockedItem(item) && state.board.selectedIds.includes(item.id)) {
         return item;
       }
       return moveElement(item, dx, dy);
@@ -27224,6 +27363,70 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
     commitItemsPatchHistory(before, selectedIds, "均匀分布", "item-transform-batch");
     setStatus("已均匀分布选中元素");
+    return true;
+  }
+
+  function addFrame(preset = "a4-portrait", title = "") {
+    const selected = resolveSelectionDependencyClosure(getMutableSelectedItems().filter((item) => !isFrame(item)), state.board.items);
+    const bounds = getBoardBounds(selected);
+    const center = getCenterScenePoint();
+    const frame = createFrame(preset, bounds ? { x: bounds.left - 40, y: bounds.top - 56 } : { x: center.x - 400, y: center.y - 300 }, getFrames(state.board.items).length, title);
+    const ids = [frame.id, ...selected.map((item) => item.id)];
+    const before = takeItemsHistorySnapshot(ids, { includeOrder: true });
+    const selectedIds = new Set(ids);
+    state.board.items = [frame, ...state.board.items.map((item) => selectedIds.has(item.id) ? { ...item, frameId: frame.id } : item)];
+    state.board.selectedIds = [frame.id];
+    commitItemsPatchHistory(before, ids, "创建板块", "item-frame-create", { beforeOrderIds: before.orderIds, afterOrderIds: state.board.items.map((item) => item.id) });
+    setStatus(selected.length ? "已创建板块并加入选中内容；超出边界的内容会在分页导出时裁切" : "已创建板块");
+    return frame.id;
+  }
+
+  function updateFrame(frameId, patch = {}) {
+    const frame = state.board.items.find((item) => item.id === frameId && isFrame(item));
+    if (!frame) return false;
+    const frames = getFrames(state.board.items);
+    if (typeof patch.order === "number") {
+      frames.splice(frames.indexOf(frame), 1);
+      frames.splice(Math.max(0, Math.min(frames.length, patch.order)), 0, frame);
+    }
+    const ids = frames.map((item) => item.id);
+    const before = takeItemsHistorySnapshot(ids);
+    const order = new Map(frames.map((item, index) => [item.id, index]));
+    state.board.items = state.board.items.map((item) => !order.has(item.id) ? item : {
+      ...item, frame: { ...item.frame, order: order.get(item.id) },
+      ...(item.id === frameId && typeof patch.title === "string" ? { title: patch.title.trim().slice(0, 200) || "未命名板块" } : {}),
+      ...(item.id === frameId && typeof patch.locked === "boolean" ? { locked: patch.locked } : {}),
+    });
+    commitItemsPatchHistory(before, ids, "修改板块", "item-frame-update");
+    return true;
+  }
+
+  function assignSelectionToFrame(frameId = "") {
+    const frame = state.board.items.find((item) => item.id === frameId && isFrame(item));
+    if (frameId && (!frame || frame.locked)) return false;
+    const selected = resolveSelectionDependencyClosure(getMutableSelectedItems().filter((item) => !isFrame(item)), state.board.items);
+    if (!selected.length) return false;
+    const ids = selected.map((item) => item.id);
+    const before = takeItemsHistorySnapshot(ids);
+    const idSet = new Set(ids);
+    const bounds = getBoardBounds(selected);
+    const dx = frame && bounds ? frame.x + 40 - bounds.left : 0;
+    const dy = frame && bounds ? frame.y + 56 - bounds.top : 0;
+    state.board.items = state.board.items.map((item) => idSet.has(item.id) ? { ...moveElement(item, dx, dy), frameId } : item);
+    commitItemsPatchHistory(before, ids, frame ? "移入板块" : "移出板块", "item-frame-membership");
+    setStatus(frame ? "已移入板块；超出边界的内容会在分页导出时裁切" : "已移出板块");
+    return true;
+  }
+
+  function removeFrame(frameId, removeContents = false) {
+    const frame = state.board.items.find((item) => item.id === frameId && isFrame(item));
+    if (!frame || frame.locked) return false;
+    const ids = [...getFrames(state.board.items).map((item) => item.id), ...state.board.items.filter((item) => item.frameId === frameId).map((item) => item.id)];
+    const before = takeItemsHistorySnapshot(ids, { includeOrder: true });
+    state.board.items = normalizeFrameOrders(state.board.items.filter((item) => item.id !== frameId && !(removeContents && item.frameId === frameId && !item.locked))
+      .map((item) => item.frameId === frameId ? { ...item, frameId: "" } : item));
+    state.board.selectedIds = state.board.selectedIds.filter((id) => state.board.items.some((item) => item.id === id));
+    commitItemsPatchHistory(before, ids, removeContents ? "删除板块及内容" : "删除板块保留内容", "item-frame-delete", { beforeOrderIds: before.orderIds, afterOrderIds: state.board.items.map((item) => item.id) });
     return true;
   }
 
@@ -27844,6 +28047,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     cancelActiveExport,
     openFileCardPreview,
     confirmWordExportPreview,
+    reorderWordExportPreview,
     closeWordExportPreview: clearWordExportPreviewRequest,
     closeFileCardPreview: clearFileCardPreviewRequest,
     toggleFileCardPreviewExpanded,
@@ -27864,6 +28068,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     getDocumentPreviewRuntimeSnapshot() {
       return documentPreviewRuntime.getStats();
     },
+    setCollectionMode,
+    collectClipboardToInbox,
+    organizeInboxItems,
+    retryLinkMetadata: queueLinkMetadata,
+    revealSearchItem,
+    addFrame,
+    updateFrame,
+    assignSelectionToFrame,
+    removeFrame,
+    exportSelectionAsWord,
     addMindMapRoot,
     addFlowNode() {
       return this.addMindMapRoot();

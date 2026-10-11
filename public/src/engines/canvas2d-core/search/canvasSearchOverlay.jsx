@@ -121,6 +121,11 @@ export function CanvasSearchOverlay({
   onHoverResult,
   onSelectResult,
   inputRef = null,
+  range = "current",
+  onRangeChange,
+  workspaceSupported = false,
+  loading = false,
+  warnings = [],
 }) {
   if (!isOpen) {
     return (
@@ -205,10 +210,16 @@ export function CanvasSearchOverlay({
           </button>
         </div>
       </div>
+      <div className="canvas2d-engine-search-subnav canvas2d-search-range" aria-label="画布搜索范围">
+        <button type="button" aria-pressed={range === "current"} onClick={() => onRangeChange?.("current")}>当前画布</button>
+        <button type="button" disabled={!workspaceSupported} aria-pressed={range === "workspace"} onClick={() => onRangeChange?.("workspace")}>整个工作区</button>
+        {loading && <span role="status">正在检索…</span>}
+      </div>
+      {warnings.length > 0 && <div className="canvas2d-engine-search-panel-meta" role="alert">{warnings.slice(0, 3).join("；")}</div>}
       <div className="canvas2d-engine-search-panel-meta">
         <div className="canvas2d-engine-search-status">
           {hasQuery
-            ? `在${activeScope?.label || "画布"}中找到 ${results.length} 条结果`
+            ? `${loading ? "正在搜索" : "在"}${range === "workspace" ? "整个工作区" : activeScope?.label || "画布"}中找到 ${results.length} 条结果${range === "workspace" && results.length >= 80 ? "（仅显示前 80 条）" : ""}`
             : `输入即搜，当前 ${totalItems} 个可检索对象`}
         </div>
         <div className="canvas2d-engine-search-shortcuts" aria-hidden="true">
@@ -237,12 +248,14 @@ export function CanvasSearchOverlay({
               <span className="canvas2d-engine-search-empty-icon" aria-hidden="true">
                 <SearchGlyph />
               </span>
-              <strong>没有匹配结果</strong>
+              <strong>{loading ? "正在检索…" : "没有匹配结果"}</strong>
               <span>{activeScope?.key && activeScope.key !== "all" ? `当前仅检索${activeScope.label}，可切换范围后再试。` : "换个关键词，或缩短搜索词再试。"}</span>
             </div>
           ) : null}
           {hasResults
             ? results.map((result, index) => (
+              <React.Fragment key={result.entryKey || `${result.id}-${index}`}>
+                {result.boardName && (index === 0 || results[index - 1].boardPath !== result.boardPath) && <div className="canvas2d-search-board-heading">{result.boardName}</div>}
                 <button
                   key={result.entryKey || `${result.id}-${result.matchLabel}-${index}`}
                   type="button"
@@ -258,6 +271,7 @@ export function CanvasSearchOverlay({
                   <span className="canvas2d-engine-search-result-main">
                     <span className="canvas2d-engine-search-result-head">
                       <strong>{result.title}</strong>
+                      {result.boardName && <small>{result.boardName}</small>}
                       <em>{result.typeLabel}</em>
                     </span>
                     <span className="canvas2d-engine-search-result-summary">
@@ -272,6 +286,7 @@ export function CanvasSearchOverlay({
                     </span>
                   </span>
                 </button>
+              </React.Fragment>
               ))
             : null}
         </div>
