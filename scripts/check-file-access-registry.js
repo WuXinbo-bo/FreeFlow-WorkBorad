@@ -14,6 +14,8 @@ try {
   access.grant(allowed, { directory: true, write: true });
   access.assert(path.join(allowed, "new", "board.freeflow"), { write: true });
   assert.throws(() => access.assert(path.join(allowed, "..", "private", "secret")), /尚未授权/);
+  assert.throws(() => assertFileIpcAccess(access, "desktop-shell:read-image-thumbnail", [path.join(outside, "secret")]), /尚未授权/);
+  assertFileIpcAccess(access, "desktop-shell:read-image-thumbnail", [path.join(allowed, "picture.png")]);
   fs.symlinkSync(outside, path.join(allowed, "escape"), "dir");
   assert.throws(() => access.assert(path.join(allowed, "escape", "secret")), /尚未授权/);
   assert.throws(() => access.assert(path.join(allowed, "escape", "new"), { write: true }), /尚未授权/);

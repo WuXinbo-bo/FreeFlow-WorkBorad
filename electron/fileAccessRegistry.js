@@ -69,7 +69,7 @@ function createFileAccessRegistry({ storagePath = "" } = {}) {
 // background export renderer. Native pickers/drop/clipboard grant separately.
 function assertFileIpcAccess(registry, channel, args) {
   const name = channel.replace(/^desktop-shell:/, "");
-  const single = new Set(["read-file", "read-file-base64", "read-file-preview", "get-file-preview-metadata", "get-file-id", "path-exists", "write-file", "ensure-directory", "remove-path"]);
+  const single = new Set(["read-file", "read-file-base64", "read-file-preview", "read-image-thumbnail", "get-file-preview-metadata", "get-file-id", "path-exists", "write-file", "ensure-directory", "remove-path"]);
   if (single.has(name) && args[0]) registry.assert(args[0], { write: ["write-file", "ensure-directory", "remove-path"].includes(name) });
   if (name === "rename-path") { registry.assert(args[0], { write: true }); registry.assert(args[1], { write: true }); }
   if (["list-canvas-boards", "list-canvas-images", "watch-canvas-workspace", "list-canvas-trash", "restore-canvas-trash", "purge-canvas-trash"].includes(name) && args[0]?.folderPath) registry.assert(args[0].folderPath, { write: ["restore-canvas-trash", "purge-canvas-trash"].includes(name) });

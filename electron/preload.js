@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     return () => ipcRenderer.removeListener("desktop-shell:canvas-workspace-changed", handler);
   },
   listCanvasImages: (payload) => ipcRenderer.invoke("desktop-shell:list-canvas-images", payload),
+  readCanvasImageThumbnail: (targetPath) => ipcRenderer.invoke("desktop-shell:read-image-thumbnail", targetPath),
   ensureDirectory: (targetPath) => ipcRenderer.invoke("desktop-shell:ensure-directory", targetPath),
   pickImageSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-image-save-path", payload),
   pickTextSavePath: (payload) => ipcRenderer.invoke("desktop-shell:pick-text-save-path", payload),

@@ -107,6 +107,8 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   const [regionMode, setRegionMode] = useState(false);
   const regionRef = useRef(null);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const interactionRef = useRef(null);
+  interactionRef.current = { toolsOpen, regionMode };
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState("");
   const [pageNumber, setPageNumber] = useState(1);
@@ -575,9 +577,14 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
     const previous = document.activeElement;
     const handleKey = (event) => {
       if (document.querySelector(".file-conversion-dialog")) return;
-      if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); setReading(false); }
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (interactionRef.current.toolsOpen) { setToolsOpen(false); document.querySelector(".file-workstation-reader [aria-label=\"文件操作\"]")?.focus(); }
+        else if (interactionRef.current.regionMode) { regionRef.current?.marker.remove(); regionRef.current = null; setRegionMode(false); }
+        else setReading(false);
+      }
       if (event.key === "Tab") {
-        const focusable = Array.from(document.querySelector(".file-workstation-reader")?.querySelectorAll("button, input, select, [tabindex='0']") || []).filter((node) => !node.disabled);
+        const focusable = Array.from(document.querySelector(".file-workstation-reader")?.querySelectorAll("button, input, select, summary, [tabindex='0']") || []).filter((node) => !node.disabled && node.getClientRects().length);
         const index = focusable.indexOf(document.activeElement);
         if (focusable.length && (event.shiftKey ? index <= 0 : index < 0 || index === focusable.length - 1)) { event.preventDefault(); focusable[event.shiftKey ? focusable.length - 1 : 0].focus(); }
       }
@@ -747,30 +754,24 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
           <span>{previewLabel.noun} 预览</span>
         </div>
         <div className="canvas2d-file-preview-react-actions" role="toolbar" aria-label="预览控制">
-          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom - 0.1)} aria-label="缩小预览" title="缩小预览">-</button>
-          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, FILE_CARD_PREVIEW_DEFAULT_ZOOM)} aria-label="重置预览缩放" title="重置预览缩放">
-            {Math.round(previewZoom * 100)}%
-          </button>
-          <button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom + 0.1)} aria-label="放大预览" title="放大预览">+</button>
-          <button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)} aria-label={request.expanded ? "收起预览" : "展开预览"} title={request.expanded ? "收起预览" : "展开预览"}>
-            {request.expanded ? "收起" : "展开"}
-          </button>
-          <button type="button" onClick={() => { captureSelection(); setToolsOpen(!toolsOpen); }} aria-label="文件工具" title="搜索、摘取与转换">⋯</button>
-          <button type="button" onClick={() => setReading(!reading)} aria-label={reading ? "返回画布预览" : "放大阅读"} title={reading ? "返回画布（Esc）" : "放大阅读"}>{reading ? "↙" : "↗"}</button>
-          <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览" title="关闭预览">
-            ×
-          </button>
+          <button type="button" onClick={() => { setToolsOpen(true); }} aria-label="搜索文件内容" title="搜索文件内容">⌕</button>
+          <button type="button" onClick={() => { setToolsOpen(false); setReading(!reading); }} aria-label={reading ? "返回画布预览" : "专注阅读"} title={reading ? "返回画布（Esc）" : "专注阅读"}>{reading ? "返回" : "阅读"}</button>
+          <button type="button" onClick={() => { captureSelection(); setToolsOpen(!toolsOpen); }} aria-label="文件操作" aria-expanded={toolsOpen} title="提取内容、转换与文件操作">⋯</button>
+          <button type="button" className="canvas2d-file-preview-react-close" onClick={() => bridge?.closeFileCardPreview?.(request.id)} aria-label="关闭预览" title="关闭预览">×</button>
         </div>
       </div>
+      <div className="file-workstation-reading-bar" role="toolbar" aria-label="阅读控制">
+        <div><button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom - 0.1)} aria-label="缩小预览">−</button><button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, FILE_CARD_PREVIEW_DEFAULT_ZOOM)} aria-label="重置预览缩放">{Math.round(previewZoom * 100)}%</button><button type="button" onClick={() => bridge?.setFileCardPreviewZoom?.(request.id, previewZoom + 0.1)} aria-label="放大预览">+</button></div>
+        {previewKind === "pdf" ? <div><input aria-label="跳转页码" type="number" min="1" max={renderState.pageCount || 1} value={pageNumber} onChange={(event) => setPageNumber(Number(event.target.value) || 1)} onKeyDown={(event) => { if (event.key === "Enter") rendererRef.current?.goToPage(pageNumber); }} /><span>/ {renderState.pageCount}</span><button onClick={() => rendererRef.current?.goToPage(pageNumber)}>跳转</button></div> : null}
+        {sheets.length ? <select aria-label="工作表" value={sheetNumber} onChange={(event) => setSheetNumber(Number(event.target.value))}>{sheets.map((sheet, index) => <option key={index} value={index}>{sheet.name}</option>)}</select> : null}
+      </div>
       <div className="canvas2d-file-preview-react-shell">
-        {toolsOpen ? <div className="file-workstation-tools" onPointerDown={(event) => event.stopPropagation()}>
+        {toolsOpen ? <div className="file-workstation-tools" onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (!reading && event.key === "Escape") { event.preventDefault(); setToolsOpen(false); } }}>
           <div><input aria-label="搜索文件内容" placeholder="搜索文字" value={query} onChange={(event) => { searchGeneration.current += 1; setQuery(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} /><button onClick={() => void search()}>查找</button></div>
-          {previewKind === "pdf" ? <div><input aria-label="跳转页码" type="number" min="1" max={renderState.pageCount || 1} value={pageNumber} onChange={(event) => setPageNumber(Number(event.target.value) || 1)} /><span>/ {renderState.pageCount}</span><button onClick={() => rendererRef.current?.goToPage(pageNumber)}>跳转</button></div> : null}
-          {sheets.length ? <select aria-label="工作表" value={sheetNumber} onChange={(event) => setSheetNumber(Number(event.target.value))}>{sheets.map((sheet, index) => <option key={index} value={index}>{sheet.name}</option>)}</select> : null}
-          {previewKind === "pdf" ? <div><button onClick={() => void insertPageImage()}>当前页转图片</button><button onClick={() => { setRegionMode(true); setToolsOpen(false); setSearchStatus("拖选页面区域以摘取图片"); }}>裁取页面区域</button></div> : null}
-          <div><button onPointerDown={captureSelection} onClick={() => void extractPage()}>摘取文字</button><button onClick={() => bridge?.openFileConversion?.([item])}>格式转换</button></div>
-          <div><button onClick={() => bridge?.retryFileCardPreview?.(request.id)}>刷新源文件</button><button onClick={() => void bridge?.relinkFileCard?.(request.itemId)}>重新关联</button><button onClick={() => void globalThis.desktopShell?.openPath?.(sourcePath)}>系统打开</button></div>
-          <span role="status">{searchStatus || "选中文字后可摘取；PDF 未选中时摘取当前页。"}</span>
+          <div className="file-workstation-tool-group"><span>添加到画布</span><button onPointerDown={captureSelection} onClick={() => void extractPage()}>添加文字到画布</button>{previewKind === "pdf" ? <><button onClick={() => void insertPageImage()}>添加当前页图片到画布</button><button onClick={() => { setRegionMode(true); setToolsOpen(false); setSearchStatus("拖选页面区域以添加到画布"); }}>截取页面区域</button></> : null}</div>
+          <div className="file-workstation-tool-group"><button onClick={() => bridge?.openFileConversion?.([item])}>转换文件</button><button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)} aria-label={request.expanded ? "收起预览" : "展开预览"}>{request.expanded ? "收起卡片预览" : "展开卡片预览"}</button></div>
+          <details className="file-workstation-file-maintenance"><summary>源文件操作</summary><div><button onClick={() => bridge?.retryFileCardPreview?.(request.id)}>刷新源文件</button><button onClick={() => void bridge?.relinkFileCard?.(request.itemId)}>重新关联文件</button><button onClick={() => void globalThis.desktopShell?.openPath?.(sourcePath)}>使用系统应用打开</button></div></details>
+          <span role="status">{searchStatus || "选中文字可添加到画布；PDF 未选中时使用当前页文字。"}</span>
         </div> : null}
         <div ref={scrollRef} className="canvas2d-file-preview-react-scroll" tabIndex={0} aria-label={previewLabel.scrollAriaLabel}>
           <div ref={frameRef} className={`canvas2d-file-preview-react-frame is-${previewKind}`}>

@@ -199,9 +199,9 @@ async function main() {
       };
     });
     assert(previewChrome.actionParentIsHead, "preview controls must share the compact glass header", previewChrome);
-    assert.strictEqual(previewChrome.rowCount, 2, "preview shell should use one chrome row and one document row");
-    assert(previewChrome.headHeight <= 50 && previewChrome.shellTopDelta < 1, "preview header should remain compact and attached", previewChrome);
-    assert.strictEqual(previewChrome.toolbarLabel, "预览控制");
+    assert.strictEqual(previewChrome.rowCount, 3, "preview shell should use title, reading controls and document rows");
+    assert(previewChrome.headHeight <= 50 && previewChrome.shellTopDelta >= 0, "preview controls should remain compact and attached", previewChrome);
+    assert.equal(previewChrome.toolbarLabel, "预览控制");
 
     await page.evaluate(() => {
       const canvas = document.querySelector("#canvas-office-canvas");

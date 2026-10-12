@@ -35,6 +35,7 @@ const recoveryService = require("../src/backend/services/boardRecoveryService");
 const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
 const { createIpcEventValidator, createSecuredIpcMain } = require("./ipcSecurity");
 const { createFileAccessRegistry, assertFileIpcAccess } = require("./fileAccessRegistry");
+const imageThumbnails = require("./imageThumbnailService").createImageThumbnailService();
 const { assertArchiveBudget } = require("./filePreviewLimits");
 const { createFileWorkstationService } = require("./fileWorkstationService");
 const { shouldIgnoreMacOSMouseEvents } = require("./macosWindowInteraction");
@@ -3734,6 +3735,8 @@ ipcMain.handle("desktop-shell:list-canvas-boards", async (_event, payload) => {
 });
 
 ipcMain.handle("desktop-shell:watch-canvas-workspace", (_event, payload) => boardWorkspaceWatcher.watch(String(payload?.folderPath || "").trim()));
+
+ipcMain.handle("desktop-shell:read-image-thumbnail", (_event, targetPath) => imageThumbnails.read(fileAccess.assert(targetPath)));
 
 ipcMain.handle("desktop-shell:list-canvas-images", async (_event, payload) => {
   const folderPath = String(payload?.folderPath || "").trim();
