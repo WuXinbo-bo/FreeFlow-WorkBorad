@@ -317,7 +317,7 @@ export function mountSettingsCenter(host, options = {}) {
     const general = draft.general;
     return `
       <div class="settings-center-section-heading">
-        <div><p>General</p><h4>通用设置</h4></div>
+        <div><p>基本信息</p><h4>通用设置</h4></div>
         <span>名称与更新策略</span>
       </div>
       <section class="settings-center-group">
@@ -458,7 +458,7 @@ export function mountSettingsCenter(host, options = {}) {
     const presets = Object.values(THEME_PRESET_DEFS).filter((preset) => preset.key !== "custom");
     return `
       <div class="settings-center-section-heading">
-        <div><p>Appearance</p><h4>外观</h4></div>
+        <div><p>配色</p><h4>外观</h4></div>
         <span>实时预览 · 取消恢复</span>
       </div>
       <section class="settings-center-group settings-center-appearance-presets">
@@ -492,7 +492,7 @@ export function mountSettingsCenter(host, options = {}) {
     const workbench = draft.workbench;
     return `
       <div class="settings-center-section-heading">
-        <div><p>Workbench</p><h4>工作台习惯</h4></div>
+        <div><p>布局与启动</p><h4>工作台习惯</h4></div>
         <span>下一次启动与当前应用</span>
       </div>
       <section class="settings-center-group">
@@ -527,17 +527,17 @@ export function mountSettingsCenter(host, options = {}) {
     const canvas = draft.canvas;
     return `
       <div class="settings-center-section-heading">
-        <div><p>Canvas</p><h4>画布设置</h4></div>
+        <div><p>保存与编辑</p><h4>画布设置</h4></div>
         <span>目录与编辑行为</span>
       </div>
       <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>内容目录</h5><p>所有字段都是目录，不再混用文件与文件夹语义。</p></div>
+        <div class="settings-center-group-heading"><h5>内容目录</h5><p>设置画布、工作区和图片的保存位置。</p></div>
         ${renderPathField("canvas.defaultBoardDirectory", "默认画布目录", canvas.defaultBoardDirectory, "新建和保存画布时优先使用。")}
         ${renderPathField("canvas.workspaceDirectory", "工作区目录", canvas.workspaceDirectory, "画布列表与导航的根目录。")}
         ${renderPathField("canvas.exportImageDirectory", "图片导出目录", canvas.exportImageDirectory, "留空时使用当前画布目录下的 importImage。")}
       </section>
       <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>编辑行为</h5><p>保存后同步到当前画布引擎。</p></div>
+        <div class="settings-center-group-heading"><h5>编辑行为</h5><p>保存后应用到当前画布。</p></div>
         <div class="settings-center-toggle-stack">
           ${renderToggle("canvas.autosaveEnabled", "自动保存画布", canvas.autosaveEnabled !== false, "仅在内容变更后按间隔保存。")}
           ${renderToggle("canvas.linkSemanticsEnabled", "识别文本链接", canvas.linkSemanticsEnabled !== false, "关闭后新插入的链接按纯文本处理。")}
@@ -550,7 +550,7 @@ export function mountSettingsCenter(host, options = {}) {
     const permissions = draft.permissions;
     return `
       <div class="settings-center-section-heading">
-        <div><p>Permissions</p><h4>权限与目录</h4></div>
+        <div><p>访问授权</p><h4>权限与目录</h4></div>
         <span>默认关闭，按需授权</span>
       </div>
       <section class="settings-center-group">
@@ -584,13 +584,13 @@ export function mountSettingsCenter(host, options = {}) {
     const claude = runtime.providers?.claude || {};
     return `
       <div class="settings-center-section-heading">
-        <div><p>Diagnostics</p><h4>设置诊断</h4></div>
+        <div><p>运行信息</p><h4>设置诊断</h4></div>
         <span>只读运行状态</span>
       </div>
       <section class="settings-center-group">
         <div class="settings-center-diagnostic-grid">
           <div><span>设置协议</span><strong>v${Number(snapshot.schemaVersion) || 1}</strong></div>
-          <div><span>草稿状态</span><strong>${isDirty() ? "有未保存修改" : "已同步"}</strong></div>
+          <div><span>草稿状态</span><strong>${isDirty() ? "有未保存修改" : "已保存"}</strong></div>
           <div><span>Codex CLI</span><strong>${codex.available ? codex.version || "已绑定" : codex.candidates?.length ? "待选择" : "未检测到"}</strong></div>
           <div><span>Claude Code</span><strong>${claude.available ? claude.version || "已绑定" : claude.candidates?.length ? "待选择" : "未检测到"}</strong></div>
           <div><span>活动 Provider</span><strong>${runtime.activeProvider === "claude" ? "Claude" : "Codex"}</strong></div>
@@ -643,7 +643,7 @@ export function mountSettingsCenter(host, options = {}) {
         : "";
       const conflictDetails = conflict && (conflictPaths.length || conflictDirectory) ? `<details class="settings-center-github-conflict-details"><summary>冲突详情${conflictPaths.length ? ` · ${conflictPaths.length} 个字段` : ""}</summary>${conflictPaths.length ? `<ul>${conflictPaths.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}</ul>` : ""}${conflictDirectory ? `<div><small>三方副本</small><code>${escapeHtml(conflictDirectory)}</code><button type="button" data-settings-action="github-reveal-conflict" data-github-board-id="${escapeHtml(board.boardId)}">打开所在目录</button></div>` : ""}</details>` : "";
       return `<article class="settings-center-github-board" data-github-board-id="${escapeHtml(board.boardId)}">
-        <div class="settings-center-github-board-copy"><strong>${escapeHtml(title)}</strong><small><code>${escapeHtml(board.boardId)}</code>${board.updatedAt ? ` · ${escapeHtml(formatDateTime(board.updatedAt))}` : ""}</small>${boardPath ? `<small class="settings-center-github-board-path">${escapeHtml(boardPath)}</small>` : ""}</div>
+        <div class="settings-center-github-board-copy"><strong>${escapeHtml(title)}</strong><small>${board.updatedAt ? escapeHtml(formatDateTime(board.updatedAt)) : "暂无更新时间"}</small><details class="settings-center-github-file-details"><summary>文件详情</summary><small><code>${escapeHtml(board.boardId)}</code></small>${boardPath ? `<small class="settings-center-github-board-path">${escapeHtml(boardPath)}</small>` : ""}</details></div>
         <span class="settings-center-github-board-state${isDeleted || state === "conflict" || state === "both-changed" ? " is-warning" : state === "up-to-date" || state === "synced" ? " is-ready" : ""}">${escapeHtml(githubSyncStateLabel(state))}</span>
         <div class="settings-center-inline-actions">${isDeleted ? restoreAction : canReconcile ? reconcileActions : `<button type="button" data-settings-action="github-pull" data-github-board-id="${escapeHtml(board.boardId)}"${!canPull || githubSyncAction ? " disabled" : ""}>拉取</button>`}</div>
         ${conflictDetails}
@@ -660,7 +660,7 @@ export function mountSettingsCenter(host, options = {}) {
         <div class="settings-center-diagnostic-grid">
           <div><span>授权</span><strong>${connected ? `已连接${status.auth?.user?.login ? ` · ${escapeHtml(status.auth.user.login)}` : ""}` : "未连接"}</strong></div>
           <div><span>仓库</span><strong>${escapeHtml(repository.owner && repository.repo ? `${repository.owner}/${repository.repo}` : "尚未选择")}</strong></div>
-          <div><span>画布状态</span><strong>${escapeHtml(Object.values(status.ledger?.boards || {}).map((item) => item.syncState).filter(Boolean)[0] || "未同步")}</strong></div>
+          <div><span>同步范围</span><strong>当前工作区 · 状态见文件侧栏</strong></div>
         </div>
         ${githubSyncError ? `<div class="settings-center-runtime-error">${escapeHtml(githubSyncError)}</div>` : ""}
         ${!connected ? `<div class="settings-center-auth-methods" role="radiogroup" aria-label="GitHub 连接方式">
@@ -670,13 +670,12 @@ export function mountSettingsCenter(host, options = {}) {
         ${githubAuthMethod === "token" ? `<div class="settings-center-auth-panel"><label class="settings-center-field"><span>个人访问令牌</span><input type="password" data-github-token autocomplete="off" spellcheck="false" maxlength="512" placeholder="粘贴 GitHub Fine-grained token" /><small>建议只选择自己的同步仓库，并授予 Contents Read and write。令牌验证成功后仅在本机加密保存。</small></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-open-token">创建个人访问令牌</button><button class="is-primary" type="button" data-settings-action="github-token-connect"${githubSyncAction ? " disabled" : ""}>验证并连接</button></div></div>` : `<div class="settings-center-auth-panel"><div class="settings-center-form-grid"><label class="settings-center-field"><span>授权应用类型</span><select data-github-app-type><option value="github-app"${githubAppType === "github-app" ? " selected" : ""}>GitHub App</option><option value="oauth-app"${githubAppType === "oauth-app" ? " selected" : ""}>OAuth App</option></select><small>GitHub App 需要安装到同步仓库并授予 Contents 读写；OAuth App 使用 repo 授权范围。</small></label><label class="settings-center-field"><span>公开 Client ID</span><input type="text" data-github-client-id value="${escapeHtml(githubClientId)}" maxlength="128" placeholder="启用了 Device Flow 的授权应用 Client ID" /><small>Client ID 不是密码，不要填写 Client Secret。</small></label></div><div class="settings-center-inline-actions"><button class="is-primary" type="button" data-settings-action="github-connect"${githubSyncAction ? " disabled" : ""}>开始设备授权</button></div></div>`}` : ""}
         ${flow.user_code ? `<div class="settings-center-inline-actions"><code>${escapeHtml(flow.user_code)}</code><button type="button" data-settings-action="github-open-device">打开 GitHub 授权页</button><button type="button" data-settings-action="github-poll"${githubSyncAction ? " disabled" : ""}>检查授权结果</button></div>` : ""}
         ${connected ? `<div class="settings-center-form-grid"><label class="settings-center-field"><span>私有仓库</span><select data-github-repository><option value="">请选择仓库</option>${githubRepositories.map((repo) => `<option value="${escapeHtml(`${repo.owner?.login || repo.owner?.name || ""}/${repo.name || ""}`)}"${repo.owner?.login === repository.owner && repo.name === repository.repo ? " selected" : ""}>${escapeHtml(`${repo.owner?.login || ""}/${repo.name || ""}`)}</option>`).join("")}</select></label><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-repositories">加载仓库</button><button type="button" data-settings-action="github-repository-create">创建私有仓库</button><button type="button" data-settings-action="github-repository-save">使用所选仓库</button></div></div>` : ""}
-        <div class="settings-center-inline-actions">
-          ${connected ? `<button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新状态</button><button type="button" data-settings-action="github-workspace"${!hasRepository || githubSyncAction ? " disabled" : ""}>发现远程画布</button><button type="button" data-settings-action="github-workspace-plan"${!hasRepository || githubSyncAction ? " disabled" : ""}>检查当前文件夹</button><button type="button" data-settings-action="github-workspace-pull"${!hasRepository || githubSyncAction ? " disabled" : ""}>拉取到当前文件夹</button><button type="button" data-settings-action="github-workspace-sync"${!hasRepository || githubSyncAction ? " disabled" : ""}>同步当前文件夹</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button>` : ""}
-        </div>
+        ${connected ? `<div class="settings-center-inline-actions"><button type="button" data-settings-action="github-workspace"${!hasRepository || githubSyncAction ? " disabled" : ""}>发现远程画布</button><button type="button" data-settings-action="github-workspace-pull"${!hasRepository || githubSyncAction ? " disabled" : ""}>拉取到当前文件夹</button></div><p class="settings-center-sync-hint">日常检查、上传与拉取可在画布工作区底部操作。拉取会先检查差异，不直接覆盖冲突。</p>` : ""}
+        ${connected ? `<details class="settings-center-disclosure settings-center-github-advanced"><summary>更多同步与连接操作</summary><div class="settings-center-inline-actions"><button type="button" data-settings-action="github-refresh"${githubSyncAction ? " disabled" : ""}>刷新连接状态</button><button type="button" data-settings-action="github-workspace-plan"${!hasRepository || githubSyncAction ? " disabled" : ""}>检查当前文件夹</button><button type="button" data-settings-action="github-workspace-sync"${!hasRepository || githubSyncAction ? " disabled" : ""}>同步当前文件夹</button><button type="button" data-settings-action="github-sync"${githubSyncAction ? " disabled" : ""}>同步当前画布</button><button type="button" data-settings-action="github-disconnect"${githubSyncAction ? " disabled" : ""}>断开 GitHub</button></div></details>` : ""}
         ${connected && hasRepository && githubWorkspacePlan ? `<div class="settings-center-diagnostic-grid"><div><span>本地工作区</span><strong>${escapeHtml(githubWorkspacePlan.rootPath || "当前文件夹")}</strong></div><div><span>画布总数</span><strong>${Number(githubWorkspacePlan.total || githubWorkspacePlan.items?.length || 0)}</strong></div><div><span>待上传 / 待拉取</span><strong>${Number(githubWorkspacePlan.counts?.["local-only"] || 0) + Number(githubWorkspacePlan.counts?.["local-changed"] || 0)} / ${Number(githubWorkspacePlan.counts?.["remote-only"] || 0) + Number(githubWorkspacePlan.counts?.["remote-changed"] || 0)}</strong></div></div>` : ""}
         ${connected && hasRepository ? `<div class="settings-center-github-remote" aria-live="polite">
-          <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>远程画布</h5><p>${githubWorkspace?.lastCommitSha ? `远端版本 ${escapeHtml(String(githubWorkspace.lastCommitSha).slice(0, 12))}` : "发现后列出此仓库中的画布；新设备无需提前知道 boardId。"}</p></div><span>${githubSyncAction === "workspace" ? "正在读取" : githubRemoteBoards.length ? `${githubRemoteBoards.length} 个画布` : "尚未读取"}</span></div>
-          ${workspaceBoards || (githubSyncAction === "workspace" ? `<div class="settings-center-loading"><span></span><strong>正在读取远程画布</strong></div>` : `<div class="settings-center-empty-inline">点击“发现远程画布”读取远端 workspace。</div>`)}
+          <div class="settings-center-group-heading settings-center-group-heading-inline"><div><h5>远程画布</h5><p>${githubWorkspace?.lastCommitSha ? `远端版本 ${escapeHtml(String(githubWorkspace.lastCommitSha).slice(0, 12))}` : "发现后列出此仓库中的画布；新设备可从这里选择需要拉取的画布。"}</p></div><span>${githubSyncAction === "workspace" ? "正在读取" : githubRemoteBoards.length ? `${githubRemoteBoards.length} 个画布` : "尚未读取"}</span></div>
+          ${workspaceBoards || (githubSyncAction === "workspace" ? `<div class="settings-center-loading"><span></span><strong>正在读取远程画布</strong></div>` : `<div class="settings-center-empty-inline">点击“发现远程画布”读取仓库中的画布。</div>`)}
         </div>` : ""}
       `}
       </section>`;
@@ -705,13 +704,14 @@ export function mountSettingsCenter(host, options = {}) {
       host.innerHTML = `<div class="settings-center-loading"><span></span><strong>正在读取设置</strong></div>`;
       return;
     }
+    const githubAdvancedOpen = host.querySelector(".settings-center-github-advanced")?.open;
     host.innerHTML = `
       <div class="settings-center-layout">
         <nav class="settings-center-nav" aria-label="设置分类">${renderNavigation()}</nav>
         <main class="settings-center-content" tabindex="-1">${renderActiveSection()}</main>
       </div>
       <footer class="settings-center-footer">
-        <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "所有设置已同步"}</span></div>
+        <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "设置已保存"}</span></div>
         <div class="settings-center-footer-actions">
           ${conflictPending ? `<button type="button" data-settings-action="reload"${githubSyncAction ? " disabled" : ""}>重新载入最新设置</button>` : ""}
           <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction ? " disabled" : ""}>恢复本页</button>
@@ -720,6 +720,7 @@ export function mountSettingsCenter(host, options = {}) {
         </div>
       </footer>
     `;
+    if (githubAdvancedOpen && host.querySelector(".settings-center-github-advanced")) host.querySelector(".settings-center-github-advanced").open = true;
     Object.entries(fieldErrors).forEach(([path, error]) => {
       const errorEl = host.querySelector(`[data-field-error="${CSS.escape(path)}"]`);
       if (errorEl) errorEl.textContent = error;
@@ -738,7 +739,7 @@ export function mountSettingsCenter(host, options = {}) {
     const stateEl = host.querySelector(".settings-center-save-state");
     if (stateEl) {
       stateEl.className = "settings-center-save-state";
-      stateEl.textContent = isDirty() ? "有未保存修改" : "所有设置已同步";
+      stateEl.textContent = isDirty() ? "有未保存修改" : "设置已保存";
     }
     const cancelButton = host.querySelector('[data-settings-action="cancel"]');
     if (cancelButton) cancelButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);

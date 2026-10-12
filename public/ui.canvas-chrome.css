@@ -1,7 +1,12 @@
 .canvas2d-engine-topbar {
+  z-index: 85;
   top: 6px !important;
-  left: var(--canvas-chrome-inline-inset) !important;
+  left: var(--canvas-info-inline-start, var(--canvas-chrome-inline-inset)) !important;
   right: var(--canvas-chrome-inline-end-inset) !important;
+}
+
+.canvas2d-engine-ui:not(:has(.canvas2d-tutorial-layer)) .canvas2d-engine-topbar:has(.canvas2d-info-options[open], .canvas-chrome-info-dock.is-popover-open) {
+  z-index: 240;
 }
 
 .canvas2d-engine-topbar-stack {
@@ -9,11 +14,11 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 6px !important;
-  max-width: calc(100% - 94px) !important;
+  max-width: calc(100% - var(--canvas2d-topbar-left-reserved-width) - 12px) !important;
 }
 
 .canvas2d-engine-topbar .canvas2d-engine-corner-top-left {
-  top: calc(var(--canvas-chrome-height) + 6px);
+  top: 0;
 }
 
 .canvas2d-engine-toolbar-wrap {
@@ -22,7 +27,7 @@
 }
 
 .canvas2d-engine-search-stack {
-  width: 100%;
+  width: max-content;
 }
 
 .canvas2d-engine-toolbar.canvas-chrome-toolbar {
@@ -241,71 +246,31 @@
   display: none;
 }
 
-.canvas-chrome-info-dock {
-  position: relative;
-  border-radius: var(--canvas-chrome-radius) !important;
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-compact {
+  position: relative; display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px;
+  width: 244px; min-width: 244px; max-width: 244px; height: var(--canvas-chrome-height); padding: 4px 6px;
+  border-radius: var(--canvas-chrome-radius) !important; box-sizing: border-box; transition: none;
 }
-
-.canvas-chrome-info-dock .canvas2d-brand-row {
-  padding-left: 42px;
-  box-sizing: border-box;
-}
-
-.canvas2d-floating-card-info.canvas-chrome-info-dock.is-compact .canvas2d-brand-logo {
-  margin-left: auto;
-  height: 18px;
-}
-
-.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed {
-  min-width: 78px;
-  height: var(--canvas-chrome-height);
-  min-height: var(--canvas-chrome-height);
-  padding: 5px !important;
-  box-sizing: border-box;
-  opacity: 0.82;
-}
-
-.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed .canvas2d-brand-logo {
-  width: 24px;
-  max-width: 24px;
-  height: 24px;
-}
-
-.canvas-chrome-info-dock .canvas2d-info-collapse-toggle {
-  position: absolute;
-  top: 50%;
-  left: 2px;
-  z-index: 2;
-  margin: 0;
-  border-color: transparent !important;
-  color: var(--air-ink-muted) !important;
-  background: transparent !important;
-  transform: translateY(-50%);
-}
-
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-compact .canvas2d-brand-logo { flex: none; width: 18px; height: 18px; margin: 0; object-fit: contain; }
+.canvas-chrome-info-dock .canvas2d-info-detail { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; }
+.canvas-chrome-info-dock .canvas2d-board-title { flex: 1; min-width: 0; margin: 0; font-size: 12px; }
+.canvas-chrome-info-dock .canvas2d-board-title-input { flex: 1; min-width: 0; width: 0; padding: 3px 4px; }
+.canvas2d-info-save-state { flex: none; color: var(--air-ink-muted); font: 10px/1.4 system-ui, sans-serif; white-space: nowrap; }
+.canvas2d-info-save-state.is-error { color: #b13b42; }
+.canvas-chrome-info-dock .canvas2d-info-collapse-toggle { position: static; flex: none; width: 22px; height: 24px; margin: 0; border: 0; border-radius: 4px; background: transparent; color: var(--air-ink-muted); transform: none; }
 .canvas-chrome-info-dock .canvas2d-info-collapse-toggle:hover,
-.canvas-chrome-info-dock .canvas2d-info-collapse-toggle:focus-visible {
-  border-color: transparent !important;
-  color: var(--air-accent) !important;
-  background: var(--air-active) !important;
-}
-
-@media (min-width: 721px) {
-  .canvas2d-navigator-head {
-    padding-left: 0 !important;
-    padding-top: 32px !important;
-  }
-}
-
-.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed .canvas2d-brand-row {
-  justify-content: flex-end;
-  padding-left: 18px;
-}
-
-.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed .canvas2d-info-collapse-toggle {
-  left: 2px;
-  margin: 0;
-}
+.canvas-chrome-info-dock .canvas2d-info-collapse-toggle:focus-visible { background: var(--air-active); color: var(--air-accent); }
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed { width: 64px; min-width: 64px; max-width: 64px; height: var(--canvas-chrome-height); padding: 4px 6px !important; gap: 6px; }
+.canvas-chrome-info-dock.is-collapsed .canvas2d-info-collapse-toggle svg { transform: rotate(180deg); }
+.canvas2d-floating-card-info.canvas-chrome-info-dock.is-collapsed.is-popover-open .canvas2d-info-detail { display: flex !important; position: absolute; top: calc(100% + 8px); left: 0; width: 244px; box-sizing: border-box; padding: 10px; pointer-events: auto; }
+.canvas-chrome-info-dock.is-popover-open .canvas2d-info-collapse-toggle svg { transform: rotate(-90deg); }
+.canvas2d-info-options { position: relative; flex: none; }
+.canvas2d-info-options summary { display: flex; align-items: center; justify-content: center; width: 18px; height: 24px; list-style: none; cursor: pointer; color: var(--air-ink-muted); }
+.canvas2d-info-options summary::-webkit-details-marker { display: none; }
+.canvas2d-info-options > div { display: flex; flex-direction: column; position: absolute; z-index: 3; top: calc(100% + 8px); left: -120px; width: 210px; padding: 12px; gap: 7px; font: 12px/1.5 system-ui, sans-serif; }
+.canvas2d-info-options button { border: 0; padding: 5px 0; background: transparent; text-align: left; color: var(--air-accent); cursor: pointer; font: inherit; }
+.canvas2d-engine-toolbar.canvas-chrome-toolbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.canvas2d-engine-toolbar.canvas-chrome-toolbar::-webkit-scrollbar { display: none; }
 
 .canvas-chrome-edge-rail {
   overflow: hidden;
@@ -370,12 +335,6 @@
 .canvas-chrome-edge-rail:active,
 .is-stage-moving > .canvas-chrome-edge-rail {
   cursor: grabbing !important;
-}
-
-@media (max-width: 1024px) {
-  .canvas2d-engine-topbar-stack {
-    max-width: calc(100% - 94px) !important;
-  }
 }
 
 .desktop-clear-stage.is-stage-moving,

@@ -121,23 +121,42 @@
 .canvas2d-workspace-sync > div:first-child { display: flex; align-items: center; gap: 6px; }
 .canvas2d-workspace-sync span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas2d-workspace-sync-actions { display: flex; gap: 5px; padding-top: 4px; }
-.canvas2d-workspace-sync.is-stale { background: rgba(255, 239, 202, .28); }
+.canvas2d-workspace-sync.is-warning { background: rgba(255, 239, 202, .28); }
 .canvas2d-workspace-sync-summary { padding-top: 3px; color: var(--air-ink-muted, #69747b); font-size: 10px; }
 .canvas2d-workspace-sync-time { display: block; color: var(--air-ink-muted, #69747b); font-size: 10px; }
+.canvas2d-workspace-sync-toggle { flex: 1; min-width: 0; padding: 4px 0; border: 0; background: transparent; text-align: left; font-size: 11px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas2d-workspace-sync-details { padding-top: 5px; }
+.canvas2d-workspace-sync-details .canvas2d-workspace-repair { margin: 6px 0 0; }
 .canvas2d-workspace-error, .canvas2d-workspace-notice { padding: 7px 12px; overflow-wrap: anywhere; font-size: 11px; }
 .canvas2d-workspace-error { color: #b13b42; background: rgba(255, 220, 223, .32); }
 .canvas2d-workspace-notice { color: #277052; background: rgba(218, 244, 230, .32); }
 .canvas2d-workspace-repair { margin: 4px 12px; }
 .canvas2d-navigation-docks > .canvas2d-navigator-panel {
-  position: relative !important; inset: auto !important; flex: 0 1 auto; width: 100% !important; max-width: 100%;
-  height: auto; max-height: 440px !important; min-height: 0; min-width: 0; padding: 12px !important; box-sizing: border-box;
+  position: relative !important; inset: auto !important; display: flex; flex-direction: column; flex: 0 1 auto; width: 100% !important; max-width: 100%;
+  height: auto; max-height: 440px !important; min-height: 0; min-width: 0; padding: 0 !important; box-sizing: border-box;
+  color: var(--air-ink, #252b31); font: 12px/1.5 system-ui, sans-serif;
 }
 .canvas2d-navigation-docks:has(.canvas2d-workspace-panel.is-open) > .canvas2d-navigator-panel { max-height: 38% !important; }
-.canvas2d-navigation-docks .canvas2d-navigator-head { flex: none; padding: 0 28px 8px 0 !important; min-height: 30px !important; }
-.canvas2d-navigation-docks .canvas2d-navigator-brand { min-width: 0; }
-.canvas2d-navigation-docks .canvas2d-navigator-head strong { font-size: 13px !important; }
-.canvas2d-navigation-docks .canvas2d-navigator-dock-collapse { top: 12px !important; right: 10px !important; width: 26px !important; height: 26px !important; transform: none; }
-.canvas2d-navigation-docks .canvas2d-navigator-list { flex: 1; min-height: 0; overflow: auto; align-content: start; }
+.canvas2d-navigation-docks .canvas2d-navigator-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; flex: none; height: 40px; min-height: 40px !important;
+  margin: 0 !important; padding: 8px 12px !important; border: 0 !important; box-sizing: border-box;
+}
+.canvas2d-navigation-docks .canvas2d-navigator-head strong { font-size: 13px !important; font-weight: 700 !important; letter-spacing: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-head-actions { display: flex; gap: 0 !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-head-actions .canvas2d-workspace-icon { width: 28px !important; min-width: 28px !important; height: 28px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-list { flex: 1; min-height: 0; overflow: auto; align-content: start; padding: 0 6px 8px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-search { margin: 0 12px 8px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-search input { width: 100%; min-width: 0; min-height: 28px !important; padding: 5px 7px !important; background: transparent !important; font: inherit; box-sizing: border-box; }
+.canvas2d-navigation-docks .canvas2d-navigator-tree-toggle { display: inline-flex; align-items: center; justify-content: center; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry-index:empty { display: none; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry strong { font-size: 12px; font-weight: 500; }
+.canvas2d-navigation-docks .canvas2d-navigator-empty { padding: 12px 6px !important; gap: 6px; color: var(--air-ink-muted); }
+.canvas2d-navigator-empty button { justify-self: start; align-self: flex-start; padding: 3px 0; border: 0; background: transparent; color: var(--air-accent); font: inherit; cursor: pointer; }
+.canvas2d-navigator-options { position: relative; }
+.canvas2d-navigator-options summary { list-style: none; cursor: pointer; }
+.canvas2d-navigator-options summary::-webkit-details-marker { display: none; }
+.canvas2d-navigator-options > div { position: absolute; top: calc(100% + 4px); right: 0; z-index: 3; min-width: 148px; padding: 5px; }
+.canvas2d-navigator-options > div button { display: flex; align-items: center; gap: 8px; width: 100% !important; height: 32px !important; padding: 0 7px; text-align: left; font: inherit; }
 .canvas2d-navigation-docks > .canvas2d-navigator-tab { position: relative; inset: auto !important; display: flex; align-items: center; gap: 8px; flex: none; width: 100% !important; height: 40px; min-height: 40px !important; padding: 0 8px; transform: none; box-sizing: border-box; text-align: left; }
 .canvas2d-navigator-tab-label { color: var(--air-ink, #252b31); font: 600 13px/1.5 system-ui, sans-serif; }
 .canvas2d-workspace-panel.is-collapsed { flex: none; height: 40px; }
@@ -148,7 +167,6 @@
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel.is-open, .canvas2d-navigator-panel)) > .canvas2d-navigator-tab { justify-content: center; padding: 0; }
 .canvas2d-workspace-resizer { position: absolute; right: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; touch-action: none; }
 .canvas2d-workspace-resizer:hover, .canvas2d-workspace-resizer:focus-visible { background: var(--air-accent, #347eac); }
-.canvas2d-engine-ui:has(.canvas2d-workspace-panel.is-open) .canvas2d-engine-corner-top-left { visibility: hidden; pointer-events: none; }
 .canvas2d-workspace-menu { position: fixed; z-index: 3000; width: 170px; padding: 5px; background: #fff; border: 1px solid #dce2e6; border-radius: 6px; box-shadow: 0 6px 20px #0002; font: 12px/1.5 system-ui, sans-serif; color: #252b31; }
 .canvas2d-workspace-menu { pointer-events: auto; }
 .canvas2d-workspace-menu button { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 3px; background: transparent; text-align: left; }
