@@ -983,7 +983,7 @@ async function checkMinimap(page, viewport) {
   const minimap = page.locator("#canvas2d-transient-minimap");
   const toggle = minimap.locator(".canvas2d-transient-minimap-toggle");
   assert(await minimap.evaluate((element) => element.classList.contains("is-collapsed")), "minimap did not start collapsed", viewport);
-  await page.locator(".canvas2d-navigator-dock-collapse").click();
+  await page.getByRole("button", { name: "收起画布目录", exact: true }).click();
   await toggle.click();
   await moveAway(page, viewport);
   await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap")?.getBoundingClientRect().width >= 163.5);
@@ -1056,90 +1056,36 @@ async function checkMinimap(page, viewport) {
 }
 
 async function checkInfoDock(page, viewport) {
-  const navigatorHeaderLayout = await page.evaluate(() => {
-    const read = (selector) => {
-      const rect = document.querySelector(selector)?.getBoundingClientRect();
-      return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null;
-    };
-    return {
-      brand: read(".canvas2d-navigator-brand"),
-      panelControls: read('[data-stage-panel-controls="left"]'),
-    };
-  });
-  assert(
-    navigatorHeaderLayout.brand && navigatorHeaderLayout.panelControls && !rectanglesOverlap(navigatorHeaderLayout.brand, navigatorHeaderLayout.panelControls, 4),
-    "canvas navigator brand is covered by the workspace controls",
-    { viewport, navigatorHeaderLayout }
-  );
-  await page.locator(".canvas2d-navigator-dock-collapse").click();
-  await page.waitForTimeout(260);
+  const directory = await page.locator(".canvas2d-navigator-head").boundingBox();
+  const controls = await page.locator('[data-stage-panel-controls="left"]').boundingBox();
+  assert(directory && directory.y >= controls.y + controls.height, "directory header overlaps the top controls", { viewport, directory, controls });
+  await page.getByRole("button", { name: "收起画布目录", exact: true }).click();
+  await moveAway(page, viewport);
   const infoSelector = ".canvas-chrome-info-dock";
-  const expanded = await readSurface(page, infoSelector);
-  const expandedMetrics = await page.evaluate(() => {
-    const logo = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-logo")?.getBoundingClientRect();
-    const label = document.querySelector(".canvas-chrome-info-dock .canvas2d-brand-label")?.getBoundingClientRect();
-    const toggle = document.querySelector(".canvas-chrome-info-dock .canvas2d-info-collapse-toggle")?.getBoundingClientRect();
-    const panelControls = document.querySelector('[data-stage-panel-controls="left"]')?.getBoundingClientRect();
-    const utility = document.querySelector(".canvas-chrome-utility-dock")?.getBoundingClientRect();
-    const info = document.querySelector(".canvas-chrome-info-dock")?.getBoundingClientRect();
-    const canvasPanel = document.querySelector(".desktop-clear-stage")?.getBoundingClientRect();
-    return {
-      logoHeight: logo?.height || 0,
-      logoRightGap: logo && info ? info.right - logo.right : null,
-      brandOrder: Boolean(label && logo && label.right <= logo.left),
-      toggleSideAligned: Boolean(toggle && info && Math.abs((toggle.top + toggle.bottom) / 2 - (info.top + info.bottom) / 2) <= 1 && toggle.left >= info.left && toggle.left - info.left <= 4),
-      toggleAvoidsLogo: Boolean(toggle && logo && toggle.right <= logo.left),
-      logoAvoidsPanelControls: Boolean(
-        logo && panelControls &&
-          (logo.right <= panelControls.left || logo.left >= panelControls.right || logo.bottom <= panelControls.top || logo.top >= panelControls.bottom)
-      ),
-      topDelta: info && utility ? info.top - utility.top : null,
-      canvasWidth: canvasPanel?.width || 0,
-      contained: Boolean(info && canvasPanel && info.left >= canvasPanel.left && info.right <= canvasPanel.right),
-    };
-  });
-  assert(expanded.background === "rgba(255, 255, 255, 0.58)" && expanded.hitInside, "canvas information dock has no usable glass backing", {
-    viewport,
-    expanded,
-  });
-  assert(
-    expandedMetrics.logoRightGap >= 0 && expandedMetrics.logoRightGap <= 12 && expandedMetrics.brandOrder && expandedMetrics.toggleSideAligned && expandedMetrics.toggleAvoidsLogo && expandedMetrics.logoAvoidsPanelControls,
-    "canvas information dock did not keep the logo at the right and the collapse control at the side midpoint",
-    { viewport, expandedMetrics }
-  );
-  if (expandedMetrics.canvasWidth >= 620) {
-    assert(expandedMetrics.logoHeight >= 18 && Math.abs(expandedMetrics.topDelta) <= 1, "expanded canvas information dock is not aligned with the utility row", {
-      viewport,
-      expandedMetrics,
-    });
-  } else {
-    assert(expandedMetrics.logoHeight >= 18 && expandedMetrics.contained, "expanded canvas information dock escaped the narrow canvas workspace", {
-      viewport,
-      expandedMetrics,
-    });
-  }
-
   const toggle = page.locator(".canvas2d-info-collapse-toggle");
-  await toggle.click();
-  await moveAway(page, viewport);
-  const collapsed = await readSurface(page, infoSelector);
-  const collapsedLogoHeight = await page.locator(".canvas-chrome-info-dock .canvas2d-brand-logo").evaluate((logo) => logo.getBoundingClientRect().height);
-  const expectedCollapsedHeight = viewport.width <= 720 ? 36 : 40;
-  const expectedCollapsedLogoHeight = viewport.width <= 720 ? 22 : 24;
-  assert(collapsed.rect.width <= 78.5 && Math.abs(collapsed.rect.height - expectedCollapsedHeight) <= 0.5 && Math.abs(collapsedLogoHeight - expectedCollapsedLogoHeight) <= 0.5 && collapsed.background === expanded.background, "collapsed canvas information dock lost its balanced glass layout", {
-    viewport,
-    collapsed,
-    collapsedLogoHeight,
+  const initial = await readSurface(page, infoSelector);
+  const topLayout = await page.evaluate(() => {
+    const read = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
+    return { info: read(".canvas-chrome-info-dock"), controls: read('[data-stage-panel-controls="left"]'), toolbar: read(".canvas2d-engine-toolbar"), panel: read(".desktop-clear-stage") };
   });
-  await toggle.click();
-  await moveAway(page, viewport);
-  const restored = await readSurface(page, infoSelector);
-  const restoredWidthIsValid = expanded.rect.width > 78.5 ? restored.rect.width >= 185 : restored.rect.width <= 78.5;
-  assert(restoredWidthIsValid && restored.hitInside && restored.background === expanded.background, "canvas information dock did not restore", {
-    viewport,
-    expanded,
-    restored,
-  });
+  assert(initial.background === "rgba(255, 255, 255, 0.58)" && initial.hitInside, "canvas information dock has no usable glass backing", { viewport, initial });
+  assert(topLayout.info.left >= topLayout.controls.right + 4 && topLayout.info.right <= topLayout.toolbar.left + 1 && topLayout.info.right <= topLayout.panel.right, "canvas information dock overlaps or escapes the top row", { viewport, topLayout });
+  assert(Math.abs(topLayout.info.top + topLayout.info.height / 2 - topLayout.controls.top - topLayout.controls.height / 2) <= 2, "canvas information dock is not on the control row", { viewport, topLayout });
+  if (initial.rect.width > 64.5) {
+    await toggle.click(); await moveAway(page, viewport);
+    const collapsed = await readSurface(page, infoSelector);
+    assert(collapsed.rect.width <= 64.5 && collapsed.background === initial.background && collapsed.hitInside, "canvas information dock failed to collapse", { viewport, collapsed });
+    await toggle.click(); await moveAway(page, viewport);
+    const restored = await readSurface(page, infoSelector);
+    assert(Math.abs(restored.rect.width - initial.rect.width) < 1 && restored.hitInside, "canvas information dock failed to restore", { viewport, initial, restored });
+  } else {
+    await toggle.click();
+    await page.locator(".canvas-chrome-info-dock .canvas2d-board-title").waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    assert(!(await page.locator(infoSelector).getAttribute("class")).includes("is-popover-open"), "narrow information popover failed to close", { viewport });
+    await moveAway(page, viewport);
+    assert(Math.abs((await readSurface(page, infoSelector)).rect.width - initial.rect.width) < 1, "popover changed the narrow header layout", { viewport });
+  }
 }
 
 async function checkPanelLayoutControls(page, viewport) {
@@ -1534,9 +1480,9 @@ async function checkViewport(browser, viewport) {
     const shareButton = page.locator('.canvas2d-engine-tool[title="分享"]');
     await shareButton.click();
     const shareMenu = page.locator(".canvas2d-engine-menu-share");
-    await shareMenu.getByRole("menuitem", { name: "导出 PDF" }).click();
+    await shareMenu.getByRole("menuitem", { name: "导出为 PDF" }).click();
     assert(await shareMenu.getByRole("menuitem", { name: "标准" }).isVisible(), "PDF submenu did not open", viewport);
-    await shareMenu.getByRole("menuitem", { name: "导出 PNG" }).click();
+    await shareMenu.getByRole("menuitem", { name: "导出为图片（PNG）" }).click();
     assert((await shareMenu.getByRole("menuitem", { name: "标准" }).count()) === 1, "share submenus were not exclusive", viewport);
     const shareSurface = await readSurface(page, ".canvas2d-engine-menu-share");
     assert(shareSurface.background === "rgb(255, 255, 255)" && shareSurface.hitInside, "share menu is not a usable white surface", {

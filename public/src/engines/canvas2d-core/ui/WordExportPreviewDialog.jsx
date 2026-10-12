@@ -314,9 +314,8 @@ export function WordExportPreviewDialog({
         </div>
 
         <div className="canvas2d-word-export-meta">
-          <span>选择 {model.itemCount || 0}</span>
-          <span>可导出 {model.exportableCount || 0}</span>
-          <span>跳过 {model.skippedCount || 0}</span>
+          <span>可导出 {model.exportableCount || 0} 项内容</span>
+          {model.skippedCount ? <span>有 {model.skippedCount} 项无法导出</span> : null}
         </div>
 
         <details className="canvas2d-word-export-note"><summary>调整阅读顺序</summary><ol className="canvas2d-word-reading-order">{(model.orderedItemIds || []).map((id, index, ids) => {
@@ -324,15 +323,15 @@ export function WordExportPreviewDialog({
           return <li key={id}><span>{index + 1}. {String(item?.title || item?.plainText || item?.name || item?.type || id).slice(0, 60)}</span><button type="button" disabled={exporting || index === 0} aria-label={`上移段落 ${index + 1}`} onClick={() => onReorder?.(id, -1)}>↑</button><button type="button" disabled={exporting || index === ids.length - 1} aria-label={`下移段落 ${index + 1}`} onClick={() => onReorder?.(id, 1)}>↓</button></li>;
         })}</ol></details>
         {request.assetWarnings?.length > 0 && <div className="canvas2d-word-export-note" role="alert">以下图片将使用占位：{request.assetWarnings.join("；")}</div>}
-        <TypeSummary summary={model.typeSummary || {}} />
+        <details className="canvas2d-word-export-note"><summary>内容统计</summary><TypeSummary summary={model.typeSummary || {}} /></details>
 
         <div className="canvas2d-word-export-body" aria-label="Word 预览">
           <WordDocxPreviewPane request={request} />
         </div>
 
         {skippedItems.length ? (
-          <div className="canvas2d-word-export-note">
-            <strong>已自动跳过</strong>
+          <div className="canvas2d-word-export-note" role="alert">
+            <strong>以下内容不会导出</strong>
             <span>
               {skippedItems
                 .slice(0, 3)
@@ -353,7 +352,7 @@ export function WordExportPreviewDialog({
             onClick={onConfirm}
             disabled={!canExport}
           >
-            {exporting ? "正在导出..." : "导出 Word"}
+            {exporting ? "正在导出..." : "导出为 Word"}
           </button>
         </div>
       </div>

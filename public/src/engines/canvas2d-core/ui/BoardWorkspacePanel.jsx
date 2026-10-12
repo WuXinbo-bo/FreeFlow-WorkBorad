@@ -41,6 +41,8 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   const [plan, setPlan] = useState(null);
   const [planStale, setPlanStale] = useState(false);
   const [syncError, setSyncError] = useState("");
+  const [statusError, setStatusError] = useState("");
+  const [syncExpanded, setSyncExpanded] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef(null);
   const folderRef = useRef("");
@@ -64,6 +66,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
 
   const toggle = (next) => {
     setOpen(next);
+    if (!next) setSyncExpanded(false);
     writeChromePreference("workspaceOpen", next);
     setMenu(null);
     setEditor(null);
@@ -95,11 +98,14 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
       if (status?.ok === false) throw new Error(status.error || "读取同步状态失败");
       if (mounted.current && request === statusSequence.current) {
         const key = `${Boolean(status.connected)}:${status.repository?.owner || ""}/${status.repository?.repo || ""}:${status.repository?.branch || ""}`;
-        if (key !== repositoryKey.current) { repositoryKey.current = key; setPlan(null); }
+        if (key !== repositoryKey.current) {
+          repositoryKey.current = key; setPlan(null); setPlanStale(false); setSyncExpanded(false); setSyncError(""); setNotice("");
+        }
+        setStatusError("");
         setSyncStatus(status);
       }
     } catch (cause) {
-      if (mounted.current && request === statusSequence.current) { setSyncError(cause.message); setPlanStale(true); }
+      if (mounted.current && request === statusSequence.current) { setStatusError(cause.message); setPlanStale(true); }
     }
   }
 
@@ -234,7 +240,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   useEffect(() => { setActiveIndex(-1); }, [query, view, sort]);
   const syncByPath = new Map((plan?.items || []).map((item) => [item.localPath, item.state]));
   const ledger = Object.values(syncStatus?.ledger?.boards || {}).filter((entry) => String(entry.localPath || "").replace(/[\\/][^\\/]+$/, "") === folder);
-  const connected = Boolean(syncStatus?.connected && syncStatus.repository?.repo);
+  const connected = Boolean(syncStatus?.connected && syncStatus.repository?.owner && syncStatus.repository?.repo);
   const stateStale = planStale || Boolean(snapshot?.boardDirty || snapshot?.editingId);
   const boardLabel = (path) => {
     const entry = ledger.find((entry) => entry.localPath === path);
@@ -244,6 +250,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   };
   const syncCounts = summarizeSyncPlan(plan);
   const lastSyncedAt = Math.max(0, ...ledger.map((entry) => Date.parse(entry.updatedAt || entry.lastSyncedAt || "") || 0));
+  const showSyncDetails = syncExpanded || Boolean(syncError || statusError || syncCounts.upload || syncCounts.pull || syncCounts.conflict || syncCounts.deleted || ["pull", "upload"].includes(busy));
   const previousBoard = recent.find((entry) => entry.filePath !== currentPath);
 
   function moveSearchSelection(event) {
@@ -262,7 +269,13 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     setNotice("");
     setMenu(null);
     try { await task(); return true; }
-    catch (cause) { if (mounted.current) setError(cause.message || "操作失败"); return false; }
+    catch (cause) {
+      if (mounted.current) {
+        if (["check", "pull", "upload"].includes(action)) setSyncError(cause.message || "同步未完成，本地内容已保留");
+        else setError(cause.message || "操作失败");
+      }
+      return false;
+    }
     finally { busyRef.current = false; if (mounted.current) setBusy(""); }
   }
 
@@ -339,28 +352,36 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     setSyncError("");
     await run(action, async () => {
       if (!folder) throw new Error("请先打开工作区");
-      const path = currentRef.current?.boardFilePath || "";
-      const payload = { rootPath: folder, boardPath: path };
-      if (action === "check") {
-        const result = await bridge.withBoardFileOperation(() => syncClient.planWorkspace(payload));
-        if (result?.ok === false) throw new Error(result.error || "检查失败");
-        setPlan({ ...result, checkedAt: result.checkedAt || Date.now() }); setPlanStale(false);
-        setNotice(`已检查 ${result.total || result.items?.length || 0} 个画布`);
-        return;
-      }
-      const result = await bridge.withBoardFileOperation(() => action === "pull" ? syncClient.pullWorkspace(payload) : syncClient.syncWorkspace(payload));
-      if (result?.ok === false) throw new Error(result.error || "同步失败");
-      window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: result }));
-      setPlan(result.refreshed ? { ...result.refreshed, checkedAt: result.refreshed.checkedAt || Date.now() } : null); setPlanStale(false);
-      const failures = (result.results || []).filter((item) => item.error);
-      if (failures.length) { setError(`${failures.length} 个画布未完成：${failures[0].error}`); setSyncError("部分画布未完成，可以重新检查后重试"); }
-      else {
-        const conflicts = Number(result.counts?.["both-changed"] || 0) + Number(result.counts?.["path-collision"] || 0) + Number(result.counts?.conflict || 0);
-        setNotice(conflicts ? `${conflicts} 个画布需要在 GitHub 设置中处理冲突` : action === "pull" ? "拉取完成，画布列表已更新" : "上传完成");
-      }
-      await refresh();
-      await refreshStatus();
-    }).then((ok) => { if (!ok) { setSyncError("同步未完成，请检查错误后重试；本地内容已保留"); setPlanStale(true); } });
+      const key = repositoryKey.current;
+      const isCurrent = () => mounted.current && key === repositoryKey.current && folder === folderRef.current;
+      try {
+        const path = currentRef.current?.boardFilePath || "";
+        const payload = { rootPath: folder, boardPath: path };
+        if (action === "check") {
+          const result = await bridge.withBoardFileOperation(() => syncClient.planWorkspace(payload));
+          if (!isCurrent()) return;
+          if (result?.ok === false) throw new Error(result.error || "检查失败");
+          await refreshStatus();
+          if (!isCurrent()) return;
+          setPlan({ ...result, checkedAt: result.checkedAt || Date.now() }); setPlanStale(false);
+          setNotice(`已检查 ${result.total || result.items?.length || 0} 个画布`);
+          return;
+        }
+        const result = await bridge.withBoardFileOperation(() => action === "pull" ? syncClient.pullWorkspace(payload) : syncClient.syncWorkspace(payload));
+        if (!isCurrent()) return;
+        if (result?.ok === false) throw new Error(result.error || "同步失败");
+        window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: result }));
+        setPlan(result.refreshed ? { ...result.refreshed, checkedAt: result.refreshed.checkedAt || Date.now() } : null); setPlanStale(false);
+        const failures = (result.results || []).filter((item) => item.error);
+        if (failures.length) { setSyncError(`${failures.length} 个画布未完成：${failures[0].error}。可以重新检查后重试。`); }
+        else {
+          const conflicts = Number(result.counts?.["both-changed"] || 0) + Number(result.counts?.["path-collision"] || 0) + Number(result.counts?.conflict || 0);
+          setNotice(conflicts ? `${conflicts} 个画布需要在 GitHub 设置中处理冲突` : action === "pull" ? "拉取完成，画布列表已更新" : "上传完成");
+        }
+        await refresh();
+        await refreshStatus();
+      } catch (cause) { if (isCurrent()) throw cause; }
+    }).then((ok) => { if (!ok) setPlanStale(true); });
   }
 
   async function openRecovery(kind, board = null) {
@@ -407,16 +428,15 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
           <IconButton label="收起画布工作区" onClick={() => toggle(false)}><ChevronLeft size={17} /></IconButton>
         </div></header>
         <div className="canvas2d-workspace-folder"><button type="button" title={folder || "打开工作区文件夹"} disabled={Boolean(busy)} onClick={() => run("folder", async () => { const next = await bridge.pickCanvasWorkspaceFolder(); if (next) { setQuery(""); setPlan(null); await refresh(next); } })}><FolderOpen size={17} /><span>{folderName(folder)}</span></button><IconButton label="刷新画布列表" disabled={loading || Boolean(busy)} onClick={() => run("refresh", async () => { await refresh(); await refreshStatus(); })}><RefreshCw size={15} /></IconButton></div>
-        <div className="canvas2d-workspace-current"><div><span>当前画布</span><strong title={currentPath}>{currentName}</strong><small>{snapshot?.boardSaveError ? "保存失败 · 修改仍在内存" : snapshot?.boardDirty ? "未保存" : "已保存到本机"}{folder && !boards.some((board) => board.filePath === currentPath) ? " · 工作区外" : ""}</small><small>{boardLabel(currentPath)}</small></div><IconButton label="切换到上一个画布" disabled={Boolean(busy) || !previousBoard} onClick={() => requestSwitch({ kind: "open", path: previousBoard.filePath })}><ArrowLeftRight size={16} /></IconButton><IconButton label="保存当前画布" disabled={Boolean(busy)} onClick={() => run("save", async () => { if (!(await bridge.saveBoard({ exactPath: true }))) throw new Error("保存失败"); await refresh(); })}><Save size={16} /></IconButton><IconButton label="当前画布操作" data-workspace-more disabled={Boolean(busy)} onClick={(event) => openMenu(event, { name: snapshot?.boardFileName, filePath: currentPath })}><MoreHorizontal size={17} /></IconButton></div>
+        <div className="canvas2d-workspace-current"><div>{!sorted.some((board) => board.filePath === currentPath) ? <strong title={currentPath}>{currentName}</strong> : null}<small>{snapshot?.boardSaveError ? "保存失败 · 修改仍在内存" : boardLabel(currentPath) === "仅本地" ? "已保存到本机" : boardLabel(currentPath)}{folder && currentPath && !boards.some((board) => board.filePath === currentPath) ? " · 工作区外" : ""}</small></div><IconButton label="切换到上一个画布" disabled={Boolean(busy) || !previousBoard} onClick={() => requestSwitch({ kind: "open", path: previousBoard.filePath })}><ArrowLeftRight size={16} /></IconButton><IconButton label="保存当前画布" disabled={Boolean(busy)} onClick={() => run("save", async () => { if (!(await bridge.saveBoard({ exactPath: true }))) throw new Error("保存失败"); await refresh(); })}><Save size={16} /></IconButton><IconButton label="当前画布操作" data-workspace-more disabled={Boolean(busy)} onClick={(event) => openMenu(event, { name: snapshot?.boardFileName, filePath: currentPath })}><MoreHorizontal size={17} /></IconButton></div>
         {snapshot?.boardSaveError && <div className="canvas2d-workspace-error" role="alert">保存失败：{snapshot.boardSaveError}。请重试保存或另存为，修改仍保留在内存。</div>}
-        {recent.length > 1 ? <nav className="canvas2d-workspace-quick" aria-label="最近画布快捷切换">{recent.slice(0, 4).map((board) => <button key={board.filePath} type="button" title={board.filePath} aria-label={`快速切换：${displayName(board.name)}`} aria-current={board.filePath === currentPath ? "page" : undefined} disabled={Boolean(busy) || Boolean(pending)} onClick={() => requestSwitch({ kind: "open", path: board.filePath })}>{displayName(board.name)}</button>)}</nav> : null}
         <label className="canvas2d-workspace-search"><Search size={15} /><input ref={searchRef} aria-label="搜索画布" aria-controls="freeflow-workspace-board-list" aria-activedescendant={activeIndex >= 0 && sorted[activeIndex] ? `freeflow-workspace-board-${activeIndex}` : undefined} placeholder="搜索画布 · ⌘/Ctrl P" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; moveSearchSelection(event); if (event.key === "Escape") { setQuery(""); setActiveIndex(-1); event.currentTarget.blur(); } const selected = sorted[Math.max(0, activeIndex)]; if (event.key === "Enter" && selected) { event.preventDefault(); requestSwitch({ kind: "open", path: selected.filePath }); } }} /></label>
         <div className="canvas2d-workspace-views" role="tablist" aria-label="画布列表视图"><button role="tab" aria-selected={view === "workspace"} onClick={() => { setView("workspace"); setQuery(""); }}>工作区</button><button role="tab" aria-selected={view === "recent"} onClick={() => { setView("recent"); setQuery(""); }}>最近打开</button></div>
         <div className="canvas2d-workspace-list-head"><span>{loading ? "正在读取…" : `${query ? sorted.length : displayed.length} 个画布`}</span>{view === "workspace" ? <select aria-label="画布排序" value={sort} onChange={(event) => setSort(event.target.value)}><option value="modified">最近修改</option><option value="name">名称</option></select> : null}</div>
         {editor ? <form className="canvas2d-workspace-editor" onSubmit={commitEditor}><input aria-label={editor.kind === "create" ? "新画布名称" : "重命名画布"} autoFocus placeholder="画布名称" value={editor.name} disabled={Boolean(busy)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setEditor(null); }} /><button type="submit" disabled={Boolean(busy)}>{editor.kind === "create" ? "新建" : "确认"}</button><IconButton label="取消编辑" onClick={() => setEditor(null)}><X size={15} /></IconButton></form> : null}
         <div id="freeflow-workspace-board-list" className="canvas2d-workspace-list" aria-label="工作区画布列表">
           {sorted.map((board, index) => <div id={`freeflow-workspace-board-${index}`} key={board.filePath} className={`canvas2d-workspace-row${board.filePath === currentPath ? " is-current" : ""}${index === activeIndex ? " is-keyboard-selected" : ""}`} onContextMenu={(event) => openMenu(event, board)}>
-            <button type="button" className="canvas2d-workspace-open" aria-current={board.filePath === currentPath ? "page" : undefined} title={board.filePath} disabled={Boolean(busy) || Boolean(pending)} onClick={() => requestSwitch({ kind: "open", path: board.filePath })}><span>{displayName(board.name)}</span><small>{boardLabel(board.filePath)}</small></button>
+            <button type="button" className="canvas2d-workspace-open" aria-current={board.filePath === currentPath ? "page" : undefined} title={board.filePath} disabled={Boolean(busy) || Boolean(pending)} onClick={() => requestSwitch({ kind: "open", path: board.filePath })}><span>{displayName(board.name)}</span><small>{board.filePath === currentPath && snapshot?.boardSaveError ? "保存失败" : boardLabel(board.filePath) === "仅本地" ? "" : boardLabel(board.filePath)}</small></button>
             <IconButton label={`画布操作：${displayName(board.name)}`} data-workspace-more disabled={Boolean(busy)} onClick={(event) => openMenu(event, board)}><MoreHorizontal size={15} /></IconButton>
           </div>)}
           {!sorted.length && !loading ? <div className="canvas2d-workspace-empty">{query ? "没有匹配的画布" : folder ? "工作区暂无画布" : "未选择工作区"}</div> : null}
@@ -424,17 +444,19 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
         {failedPath ? <button type="button" className="canvas2d-workspace-repair" disabled={Boolean(busy)} onClick={() => run("repair", async () => { const result = await bridge.repairBoardAtPath(failedPath); if (!result?.ok) throw new Error(result?.error || "修复失败"); setNotice("已生成修复副本"); setFailedPath(""); await refresh(); })}>生成修复副本</button> : null}
         {folder && currentPath && !boards.some((board) => board.filePath === currentPath) && currentPath.replace(/[\\/][^\\/]+$/, "") === folder && !loading ? <div className="canvas2d-workspace-error" role="status">当前文件已从工作区移除，内存内容已保留，请另存为。</div> : null}
         {snapshot?.boardFileReloadRequired ? <button type="button" className="canvas2d-workspace-repair" disabled={Boolean(busy)} onClick={() => requestSwitch({ kind: "open", path: currentPath, reload: true })}>重新载入当前画布</button> : null}
-        <div className={`canvas2d-workspace-sync${stateStale && connected ? " is-stale" : ""}`}>
-          <div><Cloud size={15} /><span title={syncStatus?.repository?.owner ? `${syncStatus.repository.owner}/${syncStatus.repository.repo}` : ""}>{busy === "check" ? "正在检查…" : busy === "pull" ? "正在拉取…" : busy === "upload" ? "正在上传…" : connected ? `${syncStatus.repository.repo} · ${stateStale ? "需要检查" : "已连接"}` : syncStatus?.connected ? "未绑定仓库" : "未连接 GitHub"}</span><IconButton label="GitHub 同步设置" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}><Settings size={15} /></IconButton></div>
+        {connected ? <div className={`canvas2d-workspace-sync${syncError || statusError || syncCounts.conflict ? " is-warning" : ""}`}>
+          <div><Cloud size={15} /><button type="button" className="canvas2d-workspace-sync-toggle" aria-expanded={showSyncDetails} title={syncStatus?.repository?.owner ? `${syncStatus.repository.owner}/${syncStatus.repository.repo}` : "GitHub 同步"} onClick={() => setSyncExpanded((value) => !value)}>{busy === "check" ? "正在检查…" : busy === "pull" ? "正在拉取…" : busy === "upload" ? "正在上传…" : connected ? syncCounts.conflict ? `有 ${syncCounts.conflict} 个冲突` : stateStale ? "修改后待检查" : plan ? syncCounts.upload || syncCounts.pull ? `待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}` : "检查完成 · 无待同步内容" : "已连接 · 尚未检查" : syncStatus?.connected ? "未绑定仓库" : "未连接 GitHub"}</button><IconButton label="GitHub 同步设置" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}><Settings size={15} /></IconButton></div>
           {connected ? <>
-            <div className="canvas2d-workspace-sync-summary" role="status">{plan ? `${stateStale ? "上次检查：" : ""}待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}${syncCounts.conflict ? ` · 冲突 ${syncCounts.conflict}` : ""}${syncCounts.deleted ? ` · 远程已删除 ${syncCounts.deleted}` : ""}` : "点击检查更新获取当前状态"}</div>
-            {plan?.checkedAt ? <small className="canvas2d-workspace-sync-time">检查于 {new Date(plan.checkedAt).toLocaleString()}{stateStale ? " · 结果可能已变化" : ""}</small> : null}
-            {lastSyncedAt ? <small className="canvas2d-workspace-sync-time">上次成功同步 {new Date(lastSyncedAt).toLocaleString()}</small> : null}
-            <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}>检查更新</button><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></div>
-            {syncCounts.conflict ? <button type="button" className="canvas2d-workspace-repair" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}>查看并处理冲突</button> : null}
+            <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}>检查更新</button>{showSyncDetails ? <><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></> : null}</div>
+            {showSyncDetails ? <div className="canvas2d-workspace-sync-details">
+              <div className="canvas2d-workspace-sync-summary" role="status">{plan ? `${stateStale ? "上次检查：" : ""}待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}${syncCounts.conflict ? ` · 冲突 ${syncCounts.conflict}` : ""}${syncCounts.deleted ? ` · 远程已删除 ${syncCounts.deleted}` : ""}` : "检查更新后可查看本地与远端差异"}</div>
+              {plan?.checkedAt ? <small className="canvas2d-workspace-sync-time">检查于 {new Date(plan.checkedAt).toLocaleString()}{stateStale ? " · 结果可能已变化" : ""}</small> : null}
+              {lastSyncedAt ? <small className="canvas2d-workspace-sync-time">上次成功同步 {new Date(lastSyncedAt).toLocaleString()}</small> : null}
+              {syncCounts.conflict ? <button type="button" className="canvas2d-workspace-repair" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}>查看并处理冲突</button> : null}
+            </div> : null}
           </> : null}
-          {syncError ? <div className="canvas2d-workspace-error" role="alert">{syncError}<button type="button" disabled={Boolean(busy) || !connected || !folder} onClick={() => sync("check")}>重试检查</button></div> : null}
-        </div>
+          {syncError || statusError ? <div className="canvas2d-workspace-error" role="alert">{syncError || statusError}<button type="button" disabled={Boolean(busy) || !connected || !folder} onClick={() => sync("check")}>重试检查</button></div> : null}
+        </div> : null}
         {notice ? <div className="canvas2d-workspace-notice" role="status">{notice}</div> : null}
         {error ? <div className="canvas2d-workspace-error" role="alert">{error}</div> : null}
       </div>

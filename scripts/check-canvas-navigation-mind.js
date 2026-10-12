@@ -32,7 +32,7 @@ async function checkNavigator(page) {
     const opened = await minimap.boundingBox();
     const directory = await page.locator(".canvas2d-navigator-panel").boundingBox();
     assert(opened.x >= directory.x + directory.width + 8, "minimap did not avoid the open directory");
-    await page.locator(".canvas2d-navigator-dock-collapse").click();
+    await page.getByRole("button", { name: "收起画布目录", exact: true }).click();
     await settle(page);
     const restored = await minimap.boundingBox();
     assert(Math.abs(restored.x - origin.x) <= 1 && Math.abs(restored.y - origin.y) <= 1,

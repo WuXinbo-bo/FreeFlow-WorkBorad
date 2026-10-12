@@ -48,6 +48,8 @@ async function main() {
     assert.match(denied.error, /尚未授权/);
     const panel = page.getByRole("complementary", { name: "画布工作区" });
     await panel.waitFor({ state: "visible" });
+    assert.equal(await panel.locator(".canvas2d-workspace-sync").count(), 0, "unconfigured GitHub sync must not occupy the workspace");
+    assert.equal(await page.locator('.canvas2d-engine-toolbar [aria-label="画布工作区"]').count(), 0, "duplicate workspace toolbar entry remains");
     const row = (name) => panel.locator(".canvas2d-workspace-open").filter({ has: page.locator("span", { hasText: new RegExp(`^${name}$`) }) });
     const snapshot = () => page.evaluate(() => { const s = window.__canvas2dEngine.getSnapshot(); return { path: s.boardFilePath, dirty: s.boardDirty, ids: s.board.items.map((item) => item.id) }; });
     const makeDirty = async () => {
@@ -207,10 +209,12 @@ async function main() {
     await app.evaluate(({ ipcMain }, text) => {
       const fs = globalThis.__workspaceTestFs;
       ipcMain.removeHandler("desktop-shell:github-sync-status");
-      ipcMain.handle("desktop-shell:github-sync-status", () => ({ connected: true, repository: { owner: "fixture", repo: "test" }, ledger: { boards: {} } }));
+      globalThis.__workspaceSyncStatus = { connected: true, repository: { owner: "fixture", repo: "test" }, ledger: { boards: {} } };
+      ipcMain.handle("desktop-shell:github-sync-status", () => globalThis.__workspaceSyncStatus);
       ipcMain.removeHandler("desktop-shell:github-sync-workspace-plan");
       globalThis.__workspacePlanFail = false;
-      ipcMain.handle("desktop-shell:github-sync-workspace-plan", (_event, payload) => {
+      ipcMain.handle("desktop-shell:github-sync-workspace-plan", async (_event, payload) => {
+        if (globalThis.__workspacePlanWait) await globalThis.__workspacePlanWait;
         if (globalThis.__workspacePlanFail) return { ok: false, error: "offline fixture" };
         return { ok: true, rootPath: payload.rootPath, checkedAt: Date.now(), total: 3, counts: { "local-changed": 1, "remote-only": 1, "both-changed": 1 }, items: [{ localPath: payload.boardPath, state: "local-changed" }] };
       });
@@ -221,6 +225,8 @@ async function main() {
       });
     }, boardText("remote"));
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("freeflow:github-sync-status")));
+    await panel.getByRole("button", { name: "检查更新", exact: true }).waitFor();
+    assert(!(await panel.locator(".canvas2d-workspace-sync").getAttribute("class")).includes("is-warning"), "ordinary unchecked sync is highlighted as an error");
     await panel.getByRole("button", { name: "检查更新", exact: true }).click();
     await panel.locator(".canvas2d-workspace-sync-summary").filter({ hasText: "待上传 1 · 待拉取 1 · 冲突 1" }).waitFor();
     await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
@@ -234,6 +240,32 @@ async function main() {
     await app.evaluate(() => { globalThis.__workspacePlanFail = false; });
     await panel.getByRole("button", { name: "重试检查", exact: true }).click();
     await page.waitForFunction(() => !document.querySelector(".canvas2d-workspace-sync .canvas2d-workspace-error"));
+    const setSyncStatus = async (status) => {
+      await app.evaluate((_electron, value) => { globalThis.__workspaceSyncStatus = value; }, status);
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent("freeflow:github-sync-status")));
+    };
+    await setSyncStatus({ ok: false, error: "status offline fixture" });
+    await panel.locator(".canvas2d-workspace-sync").getByRole("alert").filter({ hasText: "status offline fixture" }).waitFor();
+    assert(await panel.getByRole("button", { name: "重试检查", exact: true }).isVisible(), "temporary status failure hid a configured repository");
+    for (const status of [{ connected: false }, { connected: true, repository: null }, { connected: true, repository: { owner: "fixture", repo: "other" }, ledger: { boards: {} } }]) {
+      await setSyncStatus(status);
+      if (!status.repository) await page.waitForFunction(() => !document.querySelector(".canvas2d-workspace-sync"));
+      else {
+        await panel.locator(".canvas2d-workspace-sync-toggle").filter({ hasText: "尚未检查" }).waitFor();
+        assert.equal(await panel.locator(".canvas2d-workspace-sync-summary").count(), 0, "repository switch retained stale counts or expansion");
+        assert(!(await panel.locator(".canvas2d-workspace-sync").getAttribute("class")).includes("is-warning"));
+      }
+    }
+    await app.evaluate(() => { globalThis.__workspacePlanWait = new Promise((resolve) => { globalThis.__releaseWorkspacePlan = resolve; }); });
+    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "true");
+    await setSyncStatus({ connected: true, repository: { owner: "fixture", repo: "test" }, ledger: { boards: {} } });
+    await panel.locator(".canvas2d-workspace-sync-toggle").filter({ hasText: "正在检查" }).waitFor();
+    await app.evaluate(() => { globalThis.__releaseWorkspacePlan(); globalThis.__workspacePlanWait = null; });
+    await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
+    assert.equal(await panel.locator(".canvas2d-workspace-sync-summary").count(), 0, "late plan from the previous repository populated the new repository");
+    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
     await makeDirty();
     await panel.locator(".canvas2d-workspace-current").getByText("未保存 · 待上传", { exact: true }).waitFor();
     await panel.getByRole("button", { name: "拉取", exact: true }).click();
@@ -387,6 +419,29 @@ async function main() {
       assert(entries.y + entries.height <= backing.y + backing.height + 1, "directory escaped the shared backing");
     };
     await assertSharedLayout();
+    const assertTopRow = async () => {
+      const info = await page.locator(".canvas-chrome-info-dock").boundingBox();
+      const controls = await page.locator('[data-stage-panel-controls="left"]').boundingBox();
+      const toolbar = await page.locator(".canvas2d-engine-toolbar").boundingBox();
+      assert(info && info.x >= controls.x + controls.width + 4, "canvas info overlaps the left controls");
+      assert(info.x + info.width <= toolbar.x + 1, "canvas info overlaps the canvas toolbar");
+      assert(Math.abs(info.y + info.height / 2 - controls.y - controls.height / 2) <= 2, "canvas info left the top row");
+    };
+    await assertTopRow();
+    const infoDock = page.locator(".canvas-chrome-info-dock");
+    const expandedInfoWidth = (await infoDock.boundingBox()).width;
+    if (expandedInfoWidth > 64) {
+      await infoDock.getByRole("button", { name: "收起画布信息", exact: true }).click();
+      await page.waitForFunction(() => document.querySelector(".canvas-chrome-info-dock")?.offsetWidth <= 64);
+      await infoDock.getByRole("button", { name: "展开画布信息", exact: true }).click();
+      await page.waitForFunction(() => document.querySelector(".canvas-chrome-info-dock")?.offsetWidth > 64);
+      await infoDock.getByLabel("画布信息详情", { exact: true }).click();
+      await infoDock.getByRole("button", { name: "重命名画布", exact: true }).click();
+      await infoDock.locator(".canvas2d-board-title-input").press("Escape");
+    }
+    const headers = await page.evaluate(() => [".canvas2d-workspace-head", ".canvas2d-navigator-head"].map((selector) => { const el = document.querySelector(selector); const r = el.getBoundingClientRect(); const title = el.querySelector("strong").getBoundingClientRect(); return { height: r.height, titleX: title.x }; }));
+    assert.equal(headers[0].height, headers[1].height);
+    assert(Math.abs(headers[0].titleX - headers[1].titleX) < 1, "directory and workspace titles are misaligned");
     const navigationSnapshot = await snapshot();
     for (let cycle = 0; cycle < 4; cycle += 1) {
       await panel.getByRole("button", { name: "收起画布工作区" }).click();
@@ -411,7 +466,8 @@ async function main() {
     await directory.getByPlaceholder("搜索目录...").press("Escape");
     await folderEntry.waitFor();
     await folderEntry.hover();
-    await folderEntry.getByRole("button", { name: "更多操作", exact: true }).click();
+    try { await folderEntry.getByRole("button", { name: "更多操作", exact: true }).click(); }
+    catch (cause) { throw new Error(`${cause.message} ${JSON.stringify(await directory.evaluate((node) => ({ text: node.textContent, html: node.querySelector(".canvas2d-navigator-list")?.innerHTML.slice(0, 2500) })))}`); }
     await directory.getByRole("button", { name: "重命名", exact: true }).click();
     await directory.locator(".canvas2d-navigator-title-input").fill("独立目录测试");
     await directory.locator(".canvas2d-navigator-title-input").press("Enter");
@@ -467,6 +523,11 @@ async function main() {
     assert(bounds.width <= 360, "sidebar overflowed a narrow canvas pane");
     const directoryBounds = await directory.boundingBox();
     const narrowStage = await page.locator(".desktop-clear-stage").boundingBox();
+    await assertTopRow();
+    await infoDock.getByRole("button", { name: "展开画布信息", exact: true }).click();
+    await infoDock.locator(".canvas2d-board-title").waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".canvas-chrome-info-dock")?.classList.contains("is-popover-open"));
     await assertSharedLayout();
     assert(directoryBounds.x + directoryBounds.width <= narrowStage.x + narrowStage.width, "directory overflowed the narrow canvas");
     assert(await directory.getByLabel("新建文件夹", { exact: true }).isVisible(), "directory controls are not reachable in the narrow canvas");

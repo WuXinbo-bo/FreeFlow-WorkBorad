@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Image as ImageIcon, Plus, RefreshCw, X } from "lucide-react";
 
 function formatPathLabel(pathValue = "", emptyText = "未设置") {
   const value = String(pathValue || "").trim();
@@ -63,249 +65,130 @@ const SORT_OPTIONS = Object.freeze([
   { value: "size-desc", label: "文件大小" },
 ]);
 
+function ManagedImageThumbnail({ item }) {
+  const rootRef = useRef(null);
+  const [visible, setVisible] = useState(false);
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), { root: rootRef.current?.closest(".canvas2d-image-manager-list") });
+    if (rootRef.current) observer.observe(rootRef.current);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    setUrl("");
+    if (!visible || item.missing || !globalThis.desktopShell?.readCanvasImageThumbnail) return undefined;
+    let active = true;
+    let objectUrl = "";
+    void globalThis.desktopShell.readCanvasImageThumbnail(item.filePath).then((result) => {
+      if (!active || !result?.ok || !result.data) return;
+      objectUrl = URL.createObjectURL(new Blob([result.data], { type: "image/png" }));
+      setUrl(objectUrl);
+    }).catch(() => {});
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [visible, item.filePath, item.modifiedAt, item.missing]);
+  return <span ref={rootRef} className="canvas2d-image-thumbnail" aria-hidden="true">{url ? <img src={url} alt="" /> : <ImageIcon size={24} />}</span>;
+}
+
 export function CanvasImageManagerDialog({ open, bridge, snapshot, onClose }) {
   const [busyAction, setBusyAction] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [actionError, setActionError] = useState("");
   const [sortKey, setSortKey] = useState("modified-desc");
   const [selectedPath, setSelectedPath] = useState("");
-
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const rootRef = useRef(null);
+  const busyRef = useRef(false);
+  const generation = useRef(0);
+  const pickerRef = useRef(null);
+  const sourceMenuRef = useRef(null);
   const imageManager = snapshot?.canvasImageManager || {};
   const folderPath = String(imageManager?.folderPath || snapshot?.canvasImageSavePath || "").trim();
   const items = Array.isArray(imageManager?.items) ? imageManager.items : [];
   const loading = Boolean(imageManager?.loading);
   const error = String(imageManager?.error || "").trim();
   const missingCount = Number(imageManager?.missingCount || 0) || 0;
-  const sortedItems = useMemo(() => items.slice().sort((left, right) => compareImages(left, right, sortKey)), [items, sortKey]);
-  const selectedItem = sortedItems.find((item) => String(item.filePath || "") === selectedPath) || sortedItems[0] || null;
+  const sortedItems = useMemo(() => items.filter((item) => (!query || String(item.name || "").toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (filter === "all" || (filter === "used" ? item.referenced : item.missing))).sort((left, right) => compareImages(left, right, sortKey)), [items, sortKey, query, filter]);
+  const selectedItem = sortedItems.find((item) => String(item.filePath || "") === selectedPath) || null;
   const referencedCount = items.filter((item) => item?.referenced).length;
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-    void bridge.refreshCanvasImageManager();
+    if (!open) return undefined;
+    const previous = document.activeElement;
+    generation.current += 1;
+    busyRef.current = false;
+    setBusyAction(""); setFeedback(""); setActionError(""); setSelectedPath(""); setQuery(""); setFilter("all");
+    const session = generation.current;
+    void bridge.refreshCanvasImageManager().catch((cause) => { if (session === generation.current) setActionError(cause.message); });
+    rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    const key = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const details = rootRef.current?.querySelector("details[open]");
+        if (details) { details.open = false; details.querySelector("summary")?.focus(); } else onClose();
+      }
+      if (event.key === "Tab") {
+        const controls = Array.from(rootRef.current?.querySelectorAll("button,input,select,summary") || []).filter((node) => !node.disabled && node.getClientRects().length);
+        const index = controls.indexOf(document.activeElement);
+        if (controls.length && (event.shiftKey ? index <= 0 : index < 0 || index === controls.length - 1)) { event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0].focus(); }
+      }
+    };
+    document.addEventListener("keydown", key, true);
+    return () => { generation.current += 1; pickerRef.current?.(); document.removeEventListener("keydown", key, true); if (previous?.isConnected) previous.focus?.({ preventScroll: true }); };
   }, [open, bridge]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setSelectedPath((current) => {
-      if (current && items.some((item) => String(item.filePath || "") === current)) {
-        return current;
-      }
-      return String(items[0]?.filePath || "").trim();
-    });
-  }, [open, items]);
-
-  if (!open) {
-    return null;
-  }
-
   const runBusy = async (action, task) => {
-    if (busyAction) {
-      return;
-    }
-    setBusyAction(action);
-    setFeedback("");
+    if (busyRef.current) return;
+    const session = generation.current;
+    busyRef.current = true;
+    if (sourceMenuRef.current) sourceMenuRef.current.open = false;
+    setBusyAction(action); setFeedback(""); setActionError("");
     try {
-      await task();
-    } finally {
-      setBusyAction("");
-    }
+      const message = await task();
+      if (session === generation.current && typeof message === "string") setFeedback(message);
+    } catch (cause) { if (session === generation.current) setActionError(cause.message || "操作失败，请重试"); }
+    finally { if (session === generation.current) { busyRef.current = false; setBusyAction(""); } }
   };
-
-  const handleChooseFolder = () =>
-    runBusy("pick-folder", async () => {
-      const nextPath = String((await bridge.pickCanvasImageSavePath()) || "").trim();
-      if (!nextPath) {
-        return;
-      }
-      await bridge.refreshCanvasImageManager();
-      setFeedback("图片目录已更新");
+  const handleChooseFolder = () => runBusy("folder", async () => {
+    if (!(await bridge.pickCanvasImageSavePath())) return;
+    await bridge.refreshCanvasImageManager(); return "图片目录已更新";
+  });
+  const handleLocalImport = () => runBusy("local", async () => {
+    const session = generation.current;
+    const files = await new Promise((resolve) => {
+      const input = document.createElement("input"); input.type = "file"; input.accept = "image/*"; input.multiple = true; input.hidden = true;
+      const finish = (files) => { input.remove(); pickerRef.current = null; resolve(files); };
+      pickerRef.current = () => finish([]);
+      input.onchange = () => finish(Array.from(input.files || [])); input.addEventListener("cancel", () => finish([]), { once: true });
+      document.body.appendChild(input); input.click();
     });
-
-  const handleOpenFolder = () =>
-    runBusy("open-folder", async () => {
-      await bridge.revealCanvasImageSavePath();
-    });
-
-  const handleClipboardImport = () =>
-    runBusy("clipboard", async () => {
-      const ok = await bridge.importCanvasImagesFromClipboard();
-      if (ok) {
-        setFeedback("已导入剪贴板图片");
-      }
-    });
-
-  const handleScreenshotImport = () =>
-    runBusy("screenshot", async () => {
-      const ok = await bridge.captureCanvasImageToManager();
-      if (ok) {
-        setFeedback("系统截图已加入画布");
-      }
-    });
-
-  const handleLocalImport = () =>
-    runBusy("local-import", async () => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      input.multiple = true;
-      input.onchange = async () => {
-        const files = Array.from(input.files || []);
-        if (!files.length) {
-          return;
-        }
-        await bridge.importFiles(files);
-        await bridge.refreshCanvasImageManager();
-        setFeedback(`已导入 ${files.length} 张图片`);
-      };
-      input.click();
-    });
-
-  const handleInsertSelected = () =>
-    runBusy("insert", async () => {
-      const targetPath = String(selectedItem?.filePath || "").trim();
-      if (!targetPath || selectedItem?.missing) {
-        return;
-      }
-      const ok = await bridge.insertManagedCanvasImage(targetPath);
-      if (ok) {
-        setFeedback("图片已插入画布");
-      }
-    });
-
-  return (
-    <div className="canvas2d-board-workspace-overlay" role="presentation">
-      <div className="canvas2d-board-workspace-dialog canvas2d-image-manager-dialog" role="dialog" aria-modal="true" aria-label="画布图片管理">
-        <div className="canvas2d-board-workspace-main canvas2d-image-manager-main">
-          <div className="canvas2d-board-workspace-header">
-            <div className="canvas2d-board-workspace-title-block">
-              <span className="canvas2d-board-workspace-eyebrow">Canvas Assets</span>
-              <strong>画布图片管理</strong>
-              <div className="canvas2d-board-workspace-header-meta">
-                <span>{items.length} 项</span>
-                <span>{referencedCount} 项已在画布中使用</span>
-                {missingCount ? <span>缺失 {missingCount} 项</span> : null}
-              </div>
-            </div>
-            <button type="button" className="canvas2d-board-workspace-close" onClick={onClose} aria-label="关闭图片管理">
-              ×
-            </button>
-          </div>
-
-          <div className="canvas2d-board-workspace-path-card">
-            <div className="canvas2d-board-workspace-path-main">
-              <span>当前图片目录</span>
-              <strong title={folderPath || "未设置画布图片目录"}>{formatPathLabel(folderPath, "未设置")}</strong>
-              <small>{folderPath || "导入、截图和粘贴图片会统一写入这里"}</small>
-            </div>
-            <div className="canvas2d-board-workspace-path-actions">
-              <button type="button" onClick={handleChooseFolder} disabled={busyAction === "pick-folder"}>选择目录</button>
-              <button type="button" onClick={handleOpenFolder} disabled={!folderPath || busyAction === "open-folder"}>打开目录</button>
-              <button type="button" onClick={() => void bridge.refreshCanvasImageManager()} disabled={loading}>刷新</button>
-            </div>
-          </div>
-
-          <div className="canvas2d-board-workspace-toolbar">
-            <div className="canvas2d-board-workspace-list-head">
-              <span>来源与资产</span>
-              <strong>统一导入入口</strong>
-            </div>
-            <div className="canvas2d-board-workspace-toolbar-actions">
-              <div className="canvas2d-board-workspace-sort-field">
-                <span>排序</span>
-                <select value={sortKey} onChange={(event) => setSortKey(event.target.value)}>
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="canvas2d-image-manager-action-grid">
-            <button type="button" onClick={handleLocalImport} disabled={busyAction === "local-import"}>导入本地图片</button>
-            <button type="button" onClick={handleClipboardImport} disabled={busyAction === "clipboard"}>读取剪贴板图片</button>
-            <button type="button" onClick={handleScreenshotImport} disabled={busyAction === "screenshot"}>系统截图导入</button>
-            <button type="button" onClick={handleInsertSelected} disabled={!selectedItem || Boolean(selectedItem?.missing) || busyAction === "insert"}>
-              插入选中图片
-            </button>
-          </div>
-
-          {error ? <div className="canvas2d-image-manager-banner is-error">{error}</div> : null}
-          {feedback ? <div className="canvas2d-image-manager-banner">{feedback}</div> : null}
-
-          <div className="canvas2d-image-manager-list" role="list">
-            {loading ? (
-              <div className="canvas2d-engine-export-history-empty">
-                <strong>正在读取图片目录</strong>
-                <span>请稍候，正在整理当前画布的图片资产。</span>
-              </div>
-            ) : sortedItems.length ? (
-              sortedItems.map((item) => {
-                const selected = selectedItem && selectedItem.filePath === item.filePath;
-                return (
-                  <button
-                    key={item.id || item.filePath}
-                    type="button"
-                    className={`canvas2d-image-manager-item${selected ? " is-active" : ""}${item.missing ? " is-missing" : ""}`}
-                    onClick={() => setSelectedPath(String(item.filePath || "").trim())}
-                    title={item.filePath || item.name}
-                  >
-                    <span className="canvas2d-image-manager-item-main">
-                      <strong>{item.name || "未命名图片"}</strong>
-                      <span>{item.filePath || "当前记录未关联本地文件"}</span>
-                    </span>
-                    <span className="canvas2d-image-manager-item-meta">
-                      <span>{formatFileSize(item.size)}</span>
-                      <span>{formatTime(item.modifiedAt)}</span>
-                      <span>{item.missing ? "文件缺失" : item.referenced ? `已使用 ${item.referenceCount} 次` : "未放置到画布"}</span>
-                    </span>
-                  </button>
-                );
-              })
-            ) : (
-              <div className="canvas2d-engine-export-history-empty">
-                <strong>当前还没有图片资产</strong>
-                <span>从本地导入、读取剪贴板图片或做一次系统截图后，会统一出现在这里。</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <aside className="canvas2d-board-workspace-side canvas2d-image-manager-side">
-          <div className="canvas2d-board-workspace-current">
-            <span>当前选中</span>
-            <strong>{selectedItem?.name || "未选择图片"}</strong>
-            <small>{selectedItem?.filePath || "从列表中选中一张图片以继续操作"}</small>
-          </div>
-          <div className="canvas2d-board-workspace-stat-strip">
-            <div className="canvas2d-board-workspace-stat">
-              <span>目录</span>
-              <strong>{formatPathLabel(folderPath, "未设置")}</strong>
-            </div>
-            <div className="canvas2d-board-workspace-stat">
-              <span>更新时间</span>
-              <strong>{formatTime(imageManager?.lastScannedAt || 0)}</strong>
-            </div>
-          </div>
-          <div className="canvas2d-image-manager-detail-card">
-            <span className="canvas2d-board-workspace-eyebrow">状态摘要</span>
-            <strong>{selectedItem?.missing ? "待修复的图片引用" : selectedItem ? "可继续插入或定位" : "等待选择图片"}</strong>
-            <p>
-              {selectedItem
-                ? selectedItem.missing
-                  ? "当前画布中存在失效图片路径，建议先重新导入原图，再逐步替换。"
-                  : selectedItem.referenced
-                    ? "该图片已经被当前画布使用，可继续重复放置或打开本地目录。"
-                    : "该图片已进入统一管理目录，但尚未放置到当前画布。"
-                : "这里保留统一目录、图片状态和快捷操作，避免在多个设置入口之间来回切换。"}
-            </p>
-          </div>
-        </aside>
+    if (!files.length || session !== generation.current) return;
+    await bridge.importFiles(files); await bridge.refreshCanvasImageManager(); return `已将 ${files.length} 张图片添加到画布`;
+  });
+  const handleInsertSelected = () => runBusy("insert", async () => {
+    if (!selectedItem?.filePath || selectedItem.missing) return;
+    if (!(await bridge.insertManagedCanvasImage(selectedItem.filePath))) throw new Error("图片未能添加，请检查文件后重试");
+    return "图片已添加到画布";
+  });
+  if (!open) return null;
+  return createPortal(<div className="canvas2d-board-workspace-overlay canvas2d-image-manager-overlay" data-shape-include="true" onPointerDown={(event) => event.stopPropagation()}>
+    <section ref={rootRef} className="canvas2d-board-workspace-dialog canvas2d-image-manager-dialog" role="dialog" aria-modal="true" aria-label="画布图片管理" onKeyDown={(event) => event.stopPropagation()}>
+      <header className="canvas2d-image-header"><div><strong>画布图片</strong><span>{items.length} 张 · 当前画布已使用 {referencedCount} 张</span></div><button type="button" onClick={onClose} aria-label="关闭图片管理"><X size={18} /></button></header>
+      <div className="canvas2d-image-folder"><span title={folderPath}>{formatPathLabel(folderPath, "请选择图片目录")}</span><details><summary>目录设置</summary><div><button disabled={Boolean(busyAction)} onClick={handleChooseFolder}>更改图片目录</button><button disabled={!folderPath || Boolean(busyAction)} onClick={() => runBusy("reveal", () => bridge.revealCanvasImageSavePath())}>打开图片目录</button></div></details></div>
+      <div className="canvas2d-image-manager-tools">
+        <input aria-label="搜索图片" placeholder="搜索图片名称" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <select aria-label="图片排序" value={sortKey} onChange={(event) => setSortKey(event.target.value)}>{SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+        <button aria-label="刷新图片列表" disabled={loading || Boolean(busyAction)} onClick={() => runBusy("refresh", () => bridge.refreshCanvasImageManager())}><RefreshCw size={16} /></button>
+        <details ref={sourceMenuRef} className="canvas2d-image-add"><summary><Plus size={15} />添加图片</summary><div><span>直接添加到当前画布</span><button disabled={Boolean(busyAction)} onClick={handleLocalImport}>从本地文件添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("clipboard", async () => (await bridge.importCanvasImagesFromClipboard()) ? "剪贴板图片已添加到画布" : "剪贴板中没有可用图片")}>从剪贴板添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("screenshot", async () => (await bridge.captureCanvasImageToManager()) ? "截图已添加到画布" : "已取消截图")}>从系统截图添加</button></div></details>
       </div>
-    </div>
-  );
+      <nav className="canvas2d-image-filters" aria-label="图片筛选">{[["all", "全部"], ["used", "画布已使用"], ["missing", `缺失${missingCount ? ` ${missingCount}` : ""}`]].map(([value, label]) => <button key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); setSelectedPath(""); }}>{label}</button>)}</nav>
+      {(error || actionError || feedback) ? <div role={error || actionError ? "alert" : "status"} className={`canvas2d-image-manager-banner${error || actionError ? " is-error" : ""}`}>{error || actionError || feedback}</div> : null}
+      <div className="canvas2d-image-manager-list" aria-label="图片列表">
+        {loading ? <p className="canvas2d-image-empty">正在读取图片目录…</p> : sortedItems.length ? sortedItems.map((item) => <button key={item.filePath} className={`canvas2d-image-manager-item${selectedItem?.filePath === item.filePath ? " is-active" : ""}${item.missing ? " is-missing" : ""}`} aria-pressed={selectedItem?.filePath === item.filePath} onClick={() => setSelectedPath(item.filePath)} title={item.name}>
+          <ManagedImageThumbnail item={item} /><strong>{item.name || "未命名图片"}</strong><small>{item.missing ? "文件缺失" : item.referenced ? `已使用 ${item.referenceCount || 1} 次` : formatFileSize(item.size)}</small>
+        </button>) : <div className="canvas2d-image-empty"><strong>{query || filter !== "all" ? "没有匹配的图片" : "图片目录暂无图片"}</strong><span>{query || filter !== "all" ? "尝试其他名称或筛选条件" : "添加图片后，可以在这里查看和再次使用。"}</span></div>}
+      </div>
+      <footer className="canvas2d-image-footer"><div>{selectedItem ? <><span>{selectedItem.name}</span><details><summary>文件详情</summary><div><span>{selectedItem.filePath}</span><span>{formatFileSize(selectedItem.size)} · {formatTime(selectedItem.modifiedAt)}</span>{selectedItem.missing ? <p>原文件已缺失，请重新添加原图后替换画布中的引用。</p> : null}</div></details></> : <span>选中图片后可添加到画布</span>}</div><button className="is-primary" onClick={handleInsertSelected} disabled={!selectedItem || Boolean(selectedItem.missing) || Boolean(busyAction)}>添加到画布</button></footer>
+    </section>
+  </div>, document.getElementById("global-overlay-layer") || document.body);
 }

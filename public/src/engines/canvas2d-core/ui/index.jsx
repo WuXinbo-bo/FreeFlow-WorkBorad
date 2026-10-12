@@ -12,7 +12,7 @@ import {
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
-import { FolderOpen } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import {
   buildCanvasSearchIndex,
@@ -855,7 +855,7 @@ function CanvasNavigatorPanel({
             aria-label={entry.collapsed ? "展开子目录" : "收起子目录"}
             title={isFolder ? (entry.collapsed ? "展开" : "收起") : "无子目录"}
           >
-            {isFolder ? (entry.collapsed ? ">" : "⌄") : ""}
+            {isFolder ? (entry.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />) : null}
           </button>
           <button
             type="button"
@@ -903,7 +903,7 @@ function CanvasNavigatorPanel({
               aria-label="更多操作"
               title="更多操作"
             >
-              ...
+              <MoreHorizontal size={16} />
             </button>
           </div>
         </div>
@@ -932,33 +932,17 @@ function CanvasNavigatorPanel({
       }}
     >
       <header className="canvas2d-navigator-head">
-        <div className="canvas2d-navigator-brand">
-          <img className="canvas2d-navigator-brand-mark" src="assets/brand/FreeFlow_app_icon.png" alt="" aria-hidden="true" />
-          <strong>{navigator?.title || "画布目录"}</strong>
-        </div>
+        <strong>{navigator?.title || "画布目录"}</strong>
         <div className="canvas2d-navigator-head-actions">
-          <button
-            type="button"
-            className={orderVisible ? "is-active" : ""}
-            onClick={() => setOrderVisible((value) => !value)}
-            aria-label={orderVisible ? "隐藏目录序号" : "显示目录序号"}
-            title={orderVisible ? "隐藏目录序号" : "显示目录序号"}
-          >
-            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true" className="canvas2d-tool-svg">
-              <path d="M9 7h10M9 12h10M9 17h10M4.5 6.8h2.2M4.5 12h2.2M4.5 17.2h2.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="搜索目录" title="搜索">
-            <span aria-hidden="true">⌕</span>
-          </button>
-          <button type="button" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹">
-            +
-          </button>
+          <button type="button" className="canvas2d-workspace-icon" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹"><Plus size={17} /></button>
+          <button type="button" className={`canvas2d-workspace-icon${searchOpen ? " is-active" : ""}`} onClick={() => { setSearchOpen((value) => !value); setQuery(""); }} aria-label="搜索目录" title="搜索目录" aria-expanded={searchOpen}><Search size={17} /></button>
+          <details className="canvas2d-navigator-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
+            <summary className="canvas2d-workspace-icon" aria-label="目录显示选项" title="目录显示选项"><MoreHorizontal size={17} /></summary>
+            <div className="canvas-chrome-surface"><button type="button" aria-label={orderVisible ? "隐藏目录序号" : "显示目录序号"} aria-pressed={orderVisible} onClick={(event) => { setOrderVisible((value) => !value); const details = event.currentTarget.closest("details"); details.open = false; details.querySelector("summary")?.focus(); }}><ListOrdered size={16} />{orderVisible ? "隐藏目录序号" : "显示目录序号"}</button></div>
+          </details>
+          <button type="button" className="canvas2d-workspace-icon" onClick={() => { setSearchOpen(false); setQuery(""); setMenuState(null); clearNavigatorDrag(); onPreviewEntry?.(""); onCollapse?.(true); }} aria-label="收起画布目录" title="收起画布目录"><ChevronLeft size={17} /></button>
         </div>
       </header>
-      <button type="button" className="canvas2d-navigator-dock-collapse" onClick={() => onCollapse?.(true)} aria-label="收起画布目录" title="收起">
-        ‹
-      </button>
       {searchOpen ? (
         <div className="canvas2d-navigator-search">
           <input
@@ -983,17 +967,13 @@ function CanvasNavigatorPanel({
           </button>
         </div>
       ) : null}
-      <div className="canvas2d-navigator-meta">
-        <span>{entriesWithLocalCollapse.length} 条重要笔记</span>
-        <span>树形目录 · 支持多级嵌套</span>
-      </div>
       <div className="canvas2d-navigator-list">
         {visibleRoots.length ? (
           visibleRoots.map((entry, index) => renderEntry(entry, index, visibleRoots))
         ) : (
           <div className="canvas2d-navigator-empty">
-            <strong>还没有目录项</strong>
-            <span>点击右上角 + 新建文件夹，或右键画布元素选择“加入画布目录”。</span>
+            <strong>{normalizedQuery ? "没有匹配的目录项" : "尚无目录项"}</strong>
+            {normalizedQuery ? <button type="button" onClick={() => setQuery("")}>清除搜索</button> : <button type="button" onClick={() => onAddFolder?.()}>新建文件夹</button>}
           </div>
         )}
       </div>
@@ -1171,7 +1151,6 @@ function Canvas2DControls({ engine }) {
   const [captureIncludeBackground, setCaptureIncludeBackground] = useState(true);
   const [insertMenuOpen, setInsertMenuOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [workspaceOpenRequest, setWorkspaceOpenRequest] = useState(0);
   const [canvasImageManagerOpen, setCanvasImageManagerOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
@@ -1186,6 +1165,7 @@ function Canvas2DControls({ engine }) {
   const [titleDraft, setTitleDraft] = useState("");
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [infoPanelAutoCollapsed, setInfoPanelAutoCollapsed] = useState(false);
+  const [infoPanelPopoverOpen, setInfoPanelPopoverOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchRange, setSearchRange] = useState("current");
   const [workspaceSearch, setWorkspaceSearch] = useState({ results: [], warnings: [], loading: false });
@@ -1563,27 +1543,24 @@ function Canvas2DControls({ engine }) {
       }
         frameId = requestAnimationFrame(() => {
           frameId = 0;
-          const infoRect = infoElement.getBoundingClientRect();
-          const stackRect =
-            topbarStackRef.current instanceof HTMLElement ? topbarStackRef.current.getBoundingClientRect() : null;
-          const expandedInfoWidth = Math.max(186, infoRect.width);
-          const collapseGap = 8;
-          const releaseGap = 16;
-          const occupiedLeft = stackRect ? stackRect.left : Number.POSITIVE_INFINITY;
-          const expandedInfoRight = infoRect.left + expandedInfoWidth;
+          const rootRect = rootElement.getBoundingClientRect();
+          const controls = rootElement.closest(".desktop-clear-stage")?.querySelector('[data-stage-panel-controls="left"]');
+          const controlsRect = controls?.getBoundingClientRect();
+          rootElement.style.setProperty("--canvas-info-inline-start", `${controlsRect?.width ? controlsRect.right - rootRect.left + 8 : 16}px`);
+          const topbarRect = infoElement.parentElement.getBoundingClientRect();
+          const toolbarWidth = toolbarRef.current?.scrollWidth || 0;
+          const availableWidth = topbarRect.width - 244 - 12;
           const now = performance.now();
           setInfoPanelAutoCollapsed((current) => {
-            if (!Number.isFinite(occupiedLeft)) {
-              return false;
-            }
+            if (!toolbarWidth) return false;
             if (current && now < infoPanelAutoCollapseLockUntilRef.current) {
               scheduleAutoCollapseRecheck(infoPanelAutoCollapseLockUntilRef.current - now + 1);
               return true;
             }
             if (current) {
-              return occupiedLeft <= expandedInfoRight + releaseGap;
+              return availableWidth < toolbarWidth + 16;
             }
-            const shouldCollapse = occupiedLeft <= expandedInfoRight + collapseGap;
+            const shouldCollapse = availableWidth < toolbarWidth;
             if (shouldCollapse) {
               infoPanelAutoCollapseLockUntilRef.current = now + 220;
               scheduleAutoCollapseRecheck(221);
@@ -1607,6 +1584,8 @@ function Canvas2DControls({ engine }) {
         : null;
     resizeObserver?.observe(rootElement);
     resizeObserver?.observe(infoElement);
+    const controls = rootElement.closest(".desktop-clear-stage")?.querySelector('[data-stage-panel-controls="left"]');
+    if (controls) resizeObserver?.observe(controls);
     if (searchRef.current instanceof HTMLElement) {
       resizeObserver?.observe(searchRef.current);
     }
@@ -1691,6 +1670,25 @@ function Canvas2DControls({ engine }) {
       showToast(`检查更新失败：${error?.message || "未知错误"}`);
     }
   };
+
+  useEffect(() => {
+    const details = infoPanelRef.current?.querySelector("details");
+    if (details) details.open = false;
+    setInfoPanelPopoverOpen(false);
+  }, [infoPanelCollapsed, infoPanelAutoCollapsed, boardFilePath]);
+
+  useEffect(() => {
+    if (!infoPanelPopoverOpen) return undefined;
+    const closeOutside = (event) => { if (!infoPanelRef.current?.contains(event.target)) setInfoPanelPopoverOpen(false); };
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape" || editingTitle || infoPanelRef.current?.querySelector("details[open]")) return;
+      event.preventDefault(); event.stopImmediatePropagation(); setInfoPanelPopoverOpen(false);
+      infoPanelRef.current?.querySelector(".canvas2d-info-collapse-toggle")?.focus();
+    };
+    window.addEventListener("pointerdown", closeOutside, true);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => { window.removeEventListener("pointerdown", closeOutside, true); window.removeEventListener("keydown", closeOnEscape, true); };
+  }, [infoPanelPopoverOpen, editingTitle]);
 
   const openSearch = () => {
     setDrawMenuOpen(false);
@@ -1865,11 +1863,11 @@ function Canvas2DControls({ engine }) {
       className={`canvas2d-engine-ui${overlayCompact ? " is-overlay-compact" : ""}`}
       style={{
         "--canvas2d-overlay-scale": overlayScale,
-        "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "78px" : "186px",
+        "--canvas2d-topbar-left-reserved-width": infoPanelCollapsed || infoPanelAutoCollapsed ? "64px" : "244px",
       }}
     >
       <div className="canvas2d-navigation-panels"><div className="canvas2d-navigation-docks canvas-chrome-surface" style={{ "--workspace-width": `${workspaceWidth}px` }}>
-      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} width={workspaceWidth} onWidthChange={setWorkspaceWidth} />
+      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} width={workspaceWidth} onWidthChange={setWorkspaceWidth} />
       <CanvasNavigatorPanel
         key={snapshot.boardFilePath}
         navigator={navigatorView}
@@ -1894,26 +1892,9 @@ function Canvas2DControls({ engine }) {
         className="canvas2d-engine-corner canvas2d-engine-corner-top-left"
         aria-label="工作白板模式信息"
       >
-        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact canvas-chrome-surface canvas-chrome-info-dock${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-collapsed" : ""}`}>
-          <div className="canvas2d-brand-row" aria-label="FreeFlow 品牌">
-            <span className="canvas2d-floating-eyebrow canvas2d-brand-label">FreeFlow</span>
-            <img
-              className="canvas2d-brand-logo"
-              src="/assets/brand/FreeFlow_app_icon.png"
-              alt="FreeFlow logo"
-            />
-            <button
-              type="button"
-              className="canvas2d-info-collapse-toggle"
-              onClick={() => setInfoPanelCollapsed((value) => !value)}
-              title={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"}
-              aria-label={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"}
-              aria-pressed={infoPanelCollapsed || infoPanelAutoCollapsed}
-            >
-              <span aria-hidden="true">{infoPanelCollapsed || infoPanelAutoCollapsed ? "›" : "‹"}</span>
-            </button>
-          </div>
-          <div className="canvas2d-info-detail">
+        <div className={`canvas2d-floating-card canvas2d-floating-card-info is-compact canvas-chrome-surface canvas-chrome-info-dock${infoPanelCollapsed || infoPanelAutoCollapsed ? " is-collapsed" : ""}${infoPanelPopoverOpen ? " is-popover-open" : ""}`}>
+          <img className="canvas2d-brand-logo" src="/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow" title={boardTitle} />
+          <div className={`canvas2d-info-detail${infoPanelPopoverOpen ? " canvas-chrome-surface" : ""}`}>
             {editingTitle ? (
               <input
                 ref={titleInputRef}
@@ -1947,13 +1928,19 @@ function Canvas2DControls({ engine }) {
                 {boardTitle}
               </div>
             )}
-            <div className="canvas2d-floating-meta">
-              <span className={`canvas2d-badge${autosaveEnabled ? " is-on" : " is-off"}`}>
-                自动保存 {autosaveEnabled ? "开" : "关"}
-              </span>
-              {autosaveEnabled && autosaveAt ? <span className="canvas2d-badge is-time">上次 {autosaveAt}</span> : null}
-            </div>
+            <span className={`canvas2d-info-save-state${snapshot.boardSaveError ? " is-error" : ""}`} title={snapshot.boardSaveError || (snapshot.boardDirty || snapshot.editingId ? "修改尚未保存到本机" : "已保存到本机")}>{snapshot.boardSaveError ? "保存失败" : snapshot.boardDirty || snapshot.editingId ? "未保存" : "已保存"}</span>
+            <details className="canvas2d-info-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
+              <summary aria-label="画布信息详情" title="画布信息详情"><Info size={16} /></summary>
+              <div className="canvas-chrome-surface">
+                <strong>FreeFlow</strong>
+                <span>自动保存{autosaveEnabled ? "已开启" : "已关闭"}</span>
+                {autosaveEnabled && autosaveAt ? <span>上次自动保存 {autosaveAt}</span> : null}
+                <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; setEditingTitle(true); }}>重命名画布</button>
+                <button type="button" onClick={() => bridge.revealBoardInFolder()}>显示文件位置</button>
+              </div>
+            </details>
           </div>
+          <button type="button" className="canvas2d-info-collapse-toggle" onClick={() => infoPanelAutoCollapsed ? setInfoPanelPopoverOpen((value) => !value) : setInfoPanelCollapsed((value) => !value)} title={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-label={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-expanded={infoPanelPopoverOpen || !(infoPanelCollapsed || infoPanelAutoCollapsed)}><ChevronLeft size={14} /></button>
         </div>
       </div>
 
@@ -1965,9 +1952,6 @@ function Canvas2DControls({ engine }) {
         aria-label="工作白板工具栏"
       >
         <div className="canvas2d-engine-toolbar canvas-chrome-surface canvas-chrome-toolbar" role="toolbar" ref={toolbarRef}>
-          {globalThis.desktopShell?.listCanvasBoards ? <button type="button" className="canvas2d-engine-tool" aria-label="画布工作区" title="画布工作区" onClick={() => setWorkspaceOpenRequest((value) => value + 1)}>
-            <span className="canvas2d-engine-tool-icon" aria-hidden="true"><FolderOpen size={18} /></span>
-          </button> : null}
           <button
             type="button"
             className={`canvas2d-engine-tool${activeTool === "pan" ? " is-active" : ""}`}
@@ -2065,7 +2049,8 @@ function Canvas2DControls({ engine }) {
             type="button"
             className="canvas2d-engine-tool"
             onClick={() => fileInputRef.current?.click()}
-            title="文件工具"
+            title="添加文件"
+            aria-label="添加文件"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
               <FileIcon />
@@ -2322,7 +2307,7 @@ function Canvas2DControls({ engine }) {
                       setCapturePdfMenuOpen((value) => !value);
                     }}
                   >
-                    <span>导出 PDF</span>
+                    <span>导出为 PDF</span>
                     <ChevronIcon open={capturePdfMenuOpen} />
                   </button>
                   {capturePdfMenuOpen ? (
@@ -2358,7 +2343,7 @@ function Canvas2DControls({ engine }) {
                       setCapturePngMenuOpen((value) => !value);
                     }}
                   >
-                    <span>导出 PNG</span>
+                    <span>导出为图片（PNG）</span>
                     <ChevronIcon open={capturePngMenuOpen} />
                   </button>
                   {capturePngMenuOpen ? (
@@ -2445,7 +2430,7 @@ function Canvas2DControls({ engine }) {
                       setCanvasImageManagerOpen(true);
                     }}
                   >
-                    <span>画布图片位置</span>
+                    <span>画布图片管理</span>
                   </button>
                   <button
                     type="button"
