@@ -63,7 +63,7 @@ function createSnapshotMip(canvas, width, height, density) {
   return current;
 }
 
-async function captureElementSnapshot(node, { density = 1, maxPixels = DEFAULT_MAX_PIXELS } = {}) {
+export async function captureElementSnapshot(node, { density = 1, maxPixels = DEFAULT_MAX_PIXELS } = {}) {
   if (!isElementNode(node) || !node.isConnected) {
     throw new Error("presentation snapshot source is unavailable");
   }

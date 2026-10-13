@@ -5,6 +5,7 @@ import { timeAssetTask } from "../perf/canvasRuntimeStats.js";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 import { createPdfVisiblePageRenderer } from "../documentPreview/pdfVisiblePageRenderer.js";
 import { readFileReadingPreference, saveFileReadingPreference } from "../documentPreview/fileReadingPreferences.js";
+import { findPreviewText } from "../documentPreview/findPreviewText.js";
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const FILE_CARD_PREVIEW_ZOOM_MIN = 0.34;
 const FILE_CARD_PREVIEW_ZOOM_MAX = 1.9;
@@ -103,6 +104,8 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   const rendererRef = useRef(null);
   const searchGeneration = useRef(0);
   const selectionRef = useRef("");
+  const searchOffsetRef = useRef(0);
+  const pendingSearchNavigationRef = useRef(null);
   const [reading, setReading] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
   const regionRef = useRef(null);
@@ -193,6 +196,16 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
     FILE_CARD_PREVIEW_ZOOM_MIN,
     FILE_CARD_PREVIEW_ZOOM_MAX
   );
+  useEffect(() => {
+    const navigation = pendingSearchNavigationRef.current;
+    const searchNavigated = navigation?.requestId === request?.id && navigation?.previewGeneration === request?.previewGeneration && navigation?.pageNumber === pageNumber;
+    pendingSearchNavigationRef.current = null;
+    selectionRef.current = "";
+    searchOffsetRef.current = 0;
+    searchGeneration.current += 1;
+    if (!searchNavigated) setSearchStatus("");
+  }, [request?.id, request?.previewGeneration, pageNumber, sheetNumber]);
+
   useEffect(() => {
     zoomRef.current = previewZoom;
   }, [previewZoom]);
@@ -300,7 +313,9 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
         } else if (previewKind === "text") {
           const pre = document.createElement("pre"); pre.className = "file-workstation-text";
           if (bytes.subarray(0, 800000).includes(0)) throw new Error("此文件不是 UTF-8 文本，请使用系统应用打开");
-          pre.textContent = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, 800000), { stream: bytes.length > 800000 }).slice(0, 200000);
+          const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, 800000), { stream: bytes.length > 800000 });
+          pre.textContent = decoded.slice(0, 200000);
+          if (bytes.length > 800000 || decoded.length > 200000) setSearchStatus("预览仅显示前 20 万字符；完整内容可在系统中打开");
           if (bytes.length > 800000) { const note = document.createElement("p"); note.textContent = "预览仅显示前 20 万字；原文件完整保留。"; host.appendChild(note); }
           host.appendChild(pre); nodes = 1; setPageWidth(794); setContentHeight(Math.max(600, host.scrollHeight));
         } else {
@@ -629,7 +644,8 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   function captureSelection() {
     const selection = previewKind === "docx" ? docxFrameRef.current?.contentWindow?.getSelection() : window.getSelection();
     const root = previewKind === "docx" ? docxFrameRef.current?.contentDocument?.body : hostRef.current;
-    if (root?.contains(selection?.anchorNode) && selection?.toString()) selectionRef.current = selection.toString().slice(0, 50000);
+    if (root?.contains(selection?.anchorNode)) selectionRef.current = selection.toString().slice(0, 50000);
+    else if (!selection?.rangeCount || selection.isCollapsed) selectionRef.current = "";
   }
   async function search() {
     const keyword = query.trim().normalize("NFKC").toLowerCase(); if (!keyword) return;
@@ -645,21 +661,29 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
           const content = await (await pdf.getPage(page)).getTextContent();
           if (generation !== searchGeneration.current) return;
           const text = content.items.map((item) => item.str || "").join(" ");
-          if (text.normalize("NFKC").toLowerCase().includes(keyword)) { rendererRef.current?.goToPage(page); setSearchStatus(`找到：第 ${page} 页（再次搜索查找下一页）`); return; }
+          if (text.normalize("NFKC").toLowerCase().includes(keyword)) {
+            pendingSearchNavigationRef.current = { requestId: request?.id, previewGeneration: request?.previewGeneration, pageNumber: page };
+            rendererRef.current?.goToPage(page);
+            setSearchStatus(`找到：第 ${page} 页（再次搜索查找下一页）`);
+            return;
+          }
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
         setSearchStatus(pdf.numPages > limit ? "前 1000 页未找到" : "未找到；扫描件需先用外部 OCR 识别");
       } else {
         const root = previewKind === "docx" ? docxFrameRef.current?.contentDocument?.body : hostRef.current;
-        const walker = root && root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT); let node;
-        while (walker && (node = walker.nextNode())) {
-          const index = node.textContent.toLowerCase().indexOf(keyword);
-          if (index < 0) continue;
-          const range = root.ownerDocument.createRange(); range.setStart(node, index); range.setEnd(node, index + keyword.length);
-          const selection = root.ownerDocument.defaultView.getSelection(); selection.removeAllRanges(); selection.addRange(range); selectionRef.current = range.toString();
-          const parent = node.parentElement;
-          if (previewKind === "docx") scrollRef.current.scrollTop = parent.getBoundingClientRect().top * previewZoom * fitScale; else parent.scrollIntoView({ block: "center" });
-          setSearchStatus("已定位；可摘取选中文字"); return;
+        const match = findPreviewText(root, keyword, searchOffsetRef.current);
+        if (match) {
+          searchOffsetRef.current = match.nextOffset;
+          const selection = root.ownerDocument.defaultView.getSelection();
+          selection.removeAllRanges(); selection.addRange(match.range);
+          selectionRef.current = match.range.toString();
+          const parent = match.range.startContainer.parentElement;
+          if (previewKind === "docx") {
+            const bounds = match.range.getBoundingClientRect();
+            scrollRef.current.scrollTop += bounds.top * previewZoom * fitScale;
+          } else parent?.scrollIntoView({ block: "center" });
+          setSearchStatus("已定位；再次查找可跳到下一处"); return;
         }
         setSearchStatus("未找到");
       }
@@ -667,8 +691,10 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   }
   async function extractPage() {
     captureSelection();
+    const generation = searchGeneration.current;
     let text = selectionRef.current;
     if (!text && pdfRef.current) { const content = await (await pdfRef.current.getPage(pageNumber)).getTextContent(); text = content.items.map((item) => `${item.str || ""}${item.hasEOL ? "\n" : " "}`).join(""); }
+    if (generation !== searchGeneration.current) return;
     if (!text) { setSearchStatus("请先选择文字；扫描页可以转图片"); return; }
     if (bridge?.insertFileExcerpt?.(request.id, text, previewKind === "pdf" ? pageNumber : 0)) setSearchStatus("摘取已插入画布，可撤销");
   }
@@ -767,7 +793,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
       </div>
       <div className="canvas2d-file-preview-react-shell">
         {toolsOpen ? <div className="file-workstation-tools" onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (!reading && event.key === "Escape") { event.preventDefault(); setToolsOpen(false); } }}>
-          <div><input aria-label="搜索文件内容" placeholder="搜索文字" value={query} onChange={(event) => { searchGeneration.current += 1; setQuery(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} /><button onClick={() => void search()}>查找</button></div>
+          <div><input aria-label="搜索文件内容" placeholder="搜索文字" value={query} onChange={(event) => { searchGeneration.current += 1; searchOffsetRef.current = 0; setQuery(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} /><button onClick={() => void search()}>查找</button></div>
           <div className="file-workstation-tool-group"><span>添加到画布</span><button onPointerDown={captureSelection} onClick={() => void extractPage()}>添加文字到画布</button>{previewKind === "pdf" ? <><button onClick={() => void insertPageImage()}>添加当前页图片到画布</button><button onClick={() => { setRegionMode(true); setToolsOpen(false); setSearchStatus("拖选页面区域以添加到画布"); }}>截取页面区域</button></> : null}</div>
           <div className="file-workstation-tool-group"><button onClick={() => bridge?.openFileConversion?.([item])}>转换文件</button><button type="button" onClick={() => bridge?.toggleFileCardPreviewExpanded?.(request.id)} aria-label={request.expanded ? "收起预览" : "展开预览"}>{request.expanded ? "收起卡片预览" : "展开卡片预览"}</button></div>
           <details className="file-workstation-file-maintenance"><summary>源文件操作</summary><div><button onClick={() => bridge?.retryFileCardPreview?.(request.id)}>刷新源文件</button><button onClick={() => void bridge?.relinkFileCard?.(request.itemId)}>重新关联文件</button><button onClick={() => void globalThis.desktopShell?.openPath?.(sourcePath)}>使用系统应用打开</button></div></details>

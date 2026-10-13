@@ -10,6 +10,7 @@ import {
 import {
   getBlockSpacingEmForTag,
   getHeadingFontSize,
+  getHeadingFontWeight,
   getLineHeightRatioForTag,
   normalizeTagName,
   TEXT_BLOCK_SPACING_EM,
@@ -185,8 +186,10 @@ function normalizeMeasurementMarkup(node, { baseFontSize = DEFAULT_FONT_SIZE } =
       return;
     }
     const tag = normalizeTagName(element.tagName);
-    element.style.fontSize = `${getHeadingFontSize(tag, baseFontSize)}px`;
-    element.style.fontWeight = tag === "h1" || tag === "h2" ? "800" : "700";
+    if (!element.style.fontSize && !element.hasAttribute("data-ff-font-size")) {
+      element.style.fontSize = `${getHeadingFontSize(tag, baseFontSize)}px`;
+    }
+    if (!element.style.fontWeight) element.style.fontWeight = getHeadingFontWeight(tag);
     element.style.lineHeight = String(getLineHeightRatioForTag(tag));
     element.style.marginTop = "0";
     element.style.marginBottom = `${getBlockSpacingEmForTag(tag)}em`;

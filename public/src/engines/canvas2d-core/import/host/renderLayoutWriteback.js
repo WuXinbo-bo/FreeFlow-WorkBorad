@@ -324,7 +324,7 @@ function isMergeableTextOperation(operation) {
     return false;
   }
   const parserId = String(operation?.meta?.parserId || "");
-  return parserId === "plain-text-parser" || parserId === "markdown-parser";
+  return ["plain-text-parser", "markdown-parser", "html-parser", "web-content-parser"].includes(parserId);
 }
 
 function mergeTextOperationGroup(group = []) {
@@ -378,6 +378,8 @@ function mergeTextOperationGroup(group = []) {
       text: mergedPlainText,
       plainText: mergedPlainText,
       html: mergedHtml || base?.element?.html || "",
+      // Rebuild the document from all blocks, rather than retaining only the first one.
+      richTextDocument: null,
       title: String(base?.element?.title || textElements[0]?.title || "文本"),
       textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
       textResizeMode: TEXT_RESIZE_MODE_WRAP,
@@ -389,6 +391,13 @@ function mergeTextOperationGroup(group = []) {
           ? base.element.structuredImport
           : {}),
         mergedFromOperationCount: sorted.length,
+        blockRole: "document",
+        sourceNodeType: "doc",
+        listRole: "",
+        canonicalFragment: {
+          type: "doc",
+          content: textElements.map((element) => element.structuredImport?.canonicalFragment).filter(Boolean),
+        },
       },
     },
   };

@@ -250,6 +250,17 @@ export function normalizeRichHtml(value = "") {
   }
   const template = document.createElement("template");
   template.innerHTML = raw;
+  // Explicit Word outline metadata carries heading semantics; visual size alone does not.
+  template.content.querySelectorAll("p,div").forEach((node) => {
+    const classLevel = String(node.className || "").match(/(?:^|\s)MsoHeading([1-6])(?:\s|$)/i)?.[1];
+    const outlineLevel = String(node.getAttribute("style") || "").match(/mso-outline-level\s*:\s*([1-6])(?:\s*;|\s*$)/i)?.[1];
+    const level = classLevel || outlineLevel;
+    if (!level) return;
+    const heading = document.createElement(`h${level}`);
+    ["textAlign", "color"].forEach((key) => { heading.style[key] = node.style[key]; });
+    heading.innerHTML = node.innerHTML;
+    node.replaceWith(heading);
+  });
   template.content.querySelectorAll("p,section,article").forEach((node) => {
     if (!(node instanceof HTMLElement)) {
       return;

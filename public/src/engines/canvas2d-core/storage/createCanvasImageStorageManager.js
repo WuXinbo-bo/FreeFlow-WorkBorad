@@ -18,6 +18,15 @@ export function createCanvasImageStorageManager(deps) {
     takeItemHistorySnapshot,
     commitItemHistory,
   } = deps;
+  const cropTasks = new WeakMap();
+
+  function getImageRevision(item) {
+    return JSON.stringify([
+      item.dataUrl, item.sourcePath, item.crop, item.rotation, item.flipX,
+      item.flipY, item.brightness, item.contrast, item.width, item.height,
+      item.naturalWidth, item.naturalHeight, item.annotations,
+    ]);
+  }
 
   function normalizeExportName(value, fallback) {
     const base = String(value || "").trim() || fallback;
@@ -153,8 +162,9 @@ export function createCanvasImageStorageManager(deps) {
     return Boolean(result?.ok);
   }
 
-  async function saveImageDataToImportFolder({ dataUrl = "", sourcePath = "", name = "image", mime = "" } = {}) {
+  async function saveImageDataToImportFolder({ dataUrl = "", sourcePath = "", name = "image", mime = "", isCurrent = () => true } = {}) {
     const folder = await resolveImportImageFolder();
+    if (!isCurrent()) return { ok: false, canceled: true, error: "图片操作已失效" };
     if (!folder) {
       return { ok: false, filePath: "", mime: "", error: "未找到当前画布目录" };
     }
@@ -191,7 +201,9 @@ export function createCanvasImageStorageManager(deps) {
         return { ok: false, filePath: "", mime: "", error: "图片编码失败" };
       }
     }
+    if (!isCurrent()) return { ok: false, canceled: true, error: "图片操作已失效" };
     const result = await globalThis.desktopShell.writeFile(filePath, bytes);
+    if (!isCurrent()) return { ok: false, canceled: true, error: "图片操作已失效" };
     if (!result?.ok) {
       return { ok: false, filePath: "", mime: "", error: result?.error || "写入文件失败" };
     }
@@ -203,17 +215,19 @@ export function createCanvasImageStorageManager(deps) {
     };
   }
 
-  async function saveImageItemToImportFolder(item, { dataUrlOverride = "", nameOverride = "", resetTransforms = false } = {}) {
+  async function saveImageItemToImportFolder(item, { dataUrlOverride = "", nameOverride = "", resetTransforms = false, isCurrent = () => true } = {}) {
     if (!item || item.type !== "image") {
       return false;
     }
     const name = String(nameOverride || item.name || item.fileName || "image").trim() || "image";
     const dataUrl = String(dataUrlOverride || item.dataUrl || "").trim();
     const sourcePath = String(item.sourcePath || "").trim();
-    const result = await saveImageDataToImportFolder({ dataUrl, sourcePath, name, mime: item.mime || "" });
+    const result = await saveImageDataToImportFolder({ dataUrl, sourcePath, name, mime: item.mime || "", isCurrent });
     if (!result?.ok || !result.filePath) {
       return false;
     }
+    const dimensions = await readImageDimensions("", result.filePath, { allowLocalFileAccess: true });
+    if (!isCurrent()) return false;
     item.sourcePath = result.filePath;
     item.source = "path";
     item.dataUrl = "";
@@ -229,7 +243,6 @@ export function createCanvasImageStorageManager(deps) {
       item.brightness = 0;
       item.contrast = 0;
     }
-    const dimensions = await readImageDimensions("", result.filePath, { allowLocalFileAccess: true });
     if (dimensions?.width && dimensions?.height) {
       item.naturalWidth = dimensions.width;
       item.naturalHeight = dimensions.height;
@@ -262,6 +275,17 @@ export function createCanvasImageStorageManager(deps) {
     if (!item) {
       return false;
     }
+    const board = state.board;
+    const boardId = String(board?.boardId || "");
+    const boardFilePath = String(state.boardFilePath || "");
+    const revision = getImageRevision(item);
+    const task = {};
+    cropTasks.set(item, task);
+    const isCurrent = () => state.board === board &&
+      String(state.board?.boardId || "") === boardId &&
+      String(state.boardFilePath || "") === boardFilePath &&
+      getImageItemById(itemId) === item && cropTasks.get(item) === task &&
+      getImageRevision(item) === revision;
     const source = resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess: true });
     if (!source) {
       return false;
@@ -273,7 +297,7 @@ export function createCanvasImageStorageManager(deps) {
       img.onerror = () => resolve(null);
       img.src = source;
     });
-    if (!image) {
+    if (!image || !isCurrent()) {
       return false;
     }
     const canvas = renderImageToCanvas(item, image);
@@ -289,10 +313,12 @@ export function createCanvasImageStorageManager(deps) {
       dataUrlOverride: dataUrl,
       nameOverride: `${item.name || "image"}-crop`,
       resetTransforms: true,
+      isCurrent,
     });
     if (!ok) {
       return false;
     }
+    cropTasks.delete(item);
     commitItemHistory(before, itemId, "保存裁剪图片");
     setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
     return true;

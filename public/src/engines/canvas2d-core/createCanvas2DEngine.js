@@ -137,8 +137,10 @@ import {
   TEXT_LINE_HEIGHT_RATIO,
 } from "./rendererText.js";
 import {
+  getBlockSpacingEmForTag,
   getLineHeightRatioForTag,
   normalizeTagName,
+  TEXT_HEADING_FONT_SIZES,
   TEXT_BLOCK_SPACING_EM,
   TEXT_BODY_LINE_HEIGHT_RATIO,
 } from "./textLayout/typographyTokens.js";
@@ -296,6 +298,7 @@ import {
   renderBoardToCanvas as renderExportBoardToCanvas,
 } from "./export/renderBoardToCanvas.js";
 import { buildExportReadyBoardItems } from "./export/buildExportReadyBoardItems.js";
+import { prepareFormulaVisualItems } from "./export/prepareFormulaVisualItems.js";
 import { createHostExportAssetAdapter } from "./export/host/hostExportAssetAdapter.js";
 import { createHostExportFileAdapter } from "./export/host/hostExportFileAdapter.js";
 import {
@@ -1460,7 +1463,22 @@ function renderTableCellStaticHtml(cell = {}, fontSize = DEFAULT_TEXT_FONT_SIZE)
     normalizeRichHtmlInlineFontSizes(normalizeRichHtml(String(cell?.html || "").trim()), fontSize)
   ).trim();
   if (normalizedHtml) {
-    return normalizedHtml;
+    // Tables use the same static DOM surface as rich text. Render the formula
+    // marker before insertion so display and edit previews do not expose raw
+    // LaTeX while retaining the source in the cell model.
+    return normalizedHtml.replace(
+      /<span\b([^>]*\bdata-role=(?:"|')math-inline(?:"|')[^>]*)>([\s\S]*?)<\/span>/gi,
+      (match, _attrs, body) => {
+        const formula = htmlToPlainText(String(body || "")).trim();
+        return formula ? renderLatexToStaticHtml(formula, { displayMode: false }) : match;
+      }
+    ).replace(
+      /<(div|section|article)\b([^>]*\bdata-role=(?:"|')math-block(?:"|')[^>]*)>([\s\S]*?)<\/\1>/gi,
+      (match, _tag, _attrs, body) => {
+        const formula = htmlToPlainText(String(body || "")).trim();
+        return formula ? renderLatexToStaticHtml(formula, { displayMode: true }) : match;
+      }
+    );
   }
   return escapeRichTextHtml(String(cell?.plainText || "")).replace(/\n/g, "<br>");
 }
@@ -1832,21 +1850,23 @@ function resolveRichTextSurfaceLayout(item, viewOrScale = 1, { mode = "display",
           offsetX: 0,
           offsetY: 0,
         };
-  const scale = Math.max(0.1, Number(view?.scale || viewOrScale || 1) || 1);
+  const viewportScale = Math.max(0.1, Number(view?.scale || viewOrScale || 1) || 1);
+  const scale = viewportScale;
+  const geometryScale = viewportScale;
   const isFlowNode = item.type === "flowNode";
   const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
   const isWrapText = isWrapTextItem(item);
-  const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(scale) || 1);
-  const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(scale) || 1);
+  const width = Math.max(1, Number(item.width || 1)) * Math.max(0.1, Number(geometryScale) || 1);
+  const height = Math.max(1, Number(item.height || 1)) * Math.max(0.1, Number(geometryScale) || 1);
   const detailLike = mode === "edit" || overlayMode === "detail";
   const padding = isMindNode
-    ? { x: MIND_NODE_PADDING.x * scale, y: MIND_NODE_PADDING.y * scale }
-    : detailLike && isFlowNode ? getFlowNodeTextPadding(scale, { width, height }) : { x: 0, y: 0 };
-  const boxStyles = getRichOverlayBoxStyles(item, scale);
+    ? { x: MIND_NODE_PADDING.x * geometryScale, y: MIND_NODE_PADDING.y * geometryScale }
+    : detailLike && isFlowNode ? getFlowNodeTextPadding(geometryScale, { width, height }) : { x: 0, y: 0 };
+  const boxStyles = getRichOverlayBoxStyles(item, geometryScale);
   return {
     scale,
-    left: Number(item.x || 0) * scale + Number(view?.offsetX || 0),
-    top: Number(item.y || 0) * scale + Number(view?.offsetY || 0),
+    left: Number(item.x || 0) * viewportScale + Number(view?.offsetX || 0),
+    top: Number(item.y || 0) * viewportScale + Number(view?.offsetY || 0),
     width,
     height,
     fontSize: Math.max(1, Number(item.fontSize || DEFAULT_TEXT_FONT_SIZE) * scale),
@@ -1882,6 +1902,15 @@ function applyRichTextSurfaceLayout(node, layout, { includePosition = true, incl
     setStyleIfNeeded(node, "height", `${Math.max(1, layout.height)}px`);
   }
   setStyleIfNeeded(node, "fontSize", `${layout.fontSize}px`);
+  Object.entries(TEXT_HEADING_FONT_SIZES).forEach(([tag, size]) => {
+    if (node.style.getPropertyValue(`--ff-text-${tag}-size`) !== `${size}px`) {
+      node.style.setProperty(`--ff-text-${tag}-size`, `${size}px`);
+    }
+  });
+  Object.entries(TEXT_BLOCK_SPACING_EM).forEach(([name, spacing]) => {
+    const prop = `--ff-text-spacing-${name}`;
+    if (node.style.getPropertyValue(prop) !== `${spacing}em`) node.style.setProperty(prop, `${spacing}em`);
+  });
   setStyleIfNeeded(node, "fontFamily", layout.fontFamily);
   setStyleIfNeeded(node, "padding", layout.paddingCss);
   setStyleIfNeeded(node, "lineHeight", String(layout.lineHeightRatio));
@@ -1891,11 +1920,11 @@ function applyRichTextSurfaceLayout(node, layout, { includePosition = true, incl
   setStyleIfNeeded(node, "overflow", layout.classToggles?.["is-fixed-size"] ? "hidden" : "visible");
 }
 
-  function applyRichEditorLayoutStyles(editor, item, scale) {
+function applyRichEditorLayoutStyles(editor, item, scale) {
   if (!(editor instanceof HTMLDivElement) || !item) {
     return;
   }
-  const layout = resolveRichTextSurfaceLayout(item, scale, { mode: "edit", overlayMode: "detail" });
+  const layout = resolveRichTextSurfaceLayout(item, 1, { mode: "edit", overlayMode: "detail" });
   applyRichTextSurfaceLayout(editor, layout, { includePosition: false, includeBox: false });
   applyRichEditorTypographyTokens(editor);
 }
@@ -1911,7 +1940,7 @@ function applyRichTypographyTokens(container) {
       return;
     }
     const tag = normalizeTagName(node.tagName);
-    node.style.lineHeight = String(getLineHeightRatioForTag(tag));
+    setStyleIfNeeded(node, "lineHeight", String(getLineHeightRatioForTag(tag)));
     if (tag === "ul" || tag === "ol") {
       node.style.marginTop = `${TEXT_BLOCK_SPACING_EM.listBlock}em`;
       node.style.marginBottom = `${TEXT_BLOCK_SPACING_EM.listBlock}em`;
@@ -1929,7 +1958,7 @@ function applyRichTypographyTokens(container) {
       return;
     }
     node.style.marginTop = "0";
-    node.style.marginBottom = `${TEXT_BLOCK_SPACING_EM.paragraph}em`;
+    node.style.marginBottom = `${getBlockSpacingEmForTag(tag)}em`;
   });
 }
 
@@ -2811,7 +2840,7 @@ function getRichOverlayBoxStyles(item, scale = 1) {
   const layoutMode = getTextBoxLayoutMode(item);
   const currentWidth = Math.max(1, Number(item?.width || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
   const currentHeight = Math.max(1, Number(item?.height || 1) || 1) * Math.max(0.1, Number(scale || 1) || 1);
-  if (item.type === "mindNode" || item.type === "mindSummary") {
+  if (item.type === "flowNode" || item.type === "mindNode" || item.type === "mindSummary") {
     return {
       display: "block", widthCss: `${currentWidth}px`, heightCss: "auto", minHeightCss: `${currentHeight}px`,
       maxWidthCss: `${currentWidth}px`, whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", overflow: "visible",
@@ -2822,7 +2851,7 @@ function getRichOverlayBoxStyles(item, scale = 1) {
       display: "inline-block",
       widthCss: "max-content",
       heightCss: "auto",
-      minHeightCss: "",
+      minHeightCss: `${40 * Math.max(0.1, Number(scale) || 1)}px`,
       maxWidthCss: `${getAutoWidthOverlayMaxWidthPx(item, scale)}px`,
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
@@ -2847,7 +2876,7 @@ function getRichOverlayBoxStyles(item, scale = 1) {
     display: "block",
     widthCss: `${currentWidth}px`,
     heightCss: "auto",
-    minHeightCss: "",
+    minHeightCss: `${(item.type === "text" ? 40 : 72) * Math.max(0.1, Number(scale) || 1)}px`,
     maxWidthCss: `${currentWidth}px`,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
@@ -2957,15 +2986,38 @@ function getRichEditableItemSignature(item) {
   });
 }
 
-  function syncEditingRichEditorFrame(editor, item, view) {
+const richEditorTypographyState = new WeakMap();
+
+function syncEditingRichEditorCamera(editor, item, view) {
+  if (!(editor instanceof HTMLDivElement) || !item) return;
+  const scale = Math.max(0.1, Number(view?.scale || 1));
+  setStyleIfNeeded(editor, "left", `${Number(item.x || 0) * scale + Number(view?.offsetX || 0)}px`);
+  setStyleIfNeeded(editor, "top", `${Number(item.y || 0) * scale + Number(view?.offsetY || 0)}px`);
+  setStyleIfNeeded(editor, "transform", `scale(${scale})`);
+}
+
+function syncEditingRichEditorFrame(editor, item, view, { forceTypography = false } = {}) {
   if (!(editor instanceof HTMLDivElement) || !item) {
     return;
   }
   const scale = Math.max(0.1, Number(view?.scale || 1));
-  const layout = resolveRichTextSurfaceLayout(item, view, { mode: "edit", overlayMode: "detail" });
-  applyRichTextSurfaceLayout(editor, layout, { includePosition: true, includeBox: true });
-  applyRichEditorLayoutStyles(editor, item, scale);
-  applyInlineFontSizingToContainer(editor, scale);
+  // Lay out editing content in scene units, exactly like the display DOM.
+  // Scale the whole surface so headings, inline sizes, spacing and wrapping
+  // all share the same camera transform without persisting screen sizes.
+  const layout = resolveRichTextSurfaceLayout(item, 1, { mode: "edit", overlayMode: "detail" });
+  applyRichTextSurfaceLayout(editor, layout, { includePosition: false, includeBox: true });
+  const boxStyles = layout.boxStyles;
+  setStyleIfNeeded(editor, "width", boxStyles.widthCss);
+  setStyleIfNeeded(editor, "height", boxStyles.heightCss);
+  setStyleIfNeeded(editor, "minHeight", boxStyles.minHeightCss);
+  setStyleIfNeeded(editor, "maxWidth", boxStyles.maxWidthCss);
+  syncEditingRichEditorCamera(editor, item, view);
+  const previous = richEditorTypographyState.get(editor);
+  if (forceTypography || previous?.item !== item || previous.html !== item.html || previous.fontSize !== item.fontSize) {
+    applyRichEditorLayoutStyles(editor, item, scale);
+    applyInlineFontSizingToContainer(editor, 1);
+    richEditorTypographyState.set(editor, { item, html: item.html, fontSize: item.fontSize });
+  }
 }
 
 function getCanvasOfficeEngineMode() {
@@ -3138,7 +3190,7 @@ function applyInlineFontSizingToContainer(container, scale = 1) {
   if (!(container instanceof HTMLElement)) {
     return;
   }
-  const safeScale = Math.max(0.1, Number(scale || 1));
+  const safeScale = container.matches(".canvas-rich-editor") ? 1 : Math.max(0.1, Number(scale || 1));
   container.querySelectorAll(`[${INLINE_FONT_SIZE_ATTR}]`).forEach((node) => {
     if (!(node instanceof HTMLElement)) {
       return;
@@ -3151,7 +3203,7 @@ function applyInlineFontSizingToContainer(container, scale = 1) {
       }
       return;
     }
-    node.style.fontSize = `${Math.max(1, Math.round(logicalSize * safeScale * 100) / 100)}px`;
+    setStyleIfNeeded(node, "fontSize", `${Math.max(1, Math.round(logicalSize * safeScale * 100) / 100)}px`);
   });
 }
 
@@ -3316,7 +3368,7 @@ export function createCanvas2DEngine(options = {}) {
       fileCardSourceHydrationQueue.clear();
     },
   });
-  editorAdapterManager.register("text", { begin: beginTextEdit, sync: syncRichElementEditorLayout, commit: commitTextEdit, cancel: cancelTextEdit });
+  editorAdapterManager.register("text", { begin: beginTextEdit, sync: syncRichElementEditorLayout, commit: commitTextEdit, cancel: rollbackTextEdit });
   editorAdapterManager.register("math", { begin: beginMathEdit, sync: syncMathEditorLayout, commit: commitMathEdit, cancel: cancelMathEdit });
   editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, sync: syncRichElementEditorLayout, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
   editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, sync: syncRichElementEditorLayout, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
@@ -3801,7 +3853,7 @@ let tablePointerSelectionState = {
   linkSemanticEnabled = readLinkSemanticEnabled();
   const richTextSession = createRichTextEditingSession({
     editorElement: refs.richEditor,
-    onSelectionChange: () => syncRichTextToolbar(),
+    onSelectionChange: () => scheduleRichTextToolbarSync(),
     onRequestCommit: () => {
       const committed = commitRichEdit();
       if (committed) focusCanvasSurface();
@@ -3816,12 +3868,40 @@ let tablePointerSelectionState = {
   });
   const tableCellRichTextSession = createRichTextEditingSession({
     editorElement: refs.tableCellRichEditor,
-    onSelectionChange: () => syncRichTextToolbar(),
+    onSelectionChange: () => scheduleRichTextToolbarSync(),
     onRequestCommit: () => commitActiveTableCellRichEdit(),
     onRequestCancel: () => cancelActiveTableCellRichEdit(),
     onRequestExternalLink: () => runRichLinkCommand(),
   });
   let richFontSize = DEFAULT_TEXT_FONT_SIZE;
+  let richInputSyncTimer = 0;
+  function cancelPendingRichInputSync() {
+    if (richInputSyncTimer) clearTimeout(richInputSyncTimer);
+    richInputSyncTimer = 0;
+  }
+
+  function scheduleLongRichInputSync(item) {
+    cancelPendingRichInputSync();
+    const revision = richTextSession.getRevision();
+    richInputSyncTimer = setTimeout(() => {
+      richInputSyncTimer = 0;
+      if (getActiveRichEditingItem() !== item || richTextSession.getRevision() !== revision) return;
+      if (isViewportInteractionActive()) {
+        scheduleLongRichInputSync(item);
+        return;
+      }
+      syncActiveRichEditingItemState({ emit: false, refreshToolbar: false, markDirty: true });
+      scheduleRichTextToolbarSync();
+    }, 120);
+  }
+  let richToolbarSyncFrame = 0;
+  function scheduleRichTextToolbarSync() {
+    if (richToolbarSyncFrame) return;
+    richToolbarSyncFrame = requestAnimationFrame(() => {
+      richToolbarSyncFrame = 0;
+      syncRichTextToolbar();
+    });
+  }
   let richToolbarColorSlots = RICH_TOOLBAR_DEFAULT_COLOR_SLOTS.slice();
   let richToolbarPresetColors = RICH_TOOLBAR_DEFAULT_PRESET_COLORS.slice();
   let pendingRichColorPreview = "";
@@ -4218,6 +4298,7 @@ let tablePointerSelectionState = {
 
   const codeBlockEditor = createCodeBlockEditor(null, {
     onChange: () => {
+      syncActiveDraftEditingState();
       scheduleCodeBlockEditorLayoutSync("fast");
       scheduleCodeBlockEditorLayoutSync("precise");
       syncCodeBlockToolbar();
@@ -4280,10 +4361,45 @@ let tablePointerSelectionState = {
     getElementBounds,
     getFlowEdgeBounds,
     allowLocalFileAccess: () => getAllowLocalFileAccess(),
-    assetAdapter: exportAssetAdapter,
+    assetAdapter: {
+      ...exportAssetAdapter,
+      prepareVisualItems: (items, options) => prepareFormulaVisualItems(items, { createSurface: createFormulaExportSurface, signal: options.signal }),
+    },
     fileAdapter: exportFileAdapter,
     resolveDefaultFileName: () => getFileBaseName(state.boardFileName || state.boardFilePath || "freeflow-board"),
   });
+
+  function createFormulaExportSurface(item) {
+    const node = document.createElement("div");
+    node.style.width = `${Math.max(1, Number(item.width) || 1)}px`;
+    node.style.height = `${Math.max(1, Number(item.height) || 1)}px`;
+    if (item.type === "table") {
+      node.className = "canvas2d-scene-content-item canvas2d-scene-table-item";
+      const table = document.createElement("table");
+      table.className = "canvas2d-scene-table";
+      const body = document.createElement("tbody");
+      (item.table?.rows || []).forEach((row) => {
+        const tr = document.createElement("tr");
+        (row.cells || []).forEach((cell) => {
+          const td = document.createElement(cell.header ? "th" : "td");
+          td.rowSpan = Math.max(1, Number(cell.rowSpan) || 1);
+          td.colSpan = Math.max(1, Number(cell.colSpan) || 1);
+          td.style.textAlign = ["left", "center", "right"].includes(cell.align) ? cell.align : "left";
+          td.innerHTML = renderTableCellStaticHtml(cell, item.fontSize || 16);
+          tr.append(td);
+        });
+        body.append(tr);
+      });
+      table.append(body); node.append(table);
+    } else if (["text", "flowNode", "mindNode", "mindSummary"].includes(item.type)) {
+      node.className = "canvas2d-rich-item";
+      applyRichTextSurfaceLayout(node, resolveRichTextSurfaceLayout(item, 1), { includePosition: false });
+      node.innerHTML = renderTableCellStaticHtml(item, item.fontSize || DEFAULT_TEXT_FONT_SIZE);
+      applyRichTypographyTokens(node);
+      applyInlineFontSizingToContainer(node, 1);
+    } else return null;
+    return node;
+  }
 
   function isInteractiveMode() {
     return state.mode === "canvas2d" && getCanvasOfficeEngineMode() === "canvas2d";
@@ -5403,6 +5519,9 @@ let tablePointerSelectionState = {
     const canvasLodActive = presentationFrozen ? overlayCanvasLodActive : updateOverlayCanvasLodState(frameView);
     const viewportInteractionActive = isViewportInteractionActive();
     syncScenePresentation(frameContext);
+    if (cameraFastPath) {
+      syncEditingRichEditorCamera(refs.richEditor, getActiveRichEditingItem(), frameView);
+    }
     const sceneVectorState = cameraFastPath
       ? {
           ownedIds: sceneVectorRenderer.getOwnedIds(),
@@ -5447,7 +5566,7 @@ let tablePointerSelectionState = {
       if (dirtyState?.viewDirty || dirtyState?.reason === "mount") {
         hydrationScheduler.bumpGeneration();
       }
-      syncEditorLayout();
+      syncEditorLayout(frameView);
       syncRichTextToolbar();
       overlayAdapterManager.invokeAll("sync", visibleScene, frameContext);
       cachedOverlayOwnedIds = collectSceneOverlayOwnedIds();
@@ -5847,11 +5966,16 @@ let tablePointerSelectionState = {
     if (!entry) {
       return null;
     }
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       collapsed: false,
       entries: [...navigator.entries, entry],
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -5886,11 +6010,16 @@ let tablePointerSelectionState = {
     if (!entry) {
       return null;
     }
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       collapsed: false,
       entries: [...navigator.entries, entry],
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -5926,10 +6055,15 @@ let tablePointerSelectionState = {
     if (nextEntries.length === navigator.entries.length) {
       return false;
     }
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       entries: nextEntries,
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -5964,10 +6098,15 @@ let tablePointerSelectionState = {
     if (!changed) {
       return false;
     }
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       entries: nextEntries,
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -5982,10 +6121,15 @@ let tablePointerSelectionState = {
 
   function moveCanvasNavigatorEntry(entryId = "", direction = 0) {
     const navigator = ensureCanvasNavigatorState();
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       entries: reorderCanvasNavigatorEntries(navigator.entries, entryId, direction),
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -6000,10 +6144,15 @@ let tablePointerSelectionState = {
 
   function setCanvasNavigatorEntryParent(entryId = "", parentId = "", index = null) {
     const navigator = ensureCanvasNavigatorState();
+    const before = takeHistoryMetadataSnapshot(state);
     state.board.navigator = normalizeCanvasNavigator({
       ...navigator,
       entries: moveCanvasNavigatorEntryToParent(navigator.entries, entryId, { parentId, index }),
     });
+    pushPatchHistory(state.history, {
+      patchKind: "navigator-edit", beforeBoardMeta: before.boardMeta, afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
+      beforeSelectedIds: before.selectedIds, afterSelectedIds: state.board.selectedIds, beforeView: before.view, afterView: state.board.view,
+    }, "修改画布目录");
     syncBoard({
       persist: true,
       emit: true,
@@ -6294,6 +6443,35 @@ let tablePointerSelectionState = {
 
   let activeExportController = null;
   let activeExportKind = "";
+  let exportTaskSequence = 0;
+
+  function normalizeExportBoardPath(value = "") {
+    return String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  }
+
+  function getExportBoardIdentity() {
+    return {
+      board: state.board,
+      boardId: String(state.board?.boardId || "").trim(),
+      boardFilePath: normalizeExportBoardPath(state.boardFilePath),
+    };
+  }
+
+  function createExportTaskId() {
+    exportTaskSequence += 1;
+    const randomId = typeof globalThis?.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+    return `canvas-export-${Date.now()}-${exportTaskSequence}-${randomId}`;
+  }
+
+  function cancelBackgroundExportForController(controller) {
+    const taskId = String(controller?.__freeflowExportTask?.taskId || "").trim();
+    if (!taskId || typeof globalThis?.desktopShell?.cancelBackgroundExport !== "function") {
+      return;
+    }
+    Promise.resolve(globalThis.desktopShell.cancelBackgroundExport(taskId)).catch(() => {});
+  }
 
   function beginExportTask(kind = "") {
     if (activeExportController) {
@@ -6302,10 +6480,38 @@ let tablePointerSelectionState = {
       } catch {
         // ignore
       }
+      cancelBackgroundExportForController(activeExportController);
     }
+    syncActiveDraftEditingState();
     activeExportController = new AbortController();
     activeExportKind = String(kind || "").trim().toUpperCase();
+    activeExportController.__freeflowExportTask = {
+      taskId: createExportTaskId(),
+      ...getExportBoardIdentity(),
+      snapshot: clone(state.board),
+      kind: activeExportKind,
+    };
     return activeExportController;
+  }
+
+  function isCurrentExportTask(controller) {
+    const task = controller?.__freeflowExportTask;
+    if (!controller || !task || controller !== activeExportController || controller.signal.aborted) {
+      return false;
+    }
+    const current = getExportBoardIdentity();
+    return task.board === current.board &&
+      task.boardId === current.boardId &&
+      task.boardFilePath === current.boardFilePath;
+  }
+
+  function getStaleExportResult(kind = "EXPORT") {
+    return {
+      ok: false,
+      canceled: true,
+      code: `${String(kind || "EXPORT").toUpperCase()}_EXPORT_STALE`,
+      message: "导出任务已取消或已被替换",
+    };
   }
 
   function clearActiveExportTask(controller = null) {
@@ -6319,11 +6525,13 @@ let tablePointerSelectionState = {
     if (!activeExportController) {
       return false;
     }
+    const controller = activeExportController;
     try {
-      activeExportController.abort();
+      controller.abort();
     } catch {
       // ignore
     }
+    cancelBackgroundExportForController(controller);
     setStatus(`${activeExportKind || "导出"} 导出已取消`, "warning");
     return true;
   }
@@ -7631,6 +7839,14 @@ let tablePointerSelectionState = {
       }
       if (state.editingId && savedRevision === boardDirtyRevision) {
         const editingItem = sceneRegistry.getItemById(state.editingId);
+        if (editBaselineSnapshot && editingItem) {
+          // The board payload has already been written by this save operation.  Record
+          // the edit boundary without starting a nested persistence cycle.
+          commitItemsPatchHistory(editBaselineSnapshot, editBaselineSnapshot.items.map((item) => item.id), "保存编辑内容", "draft-save", {
+            persist: false,
+          });
+          setBoardDirty(false, { emit: false });
+        }
         editBaselineSnapshot = isMindMapNode(editingItem)
           ? takeItemsHistorySnapshot(getMindMapHistoryItemIds())
           : takeItemsHistorySnapshot([state.editingId]);
@@ -7806,6 +8022,7 @@ let tablePointerSelectionState = {
         loadMetrics.mark("deserialize-board");
         clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
         cancelClipboardImports();
+        closeEditorsBeforeBoardReplacement();
         state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
         state.boardSaveError = "";
         loadMetrics.mark("repair-board");
@@ -7813,11 +8030,6 @@ let tablePointerSelectionState = {
         state.history = createHistoryState();
         markHistoryStateBaseline(state.history, state);
         loadMetrics.mark("reset-history");
-        cancelTextEdit();
-        cancelFlowNodeEdit();
-        cancelFileMemoEdit();
-        cancelImageMemoEdit();
-        finishImageEdit();
         syncBoard({
           persist: false,
           emit: true,
@@ -7971,16 +8183,12 @@ let tablePointerSelectionState = {
     suppressDirtyTracking = true;
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
     cancelClipboardImports();
+    closeEditorsBeforeBoardReplacement();
     state.board = createEmptyBoard();
     state.boardSaveError = "";
     state.board.selectedIds = [];
     state.history = createHistoryState();
     markHistoryStateBaseline(state.history, state);
-    cancelTextEdit();
-    cancelFlowNodeEdit();
-    cancelFileMemoEdit();
-    cancelImageMemoEdit();
-    finishImageEdit();
     syncBoard({ persist: false, emit: true, markDirty: false });
     suppressDirtyTracking = false;
     if (nextPath) {
@@ -8568,7 +8776,7 @@ let tablePointerSelectionState = {
       reason
     );
     syncBoard({
-      persist: true,
+      persist: options.persist !== false,
       emit: true,
       markDirty: changed,
       sceneChange: true,
@@ -9169,6 +9377,7 @@ let tablePointerSelectionState = {
       ? snapshot.selectedIds.map((id) => String(id || "").trim()).filter(Boolean)
       : [];
     state.board.view = createView(snapshot.view || DEFAULT_VIEW);
+    if (snapshot.boardMeta) Object.assign(state.board, clone(snapshot.boardMeta));
     state.editingId = snapshot.editingId || null;
     state.editingType = snapshot.editingType || null;
     if (!state.editingId) {
@@ -9255,6 +9464,7 @@ let tablePointerSelectionState = {
       ? entry[`${targetKey}SelectedIds`].map((id) => String(id || "").trim()).filter(Boolean)
       : [];
     state.board.view = createView(entry[`${targetKey}View`] || DEFAULT_VIEW);
+    if (entry[`${targetKey}BoardMeta`]) Object.assign(state.board, clone(entry[`${targetKey}BoardMeta`]));
     state.editingId = entry[`${targetKey}EditingId`] || null;
     state.editingType = entry[`${targetKey}EditingType`] || null;
     if (!state.editingId) {
@@ -9289,11 +9499,12 @@ let tablePointerSelectionState = {
     const editingChanged =
       String(before?.editingId || "") !== String(after?.editingId || "") ||
       String(before?.editingType || "") !== String(after?.editingType || "");
+    const boardMetaChanged = JSON.stringify(before?.boardMeta) !== JSON.stringify(after?.boardMeta);
     const canPatchOrder =
       !orderChanged || Math.max(beforeOrderIds.length, afterOrderIds.length) <= HISTORY_AUTO_PATCH_ORDER_LIMIT;
     const hasPatchableMetaChange = selectionChanged || viewChanged || editingChanged || orderChanged;
     const shouldUsePatchHistory =
-      canPatchOrder &&
+      canPatchOrder && !boardMetaChanged &&
       ((changedItemIds.length > 0 && changedItemIds.length <= HISTORY_AUTO_PATCH_ITEM_LIMIT) ||
         (!changedItemIds.length && hasPatchableMetaChange));
     const changed = shouldUsePatchHistory
@@ -9417,6 +9628,7 @@ let tablePointerSelectionState = {
     if (!beforeSnapshot || !normalizedIds.length) {
       return false;
     }
+    ensureCanvasNavigatorState();
     const changed = pushPatchHistory(
       state.history,
       {
@@ -9427,6 +9639,8 @@ let tablePointerSelectionState = {
         afterItems: getCurrentBoardItemsByIds(normalizedIds),
         beforeOrderIds: Array.isArray(options.beforeOrderIds) ? options.beforeOrderIds : [],
         afterOrderIds: Array.isArray(options.afterOrderIds) ? options.afterOrderIds : [],
+        beforeBoardMeta: beforeSnapshot.boardMeta,
+        afterBoardMeta: takeHistoryMetadataSnapshot(state).boardMeta,
         beforeSelectedIds: Array.isArray(beforeSnapshot.selectedIds) ? beforeSnapshot.selectedIds : [],
         afterSelectedIds: Array.isArray(state.board.selectedIds) ? state.board.selectedIds : [],
         beforeView: beforeSnapshot.view || DEFAULT_VIEW,
@@ -9439,7 +9653,7 @@ let tablePointerSelectionState = {
       reason
     );
     syncBoard({
-      persist: true,
+      persist: options.persist !== false,
       emit: true,
       markDirty: changed,
       sceneChange: true,
@@ -10287,7 +10501,7 @@ let tablePointerSelectionState = {
     refs.codeBlockToolbar?.classList.add("is-hidden");
   }
 
-  function syncRichElementEditorLayout() {
+  function syncRichElementEditorLayout(view = state.board.view) {
     if (!(refs.richEditor instanceof HTMLDivElement)) {
       return;
     }
@@ -10309,17 +10523,18 @@ let tablePointerSelectionState = {
       } else if (isMindNode) {
         cancelMindNodeEdit();
       } else {
-        cancelTextEdit();
+        rollbackTextEdit();
       }
       return;
     }
-    const editingContent = isMindNode ? normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true }) : null;
+    const needsContent = richTextSession.getLastSyncedItemId() !== item.id;
+    const editingContent = isMindNode && needsContent ? normalizeMindNodeTextContentForEditor(item, { preserveEmpty: true }) : null;
     richTextSession.syncContent({
       itemId: item.id,
-      html: isMindNode
-        ? editingContent.html
-        : normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE),
-      plainText: isMindNode ? editingContent.plainText : item.plainText || item.text || "",
+      html: needsContent
+        ? (isMindNode ? editingContent.html : normalizeRichHtmlInlineFontSizes(item.html || "", item.fontSize || richFontSize || DEFAULT_TEXT_FONT_SIZE))
+        : "",
+      plainText: editingContent?.plainText || item.plainText || item.text || "",
       fontSize: item.fontSize || (isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE),
     });
     richFontSize = normalizeRichEditorFontSize(
@@ -10327,15 +10542,13 @@ let tablePointerSelectionState = {
       isMindNode ? DEFAULT_MIND_NODE_FONT_SIZE : DEFAULT_TEXT_FONT_SIZE
     );
     syncRichTextFontSize();
-    syncEditingRichEditorFrame(refs.richEditor, item, state.board.view);
-    applyInlineFontSizingToContainer(refs.richEditor, state.board.view.scale);
+    syncEditingRichEditorFrame(refs.richEditor, item, view, { forceTypography: needsContent });
     syncElementEditorHostIdentity(refs.richEditor, item, state.editingType);
     refs.editor?.classList.add("is-hidden");
     refs.richEditor.classList.remove("is-hidden");
-    syncRichTextToolbar();
   }
 
-  function syncEditorLayout() {
+  function syncEditorLayout(view = state.board.view) {
     const hasEditing = Boolean(state.editingId);
     if (!hasEditing) {
       const preservePendingRichEditor = hasPendingRichEditorHide() && richTextSession.isActive();
@@ -10386,7 +10599,7 @@ let tablePointerSelectionState = {
       cancelRichEdit();
       return;
     }
-    adapter.sync();
+    adapter.sync(view);
   }
 
   function getActiveRichEditingItem() {
@@ -11622,9 +11835,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (formatState.fontSizeMixed) {
       return Math.max(8, Math.round(Number(richFontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE));
     }
+    const editorScale = getActiveRichSessionContext()?.editorElement === refs.richEditor
+      ? 1 : Math.max(0.1, Number(state.board.view?.scale || 1));
     const logicalValue =
-      (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) /
-      Math.max(0.1, Number(state.board.view?.scale || 1));
+      (Number(formatState.fontSize || 0) || Math.max(8, Number(richFontSize || 16) || 16)) / editorScale;
     return Math.max(8, Math.round(logicalValue || 16));
   }
 
@@ -11633,8 +11847,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!Number.isFinite(value) || value <= 0) {
       return;
     }
-    const renderedSize =
-      value * Math.max(0.1, Number(state.board.view?.scale || 1));
+    const renderedSize = getActiveRichSessionContext()?.editorElement === refs.richEditor
+      ? value : value * Math.max(0.1, Number(state.board.view?.scale || 1));
     applyRichTextCommand("fontSize", {
       logicalSize: value,
       renderedSize,
@@ -11962,7 +12176,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         return;
       }
       const currentItem = sceneRegistry.getItemById(itemId, "text");
-      if (!currentItem) {
+      if (!currentItem || currentItem !== item || currentItem.html !== draft.html) {
         clearCommittedTextDraftCacheEntry(itemId);
         return;
       }
@@ -12207,7 +12421,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
     }
     if (refreshToolbar) {
-      requestAnimationFrame(() => syncRichTextToolbar());
+      scheduleRichTextToolbarSync();
     }
     return {
       item: context.item,
@@ -12238,6 +12452,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function syncActiveRichEditingItemState({ emit = true, refreshToolbar = true, markDirty = true } = {}) {
+    cancelPendingRichInputSync();
     if (state.editingType === "table" && tableCellEditState.active) {
       return syncEditingTableCellState({ emit, refreshToolbar, markDirty });
     }
@@ -12262,7 +12477,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       markBoardDirty();
     }
     if (refreshToolbar) {
-      requestAnimationFrame(() => syncRichTextToolbar());
+      scheduleRichTextToolbarSync();
     }
     return {
       item,
@@ -12271,12 +12486,44 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function syncActiveDraftEditingState({ markDirty = true } = {}) {
-    if (state.editingType === "text" || state.editingType === "flow-node") {
+    if (state.editingType === "text" || state.editingType === "flow-node" || state.editingType === "mind-node") {
       return syncActiveRichEditingItemState({
         emit: false,
         refreshToolbar: false,
         markDirty,
       });
+    }
+    if (state.editingType === "math") {
+      const item = getMathEditItem();
+      const formula = String(refs.editor?.value || "").trim();
+      if (item && formula && formula !== getStructuredMathTextState(item)?.formula) {
+        Object.assign(item, updateStructuredMathTextElement(item, formula));
+        if (markDirty) markBoardDirty();
+      }
+      return item;
+    }
+    if (state.editingType === "code-block") {
+      const item = getCodeBlockEditItem();
+      if (!item) return null;
+      const code = sanitizeText(codeBlockEditor.getValue() || "");
+      if (code !== item.code) {
+        Object.assign(item, updateCodeBlockElement(item, { code, text: code, plainText: code }, { remeasure: false }));
+        if (markDirty) markBoardDirty();
+      }
+      return item;
+    }
+    if (state.editingType === "table") {
+      const item = getTableEditItem();
+      if (!item) return null;
+      if (tableCellEditState.active) syncEditingTableCellState({ emit: false, refreshToolbar: false, markDirty });
+      const structure = createTableStructureFromMatrix(buildTableMatrixFromEditor(), {
+        title: item.table?.title || item.title || "表格", hasHeader: item.table?.hasHeader !== false,
+      });
+      if (JSON.stringify(item.table) !== JSON.stringify(structure)) {
+        Object.assign(item, updateTableElementStructure(item, structure));
+        if (markDirty) markBoardDirty();
+      }
+      return item;
     }
     if (state.editingType === "file-memo" && state.editingId && refs.fileMemoEditor instanceof HTMLTextAreaElement) {
       const item = sceneRegistry.getItemById(state.editingId, "fileCard");
@@ -13208,7 +13455,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       top: `${frame.top}px`,
       width: `${Math.max(220, frame.width)}px`,
       height: `${Math.max(72, frame.height)}px`,
-      fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20) * scale))}px`,
+      fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20)))}px`,
     });
     syncElementEditorHostIdentity(refs.editor, item, "math");
     refs.editor.classList.add("is-math");
@@ -13282,12 +13529,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.editingType !== "math") {
       return false;
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.editor?.classList.add("is-hidden");
     refs.editor?.classList.remove("is-math");
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -13385,6 +13633,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function commitTextEdit() {
+    cancelPendingRichInputSync();
     if (!state.editingId || state.editingType !== "text") {
       return false;
     }
@@ -13579,6 +13828,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function commitFlowNodeEdit() {
+    cancelPendingRichInputSync();
     if (!state.editingId || state.editingType !== "flow-node") {
       return false;
     }
@@ -13658,6 +13908,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function commitMindNodeEdit() {
+    cancelPendingRichInputSync();
     if (!state.editingId || state.editingType !== "mind-node") {
       return false;
     }
@@ -13766,12 +14017,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.editingType !== "flow-node") {
       return false;
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.richEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -13779,12 +14031,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.editingType !== "mind-node") {
       return false;
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.richEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -13793,7 +14046,38 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function cancelRichEdit() {
+    if (state.editingType === "text") {
+      return rollbackTextEdit();
+    }
     return editorAdapterManager.invoke(state.editingType || "text", "cancel") ?? false;
+  }
+
+  function closeEditorsBeforeBoardReplacement() {
+    cancelPendingRichInputSync();
+    richEditorTypographyState.delete(refs.richEditor);
+    // Resolve the editor against its original board before replacing it.
+    // Restoring a baseline after replacement can otherwise inject old items.
+    cancelFocusAnimation();
+    clearWordExportPreviewRequest();
+    cancelRichEdit();
+    cancelMathEdit();
+    cancelFlowNodeEdit();
+    cancelMindNodeEdit();
+    cancelCodeBlockEdit();
+    cancelTableEdit();
+    cancelFileMemoEdit();
+    cancelImageMemoEdit();
+    finishImageEdit();
+    pendingCommittedTextWorkToken += 1;
+    cancelPendingRichEditorHide();
+    editBaselineSnapshot = null;
+    state.editingId = null;
+    state.editingType = null;
+    if (activeExportController) {
+      activeExportController.abort();
+      cancelBackgroundExportForController(activeExportController);
+      clearActiveExportTask(activeExportController);
+    }
   }
 
   function beginElementEdit(item, context = {}) {
@@ -15381,15 +15665,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       baselineSnapshot: editBaselineSnapshot || null,
     });
     syncTableEditorSelectionUI();
+    if (placeAtEnd) {
+      tableCellRichTextSession.moveCaretToEnd?.();
+    } else {
+      tableCellRichTextSession.focus();
+    }
+    tableCellRichTextSession.captureSelection();
+    const sessionRevision = tableCellRichTextSession.getRevision();
     requestAnimationFrame(() => {
-      if (isTableCellEditing(rowIndex, columnIndex)) {
+      if (isTableCellEditing(rowIndex, columnIndex) && tableCellRichTextSession.getRevision() === sessionRevision) {
         syncTableCellRichEditorLayout();
-        if (placeAtEnd) {
-          tableCellRichTextSession.moveCaretToEnd?.();
-        } else {
-          tableCellRichTextSession.focus();
-        }
-        tableCellRichTextSession.captureSelection();
       }
     });
     return true;
@@ -15869,12 +16154,28 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function restoreEditingBaseline() {
+    const baseline = editBaselineSnapshot;
+    if (!baseline?.items?.length) return;
+    const originals = new Map(baseline.items.map((item) => [item.id, item]));
+    let changed = false;
+    state.board.items = state.board.items.map((item) => {
+      const original = originals.get(item.id);
+      if (!original || JSON.stringify(item) === JSON.stringify(original)) return item;
+      changed = true;
+      clearCommittedTextDraftCacheEntry(item.id);
+      return clone(original);
+    });
+    if (changed) markBoardDirty();
+  }
+
   function cancelCodeBlockEdit() {
     if (state.editingType !== "code-block") {
       return false;
     }
     const activeItemId = state.editingId;
     cancelCodeBlockEditorLayoutSync();
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.codeBlockEditor?.classList.add("is-hidden");
@@ -15882,7 +16183,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     codeBlockEditor.clear();
     editBaselineSnapshot = null;
     markCodeBlockOverlayDirty(activeItemId);
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -15973,6 +16274,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (tableCellEditState.active) {
       cancelActiveTableCellRichEdit({ keepFocus: false });
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.tableEditor?.classList.add("is-hidden");
@@ -15983,7 +16285,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     resetTablePointerSelectionState();
     setTableCellEditingState(0, 0, false);
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -16289,13 +16591,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.editingType !== "file-memo") {
       return false;
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.fileMemoEditor?.classList.add("is-hidden");
     lastFileMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -16400,13 +16703,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (state.editingType !== "image-memo") {
       return false;
     }
+    restoreEditingBaseline();
     state.editingId = null;
     state.editingType = null;
     refs.imageMemoEditor?.classList.add("is-hidden");
     lastImageMemoItemId = null;
     richTextSession.clear({ destroyAdapter: false });
     editBaselineSnapshot = null;
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
   }
 
@@ -16502,7 +16806,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!anchor) {
       return baseItem;
     }
-    const ratio = Math.max(0.1, Number(baseItem.width || 1) / Math.max(1, Number(baseItem.height || 1)));
+    const ratio = Math.max(0.1, bounds.width / Math.max(1, bounds.height));
     const rawWidth = Math.abs(Number(scenePoint.x || 0) - anchor.x);
     const rawHeight = Math.abs(Number(scenePoint.y || 0) - anchor.y);
     let width = rawWidth;
@@ -16532,12 +16836,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       left = anchor.x;
       top = anchor.y;
     }
+    const factor = width / bounds.width;
+    const logicalWidth = Number(baseItem.width) * factor;
+    const logicalHeight = Number(baseItem.height) * factor;
     return {
       ...baseItem,
-      x: left,
-      y: top,
-      width,
-      height,
+      x: left + width / 2 - logicalWidth / 2,
+      y: top + height / 2 - logicalHeight / 2,
+      width: logicalWidth,
+      height: logicalHeight,
     };
   }
 
@@ -17002,16 +17309,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (reportProgress) {
       await reportProgress("正在准备画布资源...");
     }
-    const selectedItems = collectItemsInSceneBounds(bounds, state.board.items);
+    const selectedItems = clone(collectItemsInSceneBounds(bounds, options.items || state.board.items));
     if (!selectedItems.length) {
       return null;
     }
-    const hydratedItems = await hydrateImageItems(selectedItems);
+    const visualItems = await prepareFormulaVisualItems(selectedItems, { createSurface: createFormulaExportSurface, signal: options.signal });
+    const hydratedItems = await hydrateImageItems(visualItems);
+    if (options.signal?.aborted) throw new DOMException("Capture canceled", "AbortError");
     const exportItems = buildExportReadyBoardItems(hydratedItems, { safeExport: true });
     if (reportProgress) {
       await reportProgress("正在预加载图片资源...");
     }
     await preloadImagesForItems(exportItems);
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
     if (reportProgress) {
       await reportProgress("正在渲染离屏画布...");
     }
@@ -17037,12 +17347,17 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (reportProgress) {
       await reportProgress("正在准备画布资源...");
     }
-    const hydratedItems = await hydrateImageItems(state.board.items);
+    syncActiveDraftEditingState();
+    const sourceItems = clone(state.board.items);
+    const visualItems = await prepareFormulaVisualItems(sourceItems, { createSurface: createFormulaExportSurface, signal: options.signal });
+    const hydratedItems = await hydrateImageItems(visualItems);
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
     const exportItems = buildExportReadyBoardItems(hydratedItems, { safeExport: true });
     if (reportProgress) {
       await reportProgress("正在预加载图片资源...");
     }
     await preloadImagesForItems(exportItems);
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
     if (reportProgress) {
       await reportProgress("正在渲染离屏画布...");
     }
@@ -17086,9 +17401,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   async function exportBoardAsPdf(options = {}) {
     const exportController = beginExportTask("PDF");
+    const exportTask = exportController.__freeflowExportTask;
     try {
       setStatus("正在生成 PDF...");
       await waitForUiPaint();
+      if (!isCurrentExportTask(exportController)) return getStaleExportResult("PDF");
       const exportOptions = {
         ...options,
         signal: exportController.signal,
@@ -17099,11 +17416,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const result =
         typeof globalThis?.desktopShell?.exportBoardInBackground === "function"
           ? await globalThis.desktopShell.exportBoardInBackground({
+              taskId: exportTask.taskId,
               kind: "pdf",
-              board: clone(state.board),
-              options: exportOptions,
+              board: exportTask.snapshot,
+              options: Object.fromEntries(Object.entries(exportOptions).filter(([key, value]) => key !== "signal" && typeof value !== "function")),
             })
-          : await structuredExportRuntime.exportBoardAsPdf(state.board, exportOptions);
+          : await structuredExportRuntime.exportBoardAsPdf(exportController.__freeflowExportTask.snapshot, exportOptions);
+      if (!isCurrentExportTask(exportController)) {
+        return getStaleExportResult("PDF");
+      }
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -17124,6 +17445,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "导出失败", "warning");
       return result;
     } catch (error) {
+      if (!isCurrentExportTask(exportController)) return getStaleExportResult("PDF");
       if (exportController.signal.aborted) {
         return {
           ok: false,
@@ -17162,6 +17484,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     try {
       setStatus("正在生成 PNG...");
       await waitForUiPaint();
+      if (!isCurrentExportTask(exportController)) return getStaleExportResult("PNG");
       const exportOptions = {
         ...options,
         signal: exportController.signal,
@@ -17169,7 +17492,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         includeGrid: false,
         backgroundPattern: resolveExportBackgroundPattern(options),
       };
-      const result = await structuredExportRuntime.exportBoardAsPng(state.board, exportOptions);
+      const result = await structuredExportRuntime.exportBoardAsPng(exportController.__freeflowExportTask.snapshot, exportOptions);
+      if (!isCurrentExportTask(exportController)) {
+        return getStaleExportResult("PNG");
+      }
       if (result?.canceled) {
         setStatus("PNG 导出已取消", "warning");
         return result;
@@ -17190,6 +17516,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "PNG 导出失败", "warning");
       return result;
     } catch (error) {
+      if (!isCurrentExportTask(exportController)) return getStaleExportResult("PNG");
       if (exportController.signal.aborted) {
         return {
           ok: false,
@@ -17432,7 +17759,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     item.memo = "";
     item.groupId = "";
     if (useLocalFileSystem && options.persistToImportFolder !== false) {
-      const ok = await saveImageItemToImportFolder(item, { dataUrlOverride: raw, nameOverride: file.name });
+      const ok = await saveImageItemToImportFolder(item, { dataUrlOverride: raw, nameOverride: file.name, isCurrent: options.canInsert || (() => true) });
       if (ok) {
         setSaveToast("图片已保存至当前画布目录下的 importImage 文件夹");
       }
@@ -17517,10 +17844,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function exportItemsAsImage(items = [], options = {}) {
+    const exportController = beginExportTask("PNG");
     try {
       const safeItems = buildExportReadyBoardItems(items, { safeExport: true });
-      const result = await structuredExportRuntime.exportItemsAsImage(state.board, safeItems, {
+      const result = await structuredExportRuntime.exportItemsAsImage(exportController.__freeflowExportTask.snapshot, clone(safeItems), {
         ...options,
+        signal: exportController.signal,
         onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
           if (typeof window === "undefined" || typeof window.confirm !== "function") {
             return false;
@@ -17540,6 +17869,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           );
         },
       });
+      if (!isCurrentExportTask(exportController)) return false;
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -17560,8 +17890,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "导出失败");
       return false;
     } catch (error) {
+      if (!isCurrentExportTask(exportController)) return false;
       setStatus(error?.message || "导出失败");
       return false;
+    } finally {
+      clearActiveExportTask(exportController);
     }
   }
 
@@ -17575,15 +17908,19 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     try {
       setStatus("正在生成选区 PDF...");
       await waitForUiPaint();
-      const result = await structuredExportRuntime.exportBoardAsPdf(state.board, {
+      if (!isCurrentExportTask(exportController)) return false;
+      const result = await structuredExportRuntime.exportBoardAsPdf(exportController.__freeflowExportTask.snapshot, {
         ...options,
         signal: exportController.signal,
         scope: "items",
-        items: selectedItems,
+        items: clone(selectedItems),
         defaultName: options.defaultName || "freeflow-selection",
         background: "white",
         includeGrid: false,
       });
+      if (!isCurrentExportTask(exportController)) {
+        return false;
+      }
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -17604,6 +17941,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setStatus(result?.message || "PDF 导出失败", "warning");
       return false;
     } catch (error) {
+      if (!isCurrentExportTask(exportController)) return false;
       setStatus(error?.message || "PDF 导出失败", "warning");
       return false;
     } finally {
@@ -18083,11 +18421,25 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const point = source ? { x: source.x + source.width + 32, y: source.y } : getCenterScenePoint();
     const items = files.slice(0, 50).map((file, index) => {
       const anchor = { x: point.x + (index % 3) * 360, y: point.y + Math.floor(index / 3) * 220 };
-      const item = createFileCardElement({ name: file.fileName, path: file.filePath, size: file.size }, anchor);
+      const extension = getFileExtension(file.fileName || file.filePath || "");
+      const imageOutput = ["png", "jpg", "jpeg", "webp"].includes(extension);
+      const item = imageOutput
+        ? imageModule.createElement(
+            { name: file.fileName, path: file.filePath, type: `image/${extension === "jpg" || extension === "jpeg" ? "jpeg" : extension}` },
+            anchor,
+            "",
+            {}
+          )
+        : createFileCardElement({ name: file.fileName, path: file.filePath, size: file.size }, anchor);
+      if (imageOutput) {
+        item.source = "path";
+        item.sourcePath = String(file.filePath || "");
+        item.dataUrl = "";
+      }
       item.sourceExcerpt = { itemId: request.sources[0]?.itemId, sourcePath: request.sources[0]?.filePath, extractedAt: Date.now() };
       return item;
     });
-    pushItems(items, { reason: "插入转换结果", statusText: `${items.length} 个转换文件已映射到画布，可预览或打开` }); return true;
+    pushItems(items, { reason: "插入转换结果", statusText: `${items.length} 个转换结果已映射到画布` }); return true;
   }
 
   function toggleFileCardPreviewExpanded(requestId = "") {
@@ -18336,6 +18688,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     state.wordExportPreviewRequest = { ...request, exporting: true };
     store.emit();
     const success = await exportSelectionAsWord(request.sourceItems || [], { skipPreview: true, ast: request.previewAst });
+    if (state.wordExportPreviewRequest?.id !== activeRequestId) return false;
     if (success) {
       clearWordExportPreviewRequest(activeRequestId);
       return true;
@@ -18349,6 +18702,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function exportRichTextItem(item, format = "word", options = {}) {
+    let exportController = null;
     try {
       const meta = getExportOperationMeta(item?.type, format, item);
       if (!item || !meta) {
@@ -18361,24 +18715,30 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           title: "富文本导出 Word",
         });
       }
+      exportController = beginExportTask(meta.format);
+      item = clone(item);
       let result = null;
       if (meta.loadingMessage) {
         setStatus(meta.loadingMessage);
         await waitForUiPaint();
+        if (!isCurrentExportTask(exportController)) return false;
       }
       if (meta.format === "word") {
         result = await structuredExportRuntime.exportRichTextItemAsWordFile(item, {
           defaultName: meta.defaultName,
+          signal: exportController.signal,
         });
       } else if (meta.format === "pdf") {
-        result = await structuredExportRuntime.exportRichTextItemAsPdf(state.board, item, {
+        result = await structuredExportRuntime.exportRichTextItemAsPdf(exportController.__freeflowExportTask.snapshot, item, {
           defaultName: meta.defaultName,
+          signal: exportController.signal,
           background: "white",
           includeGrid: false,
         });
       } else if (meta.format === "png") {
-        result = await structuredExportRuntime.exportRichTextItemAsPng(state.board, item, {
+        result = await structuredExportRuntime.exportRichTextItemAsPng(exportController.__freeflowExportTask.snapshot, item, {
           defaultName: meta.defaultName,
+          signal: exportController.signal,
           forceWhiteBackground: true,
           onOversizeConfirm: ({ requestedCanvasWidth, requestedCanvasHeight, requestedTotalPixels }) => {
             if (typeof window === "undefined" || typeof window.confirm !== "function") {
@@ -18400,8 +18760,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           },
         });
       } else if (meta.format === "txt") {
-        result = await structuredExportRuntime.exportTextItem(item, { defaultName: meta.defaultName });
+        result = await structuredExportRuntime.exportTextItem(item, { defaultName: meta.defaultName, signal: exportController.signal });
       }
+      if (!isCurrentExportTask(exportController)) return false;
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -18428,74 +18789,52 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       notifyExportToast(failureMessage, meta.failureMessage);
       return false;
     } catch (error) {
+      if (exportController && !isCurrentExportTask(exportController)) return false;
       const message = String(error?.message || "导出失败").trim() || "导出失败";
       setStatus(message, "warning");
       notifyExportToast(message);
       return false;
+    } finally {
+      if (exportController) clearActiveExportTask(exportController);
+    }
+  }
+
+  async function exportStructuredElementItem(item, format, method, meta) {
+    const controller = beginExportTask(format);
+    try {
+      const snapshotItem = controller.__freeflowExportTask.snapshot.items.find(entry => entry.id === item.id);
+      const result = await structuredExportRuntime[method](snapshotItem, meta.format, {
+        defaultName: meta.defaultName,
+        signal: controller.signal,
+      });
+      if (!isCurrentExportTask(controller)) return false;
+      if (result?.ok) {
+        recordExportHistory(buildExportHistoryEntry({ result, kind: meta.historyKind, scope: meta.scope,
+          title: meta.historyTitle, defaultFileName: meta.defaultFileName }));
+        setStatus(result.message || meta.successMessage,
+          result.operationResult?.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success");
+        return true;
+      }
+      setStatus(result?.canceled ? meta.cancelMessage : result?.message || meta.failureMessage, "warning");
+      return false;
+    } catch (error) {
+      if (isCurrentExportTask(controller)) setStatus(error?.message || meta.failureMessage, "warning");
+      return false;
+    } finally {
+      clearActiveExportTask(controller);
     }
   }
 
   async function exportTableItem(item, format = "xlsx") {
     const meta = getExportOperationMeta(item?.type, format, item);
-    if (!item || !meta) {
-      setStatus("仅表格元素支持此导出");
-      return false;
-    }
-    const result = await structuredExportRuntime.exportTableItem(item, meta.format, {
-      defaultName: meta.defaultName,
-    });
-    if (result?.ok) {
-      recordExportHistory(
-        buildExportHistoryEntry({
-          result,
-          kind: meta.historyKind,
-          scope: meta.scope,
-          title: meta.historyTitle,
-          defaultFileName: meta.defaultFileName,
-        })
-      );
-      setStatus(
-        result.message || meta.successMessage,
-        result.operationResult?.status === CANVAS_OPERATION_STATUS.DEGRADED ? "warning" : "success"
-      );
-      return true;
-    }
-    if (result?.canceled) {
-      setStatus(meta.cancelMessage || "表格导出已取消", "warning");
-      return false;
-    }
-    setStatus(result?.message || meta.failureMessage, "warning");
-    return false;
+    if (!item || !meta) { setStatus("仅表格元素支持此导出"); return false; }
+    return exportStructuredElementItem(item, format, "exportTableItem", meta);
   }
 
   async function exportCodeBlockItem(item, format = "source") {
     const meta = getExportOperationMeta(item?.type, format, item);
-    if (!item || !meta) {
-      setStatus("仅代码块元素支持此导出");
-      return false;
-    }
-    const result = await structuredExportRuntime.exportCodeBlockItem(item, meta.format, {
-      defaultName: meta.defaultName,
-    });
-    if (result?.ok) {
-      recordExportHistory(
-        buildExportHistoryEntry({
-          result,
-          kind: meta.historyKind,
-          scope: meta.scope,
-          title: meta.historyTitle,
-          defaultFileName: meta.defaultFileName,
-        })
-      );
-      setStatus(result.message || meta.successMessage);
-      return true;
-    }
-    if (result?.canceled) {
-      setStatus(meta.cancelMessage || "代码块导出已取消", "warning");
-      return false;
-    }
-    setStatus(result?.message || meta.failureMessage, "warning");
-    return false;
+    if (!item || !meta) { setStatus("仅代码块元素支持此导出"); return false; }
+    return exportStructuredElementItem(item, format, "exportCodeBlockItem", meta);
   }
 
   async function exportSelectionAsWord(items = [], options = {}) {
@@ -18510,12 +18849,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         title: "多选元素导出 Word",
       });
     }
+    const exportController = beginExportTask("WORD");
     try {
-      const result = await structuredExportRuntime.exportSelectionAsWordFile(selectedItems, {
+      const result = await structuredExportRuntime.exportSelectionAsWordFile(clone(selectedItems), {
+        signal: exportController.signal,
         defaultName: "freeflow-selection-word",
         title: "导出 Word",
         ast: options.ast,
       });
+      if (!isCurrentExportTask(exportController)) return false;
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -18541,10 +18883,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       notifyExportToast(message);
       return false;
     } catch (error) {
+      if (!isCurrentExportTask(exportController)) return false;
       const message = String(error?.message || "导出失败").trim() || "导出失败";
       setStatus(message, "warning");
       notifyExportToast(message);
       return false;
+    } finally {
+      clearActiveExportTask(exportController);
     }
   }
 
@@ -19266,6 +19611,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   async function runCanvasCapture(pointer) {
+    const controller = beginExportTask("CAPTURE");
+    const snapshot = controller.__freeflowExportTask.snapshot;
     try {
       const start = pointer?.startScenePoint;
       const current = pointer?.currentScenePoint || start;
@@ -19278,11 +19625,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           current,
         });
         const renderResult = await renderSceneBoundsToCanvas(selectionBounds, {
+          items: snapshot.items,
+          signal: controller.signal,
           backgroundFill: "transparent",
           backgroundGrid: false,
           exportLabel: "截图导出",
           cancelCode: "CAPTURE_EXPORT_CANCELED",
           onProgress: async (message) => {
+            if (!isCurrentExportTask(controller)) throw new DOMException("Capture canceled", "AbortError");
             setStatus(message);
             await waitForUiPaint();
           },
@@ -19300,21 +19650,24 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           y: Math.min(start.y, current.y),
         };
       } else {
-        const hydratedItems = await hydrateImageItems(state.board.items);
+        const visualItems = await prepareFormulaVisualItems(snapshot.items, { createSurface: createFormulaExportSurface, signal: controller.signal });
+        const hydratedItems = await hydrateImageItems(visualItems);
         await preloadImagesForItems(hydratedItems);
-        const viewportCanvas = renderViewportToCanvas(hydratedItems, state.board.view);
+        const viewportCanvas = renderViewportToCanvas(hydratedItems, snapshot.view);
         if (!viewportCanvas?.canvas) {
           setStatus("截图失败");
           return;
         }
         dataUrl = safeCanvasToDataUrl(viewportCanvas.canvas);
       }
+      if (!isCurrentExportTask(controller)) return;
       if (!dataUrl) {
         setStatus("截图失败：存在无法捕获的图片内容");
         return;
       }
       setStatus("正在生成截图...");
-      const result = await saveDataUrlAsImage(dataUrl, { defaultName: "画布截图" });
+      const result = await saveDataUrlAsImage(dataUrl, { defaultName: "画布截图", signal: controller.signal });
+      if (!isCurrentExportTask(controller)) return;
       if (result?.ok) {
         recordExportHistory(
           buildExportHistoryEntry({
@@ -19330,6 +19683,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           anchorPoint,
           sourcePath: result.path || "",
           persistToImportFolder: false,
+          canInsert: () => isCurrentExportTask(controller),
         });
         if (!inserted) {
           setStatus("截图已保存，但插回画布失败");
@@ -19342,13 +19696,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         setStatus(result?.error || "截图失败：无法生成图片");
       }
     } catch (error) {
-      setStatus(error?.message || "截图失败");
+      if (isCurrentExportTask(controller)) setStatus(error?.message || "截图失败");
     } finally {
-      state.selectionRect = null;
-      captureMode = null;
-      state.captureModeActive = false;
-      state.captureModeDragging = false;
-      scheduleRender();
+      if (activeExportController === controller) {
+        clearActiveExportTask(controller);
+        state.selectionRect = null;
+        captureMode = null;
+        state.captureModeActive = false;
+        state.captureModeDragging = false;
+        scheduleRender();
+      }
     }
   }
 
@@ -19400,22 +19757,29 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     setStatus(`画布背景已切换为${next === "none" ? "无背景" : next === "dots" ? "点阵" : next === "grid" ? "方格" : next === "lines" ? "横线" : "工程网格"}`);
   }
 
-  function cancelTextEdit() {
-    if (!state.editingId || state.editingType !== "text") {
+  function rollbackTextEdit() {
+    cancelPendingRichInputSync();
+    if (state.editingType !== "text") {
       return false;
     }
+    const itemId = state.editingId;
+    cancelPendingRichEditorHide();
+    restoreEditingBaseline();
+    if (itemId) clearCommittedTextDraftCacheEntry(itemId);
     state.editingId = null;
     state.editingType = null;
-    refs.editor?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
     richTextSession.clear({ destroyAdapter: false });
-    if (state.tool === "text" && shouldExitTextToolAfterEdit) {
-      shouldExitTextToolAfterEdit = false;
-      setTool("select");
-      return true;
-    }
-    syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
+    editBaselineSnapshot = null;
+    syncBoard({ persist: false, emit: true, sceneChange: true, fullOverlayRescan: false });
     return true;
+  }
+
+  // Tool switches and focus transitions historically commit the active text
+  // edit. Keep that behavior; explicit Escape uses rollbackTextEdit through
+  // cancelRichEdit instead.
+  function cancelTextEdit() {
+    return commitTextEdit();
   }
 
   function clearTransientState() {
@@ -20315,31 +20679,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   async function exportMathItem(item, format = "latex") {
     const meta = getExportOperationMeta(item, format, item);
     if (!item || !meta || (!isStructuredMathTextElement(item) && item.type !== "mathBlock" && item.type !== "mathInline")) {
-      setStatus("仅公式元素支持此导出", "warning");
-      return false;
+      setStatus("仅公式元素支持此导出", "warning"); return false;
     }
-    const result = await structuredExportRuntime.exportMathItem(item, meta.format, {
-      defaultName: meta.defaultName,
-    });
-    if (result?.ok) {
-      recordExportHistory(
-        buildExportHistoryEntry({
-          result,
-          kind: meta.historyKind,
-          scope: meta.scope,
-          title: meta.historyTitle,
-          defaultFileName: meta.defaultFileName,
-        })
-      );
-      setStatus(result.message || meta.successMessage, "success");
-      return true;
-    }
-    if (result?.canceled) {
-      setStatus(meta.cancelMessage || "公式导出已取消", "warning");
-      return false;
-    }
-    setStatus(result?.message || meta.failureMessage, "warning");
-    return false;
+    return exportStructuredElementItem(item, format, "exportMathItem", meta);
   }
 
   function createFileDescriptorEntriesFromFiles(files, entryPrefix = "file") {
@@ -20600,6 +20942,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return state.board.items.find((item) => item.type === "mindNode" && item.id === itemId) || null;
   }
 
+  function canMutateMindStructure(...nodes) {
+    const locked = nodes.find((node) => node && isLockedItem(node));
+    if (locked) {
+      setStatus("思维节点已锁定，无法修改结构", "warning");
+      return false;
+    }
+    return true;
+  }
+
   function getMindNodeLinks(node = null) {
     return normalizeMindNodeLinks(node?.links || []);
   }
@@ -20761,7 +21112,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function createMindChildNode(parentId, options = {}) {
     const parent = getMindNodeById(parentId);
-    if (!parent) {
+    if (!parent || !canMutateMindStructure(parent)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20795,7 +21146,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function createMindSiblingNode(nodeId, options = {}) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
-    if (!node || !parent) {
+    if (!node || !parent || !canMutateMindStructure(node, parent)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20822,7 +21173,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function createMindSummaryNode(nodeId, options = {}) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
-    if (!node || !parent) {
+    if (!node || !parent || !canMutateMindStructure(node, parent)) {
       return false;
     }
     const siblingIds = Array.isArray(parent.childrenIds) ? parent.childrenIds.slice() : [];
@@ -20864,7 +21215,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
     const grandParent = parent?.parentId ? getMindNodeById(parent.parentId) : null;
-    if (!node || !parent || !grandParent) {
+    if (!node || !parent || !grandParent || !canMutateMindStructure(node, parent, grandParent)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20890,7 +21241,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function setMindBranchSide(nodeId, side) {
     const node = getMindNodeById(nodeId);
-    if (!node) {
+    if (!node || !canMutateMindStructure(node)) {
       return false;
     }
     const nextSide = normalizeMindBranchSide(side, MIND_BRANCH_AUTO);
@@ -20909,7 +21260,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function relayoutMindMapByNodeId(nodeId) {
     const node = getMindNodeById(nodeId);
-    if (!node) {
+    if (!node || !canMutateMindStructure(node)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20926,7 +21277,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function toggleMindNodeCollapsed(nodeId) {
     const node = getMindNodeById(nodeId);
-    if (!node) {
+    if (!node || !canMutateMindStructure(node)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20945,7 +21296,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function demoteMindNode(nodeId) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
-    if (!node || !parent) {
+    if (!node || !parent || !canMutateMindStructure(node, parent)) {
       return false;
     }
     const siblings = Array.isArray(parent.childrenIds) ? parent.childrenIds.slice() : [];
@@ -20955,7 +21306,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const previousSiblingId = siblings[nodeIndex - 1];
     const previousSibling = getMindNodeById(previousSiblingId);
-    if (!previousSibling) {
+    if (!previousSibling || !canMutateMindStructure(previousSibling)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -20985,7 +21336,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function detachMindBranch(nodeId) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
-    if (!node || !parent) {
+    if (!node || !parent || !canMutateMindStructure(node, parent)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -21026,7 +21377,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function insertMindIntermediateNode(nodeId, options = {}) {
     const node = getMindNodeById(nodeId);
     const parent = node?.parentId ? getMindNodeById(node.parentId) : null;
-    if (!node || !parent) {
+    if (!node || !parent || !canMutateMindStructure(node, parent)) {
       return false;
     }
     const before = takeItemsHistorySnapshot(getMindMapHistoryItemIds(), { includeOrder: true });
@@ -21295,6 +21646,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onPointerDown(event) {
+    cancelFocusAnimation();
     if (boardFileOperationActive) return;
     if (!isInteractiveMode() || (event.button !== 0 && event.button !== 1 && event.button !== 2)) {
       return;
@@ -22068,7 +22420,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         return;
       }
       const useAspect =
-        (pointer.baseItem?.type === "image" && event.shiftKey) ||
+        (pointer.baseItem?.type === "image" && (event.shiftKey || Number(pointer.baseItem.rotation || 0) % 360 !== 0)) ||
         (pointer.baseItem?.type === "shape" &&
           (pointer.baseItem.shapeType === "rect" || pointer.baseItem.shapeType === "ellipse") &&
           event.shiftKey);
@@ -22604,6 +22956,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onWheel(event) {
+    cancelFocusAnimation();
     if (!isInteractiveMode() || event.defaultPrevented) {
       return;
     }
@@ -24333,7 +24686,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       if (item && !isLockedItem(item)) {
         item.fontSize = value;
         const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-        refs.richEditor.style.fontSize = `${Math.max(1, value * scale)}px`;
+        refs.richEditor.style.fontSize = `${Math.max(1, value)}px`;
         applyRichEditorLayoutStyles(refs.richEditor, item, scale);
         richTextSession.setFontSize(value, { normalize: true });
         syncActiveRichEditingItemState();
@@ -25560,8 +25913,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     richTextSession.handleInput(() => {
-      syncActiveRichEditingItemState({ emit: false, refreshToolbar: false, markDirty: true });
-      requestAnimationFrame(() => syncRichTextToolbar());
+      if (item.type === "text" && isLongRichTextDraft({ html: item.html, plainText: item.plainText })) {
+        // The live DOM owns the draft. Commit/save/export flush it synchronously;
+        // quiet-time serialization keeps typing and camera gestures responsive.
+        markBoardDirty();
+        scheduleLongRichInputSync(item);
+      } else {
+        syncActiveRichEditingItemState({ emit: false, refreshToolbar: false, markDirty: true });
+      }
+      scheduleRichTextToolbarSync();
     });
   }
 
@@ -25646,6 +26006,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onTableEditorPointerDown(event) {
     event.stopPropagation();
+    const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (link instanceof HTMLAnchorElement && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      // Opening belongs to click; pointerdown only prevents cell selection.
+      return;
+    }
     setTableInteractionPointerState("editor", true);
     if (handleTableActionPress(event)) {
       return;
@@ -25693,12 +26060,36 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     beginTableCellPointerSelection(event, rowIndex, columnIndex);
   }
 
+  function onSceneTableClick(event) {
+    const link = event.target instanceof Element ? event.target.closest(".canvas2d-scene-table a[href]") : null;
+    if (!(link instanceof HTMLAnchorElement)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!(event.ctrlKey || event.metaKey)) {
+      setStatus("按 Ctrl/Cmd+点击链接可打开网页");
+      return;
+    }
+    const opened = openExternalUrl(link.getAttribute("href") || link.href || "");
+    setStatus(opened ? "已打开链接" : "链接打开失败", opened ? "neutral" : "warning");
+  }
+
   function onTableEditorMouseDown(event) {
     setTableInteractionPointerState("editor", true);
     handleTableActionPress(event);
   }
 
   function onTableEditorClick(event) {
+    const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (link instanceof HTMLAnchorElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey || event.metaKey) {
+        openExternalUrl(link.getAttribute("href") || link.href || "");
+      } else {
+        setStatus("按 Ctrl/Cmd+点击链接可打开网页");
+      }
+      return;
+    }
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
     if (target?.getAttribute("data-pointer-action-handled") === "1") {
       target.removeAttribute("data-pointer-action-handled");
@@ -26579,7 +26970,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     hideContextMenu();
     clearTransientState();
-    cancelTextEdit();
+    cancelRichEdit();
     cancelMathEdit();
     cancelFlowNodeEdit();
     cancelMindNodeEdit();
@@ -26679,6 +27070,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function bindEvents() {
     bind(refs.fileImportInput, "change", onImportInputChange);
+    bind(refs.contentLayer, "click", onSceneTableClick);
     bind(refs.imageImportInput, "change", onImportInputChange);
     bind(document, "visibilitychange", onCanvasVisibilityChange);
     bind(window, "keydown", onCanvasModifierKey, true);
@@ -26898,6 +27290,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function unmount() {
+    cancelPendingRichInputSync();
+    if (richToolbarSyncFrame) cancelAnimationFrame(richToolbarSyncFrame);
+    richToolbarSyncFrame = 0;
+    richEditorTypographyState.delete(refs.richEditor);
+    syncActiveDraftEditingState({ markDirty: true });
+    if (state.editingId && state.editingType !== "image") commitRichEdit();
+    closeEditorsBeforeBoardReplacement();
     cancelPendingCanvasLinkJump();
     cancelContextSubmenuClose();
     cancelMindNodeLinkMenuCloseTimer();
@@ -26966,13 +27365,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     sceneContentRenderer.clear();
     richTextSession.destroy();
     codeBlockEditor.clear();
-    cancelTextEdit();
-    cancelMathEdit();
-    cancelFlowNodeEdit();
-    cancelCodeBlockEdit();
-    cancelFileMemoEdit();
-    cancelImageMemoEdit();
-    finishImageEdit();
     clearAlignmentSnap("unmount");
     stopAutosaveTimer();
     elementLifecycleManager.dispose({ reason: "engine-unmount" });
@@ -26997,6 +27389,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function undo() {
+    pendingCommittedTextWorkToken += 1;
     cancelClipboardImports();
     const pendingEntry = state.history.undo[state.history.undo.length - 1] || null;
     const currentSnapshot = pendingEntry?.kind === "patch"
@@ -27016,6 +27409,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function redo() {
+    pendingCommittedTextWorkToken += 1;
     cancelClipboardImports();
     const pendingEntry = state.history.redo[state.history.redo.length - 1] || null;
     const currentSnapshot = pendingEntry?.kind === "patch"
@@ -27035,18 +27429,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function zoomIn() {
+    cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * 1.12, getCenterScenePoint());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-in" });
   }
 
   function zoomOut() {
+    cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale / 1.12, getCenterScenePoint());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-out" });
   }
 
   function zoomToFit() {
+    cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = getZoomToFitView(state.board.items, getCanvasRect());
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "zoom-to-fit" });
@@ -27054,6 +27451,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function resetView() {
+    cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = createView(DEFAULT_VIEW);
     syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "reset-view" });
@@ -27072,12 +27470,22 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function animateViewTo(nextView, options = {}) {
     finishPendingWheelSession({ persist: false });
     cancelFocusAnimation();
+    const board = state.board;
     const startView = createView(state.board.view);
     const targetView = createView(nextView);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      state.board.view = targetView;
+      syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-instant" });
+      return;
+    }
     const duration = Math.max(120, Number(options?.duration ?? 240));
     const startAt = performance.now();
 
     const step = (now) => {
+      if (!mounted || state.board !== board) {
+        focusAnimationFrame = null;
+        return;
+      }
       const progress = Math.min(1, (now - startAt) / duration);
       const ease = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
       const view = createView({
@@ -27135,6 +27543,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (options?.animate) {
       animateViewTo(nextView, options);
     } else {
+      cancelFocusAnimation();
       state.board.view = nextView;
       syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-on-bounds" });
     }
@@ -27145,10 +27554,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!state.board.items.length) {
       return false;
     }
+    syncActiveDraftEditingState();
+    commitRichEdit();
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: true, emit: false });
     const before = takeHistorySnapshot(state);
+    closeEditorsBeforeBoardReplacement();
     cancelClipboardImports();
-    state.board = createEmptyBoard();
+    state.board = { ...state.board, ...createEmptyBoard(), boardId: state.board.boardId, preferences: clone(state.board.preferences) };
     state.boardSaveError = "";
     pushHistory(state.history, before, takeHistorySnapshot(state), "清空白板");
     syncBoard({ persist: true, emit: true });
@@ -27790,7 +28202,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
     const hasActiveTable = (context) => context.editingType === "table" || hasSingleType("table", { mutable: true })(context);
     const hasActiveRichText = (context) => ["text", "flow-node", "mind-node", "table"].includes(context.editingType);
-    const hasSelectedMindNode = (context) => context.selectedCount === 1 && context.selectedItems[0]?.type === "mindNode";
+    const hasSelectedMindNode = (context) => context.selectedCount === 1 && context.selectedItems[0]?.type === "mindNode" && !context.selectedItems[0]?.locked;
     const hasEditableSelection = (context) => {
       if (context.tool !== "select" || context.editingId || context.selectedCount !== 1 || context.mutableSelectedCount !== 1) {
         return false;
@@ -28168,6 +28580,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const nextBoard = repairMisclassifiedCodeBlocksOnBoard(board, DEFAULT_TEXT_FONT_SIZE);
       clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
       cancelClipboardImports();
+      closeEditorsBeforeBoardReplacement();
       store.replaceBoard(nextBoard);
       state.board.selectedIds = Array.isArray(nextBoard?.selectedIds) ? [...nextBoard.selectedIds] : [];
       if (options?.resetView === true) {

@@ -72,8 +72,8 @@ function CanvasOfficePage({ embedded = false } = {}) {
                 const exportController = new AbortController();
                 backgroundExportControllers.set(taskId, exportController);
                 const exportOptions = payload?.options && typeof payload.options === "object"
-                  ? { ...payload.options, signal: exportController.signal }
-                  : { signal: exportController.signal };
+                  ? { ...payload.options, taskId, signal: exportController.signal }
+                  : { taskId, signal: exportController.signal };
                 const kind = String(payload?.kind || "").trim().toLowerCase();
                 const exportRuntime = engine.getStructuredExportRuntime?.();
                 const currentBoard = engine.getSnapshotData?.() || payload?.board || {};

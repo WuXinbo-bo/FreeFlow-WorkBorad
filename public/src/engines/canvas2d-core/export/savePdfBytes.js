@@ -1,6 +1,8 @@
 import { ensurePdfFileName } from "./pdfExportOptions.js";
 
 export async function savePdfBytes(bytes, options = {}) {
+  const canceled = () => ({ ok: false, canceled: true, code: "PDF_EXPORT_CANCELED", message: "", fileName: "", filePath: "", bytes: 0 });
+  if (options.signal?.aborted) return canceled();
   const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
   if (!payload.byteLength) {
     return {
@@ -22,6 +24,7 @@ export async function savePdfBytes(bytes, options = {}) {
     !options.preferDownload
   ) {
     const picked = await globalThis.desktopShell.pickPdfSavePath({ defaultName: fileName });
+    if (options.signal?.aborted) return canceled();
     if (!picked) {
       return {
         ok: false,
@@ -56,6 +59,7 @@ export async function savePdfBytes(bytes, options = {}) {
       };
     }
     const writeResult = await globalThis.desktopShell.writeFile(picked.filePath, payload);
+    if (options.signal?.aborted) return canceled();
     if (!writeResult?.ok) {
       return {
         ok: false,
@@ -79,6 +83,7 @@ export async function savePdfBytes(bytes, options = {}) {
   }
 
   try {
+    if (options.signal?.aborted) return canceled();
     const blob = new Blob([payload], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");

@@ -15,6 +15,23 @@ function pointInBounds(point, bounds, padding = 0) {
   );
 }
 
+function pointInImageLocalBounds(point, item, padding = 0) {
+  const width = Math.max(1, Number(item?.width || 1));
+  const height = Math.max(1, Number(item?.height || 1));
+  const centerX = Number(item?.x || 0) + width / 2;
+  const centerY = Number(item?.y || 0) + height / 2;
+  const dx = Number(point?.x || 0) - centerX;
+  const dy = Number(point?.y || 0) - centerY;
+  const radians = (-Number(item?.rotation || 0) * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  let localX = dx * cos - dy * sin;
+  let localY = dx * sin + dy * cos;
+  if (item?.flipX) localX = -localX;
+  if (item?.flipY) localY = -localY;
+  return Math.abs(localX) <= width / 2 + padding && Math.abs(localY) <= height / 2 + padding;
+}
+
 function lineDistance(point, start, end) {
   const dx = Number(end.x || 0) - Number(start.x || 0);
   const dy = Number(end.y || 0) - Number(start.y || 0);
@@ -83,7 +100,7 @@ export function hitTestElement(items, point, scale = 1) {
       continue;
     }
     const bounds = candidate.baseBounds || getElementBounds(item);
-    if (pointInBounds(point, bounds, tolerance)) {
+    if (item.type === "image" ? pointInImageLocalBounds(point, item, tolerance) : pointInBounds(point, bounds, tolerance)) {
       return item;
     }
     if (hitTestPolicy === "bounds-file-memo" && item.memoVisible) {

@@ -266,6 +266,7 @@ export function createRichTextEditingSession({
       return true;
     },
     handleInput(onChange = null) {
+      revision += 1;
       onChange?.();
     },
   };

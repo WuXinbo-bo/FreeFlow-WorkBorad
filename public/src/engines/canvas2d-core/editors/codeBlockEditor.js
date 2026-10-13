@@ -47,7 +47,12 @@ export function createCodeBlockEditor(host, options = {}) {
     const start = Math.max(0, Number(rangeStart || 0));
     const end = Math.max(start, Number(rangeEnd || start));
     const value = String(node.value || "");
-    node.value = `${value.slice(0, start)}${nextText}${value.slice(end)}`;
+    node.focus({ preventScroll: true });
+    node.setSelectionRange(start, end);
+    // Chromium insertText participates in the textarea undo transaction.
+    if (!document.execCommand("insertText", false, String(nextText))) {
+      node.setRangeText(String(nextText), start, end, "end");
+    }
     const nextStart = selectionStart == null ? start + String(nextText || "").length : Math.max(0, Number(selectionStart || 0));
     const nextEnd = selectionEnd == null ? nextStart : Math.max(nextStart, Number(selectionEnd || nextStart));
     node.selectionStart = nextStart;
@@ -156,6 +161,7 @@ export function createCodeBlockEditor(host, options = {}) {
       options.onBlur?.();
     };
     onKeyDownHandler = (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       const key = String(event.key || "").toLowerCase();
       if (key === "tab") {
         handleTabKey(node, event);

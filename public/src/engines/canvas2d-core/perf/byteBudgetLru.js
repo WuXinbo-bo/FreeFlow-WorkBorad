@@ -28,7 +28,6 @@ export function createByteBudgetLru({
 
   function enforceBudget() {
     while (entries.size > entryLimit || totalBytes > byteLimit) {
-      if (entries.size === 1 && entries.size <= entryLimit && totalBytes > byteLimit) break;
       const oldestKey = entries.keys().next().value;
       if (oldestKey === undefined) break;
       evict(oldestKey, "budget");
@@ -54,6 +53,11 @@ export function createByteBudgetLru({
       if (previous.value !== value) onEvict?.(previous.value, key, "replace");
     }
     const bytes = Math.max(0, normalizeLimit(estimateSize(value, key), 0));
+    if (bytes > byteLimit) {
+      evictionCount += 1;
+      onEvict?.(value, key, "budget");
+      return false;
+    }
     entries.set(key, { value, bytes });
     totalBytes += bytes;
     enforceBudget();

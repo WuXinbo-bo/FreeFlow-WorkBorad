@@ -174,6 +174,16 @@ export function normalizeCodeBlockElement(element = {}) {
   const resolvedStructuredImport = structuredImport
     ? {
       ...structuredImport,
+      canonicalFragment: {
+        ...(structuredImport.canonicalFragment || {}),
+        type: "codeBlock",
+        text: content,
+        attrs: {
+          ...(structuredImport.canonicalFragment?.attrs || {}),
+          language: normalizeCodeBlockLanguage(element.language || base.language),
+          theme: element.theme || base.theme,
+        },
+      },
       sourceMeta: mergedSourceMeta,
     }
     : null;
