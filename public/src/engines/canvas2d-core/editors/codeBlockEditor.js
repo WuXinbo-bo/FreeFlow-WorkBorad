@@ -30,6 +30,7 @@ export function createCodeBlockEditor(host, options = {}) {
     onInputHandler = null;
     onBlurHandler = null;
     onKeyDownHandler = null;
+    onCompositionEndHandler = null;
     textarea.remove();
   }
 
