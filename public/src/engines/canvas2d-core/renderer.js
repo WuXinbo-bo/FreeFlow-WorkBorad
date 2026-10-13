@@ -957,6 +957,7 @@ function drawVisibleItemsToContext({
   rendererDispatch,
   compactPresentationRegistry,
   presentationPlan = null,
+  previewImages = false,
   sceneContentOwnedIds = null,
   sceneVectorOwnedIds = null,
 }) {
@@ -996,6 +997,7 @@ function drawVisibleItemsToContext({
         drawSelectionFrame: () => {},
         drawHandles: () => {},
         imageEditState,
+        previewImages,
         flowDraft,
         allowLocalFileAccess,
         onImageNaturalSize,
@@ -1499,6 +1501,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       retainedCameraFrame.clear();
       retainedFrameExpectedKey = "";
     },
+    setInteractionActive: (active) => retainedCameraFrame.setPaused(active),
     releaseCachedSurfaces: resetCachedSurfaces,
     hasRuntimeElementRenderer: (item) => {
       const type = canvasElementRegistry.resolveElement(item)?.type || String(item?.type || "");
@@ -1908,6 +1911,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                     rendererDispatch,
                     compactPresentationRegistry,
                     presentationPlan,
+                    previewImages: Boolean(frameContext),
                     sceneContentOwnedIds: sceneContentOwned,
                     sceneVectorOwnedIds: sceneVectorOwned,
                   }),
@@ -1931,6 +1935,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   rendererDispatch,
                   compactPresentationRegistry,
                   presentationPlan,
+                  previewImages: Boolean(frameContext),
                   sceneContentOwnedIds: sceneContentOwned,
                   sceneVectorOwnedIds: sceneVectorOwned,
                 })
@@ -1991,6 +1996,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
           rendererDispatch,
           compactPresentationRegistry,
           presentationPlan,
+          previewImages: Boolean(frameContext),
           sceneContentOwnedIds: sceneContentOwned,
           sceneVectorOwnedIds: sceneVectorOwned,
         });
@@ -2057,7 +2063,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
         dpr,
       ].join("|");
       retainedFrameExpectedKey = retainedFrameKey;
-      retainedCameraFrame.schedulePrepare({
+      if (!tileStats?.hasDeferredColdTiles) retainedCameraFrame.schedulePrepare({
         key: retainedFrameKey,
         width,
         height,
@@ -2108,6 +2114,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
                   rendererDispatch,
                   compactPresentationRegistry,
                   presentationPlan,
+                  previewImages: Boolean(frameContext),
                   sceneContentOwnedIds: sceneContentOwned,
                   sceneVectorOwnedIds: sceneVectorOwned,
                 }),
@@ -2131,6 +2138,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
               rendererDispatch,
               compactPresentationRegistry,
               presentationPlan,
+              previewImages: Boolean(frameContext),
               sceneContentOwnedIds: sceneContentOwned,
               sceneVectorOwnedIds: sceneVectorOwned,
             });
@@ -2159,6 +2167,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
               rendererDispatch,
               compactPresentationRegistry,
               presentationPlan,
+              previewImages: Boolean(frameContext),
               sceneContentOwnedIds: sceneContentOwned,
               sceneVectorOwnedIds: sceneVectorOwned,
             });

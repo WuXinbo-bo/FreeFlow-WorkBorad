@@ -45,6 +45,24 @@ async function main() {
   cache.clear();
   assert.equal(cache.getSize(), 0);
   assert(closed > beforeClear, "clear did not close cached bitmaps");
+  const coldConfig = {
+    ctx: { drawImage() {} }, sceneIndex: buildSceneIndex(items), sceneKey: "bounded",
+    view: { scale: 1, offsetX: 0, offsetY: 0 }, viewportWidth: 200, viewportHeight: 200,
+    preloadMarginPx: 100, overscanMarginPx: 200, maxColdTiles: 0, drawItems() {},
+  };
+  const foreground = cache.draw(coldConfig);
+  assert.equal(foreground.coldRenderedTiles, 0, "preload work escaped the interaction budget");
+  assert(foreground.hasDeferredColdTiles);
+  assert.equal(foreground.cacheMisses - foreground.deferredColdTiles, 9, "visible tiles must remain complete");
+  const timed = cache.draw({ ...coldConfig, maxColdTiles: Infinity, maxColdTileMs: 0 });
+  assert.equal(timed.coldRenderedTiles, 0, "offscreen work ignored its time budget");
+  let recovery = foreground;
+  for (let i = 0; i < 30 && recovery.hasDeferredColdTiles; i++) {
+    recovery = cache.draw({ ...coldConfig, maxColdTiles: 2 });
+    assert(recovery.coldRenderedTiles <= 2, "recovery exceeded its batch size");
+  }
+  assert.equal(recovery.hasDeferredColdTiles, false, "deferred tiles did not recover");
+  cache.clear();
 
   if (process.argv[2]) {
     const results = {};

@@ -87,6 +87,18 @@ function countWrappedTextLines(ctx, text, maxWidth, maxLines = 4) {
   return Math.max(1, Math.min(row, maxLines));
 }
 
+const fileNameLayouts = new Map();
+function getCachedNameLines(name, width, ctx) {
+  const key = `${width}:${name}`;
+  let lines = fileNameLayouts.get(key);
+  if (!lines) {
+    lines = getFileCardNameLines(name, width, text => ctx.measureText(text).width);
+    fileNameLayouts.set(key, lines);
+    if (fileNameLayouts.size > 512) fileNameLayouts.delete(fileNameLayouts.keys().next().value);
+  }
+  return lines;
+}
+
 export function drawFileCard(ctx, element, view, selected, hover, { drawSelectionFrame, drawHandles } = {}) {
   const layout = getFileCardLayout(element);
   const scale = Math.max(0.01, Number(view?.scale) || 1);
@@ -171,7 +183,7 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
   ctx.fillStyle = "#0f172a";
   // Measure in base coordinates: changing viewport zoom cannot change line breaks.
   ctx.font = `600 16px ${FILE_CARD_FONT}`;
-  const lines = getFileCardNameLines(element.name || element.fileName, Math.round(layout.name.width / layout.scale * 1000) / 1000, text => ctx.measureText(text).width);
+  const lines = getCachedNameLines(element.name || element.fileName, Math.round(layout.name.width / layout.scale * 1000) / 1000, ctx);
   ctx.font = `600 ${layout.name.font * scale}px ${FILE_CARD_FONT}`;
   lines.forEach((line, index) => ctx.fillText(line, x + layout.name.x * scale, y + (layout.name.y + index * layout.name.lineHeight + 2 * layout.scale) * scale));
   ctx.fillStyle = "rgba(71, 85, 105, 0.92)";

@@ -47,12 +47,18 @@ export function serializeHostBoard(board, options = {}) {
   const basePath = String(options.meta?.boardFilePath || "").trim();
   // Convert absolute paths to relative for portability
   const normalizedItems = normalizeSourcePaths(board?.items || [], basePath, true);
-  const normalizedBoard = normalizeBoard({ ...board, items: normalizedItems });
+  const normalizedBoard = normalizeBoard({ ...board, items: normalizedItems }, {
+    // Live text already has measured geometry. Saving must not reflow every card.
+    preserveTextGeometry: options.preserveTextGeometry === true,
+  });
   return {
     kind: HOST_PERSISTENCE_KIND,
     version: HOST_PERSISTENCE_VERSION,
     createdAt: Number(options.createdAt) || Date.now(),
-    meta: options.meta && typeof options.meta === "object" ? { ...options.meta } : {},
+    meta: {
+      ...(options.meta && typeof options.meta === "object" ? options.meta : {}),
+      ...(options.preserveTextGeometry === true ? { textGeometryPreserved: true } : {}),
+    },
     board: normalizedBoard,
   };
 }
@@ -67,7 +73,7 @@ export function deserializeHostBoard(raw) {
     version: HOST_PERSISTENCE_VERSION,
     createdAt: Number(payload.createdAt) || Date.now(),
     meta: payload.meta && typeof payload.meta === "object" ? { ...payload.meta } : {},
-    board: normalizeBoard(restoredBoard || {}),
+    board: normalizeBoard(restoredBoard || {}, { preserveTextGeometry: payload.meta?.textGeometryPreserved === true }),
   };
 }
 

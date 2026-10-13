@@ -80,6 +80,19 @@ async function main() {
   assert.strictEqual(rendered.at(-1), "background:warm-cache");
   assert.strictEqual(scheduler.getFrameRevision(), 4);
   scheduler.dispose();
+  let time = 0;
+  let elapsed = 0;
+  const measured = createRenderScheduler({
+    requestFrame: () => 1,
+    cancelFrame: () => {},
+    now: () => time,
+    collectFrameInput: () => { time += 9; return {}; },
+    renderFrame: () => { time += 4; return {}; },
+    onFrameComplete: ({ totalFrameDurationMs }) => { elapsed = totalFrameDurationMs; },
+  });
+  measured.flushNow({ viewDirty: true });
+  assert.equal(elapsed, 13, "frame timing excluded input collection or DOM/layout work");
+  measured.dispose();
   console.log("[check-canvas-render-scheduler] ok");
 }
 
