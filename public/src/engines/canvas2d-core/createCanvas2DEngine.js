@@ -1,3 +1,4 @@
+import { isComposingInput } from "./textEditing/inputComposition.js";
 import { getFileCapabilities } from "./documentPreview/fileCapabilities.js";
 import { readFileReadingPreference } from "./documentPreview/fileReadingPreferences.js";
 import { prepareWordExportAssets } from "./export/word/prepareWordExportAssets.js";
@@ -578,29 +579,34 @@ function buildPersistentRichToolbarHtml() {
     <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-single">
       ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
       <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
       <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
       <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
       ${buildRichMathMenuHtml()}
       ${buildRichQuoteMenuHtml()}
-      <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-      <button type="button" class="canvas2d-rich-btn canvas2d-rich-btn-icon" data-action="text-split" title="拆分文本" aria-label="拆分文本">
-        <svg viewBox="0 0 24 24" aria-hidden="true" class="canvas2d-rich-btn-svg">
-          <path d="M3.5 8.25h6.75M3.5 15.75h6.75M13.75 8.25h6.75M13.75 15.75h6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <path d="M10.75 8.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <path d="M10.75 13.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-      </button>
       ${buildRichLinkMenuHtml()}
-      ${buildRichColorControlsHtml()}
+      <div class="canvas2d-rich-submenu" data-submenu="more">
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-toggle" data-action="toggle-more-menu" aria-label="更多格式" aria-expanded="false" title="更多格式">···</button>
+        <div class="canvas2d-rich-submenu-panel canvas2d-rich-more-panel is-hidden" role="group" aria-label="更多格式">
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
+          <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
+          <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
+          <button type="button" class="canvas2d-rich-btn canvas2d-rich-btn-icon" data-action="text-split" title="拆分文本" aria-label="拆分文本">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="canvas2d-rich-btn-svg">
+              <path d="M3.5 8.25h6.75M3.5 15.75h6.75M13.75 8.25h6.75M13.75 15.75h6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M10.75 8.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M10.75 13.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </button>
+          ${buildRichColorControlsHtml()}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1939,7 +1945,7 @@ function applyRichTypographyTokens(container) {
     if (!(node instanceof HTMLElement)) {
       return;
     }
-    const tag = normalizeTagName(node.tagName);
+    const tag = node.getAttribute('data-ff-code-block') === 'true' ? 'pre' : normalizeTagName(node.tagName);
     setStyleIfNeeded(node, "lineHeight", String(getLineHeightRatioForTag(tag)));
     if (tag === "ul" || tag === "ol") {
       node.style.marginTop = `${TEXT_BLOCK_SPACING_EM.listBlock}em`;
@@ -3886,7 +3892,7 @@ let tablePointerSelectionState = {
     richInputSyncTimer = setTimeout(() => {
       richInputSyncTimer = 0;
       if (getActiveRichEditingItem() !== item || richTextSession.getRevision() !== revision) return;
-      if (isViewportInteractionActive()) {
+      if (isViewportInteractionActive() || richTextSession.isComposing()) {
         scheduleLongRichInputSync(item);
         return;
       }
@@ -3911,7 +3917,6 @@ let tablePointerSelectionState = {
   let pendingRichEditorHideToken = 0;
   let pendingCommittedTextWorkToken = 0;
   const committedTextDraftCache = new Map();
-  let richEditorComposing = false;
   let shouldExitTextToolAfterEdit = false;
   let pendingCanvasLinkBinding = false;
   let pendingCanvasNavigatorFolderTargetId = "";
@@ -4297,7 +4302,8 @@ let tablePointerSelectionState = {
   }
 
   const codeBlockEditor = createCodeBlockEditor(null, {
-    onChange: () => {
+    onChange: (_value, event) => {
+      if (isComposingInput(event)) { markBoardDirty(); return; }
       syncActiveDraftEditingState();
       scheduleCodeBlockEditorLayoutSync("fast");
       scheduleCodeBlockEditorLayoutSync("precise");
@@ -11603,7 +11609,7 @@ function closeRichToolbarSubmenus({ except = null } = {}) {
     if (!(submenu instanceof HTMLElement)) {
       return;
     }
-    const shouldKeepOpen = except instanceof HTMLElement && submenu === except;
+    const shouldKeepOpen = except instanceof HTMLElement && (submenu === except || submenu.contains(except));
     submenu.classList.toggle("is-open", shouldKeepOpen);
     const panel = submenu.querySelector(".canvas2d-rich-submenu-panel");
     const toggle = submenu.querySelector(".canvas2d-rich-submenu-toggle");
@@ -11908,6 +11914,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function syncRichTextToolbar(options = {}) {
+    if (richTextSession.isComposing() || tableCellRichTextSession.isComposing()) return;
     if (!(refs.richToolbar instanceof HTMLDivElement)) {
       return;
     }
@@ -19583,6 +19590,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function hideRichEditingChromeImmediately() {
+    closeRichToolbarSubmenus();
     refs.richToolbar?.classList.add("is-hidden");
     refs.richSelectionToolbar?.classList.add("is-hidden");
     refs.richEditor?.classList.add("is-hidden");
@@ -19764,6 +19772,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const itemId = state.editingId;
     cancelPendingRichEditorHide();
+    hideRichEditingChromeImmediately();
     restoreEditingBaseline();
     if (itemId) clearCommittedTextDraftCacheEntry(itemId);
     state.editingId = null;
@@ -24518,6 +24527,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     event.preventDefault();
     if (
+      action !== "toggle-more-menu" &&
       action !== "toggle-blockquote-menu" &&
       action !== "toggle-math-menu" &&
       action !== "toggle-link-menu" &&
@@ -24525,7 +24535,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     ) {
       closeRichToolbarSubmenus();
     }
-    if (action === "toggle-blockquote-menu" || action === "toggle-math-menu" || action === "toggle-link-menu") {
+    if (action === "toggle-more-menu" || action === "toggle-blockquote-menu" || action === "toggle-math-menu" || action === "toggle-link-menu") {
       toggleRichToolbarSubmenu(target.closest(".canvas2d-rich-submenu"));
       return;
     }
@@ -25900,7 +25910,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  function onRichEditorInput() {
+  function onRichEditorInput(event) {
+    if (isComposingInput(event) || richTextSession.isComposing()) {
+      cancelPendingRichInputSync();
+      markBoardDirty();
+      return;
+    }
     if (!state.editingId || !(refs.richEditor instanceof HTMLDivElement)) {
       return;
     }
@@ -25939,6 +25954,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onMathEditorKeyDown(event) {
+    if (isComposingInput(event)) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "escape") {
       event.preventDefault();
@@ -25962,6 +25978,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onFileMemoKeyDown(event) {
+    if (isComposingInput(event)) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "enter" && !event.shiftKey) {
       event.preventDefault();
@@ -25987,6 +26004,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onImageMemoKeyDown(event) {
+    if (isComposingInput(event)) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "enter" && !event.shiftKey) {
       event.preventDefault();
@@ -26169,7 +26187,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     openTableEditorContextMenuAt(event.clientX, event.clientY);
   }
 
-  function onTableEditorInput() {
+  function onTableEditorInput(event) {
+    if (isComposingInput(event) || tableCellRichTextSession.isComposing()) {
+      markBoardDirty();
+      return;
+    }
     if (tableCellEditState.active) {
       syncActiveDraftEditingState({ markDirty: true });
     }
@@ -26386,6 +26408,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onTableEditorKeyDown(event) {
+    if (isComposingInput(event)) return;
     const cell = event.target instanceof Element ? event.target.closest("[data-row-index][data-column-index]") : null;
     if (!(cell instanceof HTMLElement)) {
       return;
@@ -26569,6 +26592,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onCodeBlockEditorKeyDown(event) {
+    if (isComposingInput(event)) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "escape") {
       event.preventDefault();
@@ -26995,6 +27019,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onWindowKeyDown(event) {
+    if (isComposingInput(event)) return;
     if (boardFileOperationActive) return;
     if (!isInteractiveMode() || globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") return;
     if (event.target?.closest?.(".canvas2d-workspace-panel, .canvas2d-workspace-menu, .canvas2d-workspace-confirm-backdrop")) return;
@@ -27094,6 +27119,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.canvas, "copy", onCopy);
     bind(refs.canvas, "cut", onCut);
     bind(refs.canvas, "paste", onPaste);
+    bind(refs.surface, "compositionstart", (event) => {
+      const host = event.target?.closest?.('[contenteditable="true"], textarea, input');
+      if (host) host.dataset.ffComposing = "true";
+      cancelPendingRichInputSync();
+    }, true);
+    bind(refs.surface, "compositionend", (event) => {
+      const host = event.target?.closest?.('[contenteditable="true"], textarea, input');
+      if (!host || host.dataset.ffComposing !== "true") return;
+      delete host.dataset.ffComposing;
+      if (host === refs.richEditor && richTextSession.isActive()) onRichEditorInput();
+      else if (host === refs.tableCellRichEditor && tableCellEditState.active) onTableEditorInput();
+    }, true);
     bind(refs.richEditor, "blur", onRichEditorBlur);
     bind(refs.richEditor, "beforeinput", onRichEditorBeforeInput);
     bind(refs.richEditor, "input", onRichEditorInput);

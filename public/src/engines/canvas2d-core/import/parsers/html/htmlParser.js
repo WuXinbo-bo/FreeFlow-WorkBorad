@@ -27,6 +27,8 @@ const SAFE_HTML_ATTRS = new Set([
   "data-language",
   "data-lang",
   "data-role",
+  "data-footnote-definition",
+  "data-footnote-ref",
   "height",
   "href",
   "src",
@@ -538,6 +540,11 @@ function convertBlockNode(node, context) {
   }
   const tag = node.tagName;
   const dataRole = String(node.attrs?.["data-role"] || "").trim().toLowerCase();
+  if (node.attrs?.["data-footnote-definition"]) {
+    return [createCanonicalNode({ type: "footnote", attrs: { id: node.attrs["data-footnote-definition"] },
+      content: convertChildrenToBlocks(node.children, context),
+      meta: buildNodeMeta(context.descriptor, context.parserId, context.originPrefix, "footnote") })];
+  }
   if (dataRole === "math-block") {
     const formula = extractTextContent(node, { preserveWhitespace: true }).trim();
     if (!formula) {
@@ -710,7 +717,11 @@ function extractTaskItemState(node) {
   const children = Array.isArray(node.children) ? [...node.children] : [];
   let checked = null;
 
-  if (/\btask-list-item\b/i.test(String(node.attrs?.class || ""))) {
+  if (node.attrs?.["data-ff-task-item"] === "true") {
+    checked = node.attrs?.["data-ff-task-state"] === "done";
+  }
+
+  if (checked === null && /\btask-list-item\b/i.test(String(node.attrs?.class || ""))) {
     checked = false;
   }
 
@@ -883,6 +894,10 @@ function convertNodesToInline(nodes, context, inheritedMarks = []) {
     const dataRole = String(node.attrs?.["data-role"] || "").trim().toLowerCase();
     if (tag === "br") {
       result.push(createCanonicalNode({ type: "hardBreak" }));
+      return;
+    }
+    if (node.attrs?.["data-footnote-ref"]) {
+      result.push(createCanonicalNode({ type: "footnoteRef", attrs: { refId: node.attrs["data-footnote-ref"] } }));
       return;
     }
     if (dataRole === "math-inline") {

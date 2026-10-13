@@ -99,6 +99,7 @@
     "dist:win:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && npm run check:desktop-upgrade && electron-builder --win nsis portable",
     "test:canvas-edit-integrity": "node scripts/check-canvas-edit-integrity.js",
     "test:canvas-rich-editing": "node scripts/check-canvas-rich-editing.js",
+    "test:canvas-text-experience": "node scripts/check-canvas-text-experience.js",
     "test:canvas-integrity-boundaries": "node scripts/check-canvas-integrity-boundaries.js",
     "test:canvas-media-integrity": "node scripts/check-canvas-media-integrity-browser.js",
     "test:canvas-export-integrity-desktop": "node scripts/check-canvas-export-integrity-desktop.js"
@@ -117,6 +118,8 @@
     "koffi": "^2.15.2",
     "latex-to-omml": "^2.1.1",
     "lucide-react": "^1.54.0",
+    "markdown-it": "^14.1.0",
+    "markdown-it-footnote": "^4.0.0",
     "mermaid": "^11.14.0",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",

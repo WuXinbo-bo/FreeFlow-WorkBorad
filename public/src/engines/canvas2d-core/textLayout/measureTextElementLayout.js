@@ -148,7 +148,7 @@ function normalizeMeasurementMarkup(node, { baseFontSize = DEFAULT_FONT_SIZE } =
     element.style.margin = "0";
     element.style.padding = "0";
   });
-  node.querySelectorAll("p").forEach((element) => {
+  node.querySelectorAll("p, div, section, article").forEach((element) => {
     if (!isHTMLElement(element)) {
       return;
     }
@@ -231,6 +231,10 @@ function normalizeMeasurementMarkup(node, { baseFontSize = DEFAULT_FONT_SIZE } =
     element.style.border = "1px solid rgba(148, 163, 184, 0.45)";
     element.style.padding = "0.38em 0.5em";
     element.style.verticalAlign = "top";
+    if (element.tagName === "TH") {
+      element.style.fontWeight = "650";
+      if (!element.style.textAlign && !element.hasAttribute("align")) element.style.textAlign = "left";
+    }
   });
 }
 
