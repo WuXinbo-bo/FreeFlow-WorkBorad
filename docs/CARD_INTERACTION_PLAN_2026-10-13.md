@@ -37,3 +37,11 @@ file-workstation-desktop 通过：真实 PDF 读取/搜索/摘录/页面截图/�
 canvas-presentation-performance 通过：120 文本元素测试，RAF P95 8.6ms、恢复 P95 9.1ms；缩放期间 store emission 为 0；tile 缓存 36MiB，低于 128MiB 预算。250 段富文本缩放与恢复通过（不同运行 P95 约 24ms）。小地图测试验证连续缩放不重新生成场景缩略图。
 
 Windows 的共享逻辑和打包静态检查将在 main、win 分别运行；当前机器无法执行 Windows 原生桌面实测。未推送远程。构建输出含既有 html2canvas vendor duplicate-case 警告，未修改第三方代码。
+
+### 跨分支完成记录
+
+通用实现：mac `83ae5e0` → main `1fb10f0`、win `d383ea6`，cherry-pick 无冲突。构建产物在每个分支独立生成，未复制 Mac 平台 bundle。
+
+main、win 均通过：file-card-geometry、builtin-element-registry、canvas-semantic-transfer、canvas-state-history、canvas-ui-runtime、window-bounds-lifecycle、electron-ipc-security、desktop-packaging、desktop-upgrade、generated-bundles。各分支独立服务的浏览器交互测试 canvas-card-ux 与 canvas-trackpad-browser 通过，包含窄窗口菜单、取消恢复、副本、缩放、小地图缓存。
+
+原目录 feature/comprehensive-optimization 的用户实验改动未动；远程分支未推送。Windows 原生桌面仍需 Windows 机器验证。
