@@ -15,6 +15,8 @@ function applyRootStyles(node) {
 }
 
 function applyContentStyles(node) {
+  node.className = "canvas2d-rich-item";
+  node.style.position = "static";
   node.style.display = "block";
   node.style.boxSizing = "border-box";
   node.style.margin = "0";

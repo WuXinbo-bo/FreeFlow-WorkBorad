@@ -1,3 +1,4 @@
+import { isComposingInput } from "../textEditing/inputComposition.js";
 import { normalizeRichHtml, normalizeRichHtmlInlineFontSizes, toFileUrl } from "../utils.js";
 
 function ensureEditableHost(host) {
@@ -1954,6 +1955,8 @@ export function createRichTextAdapter(
       }
       const block = document.createElement("div");
       block.setAttribute("data-ff-code-block", "true");
+      const codeLanguage = pre.querySelector('code')?.className?.match(/(?:^|\s)language-([\w+-]+)/)?.[1] || pre.dataset.language;
+      if (codeLanguage) block.dataset.language = codeLanguage;
       pre.setAttribute("data-ff-code-block", "normalized");
       while (pre.firstChild) {
         const child = pre.firstChild;
@@ -2055,6 +2058,7 @@ export function createRichTextAdapter(
       const pre = document.createElement("pre");
       pre.setAttribute("data-ff-code-block", "true");
       const code = document.createElement("code");
+      if (block.dataset.language) code.className = `language-${block.dataset.language}`;
       while (block.firstChild) {
         code.appendChild(block.firstChild);
       }
@@ -2538,11 +2542,20 @@ export function createRichTextAdapter(
   }
 
   function setContent(html = "", textFallback = "") {
+    delete element.dataset.ffComposing;
     const safeHtml = normalizeRichHtmlInlineFontSizes(html || "", normalizeRichFontSize(element.style.fontSize, 16));
     const trimmedHtml = safeHtml.trim();
-    if (/^<pre[\s>]/i.test(trimmedHtml) && /^<pre[\s\S]*<\/pre>$/i.test(trimmedHtml)) {
+    delete element.dataset.language;
+    const template = document.createElement('template');
+    template.innerHTML = trimmedHtml;
+    const onlyBlock = template.content.children.length === 1 && template.content.firstElementChild;
+    const isSingleCodeBlock = onlyBlock?.tagName === 'PRE' && Array.from(template.content.childNodes).every(node => node === onlyBlock || !String(node.textContent || '').trim());
+    if (isSingleCodeBlock) {
       element.setAttribute("data-ff-code-block-root", "true");
-      element.textContent = htmlToPlainText(trimmedHtml);
+      const code = template.content.querySelector('code');
+      const language = code?.className?.match(/(?:^|\s)language-([\w+-]+)/)?.[1];
+      if (language) element.dataset.language = language;
+      element.textContent = code?.textContent ?? template.content.textContent;
       if (!element.firstChild) {
         element.appendChild(document.createTextNode(""));
       }
@@ -2562,7 +2575,9 @@ export function createRichTextAdapter(
 
   function getHTML() {
     if (isRootCodeBlockMode()) {
-      return `<pre data-ff-code-block="true"><code>${serializeCodeBlockPlainTextToHtml(getText())}</code></pre>`;
+      const language = element.dataset.language;
+      const className = language ? ` class="language-${language}"` : '';
+      return `<pre data-ff-code-block="true"><code${className}>${serializeCodeBlockPlainTextToHtml(getText())}</code></pre>`;
     }
     const htmlWithSerializedCodeBlocks = serializeEditableCodeBlocks(element);
     const container = document.createElement("div");
@@ -2761,6 +2776,7 @@ export function createRichTextAdapter(
   }
 
   function command(name, value) {
+    if (element.dataset.ffComposing === "true") return false;
     focus();
     restoreSelection();
     ensureSelection({ selectAllWhenCollapsed: false, selectAllWhenMissing: false });
@@ -2958,6 +2974,7 @@ export function createRichTextAdapter(
   }
 
   function onKeyDown(event) {
+    if (isComposingInput(event)) return;
     const inCodeBlock = Boolean(getActiveCodeBlock());
     const rootCodeBlock = isRootCodeBlockMode();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "enter") {
@@ -3181,7 +3198,7 @@ export function createRichTextAdapter(
   }
 
   function onInputEvent(event) {
-    normalizeEditableCodeBlocks(element);
+    if (!isComposingInput(event)) normalizeEditableCodeBlocks(element);
     onInput?.(event);
   }
 
@@ -3197,6 +3214,10 @@ export function createRichTextAdapter(
     onSelectionChangeExternal?.();
   }
 
+  function onCompositionStart() { element.dataset.ffComposing = "true"; }
+  function onCompositionEnd() { delete element.dataset.ffComposing; }
+  element.addEventListener("compositionstart", onCompositionStart);
+  element.addEventListener("compositionend", onCompositionEnd);
   element.addEventListener("keydown", onKeyDown);
   element.addEventListener("mousedown", onMouseDown);
   element.addEventListener("click", onClick);
@@ -3309,6 +3330,9 @@ export function createRichTextAdapter(
     },
     getSelectionSnapshot,
     destroy() {
+      delete element.dataset.ffComposing;
+      element.removeEventListener("compositionstart", onCompositionStart);
+      element.removeEventListener("compositionend", onCompositionEnd);
       element.removeEventListener("keydown", onKeyDown);
       element.removeEventListener("mousedown", onMouseDown);
       element.removeEventListener("click", onClick);

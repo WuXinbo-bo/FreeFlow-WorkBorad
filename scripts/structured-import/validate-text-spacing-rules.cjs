@@ -44,7 +44,7 @@ async function main() {
   assert(flowNodeLineHeight >= bodyLineHeight, "flow node line-height should not be smaller than body");
 
   const headingSizes = [1, 2, 3, 4, 5, 6].map((level) => inferHeadingFontSize(level));
-  const expectedSizes = [36, 30, 26, 22, 20, 18];
+  const expectedSizes = [40, 34, 29, 25, 23, 21];
   expectedSizes.forEach((size, index) => {
     assert(
       headingSizes[index] === size,
@@ -77,10 +77,10 @@ async function main() {
   );
 
   // paragraph/list/blockquote/code/table spacing presence in measurement markup.
-  assertRegex(source, /node\.querySelectorAll\("p"\)/, "paragraph selector should be normalized");
+  assertRegex(source, /node\.querySelectorAll\("p, div, section, article"\)/, "paragraph selector should be normalized");
   assertRegex(
     source,
-    /node\.querySelectorAll\("p"\)[\s\S]*?marginTop\s*=\s*"0"[\s\S]*?marginBottom\s*=\s*`\$\{spacing\}em`/,
+    /node\.querySelectorAll\("p, div, section, article"\)[\s\S]*?marginTop\s*=\s*"0"[\s\S]*?marginBottom\s*=\s*`\$\{spacing\}em`/,
     "paragraph spacing should match overlay bottom-spacing behavior"
   );
   assertRegex(

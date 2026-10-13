@@ -1,3 +1,5 @@
+import { isComposingInput } from "../textEditing/inputComposition.js";
+
 export function createCodeBlockEditor(host, options = {}) {
   let mountHost = host instanceof HTMLElement ? host : null;
   let activeItemId = "";
@@ -8,6 +10,7 @@ export function createCodeBlockEditor(host, options = {}) {
   let onInputHandler = null;
   let onBlurHandler = null;
   let onKeyDownHandler = null;
+  let onCompositionEndHandler = null;
 
   function detachTextarea() {
     if (!(textarea instanceof HTMLTextAreaElement)) {
@@ -22,6 +25,8 @@ export function createCodeBlockEditor(host, options = {}) {
     if (onKeyDownHandler) {
       textarea.removeEventListener("keydown", onKeyDownHandler);
     }
+    textarea.removeEventListener("compositionend", onCompositionEndHandler);
+    delete textarea.dataset.ffComposing;
     onInputHandler = null;
     onBlurHandler = null;
     onKeyDownHandler = null;
@@ -36,8 +41,8 @@ export function createCodeBlockEditor(host, options = {}) {
     return Math.max(1, Math.min(8, Math.round(number) || 2));
   }
 
-  function emitChange(node) {
-    options.onChange?.(node?.value || "");
+  function emitChange(node, event) {
+    options.onChange?.(node?.value || "", event);
   }
 
   function replaceRange(node, rangeStart, rangeEnd, nextText, { selectionStart = null, selectionEnd = null } = {}) {
@@ -154,14 +159,15 @@ export function createCodeBlockEditor(host, options = {}) {
     node.setAttribute("aria-label", "代码编辑器");
     node.style.background = "transparent";
     node.style.color = "#0f172a";
-    onInputHandler = () => {
-      emitChange(node);
+    onInputHandler = (event) => {
+      emitChange(node, event);
     };
+    onCompositionEndHandler = () => emitChange(node);
     onBlurHandler = () => {
       options.onBlur?.();
     };
     onKeyDownHandler = (event) => {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (isComposingInput(event)) return;
       const key = String(event.key || "").toLowerCase();
       if (key === "tab") {
         handleTabKey(node, event);
@@ -172,6 +178,7 @@ export function createCodeBlockEditor(host, options = {}) {
       }
     };
     node.addEventListener("input", onInputHandler);
+    node.addEventListener("compositionend", onCompositionEndHandler);
     node.addEventListener("blur", onBlurHandler);
     node.addEventListener("keydown", onKeyDownHandler);
     mountHost.innerHTML = "";
