@@ -2,6 +2,7 @@ import { resolveImageSource } from "./utils.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
+import { createImagePreviewCache } from "./perf/imagePreviewCache.js";
 import { createByteBudgetLru } from "./perf/byteBudgetLru.js";
 
 const DEFAULT_IMAGE_CACHE_BYTES = 192 * 1024 * 1024;
@@ -295,8 +296,8 @@ function drawAnnotations(ctx, annotations, width, height, scale = 1, draft = {})
 
 function drawImageContent(ctx, image, item, width, height, scale, cropOverride, drafts) {
   const crop = normalizeCrop(cropOverride ?? item.crop);
-  const srcWidth = image.naturalWidth || item.naturalWidth || width;
-  const srcHeight = image.naturalHeight || item.naturalHeight || height;
+  const srcWidth = image.naturalWidth || image.width || item.naturalWidth || width;
+  const srcHeight = image.naturalHeight || image.height || item.naturalHeight || height;
   const sx = crop ? crop.x * srcWidth : 0;
   const sy = crop ? crop.y * srcHeight : 0;
   const sw = crop ? crop.w * srcWidth : srcWidth;
@@ -422,6 +423,7 @@ export function createImageRenderer({
       entry.image.src = "";
     },
   });
+  const previewCache = createImagePreviewCache();
   let resourceGeneration = 0;
   let prewarmRequestCount = 0;
   let prewarmHitCount = 0;
@@ -481,17 +483,22 @@ export function createImageRenderer({
       return { handled: true, lodSimplified: false };
     }
     const cacheKey = source || item.id;
-    let entry = imageCache.get(cacheKey);
-    if (!entry && source) {
+    const usePreview = Boolean(helpers?.previewImages && helpers?.imageEditState?.id !== item.id);
+    const transform = ctx.getTransform?.();
+    const rasterScale = transform ? Math.max(1, Math.hypot(transform.a, transform.b)) : 1;
+    let entry = usePreview
+      ? previewCache.request(source, { ...item, width: width * rasterScale, height: height * rasterScale }, helpers)
+      : imageCache.get(cacheKey);
+    if (!usePreview && !entry && source) {
       entry = createImageEntry(cacheKey, source, item.id, helpers);
-    } else if (entry && source && entry.source !== source) {
+    } else if (!usePreview && entry && source && entry.source !== source) {
       entry = createImageEntry(cacheKey, source, item.id, helpers);
     }
 
     const image = entry?.image;
     drawImageMemo(ctx, item, 0, 0, width, height, scale);
-    if (image?.complete && image.naturalWidth) {
-      helpers?.onImageNaturalSize?.(item.id, image.naturalWidth, image.naturalHeight);
+    if ((entry?.ready && image) || (image?.complete && image.naturalWidth)) {
+      helpers?.onImageNaturalSize?.(item.id, entry?.naturalWidth || image.naturalWidth, entry?.naturalHeight || image.naturalHeight);
       const cropPreview = helpers?.imageEditState?.id === item.id && helpers?.imageEditState?.cropPreview
         ? helpers.imageEditState.cropPreview
         : null;
@@ -526,16 +533,21 @@ export function createImageRenderer({
         .map((item) => resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess: true }) || item.id)
         .filter(Boolean)
     );
+    previewCache.retainSources(activeKeys);
     Array.from(imageCache.keys()).forEach((key) => {
       if (!activeKeys.has(key)) {
         imageCache.delete(key);
       }
     });
   };
-  renderer.prewarmResource = (item, { allowLocalFileAccess = false } = {}) => {
+  renderer.prewarmResource = (item, { allowLocalFileAccess = false, preview = false, displayScale = 1 } = {}) => {
     if (item?.type !== "image" || item?.exportFallbackPlaceholder) return false;
     const source = resolveImageSource(item.dataUrl, item.sourcePath, { allowLocalFileAccess });
     if (!source) return false;
+    if (preview) {
+      previewCache.request(source, { ...item, width: item.width * displayScale, height: item.height * displayScale });
+      return true;
+    }
     const cacheKey = source || item.id;
     prewarmRequestCount += 1;
     let entry = imageCache.get(cacheKey);
@@ -550,12 +562,18 @@ export function createImageRenderer({
     }
     return true;
   };
-  renderer.disposeResources = () => imageCache.clear();
+  renderer.disposeResources = () => { imageCache.clear(); previewCache.clear(); };
   renderer.getResourceStats = () => Object.freeze({
     ...imageCache.getStats(),
+    byteSize: imageCache.byteSize + previewCache.getStats().byteSize,
+    preview: previewCache.getStats(),
     prewarmRequestCount,
     prewarmHitCount,
   });
-  renderer.trimResources = (maxBytes) => imageCache.trimToBytes(maxBytes);
+  renderer.trimResources = (maxBytes) => {
+    const previewBytes = previewCache.getStats().byteSize;
+    const released = imageCache.trimToBytes(Math.max(0, maxBytes - previewBytes));
+    return released + previewCache.trimToBytes(Math.max(0, maxBytes - imageCache.byteSize));
+  };
   return renderer;
 }

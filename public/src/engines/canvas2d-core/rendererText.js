@@ -1030,6 +1030,19 @@ export function drawRichTextInBox(ctx, {
 } = {}) {
   const baseFontSize = Math.max(10, Number(fontSize || 18));
   const scaleValue = Math.max(0.1, Number(scale) || 1);
+  // Lay out once in scene coordinates. Camera zoom must not remeasure every glyph.
+  if (scaleValue !== 1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scaleValue, scaleValue);
+    try {
+      return drawRichTextInBox(ctx, {
+        x: 0, y: 0, width: width / scaleValue, height: height / scaleValue,
+        html, text, color, fontSize, scale: 1, lineHeightRatio, fontWeight,
+        boldWeight, fontFamily, precomputedRuns,
+      });
+    } finally { ctx.restore(); }
+  }
   const plain = String(text || "");
   const runs = precomputedRuns || getCachedRichTextRuns(html);
   if (!runs || !runs.length) {

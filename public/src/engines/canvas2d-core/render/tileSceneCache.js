@@ -281,6 +281,7 @@ export function createTileSceneCache({
     sceneChanged = false,
     dirtyItemIds = [],
     maxColdTiles = Infinity,
+    maxColdTileMs = Infinity,
     viewportMarginPx = null,
     preloadMarginPx = null,
     overscanMarginPx = null,
@@ -303,6 +304,7 @@ export function createTileSceneCache({
         cacheMaxBytes: cache.getStats().maxBytes,
       };
     }
+    const startedAt = performance.now();
     const scale = Math.max(0.1, Number(view?.scale || 1) || 1);
     const rasterScale = resolveTileScaleLevel(scale, { exact: preferExactScale });
     const sceneTileSize = resolveTileSceneSize(rasterScale, tileSize);
@@ -430,7 +432,7 @@ export function createTileSceneCache({
         reusedVisibleTiles += 1;
       } else {
         cacheMisses += 1;
-        if (tier === "overscan" && coldRenderedTiles >= coldTileBudget) {
+        if (tier !== "primary" && (coldRenderedTiles >= coldTileBudget || performance.now() - startedAt >= maxColdTileMs)) {
           deferredColdTiles += 1;
           continue;
         }

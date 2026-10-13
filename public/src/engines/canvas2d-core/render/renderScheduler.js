@@ -37,6 +37,7 @@ export function createRenderScheduler({
   renderFrame,
   canRunLane = () => true,
   onFrameComplete = null,
+  now = () => performance.now(),
 } = {}) {
   const dirtyManagers = new Map(LANE_ORDER.map((lane) => [lane, createDirtyRegionManager()]));
   const layerState = createLayerState();
@@ -65,6 +66,7 @@ export function createRenderScheduler({
     if (!lane) {
       return null;
     }
+    const startedAt = now();
     frameRevision += 1;
     const dirtyManager = dirtyManagers.get(lane);
     const dirtyState = dirtyManager.consume();
@@ -87,7 +89,7 @@ export function createRenderScheduler({
           lane,
         })
       : null;
-    onFrameComplete?.({ lane, dirtyState, layerState: nextLayerState, frameId: frameRevision, timestamp, result });
+    onFrameComplete?.({ lane, dirtyState, layerState: nextLayerState, frameId: frameRevision, timestamp, result, totalFrameDurationMs: Math.max(0, now() - startedAt) });
     requestNextFrame();
     return result;
   }

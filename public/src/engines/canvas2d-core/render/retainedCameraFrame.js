@@ -82,6 +82,7 @@ export function createRetainedCameraFrame({
 } = {}) {
   const margin = Math.max(0, Number(marginPx || 0) || 0);
   let readyFrame = null;
+  let paused = false;
   let pendingKey = "";
   let cancelPending = null;
   let generation = 0;
@@ -119,7 +120,7 @@ export function createRetainedCameraFrame({
   }
 
   function prepareNow(descriptor = {}, targetGeneration = generation) {
-    if (targetGeneration !== generation) {
+    if (paused || targetGeneration !== generation) {
       return false;
     }
     const width = Math.max(1, Number(descriptor.width || 0) || 1);
@@ -127,9 +128,10 @@ export function createRetainedCameraFrame({
     const dpr = Math.max(0.1, Number(descriptor.dpr || 1) || 1);
     const extendedWidth = width + margin * 2;
     const extendedHeight = height + margin * 2;
+    const rasterDpr = Math.min(dpr, Math.sqrt(8_388_608 / (extendedWidth * extendedHeight)));
     const surface = surfaceFactory(
-      Math.max(1, Math.round(extendedWidth * dpr)),
-      Math.max(1, Math.round(extendedHeight * dpr))
+      Math.max(1, Math.floor(extendedWidth * rasterDpr)),
+      Math.max(1, Math.floor(extendedHeight * rasterDpr))
     );
     const context = surface?.getContext?.("2d") || null;
     if (!surface || !context || typeof descriptor.draw !== "function") {
@@ -145,7 +147,7 @@ export function createRetainedCameraFrame({
       offsetX: view.offsetX + margin,
       offsetY: view.offsetY + margin,
     });
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.setTransform(rasterDpr, 0, 0, rasterDpr, 0, 0);
     context.clearRect(0, 0, extendedWidth, extendedHeight);
     descriptor.draw({
       ctx: context,
@@ -177,7 +179,7 @@ export function createRetainedCameraFrame({
 
   function schedulePrepare(descriptor = {}) {
     const key = String(descriptor.key || "");
-    if (!key || (readyFrame?.key === key && viewsMatch(readyFrame.view, descriptor.view)) || pendingKey === key) {
+    if (paused || !key || (readyFrame?.key === key && viewsMatch(readyFrame.view, descriptor.view)) || pendingKey === key) {
       return false;
     }
     cancelScheduledPrepare();
@@ -185,7 +187,7 @@ export function createRetainedCameraFrame({
     const targetGeneration = generation;
     pendingKey = key;
     cancelPending = scheduleTask(() => {
-      if (targetGeneration !== generation) return;
+      if (paused || targetGeneration !== generation) return;
       cancelPending = null;
       pendingKey = "";
       prepareNow(descriptor, targetGeneration);
@@ -204,7 +206,7 @@ export function createRetainedCameraFrame({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    ctx.imageSmoothingQuality = "low";
     ctx.translate(transform.translateX, transform.translateY);
     ctx.scale(transform.ratio, transform.ratio);
     ctx.drawImage(
@@ -233,6 +235,7 @@ export function createRetainedCameraFrame({
   function getStats() {
     return Object.freeze({
       ready: Boolean(readyFrame),
+      paused,
       pending: Boolean(pendingKey),
       pendingKey,
       key: readyFrame?.key || "",
@@ -246,5 +249,15 @@ export function createRetainedCameraFrame({
     });
   }
 
-  return Object.freeze({ schedulePrepare, prepareNow, present, getReadiness, clear, getStats });
+  return Object.freeze({ schedulePrepare, prepareNow, present, getReadiness, clear, getStats,
+    setPaused(value) {
+      const next = Boolean(value);
+      if (paused === next) return;
+      paused = next;
+      if (paused) {
+        generation += 1;
+        cancelScheduledPrepare();
+      }
+    },
+  });
 }

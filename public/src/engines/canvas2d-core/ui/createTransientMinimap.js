@@ -285,7 +285,7 @@ export function createTransientMinimap({
     if (!pinned && !suppressGesture && collapsed) {
       collapsed = false;
       applyCollapsedState();
-      update();
+      schedulePlacement();
     }
     scheduleHide();
   }
@@ -618,14 +618,14 @@ export function createTransientMinimap({
       if (!mounted) {
         return;
       }
-      update(true);
+      lastSceneRevision = -1;
+      schedulePlacement();
     },
     refreshViewport() {
       if (!mounted || collapsed || occluded || document.hidden) {
         return;
       }
-      renderSnapshotIfNeeded(false);
-      renderViewportFrame();
+      schedulePlacement();
     },
     resize() {
       if (!mounted) {

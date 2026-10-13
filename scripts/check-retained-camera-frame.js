@@ -135,6 +135,20 @@ async function main() {
   assert.strictEqual(previousSurface.width, 0, "replacement kept the old backing store allocated");
   runtime.clear();
   assert.strictEqual(runtime.getStats().byteSize, 0);
+  runtime.schedulePrepare({ ...descriptor, key: "before-gesture" });
+  const interrupted = queued.shift();
+  runtime.setPaused(true);
+  assert.equal(runtime.schedulePrepare(descriptor), false);
+  assert.equal(runtime.prepareNow(descriptor), false, "explicit prepare escaped the interaction pause");
+  runtime.setPaused(false);
+  runtime.schedulePrepare({ ...descriptor, key: "after-gesture" });
+  interrupted();
+  assert.equal(runtime.getStats().pendingKey, "after-gesture", "stale callback consumed recovery work");
+  queued.shift()();
+  assert.equal(runtime.getStats().key, "after-gesture");
+  runtime.prepareNow({ ...descriptor, width: 4000, height: 2400, dpr: 2 });
+  assert(runtime.getStats().byteSize <= 32 * 1024 * 1024, "retained bitmap exceeded its pixel budget");
+  runtime.clear();
   console.log("[check-retained-camera-frame] ok");
 }
 

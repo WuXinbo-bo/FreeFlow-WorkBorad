@@ -4421,6 +4421,10 @@ let tablePointerSelectionState = {
     }
     cancelDeferredStoreEmit = null;
     deferredStoreEmitHandle = 0;
+    if (canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical) {
+      deferredStoreEmitPending = true;
+      return;
+    }
     store.emit();
   }
 
@@ -4510,6 +4514,7 @@ let tablePointerSelectionState = {
         height: shouldRepairFrame ? nextHeight : entry.height,
       };
     });
+    store.touchBoard?.({ itemsChanged: true, itemIds: [id] });
     markSceneGraphDirty({ hitTest: shouldRepairFrame, itemIds: [id] });
     scheduleRender({
       reason: "image-natural-size-sync",
@@ -4524,6 +4529,8 @@ let tablePointerSelectionState = {
       sceneChange: shouldRepairFrame,
       fullOverlayRescan: false,
       reason: "image-natural-size-sync",
+      boardChange: true,
+      itemIds: [id],
     });
     return true;
   }
@@ -5266,6 +5273,8 @@ let tablePointerSelectionState = {
             canvasPerformanceRuntime.requestResourcePrewarm(
               `image:${itemId}`,
               () => imageRenderer.prewarmResource?.(item, {
+                preview: true,
+                displayScale: frameView.scale,
                 allowLocalFileAccess: getAllowLocalFileAccess(),
               }),
               { priority }
@@ -5304,7 +5313,6 @@ let tablePointerSelectionState = {
     });
     const presentation = scenePresentationCoordinator.getSnapshot();
     const previousStats = refs.canvas?.__ffRenderStats || null;
-    canvasPerformanceRuntime.recordFrame(previousStats);
     const performanceWindow = canvasPerformanceRuntime.getPerformanceSnapshot();
     const presentationPressure = performanceWindow.pressure;
     const viewportInteractionActive = isViewportInteractionActive();
@@ -5758,7 +5766,11 @@ let tablePointerSelectionState = {
           snapshot.viewportIntentActive
         );
       },
-      onFrameComplete: ({ lane }) => {
+      onFrameComplete: ({ lane, result, totalFrameDurationMs }) => {
+        if (result) {
+          result.totalFrameDurationMs = totalFrameDurationMs;
+          canvasPerformanceRuntime.recordFrame({ ...result, frameDurationMs: totalFrameDurationMs });
+        }
         if (lane !== CANVAS_PERFORMANCE_LANES.RECOVERY || !pendingPerformanceRecovery) {
           return;
         }
@@ -5806,6 +5818,7 @@ let tablePointerSelectionState = {
       interactionRecoveryTimer = 0;
     }
     pendingPerformanceRecovery = null;
+    renderer.setInteractionActive(true);
     canvasPerformanceRuntime.beginInteraction(reason);
     canvasPerformanceRuntime.setViewportIntent(
       reason === "wheel-zoom" || reason === "wheel-pan" || reason === "pointer-pan"
@@ -5857,12 +5870,17 @@ let tablePointerSelectionState = {
       return false;
     }
     canvasPerformanceRuntime.setViewportIntent(false);
+    renderer.setInteractionActive(false);
     pendingPerformanceRecovery = { performanceSessionId, presentationSessionId };
     store.setPersistencePaused?.(false);
     presentationSnapshotController.setPaused(document.hidden);
     hydrationScheduler.setPaused(Boolean(document.hidden));
-    if (emit) {
-      store.emit();
+    if (emit || deferredStoreEmitPending) {
+      if (canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical) {
+        deferredStoreEmitPending = true;
+      } else {
+        flushDeferredStoreEmit();
+      }
     }
     const recoveryFrameId = scheduleRender({
       lane: CANVAS_PERFORMANCE_LANES.RECOVERY,
@@ -7718,6 +7736,7 @@ let tablePointerSelectionState = {
 
   function buildBoardFilePayload(targetPath, board = state.board) {
     const payload = structuredImportRuntime.serializeBoard(board, {
+      preserveTextGeometry: true,
       meta: {
         boardFilePath: targetPath,
       },
@@ -7810,6 +7829,7 @@ let tablePointerSelectionState = {
       return false;
     }
     if (boardLoadInFlight) return false;
+    if (autosave && canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical) return false;
     syncActiveDraftEditingState({ markDirty: true });
     while (boardSaveInFlight) await boardSaveInFlight;
     if (boardFileOperationActive && !fileOperation) return false;
@@ -7861,6 +7881,7 @@ let tablePointerSelectionState = {
         setStatus("请另存到新文件，以保留磁盘的新版本", "warning");
         return false;
       }
+      if (autosave && canvasPerformanceRuntime.getLifecycleSnapshot().interactionCritical) return false;
       const copiedBoardId = saveAs && targetPath !== state.boardFilePath ? globalThis.crypto.randomUUID() : "";
       const savedBoard = state.board;
       const savedRevision = boardDirtyRevision;
@@ -19903,6 +19924,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function clearTransientState() {
+    cancelPointerMove();
     state.pointer = null;
     state.selectionRect = null;
     state.draftElement = null;
@@ -22253,7 +22275,31 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
   }
 
+  let pendingPointerMove = null;
+  let pointerMoveFrame = 0;
+  function flushPointerMove() {
+    if (pointerMoveFrame) cancelAnimationFrame(pointerMoveFrame);
+    pointerMoveFrame = 0;
+    const event = pendingPointerMove;
+    pendingPointerMove = null;
+    if (event && state.pointer) processPointerMove(event);
+  }
+  function cancelPointerMove() {
+    if (pointerMoveFrame) cancelAnimationFrame(pointerMoveFrame);
+    pointerMoveFrame = 0;
+    pendingPointerMove = null;
+  }
+
   function onPointerMove(event) {
+    if (["move-selection", "resize-selection", "resize-multi-selection", "marquee"].includes(state.pointer?.type)) {
+      pendingPointerMove = event;
+      if (!pointerMoveFrame) pointerMoveFrame = requestAnimationFrame(flushPointerMove);
+      return;
+    }
+    processPointerMove(event);
+  }
+
+  function processPointerMove(event) {
     const scenePoint = toScenePoint(event.clientX, event.clientY);
     updateLastPointerPoint(scenePoint);
     if (!isInteractiveMode()) {
@@ -22664,6 +22710,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onPointerUp(event) {
+    if (pendingPointerMove && event.pointerId === pendingPointerMove.pointerId) pendingPointerMove = event;
+    flushPointerMove();
     const pointer = state.pointer;
     if (!pointer) {
       return;
@@ -22914,6 +22962,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onPointerCancel(event) {
+    cancelPointerMove();
     if (!state.pointer) {
       return;
     }
@@ -27567,7 +27616,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       presentationQualityDeadline = 0;
     }
     pendingPerformanceRecovery = null;
+    cancelPointerMove();
     canvasPerformanceRuntime.reset();
+    renderer.setInteractionActive(false);
     canvasPerformanceRuntime.setBackgroundSuspended(true);
     renderer.releaseCachedSurfaces();
     scenePresentationCoordinator.reset();
