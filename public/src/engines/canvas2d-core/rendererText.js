@@ -14,10 +14,11 @@ export const TEXT_FONT_FAMILY = '"Segoe UI", "PingFang SC", sans-serif';
 export const TEXT_FONT_WEIGHT = "400";
 export const TEXT_BOLD_WEIGHT = "700";
 const DEFAULT_HIGHLIGHT = "#fff4a3";
-const RICH_RUN_CACHE_LIMIT = 256;
-const RICH_LAYOUT_CACHE_LIMIT = 320;
+const RICH_RUN_CACHE_LIMIT = 512;
+const RICH_LAYOUT_CACHE_LIMIT = 512;
 const richRunCache = new Map();
 const richLayoutCache = new Map();
+const richDisplayHtmlCache = new Map();
 let measureCanvasContext = null;
 const LINK_TOKEN_DEFAULT_COLOR = "#2563eb";
 const LINK_TOKEN_ACTIVE_COLOR = "#1d4ed8";
@@ -567,13 +568,20 @@ function materializeLinkTokensIntoHtml(text = "", html = "", linkTokens = []) {
 }
 
 export function resolveRichTextDisplayHtml({ text = "", html = "", linkTokens = [] } = {}) {
-  const rawHtml = sanitizeHtml(String(html || "")).trim();
+  const sourceHtml = String(html || "");
+  if (!linkTokens?.length && richDisplayHtmlCache.has(sourceHtml)) {
+    const cached = richDisplayHtmlCache.get(sourceHtml);
+    putLruCache(richDisplayHtmlCache, sourceHtml, cached, RICH_RUN_CACHE_LIMIT);
+    return cached;
+  }
+  const rawHtml = sanitizeHtml(sourceHtml).trim();
   const linkStyledHtml = buildLinkStyledHtmlFromTokens(text, linkTokens);
   if (!rawHtml) {
     return linkStyledHtml;
   }
   const mathRenderedHtml = renderRichTextMathMarkup(rawHtml);
   if (!Array.isArray(linkTokens) || !linkTokens.length) {
+    putLruCache(richDisplayHtmlCache, sourceHtml, mathRenderedHtml, RICH_RUN_CACHE_LIMIT);
     return mathRenderedHtml;
   }
   if (hasAnchorMarkup(mathRenderedHtml)) {
