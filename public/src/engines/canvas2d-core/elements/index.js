@@ -412,13 +412,15 @@ function normalizeUnknownElementPlaceholder(element = {}) {
   });
 }
 
-export function normalizeBoard(input = {}) {
+export function normalizeBoard(input = {}, { preserveTextGeometry = false } = {}) {
   const board = input && typeof input === "object" ? input : {};
   return {
     ...(typeof board.boardId === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(board.boardId) ? { boardId: board.boardId } : {}),
     items: Array.isArray(board.items)
       ? board.items
-          .map((item) => normalizeElement(item))
+          .map((item) => preserveTextGeometry && item?.type === "text"
+            ? normalizeTextElement(item, { skipMetrics: true })
+            : normalizeElement(item))
       : [],
     selectedIds: Array.isArray(board.selectedIds)
       ? board.selectedIds.map((id) => String(id || "").trim()).filter(Boolean)

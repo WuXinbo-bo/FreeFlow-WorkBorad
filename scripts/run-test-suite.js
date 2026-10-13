@@ -42,6 +42,8 @@ const CHECKS = [
   "scripts/check-tile-cache-recovery.js",
   "scripts/check-canvas-render-scheduler.js",
   "scripts/check-canvas-resource-prewarm-runtime.js",
+  "scripts/check-image-preview-cache.js",
+  "scripts/structured-import/validate-host-persistence-adapter.cjs",
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
   "scripts/check-canvas-integrity-boundaries.js",
