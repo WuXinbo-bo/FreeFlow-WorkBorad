@@ -20,6 +20,7 @@ export const TEXT_HEADING_LINE_HEIGHT_RATIOS = Object.freeze({
 
 export const TEXT_BLOCK_SPACING_EM = Object.freeze({
   paragraph: 0.6,
+  heading: 0.45,
   listItem: 0.2,
   listBlock: 0.5,
   block: 0.6,
@@ -44,6 +45,10 @@ export function getHeadingFontSizeByLevel(level = 1, fallback = 20) {
   return getHeadingFontSize(`h${safeLevel}`, fallback);
 }
 
+export function getHeadingFontWeight(tagName = "") {
+  return /^h[12]$/.test(normalizeTagName(tagName)) ? "800" : "700";
+}
+
 export function getLineHeightRatioForTag(tagName = "") {
   const key = normalizeTagName(tagName);
   if (key in TEXT_HEADING_LINE_HEIGHT_RATIOS) {
@@ -54,6 +59,7 @@ export function getLineHeightRatioForTag(tagName = "") {
 
 export function getBlockSpacingEmForTag(tagName = "") {
   const key = normalizeTagName(tagName);
+  if (/^h[1-6]$/.test(key)) return TEXT_BLOCK_SPACING_EM.heading;
   if (key === "li") {
     return TEXT_BLOCK_SPACING_EM.listItem;
   }

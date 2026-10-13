@@ -8,7 +8,11 @@ let lastChosenOutputDir = "";
 
 function ConversionSession({ request, engine }) {
   const [sources, setSources] = useState(request.sources);
-  const choices = getFileCapabilities(sources[0]?.fileName || "").conversions;
+  const choices = sources.length
+    ? getFileCapabilities(sources[0]?.fileName || "").conversions.filter((choice) =>
+        sources.every((source) => getFileCapabilities(source.fileName || "").conversions.includes(choice))
+      )
+    : [];
   const [operation, setOperation] = useState(choices[0] || "");
   const [options, setOptions] = useState({ format: choices[0] === "sheet-format" ? "csv" : "png", pages: "", dpi: 144, quality: 85, width: "", pageSize: "a4", landscape: false, sheet: "" });
   const [outputDir, setOutputDir] = useState(lastChosenOutputDir);
@@ -17,12 +21,14 @@ function ConversionSession({ request, engine }) {
   const [failed, setFailed] = useState(false);
   const [files, setFiles] = useState([]);
   const [inserted, setInserted] = useState(false);
+  const [inserting, setInserting] = useState(false);
   const [serviceUnavailable, setServiceUnavailable] = useState(false);
   const [office, setOffice] = useState(null);
   const [checkRevision, setCheckRevision] = useState(0);
   const taskRef = useRef(""); const officeTaskRef = useRef(""); const mounted = useRef(true); const busyRef = useRef(false); const pollRef = useRef(null);
   const rootRef = useRef(null);
   const shell = globalThis.desktopShell;
+  const choicesKey = choices.join("|");
   function resetResults() { setFiles([]); setInserted(false); setMessage(""); setFailed(false); }
   function setOption(key, value) { setOptions((current) => ({ ...current, [key]: value })); resetResults(); }
   function taskError(error) {
@@ -61,6 +67,13 @@ function ConversionSession({ request, engine }) {
     document.addEventListener("keydown", key, true);
     return () => { mounted.current = false; clearInterval(pollRef.current); document.removeEventListener("keydown", key, true); void cancelTask(); void cancelTask(officeTaskRef.current); if (previous?.isConnected) previous.focus?.({ preventScroll: true }); };
   }, []);
+  useEffect(() => {
+    if (choices.includes(operation)) return;
+    const nextOperation = choices[0] || "";
+    setOperation(nextOperation);
+    setOptions((current) => ({ ...current, format: nextOperation === "sheet-format" ? "csv" : "png" }));
+    resetResults();
+  }, [choicesKey]);
   useEffect(() => {
     if (operation !== "office-pdf" || !shell?.runFileWorkstation || serviceUnavailable) return undefined;
     let active = true;
@@ -110,7 +123,12 @@ function ConversionSession({ request, engine }) {
       if (mounted.current && picked?.files?.length) { setSources((current) => [...current, ...picked.files.filter((file) => getFileCapabilities(file.fileName).conversions.includes(operation) && !current.some((source) => source.filePath === file.filePath))].slice(0, 24)); resetResults(); }
     } catch (error) { if (mounted.current) { setFailed(true); setMessage(error.message); } }
   }
-  function changeOperation(value) { setOperation(value); setOptions((current) => ({ ...current, format: value === "sheet-format" ? "csv" : "png" })); resetResults(); }
+  function changeOperation(value) {
+    if (!choices.includes(value)) return;
+    setOperation(value);
+    setOptions((current) => ({ ...current, format: value === "sheet-format" ? "csv" : "png" }));
+    resetResults();
+  }
   const canRun = operation && !serviceUnavailable && shell?.runFileWorkstation && (operation !== "office-pdf" || office?.office);
   return createPortal(<div className="file-workstation-backdrop" data-shape-include="true" onPointerDown={(event) => event.stopPropagation()}>
     <section className="file-conversion-dialog" role="dialog" aria-modal="true" aria-label="文件转换" tabIndex={-1} ref={rootRef} onKeyDown={(event) => event.stopPropagation()}>
@@ -118,7 +136,7 @@ function ConversionSession({ request, engine }) {
       <div className="file-conversion-body">
         <ol className="file-conversion-sources">{sources.map((source, index) => <li key={`${source.filePath}-${index}`}><span className="file-conversion-file-type" aria-hidden="true">{String(source.fileName || "").split(".").pop().toUpperCase()}</span><span title={source.filePath}>{source.fileName}</span>{sources.length > 1 ? <>{operation === "images-pdf" ? <button disabled={busy || index === 0} aria-label={`上移 ${source.fileName}`} onClick={() => { setSources((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; }); resetResults(); }}>↑</button> : null}<button disabled={busy} aria-label={`移除 ${source.fileName}`} onClick={() => { setSources((current) => current.filter((_, i) => i !== index)); resetResults(); }}>×</button></> : null}</li>)}</ol>
         {["images-pdf", "image-format"].includes(operation) ? <button className="file-conversion-add" disabled={busy || sources.length >= 24} onClick={() => void addSources()}>添加图片</button> : null}
-        <div className="file-conversion-target"><span>转换为</span>{choices.length > 1 ? <select aria-label="转换为" value={operation} disabled={busy} onChange={(event) => changeOperation(event.target.value)}>{choices.map((key) => <option key={key} value={key}>{LABELS[key]}</option>)}</select> : <strong>{LABELS[operation] || "此文件暂无内置转换"}</strong>}</div>
+        <div className="file-conversion-target"><span>转换为</span>{choices.length > 1 ? <select aria-label="转换为" value={operation} disabled={busy} onChange={(event) => changeOperation(event.target.value)}>{choices.map((key) => <option key={key} value={key}>{LABELS[key]}</option>)}</select> : <strong>{LABELS[operation] || "此文件暂无共同转换方式"}</strong>}</div>
         <div className="file-conversion-options">
           {operation === "pdf-images" ? <label>页码范围<input aria-label="页码范围" placeholder="全部（最多 50 页），例：1-3,5" value={options.pages} disabled={busy} onChange={(event) => setOption("pages", event.target.value)} /></label> : null}
           {["pdf-images", "image-format", "sheet-format"].includes(operation) ? <label>格式<select aria-label="输出格式" value={options.format} disabled={busy} onChange={(event) => setOption("format", event.target.value)}>{(operation === "sheet-format" ? ["csv", "xlsx"] : operation === "image-format" ? ["png", "jpg", "webp"] : ["png", "jpg"]).map((format) => <option key={format} value={format}>{FORMATS[format]}</option>)}</select></label> : null}
@@ -140,7 +158,7 @@ function ConversionSession({ request, engine }) {
         {message || serviceUnavailable ? <p role={failed ? "alert" : "status"} className={`file-conversion-status${failed ? " is-error" : ""}`}>{message || office?.reason}</p> : null}
         {files.length ? <div className="file-conversion-results"><strong>转换结果</strong>{files.map((file) => <button key={file.filePath} onClick={() => void shell.revealPath(file.filePath).catch((error) => { setFailed(true); setMessage(error.message); })}>{file.fileName} ↗</button>)}</div> : null}
       </div>
-      <footer><span>本机处理 · 保留原文件</span><div>{busy ? <button onClick={() => { setMessage("正在取消并清理…"); void cancelTask(); }}>取消任务</button> : files.length ? <><button onClick={() => void shell.revealPath(files[0].filePath).catch((error) => { setFailed(true); setMessage(error.message); })}>打开文件夹</button><button className="is-primary" disabled={inserted} onClick={() => { if (engine.insertWorkstationFiles(request.id, files)) { setInserted(true); setMessage("已添加到画布，可撤销"); } }}>{inserted ? "已添加到画布" : "添加到画布"}</button></> : <button className="is-primary" disabled={!canRun} onClick={() => void run()}>{failed ? "重试转换" : "开始转换"}</button>}</div></footer>
+      <footer><span>本机处理 · 保留原文件</span><div>{busy ? <button onClick={() => { setMessage("正在取消并清理…"); void cancelTask(); }}>取消任务</button> : files.length ? <><button onClick={() => void shell.revealPath(files[0].filePath).catch((error) => { setFailed(true); setMessage(error.message); })}>打开文件夹</button><button className="is-primary" disabled={inserted || inserting} onClick={() => { setInserting(true); try { if (engine.insertWorkstationFiles(request.id, files)) { setInserted(true); setMessage("已添加到画布，可撤销"); } } finally { setInserting(false); } }}>{inserted ? "已添加到画布" : inserting ? "正在添加…" : "添加到画布"}</button></> : <button className="is-primary" disabled={!canRun} onClick={() => void run()}>{failed ? "重试转换" : "开始转换"}</button>}</div></footer>
     </section>
   </div>, document.getElementById("global-overlay-layer") || document.body);
 }

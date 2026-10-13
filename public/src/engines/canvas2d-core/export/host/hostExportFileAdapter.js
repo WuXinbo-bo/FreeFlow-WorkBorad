@@ -57,6 +57,7 @@ export function createHostExportFileAdapter({
     typeof useLocalFileSystem === "function" ? useLocalFileSystem : () => Boolean(useLocalFileSystem);
 
   async function saveBlobAsFile(blob, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const extension = String(options.extension || "").trim().replace(/^\./, "");
     const baseName = normalizeExportName(options.defaultName || "freeflow-export", "freeflow-export");
     const filename = extension ? `${baseName}.${extension}` : baseName;
@@ -70,10 +71,11 @@ export function createHostExportFileAdapter({
         buttonLabel: options.buttonLabel || "保存文件",
         filters: Array.isArray(options.filters) ? options.filters : undefined,
       });
-      if (!result || result.canceled || !result.filePath) {
+      if (options.signal?.aborted || !result || result.canceled || !result.filePath) {
         return { ok: false, canceled: true };
       }
       const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (options.signal?.aborted) return { ok: false, canceled: true };
       const writeResult = await globalThis.desktopShell.writeFile(result.filePath, bytes);
       if (!writeResult?.ok) {
         return { ok: false, error: writeResult?.error || "写入文件失败" };
@@ -85,6 +87,7 @@ export function createHostExportFileAdapter({
         message: buildSavedMessage(result.filePath, "文件已导出"),
       };
     }
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     return triggerBlobDownload(blob, filename);
   }
 
@@ -98,7 +101,21 @@ export function createHostExportFileAdapter({
     return saveBlobAsFile(new Blob([payload], { type: options.mimeType || "application/octet-stream" }), options);
   }
 
+  async function saveGeneratedDocx(bytes, name, options) {
+    const result = await saveBytesAsFile(bytes, {
+      ...options,
+      defaultName: name,
+      extension: "docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      title: options.title || "导出 Word",
+      buttonLabel: options.buttonLabel || "保存 Word",
+      filters: [{ name: "Word 文档", extensions: ["docx"] }, { name: "所有文件", extensions: ["*"] }],
+    });
+    return result?.ok ? { ...result, message: buildSavedMessage(result.path, "Word 已导出") } : result;
+  }
+
   async function saveDataUrlAsImage(dataUrl, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-export", "freeflow-export");
     let raw = sanitizePngDataUrl(dataUrl);
     if (!raw && typeof options?.onFallbackDataUrl === "function") {
@@ -108,6 +125,7 @@ export function createHostExportFileAdapter({
         raw = "";
       }
     }
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     if (!raw) {
       return { ok: false, error: "图片生成失败：无效 PNG 数据" };
     }
@@ -116,7 +134,9 @@ export function createHostExportFileAdapter({
         dataUrl: raw,
         name,
         mime: "image/png",
+        isCurrent: () => !options.signal?.aborted,
       });
+      if (options.signal?.aborted || result?.canceled) return { ok: false, canceled: true };
       if (result?.ok) {
         const message = "图片已保存至当前画布目录下的 importImage 文件夹";
         setSaveToast?.(message);
@@ -125,22 +145,25 @@ export function createHostExportFileAdapter({
       return { ok: false, error: result?.error || "图片保存失败" };
     }
     const blob = await (await fetch(raw)).blob();
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const filename = `${name}.png`;
     if (
       typeof globalThis?.desktopShell?.pickImageSavePath === "function" &&
       typeof globalThis?.desktopShell?.writeFile === "function"
     ) {
       const picked = await globalThis.desktopShell.pickImageSavePath({ defaultName: filename });
-      if (!picked || picked.canceled || !picked.filePath) {
+      if (options.signal?.aborted || !picked || picked.canceled || !picked.filePath) {
         return { ok: false, canceled: true };
       }
       const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (options.signal?.aborted) return { ok: false, canceled: true };
       const writeResult = await globalThis.desktopShell.writeFile(picked.filePath, bytes);
       if (!writeResult?.ok) {
         return { ok: false, error: writeResult?.error || "写入文件失败" };
       }
       return { ok: true, path: picked.filePath, message: buildSavedMessage(picked.filePath, "图片已导出") };
     }
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -153,6 +176,7 @@ export function createHostExportFileAdapter({
   }
 
   async function saveTextAsFile(text, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-text", "freeflow-text");
     const filename = `${name}.txt`;
     if (
@@ -165,10 +189,11 @@ export function createHostExportFileAdapter({
         buttonLabel: options.buttonLabel || "保存文本",
         filters: Array.isArray(options.filters) ? options.filters : undefined,
       });
-      if (!result || result.canceled || !result.filePath) {
+      if (options.signal?.aborted || !result || result.canceled || !result.filePath) {
         return { ok: false, canceled: true };
       }
       const encoder = new TextEncoder();
+      if (options.signal?.aborted) return { ok: false, canceled: true };
       const writeResult = await globalThis.desktopShell.writeFile(result.filePath, encoder.encode(String(text || "")));
       if (!writeResult?.ok) {
         return { ok: false, error: writeResult?.error || "写入文件失败" };
@@ -176,6 +201,7 @@ export function createHostExportFileAdapter({
       return { ok: true, path: result.filePath, message: buildSavedMessage(result.filePath, "文本已导出") };
     }
     const blob = new Blob([String(text || "")], { type: "text/plain" });
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -188,6 +214,7 @@ export function createHostExportFileAdapter({
   }
 
   async function saveHtmlAsFile(html, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-word", "freeflow-word");
     const filename = `${name}.html`;
     const payload = String(html || "");
@@ -201,10 +228,11 @@ export function createHostExportFileAdapter({
         buttonLabel: options.buttonLabel || "保存 HTML",
         filters: Array.isArray(options.filters) ? options.filters : undefined,
       });
-      if (!result || result.canceled || !result.filePath) {
+      if (options.signal?.aborted || !result || result.canceled || !result.filePath) {
         return { ok: false, canceled: true };
       }
       const encoder = new TextEncoder();
+      if (options.signal?.aborted) return { ok: false, canceled: true };
       const writeResult = await globalThis.desktopShell.writeFile(result.filePath, encoder.encode(payload));
       if (!writeResult?.ok) {
         return { ok: false, error: writeResult?.error || "写入文件失败" };
@@ -212,6 +240,7 @@ export function createHostExportFileAdapter({
       return { ok: true, path: result.filePath, message: buildSavedMessage(result.filePath, "HTML 已导出") };
     }
     const blob = new Blob([payload], { type: "text/html;charset=utf-8" });
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -224,6 +253,7 @@ export function createHostExportFileAdapter({
   }
 
   async function saveHtmlAsWordFile(html, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-word", "freeflow-word");
     const filename = `${name}.doc`;
     const payload = String(html || "");
@@ -237,10 +267,11 @@ export function createHostExportFileAdapter({
         buttonLabel: options.buttonLabel || "保存 Word",
         filters: Array.isArray(options.filters) ? options.filters : undefined,
       });
-      if (!result || result.canceled || !result.filePath) {
+      if (options.signal?.aborted || !result || result.canceled || !result.filePath) {
         return { ok: false, canceled: true };
       }
       const encoder = new TextEncoder();
+      if (options.signal?.aborted) return { ok: false, canceled: true };
       const writeResult = await globalThis.desktopShell.writeFile(result.filePath, encoder.encode(payload));
       if (!writeResult?.ok) {
         return { ok: false, error: writeResult?.error || "写入文件失败" };
@@ -248,6 +279,7 @@ export function createHostExportFileAdapter({
       return { ok: true, path: result.filePath, message: buildSavedMessage(result.filePath, "Word 已导出") };
     }
     const blob = new Blob([payload], { type: "application/msword" });
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -260,6 +292,7 @@ export function createHostExportFileAdapter({
   }
 
   async function saveHtmlAsDocxWordFile(html, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-word", "freeflow-word");
     const filename = `${name}.docx`;
     const payload = String(html || "");
@@ -267,6 +300,7 @@ export function createHostExportFileAdapter({
       try {
         const result = await globalThis.desktopShell.exportRichTextDocx({
           html: payload,
+          returnBytes: true,
           defaultName: filename,
           title: options.title || "导出 Word",
           buttonLabel: options.buttonLabel || "保存 Word",
@@ -274,6 +308,8 @@ export function createHostExportFileAdapter({
             ? options.documentOptions
             : {},
         });
+        if (options.signal?.aborted) return { ok: false, canceled: true };
+        if (result?.ok && result.bytes) return saveGeneratedDocx(result.bytes, name, options);
         if (result?.ok) {
           return {
             ...result,
@@ -303,16 +339,20 @@ export function createHostExportFileAdapter({
   }
 
   async function saveWordAstAsDocxFile(ast, options = {}) {
+    if (options.signal?.aborted) return { ok: false, canceled: true };
     const name = normalizeExportName(options.defaultName || "freeflow-word", "freeflow-word");
     const filename = `${name}.docx`;
     if (typeof globalThis?.desktopShell?.exportWordDocx === "function") {
       try {
         const result = await globalThis.desktopShell.exportWordDocx({
           ast: ast && typeof ast === "object" ? ast : null,
+          returnBytes: true,
           defaultName: filename,
           title: options.title || "导出 Word",
           buttonLabel: options.buttonLabel || "保存 Word",
         });
+        if (options.signal?.aborted) return { ok: false, canceled: true };
+        if (result?.ok && result.bytes) return saveGeneratedDocx(result.bytes, name, options);
         if (result?.ok) {
           return {
             ...result,

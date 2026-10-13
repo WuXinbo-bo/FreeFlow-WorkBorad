@@ -98,9 +98,25 @@ export function renderBoardToCanvas(items = [], options = {}) {
     logicalHeight,
     requestedScale: exportScale,
     pixelRatio: dpr,
-    maxCanvasPixels,
-    maxCanvasSide,
+    maxCanvasPixels: maxCanvasPixels ?? (allowUnsafeSize ? 67_108_864 : undefined),
+    maxCanvasSide: maxCanvasSide ?? (allowUnsafeSize ? 16384 : undefined),
   });
+  if (!scalePlan.ok) {
+    return {
+      ok: false,
+      errorCode: scalePlan.code || "EXPORT_SIZE_LIMIT",
+      errorMessage: "导出尺寸超过安全上限，请缩小画布或降低导出倍率",
+      requestedScale: scalePlan.requestedScale,
+      scaleApplied: scalePlan.scaleApplied,
+      downgraded: scalePlan.downgraded,
+      canvasWidth: scalePlan.canvasWidth,
+      canvasHeight: scalePlan.canvasHeight,
+      totalPixels: scalePlan.totalPixels,
+      width: logicalWidth,
+      height: logicalHeight,
+      devicePixelRatio: dpr,
+    };
+  }
   const canvas = createExportCanvas(scalePlan.canvasWidth, scalePlan.canvasHeight, documentRef);
   if (!canvas) {
     return null;

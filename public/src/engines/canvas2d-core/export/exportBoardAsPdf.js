@@ -79,7 +79,11 @@ function buildExportFallbackSummary(fallbackCount = 0) {
 }
 
 export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults = {}) {
+  const signal = inputOptions.signal;
+  const canceled = () => ({ ok: false, canceled: true, code: "PDF_EXPORT_CANCELED", message: "", fileName: "", filePath: "", bytes: 0 });
+  if (signal?.aborted) return canceled();
   const { PDFDocument } = await loadVendorEsmModule("pdf-lib");
+  if (signal?.aborted) return canceled();
   const options = resolvePdfExportOptions(inputOptions, defaults);
   if (typeof renderBoard !== "function") {
     return {
@@ -97,12 +101,14 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
   }
 
   let renderResult = await renderBoard({
+    signal,
     scale: options.scale,
     backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
     backgroundGrid: options.includeGrid,
     backgroundPattern: String(inputOptions?.backgroundPattern || "").trim().toLowerCase(),
   });
 
+  if (signal?.aborted) return canceled();
   if (renderResult?.canceled) {
     return {
       ok: false,
@@ -152,6 +158,7 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
     renderResult.canvas,
     inputOptions?.onCanvasTaintedRetry || defaults?.onCanvasTaintedRetry
   );
+  if (signal?.aborted) return canceled();
   if (!pngBytes?.byteLength) {
     return {
       ok: false,
@@ -169,6 +176,7 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
 
   const pdf = await PDFDocument.create();
   const image = await pdf.embedPng(pngBytes);
+  if (signal?.aborted) return canceled();
   const pageSize = resolvePageSize(options.orientation, renderResult.width, renderResult.height);
   const page = pdf.addPage([pageSize.width, pageSize.height]);
   const imageFrame = fitImageToPage(
@@ -182,6 +190,7 @@ export async function exportBoardAsPdf(renderBoard, inputOptions = {}, defaults 
 
   const pdfBytes = await pdf.save();
   const saveResult = await savePdfBytes(pdfBytes, {
+    signal,
     fileName: options.fileName,
     preferDownload: options.preferDownload,
   });

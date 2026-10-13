@@ -122,7 +122,7 @@ async function main() {
     const level = index + 1;
     assertRegex(
       styles,
-      new RegExp(`\\.canvas-rich-editor h${level},[\\s\\S]*?\\.canvas2d-rich-item h${level} \\{[\\s\\S]*?font-size:\\s*${size}px;[\\s\\S]*?line-height:\\s*${[1.25, 1.28, 1.3, 1.32, 1.35, 1.35][index]};`),
+      new RegExp(`\\.canvas-rich-editor h${level},[\\s\\S]*?\\.canvas2d-rich-item h${level} \\{[\\s\\S]*?font-size:\\s*var\\(--ff-text-h${level}-size,\\s*${size}px\\);[\\s\\S]*?line-height:\\s*${[1.25, 1.28, 1.3, 1.32, 1.35, 1.35][index]};`),
       `live/editor heading token mismatch at h${level}`
     );
   });

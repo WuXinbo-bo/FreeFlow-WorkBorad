@@ -1,5 +1,5 @@
 function normalizeTableClipboardCellText(value = "") {
-  return String(value || "").replace(/\r?\n/g, " ").trim();
+  return String(value || "").replace(/\r\n?/g, "\n").trim();
 }
 
 function measureTableClipboardTextWidth(value = "") {
@@ -14,6 +14,31 @@ function padTableClipboardCell(value = "", width = 0) {
 
 function escapeMarkdownTableCell(value = "") {
   return String(value || "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+}
+
+function decodeBasicHtmlEntities(value = "") {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function cellToMarkdown(cell = {}) {
+  const source = String(cell?.html || "").trim();
+  if (!source) return normalizeTableClipboardCellText(cell?.plainText || "");
+  let markdown = source
+    .replace(/<span\b[^>]*\bdata-role=(?:"|')math-inline(?:"|')[^>]*>([\s\S]*?)<\/span>/gi, (_m, body) => `$${body.replace(/<[^>]+>/g, "").trim()}$`)
+    .replace(/<(div|section|article)\b[^>]*\bdata-role=(?:"|')math-block(?:"|')[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _tag, body) => `$$${body.replace(/<[^>]+>/g, "").trim()}$$`)
+    .replace(/<a\b[^>]*href=(?:"|')([^"']+)(?:"|')[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, label) => `[${label.replace(/<[^>]+>/g, "").trim()}](${href})`)
+    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, "**$2**")
+    .replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, "_$2_")
+    .replace(/<(code)\b[^>]*>([\s\S]*?)<\/\1>/gi, "`$2`")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+  return normalizeTableClipboardCellText(decodeBasicHtmlEntities(markdown));
 }
 
 function escapeCsvCell(value = "") {
@@ -70,8 +95,8 @@ export function serializeTableMatrixToPlainText(matrix = [], { hasHeader = true 
 }
 
 export function serializeTableMatrixToMarkdown(matrix = [], { hasHeader = true } = {}) {
-  const safeMatrix = mapTableMatrixToPlainTextRows(matrix).map((row) =>
-    row.map((cell) => escapeMarkdownTableCell(cell))
+  const safeMatrix = (Array.isArray(matrix) ? matrix : []).map((row) =>
+    (Array.isArray(row) ? row : []).map((cell) => escapeMarkdownTableCell(cellToMarkdown(cell)))
   );
   if (!safeMatrix.length || !safeMatrix.some((row) => row.length)) {
     return "";

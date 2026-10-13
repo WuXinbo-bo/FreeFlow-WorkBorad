@@ -132,6 +132,7 @@ let tutorialBoardPreparation = null;
 let backgroundExportWindow = null;
 let backgroundExportReady = false;
 let backgroundExportTaskSequence = 0;
+let activeBackgroundExportTaskId = "";
 const pendingBackgroundExportTasks = new Map();
 const canceledBackgroundExportTasks = new Set();
 const fileAccess = createFileAccessRegistry({ storagePath: path.join(DATA_DIR, "file-access-grants.json") });
@@ -571,6 +572,13 @@ async function buildCompositePngFromTiles(tiles = [], options = {}) {
   const width = Math.max(1, Math.round(Number(options.pixelWidth || options.width || 0) || 0) || normalized.reduce((max, tile) => Math.max(max, tile.pixelLeft + tile.pixelWidth), 0));
   const height = Math.max(1, Math.round(Number(options.pixelHeight || options.height || 0) || 0) || normalized.reduce((max, tile) => Math.max(max, tile.pixelTop + tile.pixelHeight), 0));
   const background = String(options.background || "transparent").trim().toLowerCase();
+  // Bound the final raster as well as individual tiles before Sharp allocates it.
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width > 16384 || height > 16384 || width * height > 67_108_864 || normalized.length > 1024 || normalized.reduce((bytes, tile) => bytes + tile.bytes.byteLength, 0) > 128 * 1024 * 1024) {
+    throw new Error("导出图片过大，请降低清晰度或缩小导出范围");
+  }
+  if (normalized.some((tile) => tile.pixelLeft + tile.pixelWidth > width || tile.pixelTop + tile.pixelHeight > height)) {
+    throw new Error("导出分块超出图片范围");
+  }
   const composite = sharp({
     create: {
       width,
@@ -578,15 +586,14 @@ async function buildCompositePngFromTiles(tiles = [], options = {}) {
       channels: 4,
       background: background === "transparent" ? { r: 0, g: 0, b: 0, alpha: 0 } : { r: 255, g: 255, b: 255, alpha: 1 },
     },
-    limitInputPixels: false,
-    unlimited: true,
+    limitInputPixels: 67_108_864,
   });
   const overlays = await Promise.all(
     normalized.map(async (tile) => ({
       input: Buffer.from(tile.bytes),
       left: tile.pixelLeft,
       top: tile.pixelTop,
-      limitInputPixels: false,
+      limitInputPixels: 67_108_864,
     }))
   );
   return composite
@@ -675,6 +682,7 @@ async function buildCompositePdfFromTiles(tiles = [], options = {}) {
 }
 
 async function saveBufferWithDialog(buffer, options = {}, defaultPath = "") {
+  if (options.isCanceled?.()) return { ok: false, canceled: true };
   const payload = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
   if (!payload.byteLength) {
     return { ok: false, canceled: false, error: "数据为空" };
@@ -686,11 +694,12 @@ async function saveBufferWithDialog(buffer, options = {}, defaultPath = "") {
     filters: Array.isArray(options.filters) ? options.filters : undefined,
     properties: ["showOverwriteConfirmation"],
   });
-  if (!result || result.canceled || !result.filePath) {
+  if (options.isCanceled?.() || !result || result.canceled || !result.filePath) {
     return { ok: false, canceled: true };
   }
   const resolvedPath = path.resolve(String(result.filePath || "").trim());
   await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
+  if (options.isCanceled?.()) return { ok: false, canceled: true };
   await fs.promises.writeFile(resolvedPath, payload);
   return {
     ok: true,
@@ -2270,6 +2279,8 @@ function createBackgroundExportWindow() {
     backgroundExportReady = false;
     const pendingEntries = Array.from(pendingBackgroundExportTasks.entries());
     pendingBackgroundExportTasks.clear();
+    canceledBackgroundExportTasks.clear();
+    activeBackgroundExportTaskId = "";
     pendingEntries.forEach(([, task]) => {
       try {
         task.reject(new Error("后台导出窗口已关闭"));
@@ -2296,7 +2307,7 @@ async function ensureBackgroundExportWindow() {
 }
 
 function flushPendingBackgroundExportTasks() {
-  if (!backgroundExportWindow || backgroundExportWindow.isDestroyed() || !backgroundExportReady) {
+  if (!backgroundExportWindow || backgroundExportWindow.isDestroyed() || !backgroundExportReady || activeBackgroundExportTaskId) {
     return;
   }
   for (const [taskId, task] of pendingBackgroundExportTasks.entries()) {
@@ -2304,28 +2315,42 @@ function flushPendingBackgroundExportTasks() {
       continue;
     }
     task.dispatched = true;
+    activeBackgroundExportTaskId = taskId;
     appendExportSelfTestTrace(`[background-export] dispatch task=${taskId} kind=${String(task?.payload?.kind || "")}`);
     backgroundExportWindow.webContents.send("desktop-shell:background-export-task", {
       taskId,
       payload: task.payload,
     });
+    break; // The hidden renderer owns a single board; exports must be serialized.
   }
 }
 
 async function runBoardExportInBackground(payload = {}) {
-  const taskId = `background-export-${Date.now()}-${backgroundExportTaskSequence += 1}`;
-  const window = await ensureBackgroundExportWindow();
-  return new Promise((resolve, reject) => {
+  const requestedTaskId = String(payload?.taskId || "").trim();
+  const generatedTaskId = `background-export-${Date.now()}-${backgroundExportTaskSequence += 1}`;
+  const taskId = requestedTaskId && !pendingBackgroundExportTasks.has(requestedTaskId) && !canceledBackgroundExportTasks.has(requestedTaskId)
+    ? requestedTaskId
+    : generatedTaskId;
+  const taskPromise = new Promise((resolve, reject) => {
     pendingBackgroundExportTasks.set(taskId, {
-      payload,
+      payload: { ...payload, taskId },
       resolve,
       reject,
       dispatched: false,
     });
+  });
+  taskPromise.catch(() => {}); // A window can close while loadURL is still pending.
+  try {
+    const window = await ensureBackgroundExportWindow();
     if (window && !window.isDestroyed() && backgroundExportReady) {
       flushPendingBackgroundExportTasks();
     }
-  });
+  } catch (error) {
+    const task = pendingBackgroundExportTasks.get(taskId);
+    pendingBackgroundExportTasks.delete(taskId);
+    task?.reject?.(error);
+  }
+  return taskPromise;
 }
 
 function cancelBackgroundExportTask(taskId = "") {
@@ -2337,9 +2362,9 @@ function cancelBackgroundExportTask(taskId = "") {
   if (!task) {
     return { ok: false, canceled: false, error: "导出任务不存在或已结束" };
   }
-  canceledBackgroundExportTasks.add(normalizedTaskId);
+  if (task.dispatched) canceledBackgroundExportTasks.add(normalizedTaskId);
   try {
-    if (backgroundExportWindow && !backgroundExportWindow.isDestroyed()) {
+    if (task.dispatched && backgroundExportWindow && !backgroundExportWindow.isDestroyed()) {
       backgroundExportWindow.webContents.send("desktop-shell:background-export-cancel", {
         taskId: normalizedTaskId,
       });
@@ -2349,10 +2374,11 @@ function cancelBackgroundExportTask(taskId = "") {
   }
   pendingBackgroundExportTasks.delete(normalizedTaskId);
   try {
+    const kind = String(task?.payload?.kind || "pdf").trim().toUpperCase();
     task.resolve({
       ok: false,
       canceled: true,
-      code: "PDF_EXPORT_CANCELED",
+      code: `${kind || "PDF"}_EXPORT_CANCELED`,
       message: "",
       fileName: "",
       filePath: "",
@@ -2689,8 +2715,10 @@ ipcMain.handle("desktop-shell:export-board-in-background", async (_event, payloa
 
 ipcMain.handle("desktop-shell:background-export-result", async (_event, payload) => {
   const taskId = String(payload?.taskId || "").trim();
+  if (taskId === activeBackgroundExportTaskId) activeBackgroundExportTaskId = "";
   if (taskId && canceledBackgroundExportTasks.has(taskId)) {
     canceledBackgroundExportTasks.delete(taskId);
+    flushPendingBackgroundExportTasks();
     return { ok: true, ignored: true };
   }
   if (!taskId || !pendingBackgroundExportTasks.has(taskId)) {
@@ -2698,6 +2726,7 @@ ipcMain.handle("desktop-shell:background-export-result", async (_event, payload)
   }
   const task = pendingBackgroundExportTasks.get(taskId);
   pendingBackgroundExportTasks.delete(taskId);
+  flushPendingBackgroundExportTasks();
   if (payload?.error) {
     appendExportSelfTestTrace(`[background-export] task failed id=${taskId} error=${String(payload.error || "")}`);
     task.reject(new Error(String(payload.error || "后台导出失败")));
@@ -3569,6 +3598,9 @@ ipcMain.handle("desktop-shell:pick-pdf-save-path", async (_event, payload) => {
 
 ipcMain.handle("desktop-shell:save-tile-composite-image", async (_event, payload) => {
   try {
+    const taskId = String(payload?.taskId || "").trim();
+    const isCanceled = () => Boolean(taskId && (!pendingBackgroundExportTasks.has(taskId) || canceledBackgroundExportTasks.has(taskId)));
+    if (isCanceled()) return { ok: false, canceled: true };
     appendExportSelfTestTrace(`[background-export] compose png tiles=${Array.isArray(payload?.tiles) ? payload.tiles.length : 0}`);
     const buffer = await buildCompositePngFromTiles(payload?.tiles, {
       width: payload?.width,
@@ -3583,6 +3615,7 @@ ipcMain.handle("desktop-shell:save-tile-composite-image", async (_event, payload
     const defaultName = String(payload?.defaultName || "").trim() || "freeflow-export.png";
     const saveResult = await saveBufferWithDialog(buffer, {
       defaultName,
+      isCanceled,
       title: "导出 PNG",
       buttonLabel: "保存 PNG",
       filters: [
@@ -3611,6 +3644,9 @@ ipcMain.handle("desktop-shell:save-tile-composite-image", async (_event, payload
 
 ipcMain.handle("desktop-shell:save-tile-composite-pdf", async (_event, payload) => {
   try {
+    const taskId = String(payload?.taskId || "").trim();
+    const isCanceled = () => Boolean(taskId && (!pendingBackgroundExportTasks.has(taskId) || canceledBackgroundExportTasks.has(taskId)));
+    if (isCanceled()) return { ok: false, canceled: true };
     const compositeResult = await buildCompositePdfFromTiles(payload?.tiles, {
       width: payload?.width,
       height: payload?.height,
@@ -3631,6 +3667,7 @@ ipcMain.handle("desktop-shell:save-tile-composite-pdf", async (_event, payload) 
     const defaultName = String(payload?.defaultName || "").trim() || "freeflow-board.pdf";
     const saveResult = await saveBufferWithDialog(buffer, {
       defaultName,
+      isCanceled,
       title: "导出 PDF",
       buttonLabel: "保存 PDF",
       filters: [
@@ -3670,7 +3707,7 @@ ipcMain.handle("desktop-shell:export-rich-text-docx", async (_event, payload) =>
     return { ok: false, canceled: false, error: "导出内容为空" };
   }
   try {
-    const result = await dialog.showSaveDialog(mainWindow || undefined, {
+    const result = payload?.returnBytes === true ? null : await dialog.showSaveDialog(mainWindow || undefined, {
       title,
       buttonLabel,
       defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-word.docx"),
@@ -3680,7 +3717,7 @@ ipcMain.handle("desktop-shell:export-rich-text-docx", async (_event, payload) =>
       ],
       properties: ["showOverwriteConfirmation"],
     });
-    if (!result || result.canceled || !result.filePath) {
+    if (payload?.returnBytes !== true && (!result || result.canceled || !result.filePath)) {
       return { ok: false, canceled: true };
     }
     const generated = await HTMLtoDOCX(html, null, documentOptions);
@@ -3696,6 +3733,7 @@ ipcMain.handle("desktop-shell:export-rich-text-docx", async (_event, payload) =>
     if (!buffer.byteLength) {
       return { ok: false, canceled: false, error: "Word 文档生成失败" };
     }
+    if (payload?.returnBytes === true) return { ok: true, bytes: new Uint8Array(buffer), size: buffer.byteLength };
     const resolvedPath = path.resolve(String(result.filePath || "").trim());
     await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
     await fs.promises.writeFile(resolvedPath, buffer);
@@ -3724,7 +3762,7 @@ ipcMain.handle("desktop-shell:export-word-docx", async (_event, payload) => {
     return { ok: false, canceled: false, error: "导出内容为空" };
   }
   try {
-    const result = await dialog.showSaveDialog(mainWindow || undefined, {
+    const result = payload?.returnBytes === true ? null : await dialog.showSaveDialog(mainWindow || undefined, {
       title,
       buttonLabel,
       defaultPath: defaultName || path.join(app.getPath("documents"), "freeflow-word.docx"),
@@ -3734,13 +3772,14 @@ ipcMain.handle("desktop-shell:export-word-docx", async (_event, payload) => {
       ],
       properties: ["showOverwriteConfirmation"],
     });
-    if (!result || result.canceled || !result.filePath) {
+    if (payload?.returnBytes !== true && (!result || result.canceled || !result.filePath)) {
       return { ok: false, canceled: true };
     }
     const buffer = await compileWordExportAstToDocxBuffer(ast);
     if (!buffer || !buffer.byteLength) {
       return { ok: false, canceled: false, error: "Word 文档生成失败" };
     }
+    if (payload?.returnBytes === true) return { ok: true, bytes: new Uint8Array(buffer), size: buffer.byteLength };
     const resolvedPath = path.resolve(String(result.filePath || "").trim());
     await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
     await fs.promises.writeFile(resolvedPath, buffer);
