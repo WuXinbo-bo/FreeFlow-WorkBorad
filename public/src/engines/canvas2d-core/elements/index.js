@@ -7,7 +7,7 @@ import {
 import { normalizeMindRelationshipElement } from "./mindRelationship.js";
 import { getFlowNodeMinSize, normalizeFlowEdgeElement, normalizeFlowNodeElement } from "./flow.js";
 import { normalizeImageElement } from "./media.js";
-import { normalizeFileCardElement } from "./fileCard.js";
+import { normalizeFileCardElement, resizeFileCardElement } from "./fileCard.js";
 import { isLinearShape, moveShapeElement, normalizeShapeElement } from "./shapes.js";
 import {
   TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
@@ -282,7 +282,7 @@ function createBuiltinElementRegistry() {
     createDefinition("fileCard", {
       aliases: ["file"],
       normalize: normalizeFileCardElement,
-      resize: withMinSize(resizeRectElement, 200, 96),
+      resize: resizeFileCardElement,
       capabilities: { lod: "file-card", hitTest: "bounds-file-memo", editor: "file-memo", overlay: "file-preview", resource: "file", cache: "live", contentCopy: "file", copyExportProtocol: "fileCard", measurement: "resource-intrinsic", persistence: "asset-reference", minimumReadableTextPx: 3.5, nominalFontSizePx: 14 },
     }),
     createDefinition("codeBlock", {

@@ -131,8 +131,8 @@ async function main() {
 
   const fileCard = { id: "file", type: "fileCard", x: 0, y: 0, width: 300, height: 120 };
   const resizedFile = resizeElement(fileCard, "se", { x: 40, y: 30 });
-  assert.strictEqual(resizedFile.width, 200);
-  assert.strictEqual(resizedFile.height, 96);
+  assert(Math.abs(resizedFile.width - 168) < 1e-9);
+  assert(Math.abs(resizedFile.height - 67.2) < 1e-9);
 
   const mindSummary = { id: "summary", type: "mindSummary", x: 0, y: 0, width: 220, height: 72 };
   const resizedSummary = resizeElement(mindSummary, "se", { x: 220, y: 40 });

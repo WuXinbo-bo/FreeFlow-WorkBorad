@@ -66,6 +66,7 @@ const CHECKS = [
   "scripts/check-compact-presentation-runtime.js",
   "scripts/check-element-runtime-architecture.js",
   "scripts/check-builtin-element-registry.js",
+  "scripts/check-file-card-geometry.js",
   "scripts/check-canvas-ui-runtime.js",
   "scripts/check-document-preview-runtime.js",
   "scripts/check-file-workstation.js",
@@ -186,6 +187,7 @@ async function main() {
     for (const script of ["scripts/check-canvas-edit-integrity.js", "scripts/check-canvas-rich-editing.js", "scripts/check-canvas-text-experience.js", "scripts/check-canvas-media-integrity-browser.js"]) {
       await runNodeScript(script, { CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html` });
     }
+    await runNodeScript("scripts/check-canvas-card-ux.js", { CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html` });
     await runNodeScript("scripts/check-canvas-trackpad-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });

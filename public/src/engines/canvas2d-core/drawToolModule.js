@@ -37,9 +37,11 @@ async function fetchImageAsObjectUrl(url = "") {
 
 function buildPreviewLabel(dataTransfer) {
   const types = Array.from(dataTransfer?.types || []);
-  if (types.includes("Files") || types.includes("text/uri-list")) {
-    return "松开创建图片";
+  if (types.includes("Files")) {
+    const count = Array.from(dataTransfer?.items || []).filter(item => item.kind === "file").length || dataTransfer?.files?.length || 0;
+    return count ? `在此导入 ${count} 个文件` : "在此导入文件";
   }
+  if (types.includes("text/uri-list")) return "在此导入链接或图片";
   if (types.includes("text/html")) {
     return "松开导入网页富文本";
   }
@@ -77,8 +79,9 @@ export function createDrawToolModule({
     const node = ensurePreview(surface);
     if (!node) return;
     node.textContent = label;
-    node.style.left = `${Math.round(clientX + 12)}px`;
-    node.style.top = `${Math.round(clientY + 12)}px`;
+    const rect = surface.getBoundingClientRect();
+    node.style.left = `${Math.round(Math.max(0, Math.min(clientX - rect.left + 12, rect.width - 180)))}px`;
+    node.style.top = `${Math.round(Math.max(0, Math.min(clientY - rect.top + 12, rect.height - 40)))}px`;
     node.classList.remove("is-hidden");
   }
 
