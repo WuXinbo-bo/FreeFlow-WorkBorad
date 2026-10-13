@@ -202,17 +202,15 @@ export function buildMathContextMenuHtml(item = null, runtime = {}) {
 }
 
 export function createImageContextMenuSchema(item = {}, runtime = {}) {
-  const lockLabel = item?.locked ? "解锁" : "锁定";
+  const transfer = createElementTransferActionsSchema("image", { item, runtime });
   return [
-    ...createElementTransferActionsSchema("image", { item, runtime }),
-    action("轻量编辑图片", "image-edit"),
-    action("转换格式 / 合并 PDF", "image-convert"),
-    action("恢复原图", "image-restore"),
-    action("打开所在位置", "image-reveal"),
-    action("标签与备忘录", "image-memo"),
-    action("连接节点", "connect-node"),
+    action("编辑图片", "image-edit"),
+    submenu("复制与粘贴", "复制与粘贴", [...transfer.filter(entry => entry.label !== "导出").flatMap(entry => entry.items || [entry]), action("创建副本", "duplicate")]),
+    submenu("转换与导出", "导出", [action("转换格式 / 合并 PDF", "image-convert"), ...getExportMenuItems("image", { item, runtime }).map(entry => action(entry.menuLabel, entry.action))]),
+    submenu("整理", "整理", [action("标签与备忘录", "image-memo"), action("连接节点", "connect-node"), action(item.locked ? "解锁" : "锁定", "toggle-lock")]),
     layerSubmenuSchema(),
-    ...createLockDeleteTailSchema(lockLabel),
+    submenu("原文件", "原文件", [action("恢复原图", "image-restore"), action("打开所在位置", "image-reveal")]),
+    action("移出画布", "delete"),
   ];
 }
 
@@ -221,25 +219,28 @@ export function buildImageContextMenuHtml(item = {}, runtime = {}) {
 }
 
 export function createFileCardContextMenuSchema(item = {}, runtime = {}) {
-  const lockLabel = item?.locked ? "解锁" : "锁定";
-  const ext = String(item?.ext || "").trim().toLowerCase();
-  const previewSupported = Boolean(getFileCapabilities(ext).previewKind);
+  const capabilities = getFileCapabilities(String(item.ext || "").trim().toLowerCase());
+  const transfer = createElementTransferActionsSchema("fileCard", { item, runtime });
+  const exports = getExportMenuItems("fileCard", { item, runtime });
   return [
-    ...createElementTransferActionsSchema("fileCard", { item, runtime }),
-    action("预览", "file-preview", previewSupported
-      ? {}
-      : {
-          className: "canvas2d-context-menu-item is-disabled",
-          attributes: { disabled: true, title: "此格式请使用系统应用打开" },
-        }),
-    ...(getFileCapabilities(ext).conversions.length ? [action("转换文件格式", "file-convert")] : []),
-    action("重新关联文件", "file-relink"),
-    action("打开所在位置", "file-reveal"),
-    action("标签与备忘录", "file-memo"),
-    action("重点标记", "file-mark"),
-    action("连接节点", "connect-node"),
+    ...(capabilities.previewKind ? [action("预览", "file-preview")] : []),
+    action("打开文件", "file-open"),
+    submenu("复制与粘贴", "复制与粘贴", [...transfer.filter(entry => entry.label !== "导出").flatMap(entry => entry.items || [entry]), action("创建副本", "duplicate")]),
+    ...(capabilities.conversions.length || exports.length ? [submenu("转换与导出", "导出", [
+      ...(capabilities.conversions.length ? [action("转换格式", "file-convert")] : []),
+      ...exports.map(entry => action(entry.menuLabel, entry.action)),
+    ])] : []),
+    submenu("整理", "整理", [
+      action("聚焦所选", "focus-selected"),
+      action("恢复标准尺寸", "file-reset-size", { attributes: { disabled: Boolean(item.locked) } }),
+      action("标签与备忘录", "file-memo"),
+      action(item.marked ? "取消重点标记" : "重点标记", "file-mark"),
+      action("连接节点", "connect-node"),
+      action(item.locked ? "解锁" : "锁定", "toggle-lock"),
+    ]),
     layerSubmenuSchema(),
-    ...createLockDeleteTailSchema(lockLabel),
+    submenu("原文件", "原文件", [action("打开所在位置", "file-reveal"), action("重新关联文件", "file-relink")]),
+    action("移出画布", "delete"),
   ];
 }
 

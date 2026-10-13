@@ -27,6 +27,9 @@ function renderMenuItem(item) {
     const triggerAttributes = renderAttributes({
       ...item.triggerAttributes,
       type: "button",
+      "aria-haspopup": "menu",
+      "aria-label": item.label || "",
+      "aria-expanded": "false",
       class: item.triggerClassName || "canvas2d-context-menu-item canvas2d-context-submenu-trigger",
     });
     const panelAttributes = renderAttributes({
@@ -52,7 +55,10 @@ function renderMenuItem(item) {
     class: item.className || "canvas2d-context-menu-item",
     "data-action": item.action || undefined,
   });
-  return `<button${attributes}>${escapeHtml(item.label || "")}</button>`;
+  const key = { cut: "X", copy: "C", paste: "V", duplicate: "D", "toggle-lock": "L" }[item.action];
+  const modifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || "") ? "⌘" : "Ctrl+";
+  const shortcut = key ? `<span class="canvas2d-menu-shortcut" aria-hidden="true">${modifier}${key}</span>` : "";
+  return `<button${attributes}><span>${escapeHtml(item.label || "")}</span>${shortcut}</button>`;
 }
 
 export function renderContextMenuSchema(items = []) {

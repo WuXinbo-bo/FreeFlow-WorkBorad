@@ -4,8 +4,34 @@ import { getMemoLayout } from "../memoLayout.js";
 export const FILE_CARD_STRUCTURED_IMPORT_KIND = "structured-import-v1";
 export const FILE_CARD_DEFAULT_WIDTH = 336;
 export const FILE_CARD_DEFAULT_HEIGHT = 128;
-export const FILE_CARD_MIN_WIDTH = 336;
-export const FILE_CARD_MIN_HEIGHT = 128;
+export const FILE_CARD_MIN_WIDTH = 168;
+export const FILE_CARD_MIN_HEIGHT = 64;
+
+// Keep the opposite corner fixed, including when the minimum size is reached.
+// Use the original geometry throughout a gesture, preserving legacy card ratios.
+export function resizeFileCardElement(element, handle, point) {
+  if (!["nw", "ne", "sw", "se"].includes(handle)) return element;
+  const width = Math.max(1, Number(element.width) || FILE_CARD_DEFAULT_WIDTH);
+  const height = Math.max(1, Number(element.height) || FILE_CARD_DEFAULT_HEIGHT);
+  const west = handle.includes("w");
+  const north = handle.includes("n");
+  const anchorX = Number(element.x || 0) + (west ? width : 0);
+  const anchorY = Number(element.y || 0) + (north ? height : 0);
+  const dx = (Number(point?.x ?? anchorX) - anchorX) * (west ? -1 : 1);
+  const dy = (Number(point?.y ?? anchorY) - anchorY) * (north ? -1 : 1);
+  // Project onto the aspect diagonal instead of letting one axis jump on crossing.
+  const factor = Math.max(
+    FILE_CARD_MIN_WIDTH / width, FILE_CARD_MIN_HEIGHT / height,
+    (dx * width + dy * height) / (width * width + height * height)
+  );
+  return {
+    ...element,
+    x: west ? anchorX - width * factor : anchorX,
+    y: north ? anchorY - height * factor : anchorY,
+    width: width * factor,
+    height: height * factor,
+  };
+}
 
 const FILE_CARD_TYPE_STYLES = {
   word: {

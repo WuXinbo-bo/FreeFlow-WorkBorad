@@ -106,7 +106,7 @@ async function main() {
     bitmapClipboard: true,
     fileClipboard: true,
   });
-  assert(imageMenu.some((entry) => entry.label === "复制内容"));
+  assert(imageMenu.some((entry) => entry.label === "复制与粘贴"));
   assert.equal(flattenMenuActions(imageMenu).filter((action) => action === "image-export-png").length, 1);
   assertUniqueMenuActions(imageMenu);
 
@@ -122,7 +122,7 @@ async function main() {
     ["file", "path", "filename"]
   );
   const fileCardMenu = createFileCardContextMenuSchema(fileCard, { fileClipboard: true });
-  assert(fileCardMenu.some((entry) => entry.label === "导出"));
+  assert(fileCardMenu.some((entry) => entry.label === "转换与导出"));
   assertUniqueMenuActions(fileCardMenu);
 
   const table = normalizeTableStructure({

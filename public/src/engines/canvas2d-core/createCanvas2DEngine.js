@@ -41,7 +41,7 @@ import {
   normalizeElement,
   resizeElement,
 } from "./elements/index.js";
-import { createFileCardElement, getFileCardMemoBounds, getFileCardPreviewBounds, fitFilePreviewBounds, resolveFileCardTypeStyle } from "./elements/fileCard.js";
+import { createFileCardElement, FILE_CARD_DEFAULT_WIDTH, FILE_CARD_DEFAULT_HEIGHT, FILE_CARD_MIN_WIDTH, FILE_CARD_MIN_HEIGHT, getFileCardMemoBounds, getFileCardPreviewBounds, fitFilePreviewBounds, resolveFileCardTypeStyle } from "./elements/fileCard.js";
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
@@ -3516,6 +3516,7 @@ export function createCanvas2DEngine(options = {}) {
     codeBlockEditor: null,
     codeBlockToolbar: null,
     imageToolbar: null,
+    fileQuickActions: null,
     fileMemoEditor: null,
     imageMemoEditor: null,
     tableEditor: null,
@@ -4891,6 +4892,8 @@ let tablePointerSelectionState = {
 
     if (selectedItems.length === 1) {
       const baseItem = selectedItems[0];
+      const fileFactor = Object.prototype.hasOwnProperty.call(patch, "width")
+        ? targetWidth / baseBounds.width : targetHeight / baseBounds.height;
       let nextItem = moveElement(baseItem, targetLeft - baseBounds.left, targetTop - baseBounds.top);
       const nextBounds = getElementBounds(nextItem);
       if (
@@ -4898,8 +4901,8 @@ let tablePointerSelectionState = {
         Math.abs(targetHeight - baseBounds.height) > 0.001
       ) {
         nextItem = resizeElement(nextItem, "se", {
-          x: nextBounds.left + targetWidth,
-          y: nextBounds.top + targetHeight,
+          x: nextBounds.left + (baseItem.type === "fileCard" ? baseBounds.width * fileFactor : targetWidth),
+          y: nextBounds.top + (baseItem.type === "fileCard" ? baseBounds.height * fileFactor : targetHeight),
         });
       }
       state.board.items = state.board.items.map((item) => item.id === baseItem.id ? nextItem : item);
@@ -4927,6 +4930,38 @@ let tablePointerSelectionState = {
       setStatus("已更新元素属性");
     }
     return changed;
+  }
+
+  function restoreFileCardSizes() {
+    const cards = getSelectedItemsFast().filter(item => item.type === "fileCard" && !isLockedItem(item));
+    if (!cards.length) return false;
+    const ids = cards.map(item => item.id);
+    const selected = new Set(ids);
+    const before = takeItemsHistorySnapshot(ids);
+    state.board.items = state.board.items.map(item => selected.has(item.id)
+      ? { ...item, width: FILE_CARD_DEFAULT_WIDTH, height: FILE_CARD_DEFAULT_HEIGHT } : item);
+    return commitItemsPatchHistory(before, ids, "恢复文件卡片标准尺寸", "file-card-size");
+  }
+
+  function duplicateSelection() {
+    const items = resolveSelectionDependencyClosure(getSelectedItemsFast(), state.board.items);
+    if (!items.length) return false;
+    const before = takeHistoryMetadataSnapshot(state);
+    const copies = duplicateElementsWithDelta(items, 28, 28);
+    state.board.items.push(...copies);
+    state.board.selectedIds = copies.map(item => item.id);
+    commitInsertedItemsPatchHistory(before, copies, "创建副本", "item-insert-batch", { fullOverlayRescan: true });
+    return true;
+  }
+
+  function focusSelection() {
+    const items = getSelectedItemsFast();
+    if (!items.length) return false;
+    cancelFocusAnimation();
+    finishPendingWheelSession({ persist: false });
+    state.board.view = getZoomToFitView(items, getCanvasRect());
+    syncBoard({ persist: true, emit: true, sceneChange: false, viewChange: true, fullOverlayRescan: false, reason: "focus-selection" });
+    return true;
   }
 
   function setSelectionLocked(locked) {
@@ -4988,7 +5023,11 @@ let tablePointerSelectionState = {
     }
     const safeBaseWidth = Math.max(1, Number(baseBounds.width || (baseBounds.right - baseBounds.left) || 1));
     const safeBaseHeight = Math.max(1, Number(baseBounds.height || (baseBounds.bottom - baseBounds.top) || 1));
-    const nextWidth = Math.max(1, Number(nextBounds.width || (nextBounds.right - nextBounds.left) || 1));
+    const fileCardsOnly = Array.from(baseItemsMap.values()).every(item => item.type === "fileCard");
+    const cardMinFactor = fileCardsOnly ? Math.max(...Array.from(baseItemsMap.values(), item => Math.max(FILE_CARD_MIN_WIDTH / item.width, FILE_CARD_MIN_HEIGHT / item.height))) : 0;
+    const nextWidth = Math.max(1, safeBaseWidth * cardMinFactor, Number(nextBounds.width || (nextBounds.right - nextBounds.left) || 1));
+    const nextHeight = fileCardsOnly ? safeBaseHeight * nextWidth / safeBaseWidth : safeBaseHeight;
+    const nextTop = fileCardsOnly ? nextBounds.top : baseBounds.top;
     const updatedItems = new Map();
 
     for (const [itemId, baseItem] of baseItemsMap.entries()) {
@@ -5001,9 +5040,9 @@ let tablePointerSelectionState = {
       const relRight = (itemBounds.right - baseBounds.left) / safeBaseWidth;
       const relBottom = (itemBounds.bottom - baseBounds.top) / safeBaseHeight;
       let left = nextBounds.left + relLeft * nextWidth;
-      let top = baseBounds.top + relTop * safeBaseHeight;
+      let top = nextTop + relTop * nextHeight;
       let right = nextBounds.left + relRight * nextWidth;
-      let bottom = baseBounds.top + relBottom * safeBaseHeight;
+      let bottom = nextTop + relBottom * nextHeight;
       let width = Math.max(1, right - left);
       let height = Math.max(1, bottom - top);
 
@@ -5045,8 +5084,9 @@ let tablePointerSelectionState = {
         width = Math.max(MATH_MIN_WIDTH, width);
         height = Math.max(MATH_MIN_HEIGHT, height);
       } else if (baseItem.type === "fileCard") {
-        width = Math.max(200, width);
-        height = Math.max(96, height);
+        const factor = Math.max(width / itemBounds.width, FILE_CARD_MIN_WIDTH / itemBounds.width, FILE_CARD_MIN_HEIGHT / itemBounds.height);
+        width = itemBounds.width * factor;
+        height = itemBounds.height * factor;
       } else if (baseItem.type === "mindNode") {
         width = Math.max(160, width);
         height = Math.max(72, height);
@@ -5683,6 +5723,7 @@ let tablePointerSelectionState = {
     } else {
       largeViewportProgressivePending = false;
     }
+    syncFileQuickActions();
     // File-card Word previews are rendered by the Canvas2D React UI from state.
     if (!cameraFastPath) {
       syncCodeBlockToolbar();
@@ -8029,6 +8070,7 @@ let tablePointerSelectionState = {
         clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
         cancelClipboardImports();
         closeEditorsBeforeBoardReplacement();
+        transientMinimap.resetTransient();
         state.board = repairMisclassifiedCodeBlocksOnBoard(restoredBoard, DEFAULT_TEXT_FONT_SIZE);
         state.boardSaveError = "";
         loadMetrics.mark("repair-board");
@@ -8190,6 +8232,7 @@ let tablePointerSelectionState = {
     clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
     cancelClipboardImports();
     closeEditorsBeforeBoardReplacement();
+    transientMinimap.resetTransient();
     state.board = createEmptyBoard();
     state.boardSaveError = "";
     state.board.selectedIds = [];
@@ -10049,6 +10092,16 @@ let tablePointerSelectionState = {
     }
     applyStructuredVisualThemeVariables(refs.codeBlockEditor);
     codeBlockEditor.setHost(refs.codeBlockEditor);
+
+    refs.fileQuickActions = refs.surface.querySelector(".canvas2d-file-quick-actions");
+    if (!refs.fileQuickActions) {
+      refs.fileQuickActions = document.createElement("div");
+      refs.fileQuickActions.className = "canvas2d-file-quick-actions is-hidden";
+      refs.fileQuickActions.setAttribute("role", "toolbar");
+      refs.fileQuickActions.setAttribute("aria-label", "文件快捷操作");
+      refs.fileQuickActions.innerHTML = '<button type="button" data-command="file.preview">预览</button><button type="button" data-file-open data-command="file.open">打开</button><button type="button" aria-haspopup="menu">更多</button>';
+      (refs.fixedOverlayHost || refs.surface).appendChild(refs.fileQuickActions);
+    }
 
     refs.contextMenu = refs.surface.querySelector("#canvas2d-context-menu");
     if (!(refs.contextMenu instanceof HTMLDivElement)) {
@@ -12563,6 +12616,51 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return item;
     }
     return null;
+  }
+
+  function syncFileQuickActions() {
+    const bar = refs.fileQuickActions;
+    if (!bar) return;
+    const item = getSingleSelectedItemFast("fileCard");
+    const show = item && isInteractiveMode() && state.tool === "select" && !state.editingId && !state.pointer
+      && canvasPerformanceRuntime.getLifecycleSnapshot().phase === "steady"
+      && refs.contextMenu?.classList.contains("is-hidden");
+    bar.classList.toggle("is-hidden", !show);
+    if (!show) return;
+    bar.querySelector('[data-command="file.preview"]').hidden = !getFileCapabilities(item.ext).previewKind || Boolean(item.sourceMissing);
+    const openButton = bar.querySelector('[data-file-open]');
+    openButton.textContent = item.sourceMissing ? "重新关联" : "打开";
+    openButton.dataset.command = item.sourceMissing ? "file.relink" : "file.open";
+    const rect = refs.surface.getBoundingClientRect();
+    const view = state.board.view;
+    const left = item.x * view.scale + view.offsetX;
+    const top = item.y * view.scale + view.offsetY;
+    const right = left + item.width * view.scale;
+    const bottom = top + item.height * view.scale;
+    if (right < 0 || bottom < 0 || left > rect.width || top > rect.height) {
+      bar.classList.add("is-hidden");
+      return;
+    }
+    const width = bar.offsetWidth;
+    const height = bar.offsetHeight;
+    bar.style.left = `${Math.max(8, Math.min(rect.width - width - 8, (left + right - width) / 2))}px`;
+    bar.style.top = `${Math.max(8, Math.min(rect.height - height - 8, top > height + 16 ? top - height - 8 : bottom + 8))}px`;
+  }
+
+  function onFileQuickAction(event) {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const item = getSingleSelectedItemFast("fileCard");
+    if (!item) return;
+    if (button.dataset.command) {
+      runCommand(button.dataset.command);
+      return;
+    }
+    const surfaceRect = refs.surface.getBoundingClientRect();
+    const point = sceneToScreen(state.board.view, { x: item.x + item.width / 2, y: item.y + item.height / 2 });
+    onContextMenu({ target: refs.canvas, clientX: surfaceRect.left + point.x, clientY: surfaceRect.top + point.y, preventDefault() {} });
+    refs.fileQuickActions.classList.add("is-hidden");
+    refs.contextMenu?.querySelector("button")?.focus({ preventScroll: true });
   }
 
   function syncImageToolbar() {
@@ -18446,7 +18544,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       item.sourceExcerpt = { itemId: request.sources[0]?.itemId, sourcePath: request.sources[0]?.filePath, extractedAt: Date.now() };
       return item;
     });
-    pushItems(items, { reason: "插入转换结果", statusText: `${items.length} 个转换结果已映射到画布` }); return true;
+    pushItems(items, { reason: "插入转换结果", statusText: `${items.length} 个转换结果已映射到画布` });
+    request.resultIds = items.map(item => item.id);
+    return true;
+  }
+
+  function locateWorkstationResults(requestId) {
+    const request = state.fileConversionRequest;
+    if (!request || request.id !== requestId || request.boardPath !== state.boardFilePath) return false;
+    const ids = (request.resultIds || []).filter(id => sceneRegistry.getItemById(id));
+    if (!ids.length) { setStatus("转换结果已移出画布，可重新添加", "warning"); return false; }
+    state.board.selectedIds = ids;
+    focusSelection();
+    closeFileConversion();
+    return true;
   }
 
   function toggleFileCardPreviewExpanded(requestId = "") {
@@ -22089,7 +22200,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
 
       const baseItems = new Map(selectedItems.map((item) => [item.id, clonePointerBase(item)]));
-      const pointerType = event.button === 0 && event.altKey && selectedItems.length >= 2
+      const pointerType = event.button === 0 && event.altKey && selectedItems.length >= 1
         ? "duplicate-multi-selection"
         : "move-selection";
       const selectedItemMap = new Map(state.board.items.map((item) => [item.id, item]));
@@ -22393,6 +22504,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     if (pointer.type === "resize-multi-selection") {
+      const cards = Array.from(pointer.baseSelection.items.values());
+      if (cards.length && cards.every(item => item.type === "fileCard")) {
+        const minimum = Math.max(...cards.map(item => Math.max(FILE_CARD_MIN_WIDTH / item.width, FILE_CARD_MIN_HEIGHT / item.height)));
+        const bounds = pointer.baseSelection.bounds;
+        const next = computeMultiSelectionResizedBounds(bounds, pointer.handle, scenePoint, {
+          preserveAspect: true, scaleFromCenter: Boolean(event.altKey),
+          minWidth: bounds.width * minimum, minHeight: bounds.height * minimum,
+        });
+        clearAlignmentSnap("resize-file-cards-aspect");
+        applyMultiSelectionResize(pointer.baseSelection, next);
+        state.hoverHandle = pointer.handle;
+        scheduleRender();
+        return;
+      }
       const resizedBounds = computeMultiSelectionResizedBounds(pointer.baseSelection?.bounds, pointer.handle, scenePoint, {
         preserveAspect: Boolean(event.shiftKey),
         scaleFromCenter: Boolean(event.altKey),
@@ -22442,6 +22567,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             return resizeShapeWithAspect(pointer.baseItem, pointer.handle, scenePoint);
           }
           return resizeImageWithAspect(pointer.baseItem, pointer.handle, scenePoint);
+        }
+        if (pointer.baseItem.type === "fileCard") {
+          clearAlignmentSnap("resize-file-card-aspect");
+          return resizeElement(pointer.baseItem, pointer.handle, scenePoint);
         }
         const resizedItem = resizeElement(pointer.baseItem, pointer.handle, scenePoint);
         if (pointer.baseItem.type === "shape" && isLinearShape(pointer.baseItem.shapeType)) {
@@ -22789,7 +22918,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     const pointer = state.pointer;
-    refs.canvas?.releasePointerCapture?.(event.pointerId);
+    if (refs.canvas?.hasPointerCapture?.(event.pointerId)) refs.canvas.releasePointerCapture(event.pointerId);
+    const restoreItems = Array.isArray(pointer.before?.items) ? pointer.before.items : [];
+    const restoreMap = new Map(restoreItems.map(item => [item.id, item]));
+    if (restoreMap.size) {
+      state.board.items = state.board.items.map(item => restoreMap.has(item.id) ? clone(restoreMap.get(item.id)) : item);
+    }
     suppressNativeDrag = false;
     releaseInteractionPriority(140, { emit: pointer?.type !== "pan" });
     if (state.pointer?.type === "image-crop") {
@@ -22806,9 +22940,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     syncBoard({
       persist: pointer?.type === "pan",
       emit: true,
-      sceneChange: false,
+      sceneChange: restoreMap.size > 0,
       viewChange: pointer?.type === "pan",
-      fullOverlayRescan: false,
+      markDirty: false,
+      fullOverlayRescan: restoreMap.size > 0,
       reason: pointer?.type === "pan" ? "pointer-pan-cancel-commit" : "pointer-cancel",
     });
   }
@@ -22984,6 +23119,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     activateInteractionPriority(reason);
     const baseView = cameraInteractionRuntime.getCurrentView();
     if (zooming) {
+      transientMinimap.handleZoom();
       const focusPoint = screenToScene(
         baseView,
         { x: Number(event.clientX || 0), y: Number(event.clientY || 0) },
@@ -23043,6 +23179,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function hideContextMenu() {
+    const wasOpen = refs.contextMenu && !refs.contextMenu.classList.contains("is-hidden");
     if (refs.contextMenu) {
       cancelContextSubmenuClose();
       closeContextSubmenus();
@@ -23052,6 +23189,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.contextMenu.style.top = "-9999px";
     }
     lastContextMenuSource = "canvas";
+    if (wasOpen) scheduleRender();
   }
 
   function getContextSubmenuElements() {
@@ -23097,6 +23235,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
 
     closeContextSubmenus({ exceptSubmenu: submenu });
+    if (refs.contextMenu.classList.contains("is-compact-menu")) {
+      trigger.setAttribute("aria-expanded", "true");
+      placeMenuNearPoint({ panelEl: refs.contextMenu, clientX: lastContextMenuPoint?.x || 12, clientY: lastContextMenuPoint?.y || 12,
+        containerRect: refs.surface.getBoundingClientRect(), minWidth: 120, minHeight: 120 });
+      return;
+    }
 
     const placement = placeSubmenuNearTrigger({
       panelEl: panel,
@@ -23157,7 +23301,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       button.type = "button";
       button.className = "canvas2d-context-menu-item";
       button.dataset.action = `export-element-${format}`;
-      button.textContent = `导出为 ${format.toUpperCase()}`;
+      button.textContent = format === "png" ? "导出为图片（PNG）" : `导出为 ${format.toUpperCase()}`;
       panel.appendChild(button);
     });
   }
@@ -23179,6 +23323,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     event.preventDefault();
+    refs.fileQuickActions?.classList.add("is-hidden");
     lastContextMenuSource = "canvas";
     if (isWebglRenderMode()) {
       refs.contextMenu.classList.add("is-webgl-menu");
@@ -23232,6 +23377,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return;
     }
     refs.contextMenu.classList.remove("is-webgl-menu");
+    const menuHostRect = refs.surface.getBoundingClientRect();
+    refs.contextMenu.classList.toggle("is-compact-menu", menuHostRect.height < 560 || menuHostRect.width < 700);
     const sceneEventContext = nonEditingSceneEventBridge.resolveEventContext(event);
     const scenePoint = sceneEventContext?.scenePoint || toScenePoint(event.clientX, event.clientY);
     const hitTarget = sceneEventContext?.target || null;
@@ -23274,6 +23421,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const canMergeTexts = selectedItems.length >= 2 && selectedItems.every((item) => isMergeableRichTextItem(item));
       refs.contextMenu.innerHTML = `
         <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected">复制元素</button>
+        <button type="button" class="canvas2d-context-menu-item" data-action="duplicate">创建副本</button>
+        <button type="button" class="canvas2d-context-menu-item" data-action="focus-selected">聚焦所选</button>
         <div class="canvas2d-context-submenu">
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">复制内容</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="复制内容">
@@ -23307,6 +23456,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         <div class="canvas2d-context-submenu">
           <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">对齐</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="对齐">
+            ${selectedItems.some(item => item.type === "fileCard" && !item.locked) ? '<button type="button" class="canvas2d-context-menu-item" data-action="file-reset-size">统一文件卡片尺寸</button>' : ""}
             <button type="button" class="canvas2d-context-menu-item" data-action="align-left">左对齐</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="align-center">水平居中</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="align-right">右对齐</button>
@@ -23672,11 +23822,20 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onContextMenuClick(event) {
+    const trigger = event.target.closest?.(".canvas2d-context-submenu-trigger");
+    if (trigger && refs.contextMenu.classList.contains("is-compact-menu")) {
+      const submenu = trigger.parentElement;
+      if (submenu.classList.contains("is-open")) closeContextSubmenus();
+      else openContextSubmenu(submenu);
+      return;
+    }
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
     if (!target) {
       return;
     }
     const action = target.getAttribute("data-action");
+    const directCommand = { "file-open": "file.open", "file-reset-size": "file.reset-size", duplicate: "selection.duplicate", "focus-selected": "selection.focus" }[action];
+    if (directCommand) { runCommand(directCommand); hideContextMenu(); return; }
     if (lastContextMenuSource === "rich-editor") {
       Promise.resolve(handleRichEditorContextMenuAction(action)).then((handled) => {
         if (handled) {
@@ -24478,7 +24637,52 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     hideContextMenu();
   }
 
+  let restoringContextMenuFocus = false;
+
+  function handleContextMenuKeyboard(event) {
+    if (!refs.contextMenu || refs.contextMenu.classList.contains("is-hidden")) return false;
+    const key = event.key;
+    if (key !== "Escape" && !refs.contextMenu.contains(event.target)) return false;
+    if (!["Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(key)) return false;
+    const target = event.target instanceof Element ? event.target : null;
+    const openSubmenu = refs.contextMenu.querySelector(".canvas2d-context-submenu.is-open");
+    if (key === "Escape" || (key === "ArrowLeft" && openSubmenu)) {
+      if (openSubmenu) {
+        closeContextSubmenus();
+        restoringContextMenuFocus = true;
+        openSubmenu.querySelector("button")?.focus({ preventScroll: true });
+        restoringContextMenuFocus = false;
+        if (refs.contextMenu.classList.contains("is-compact-menu")) {
+          placeMenuNearPoint({ panelEl: refs.contextMenu, clientX: lastContextMenuPoint?.x || 12, clientY: lastContextMenuPoint?.y || 12,
+            containerRect: refs.surface.getBoundingClientRect(), minWidth: 120, minHeight: 120 });
+        }
+      } else {
+        const richMenu = lastContextMenuSource === "rich-editor";
+        hideContextMenu();
+        if (richMenu && state.editingId) refs.richEditor?.focus({ preventScroll: true });
+        else focusCanvasSurface();
+      }
+    } else if (key === "ArrowRight") {
+      const submenu = target?.closest(".canvas2d-context-submenu");
+      if (submenu) {
+        openContextSubmenu(submenu);
+        submenu.querySelector(".canvas2d-context-submenu-panel button:not(:disabled)")?.focus({ preventScroll: true });
+      }
+    } else {
+      const panel = target?.closest(".canvas2d-context-submenu-panel") || refs.contextMenu;
+      const buttons = Array.from(panel.querySelectorAll(":scope > button:not(:disabled), :scope > .canvas2d-context-submenu > button:not(:disabled)")).filter(button => button.getClientRects().length);
+      const index = buttons.indexOf(target?.closest("button"));
+      const next = key === "Home" ? 0 : key === "End" ? buttons.length - 1
+        : (index + (key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+      buttons[next]?.focus({ preventScroll: true });
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   function onContextMenuPointerOver(event) {
+    if (refs.contextMenu?.classList.contains("is-compact-menu")) return;
     const target = event.target instanceof Element ? event.target : null;
     const submenu = target?.closest?.(".canvas2d-context-submenu");
     if (submenu instanceof HTMLElement) {
@@ -24491,10 +24695,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onContextMenuPointerLeave() {
+    if (refs.contextMenu?.classList.contains("is-compact-menu")) return;
     scheduleContextSubmenuClose();
   }
 
   function onContextMenuFocusIn(event) {
+    if (restoringContextMenuFocus || refs.contextMenu?.classList.contains("is-compact-menu")) return;
     const target = event.target instanceof Element ? event.target : null;
     const submenu = target?.closest?.(".canvas2d-context-submenu");
     if (submenu instanceof HTMLElement) {
@@ -25218,6 +25424,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function onCanvasInputBlur() {
     canvasControlKeyPressed = false;
+    if (state.pointer) onPointerCancel({ pointerId: state.pointer.pointerId });
     finishPendingWheelSession({ persist: true });
   }
 
@@ -26970,6 +27177,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function cancelCanvasKeyboardInteraction() {
+    if (state.pointer) {
+      onPointerCancel({ pointerId: state.pointer.pointerId });
+      focusCanvasSurface();
+      return true;
+    }
     if (captureMode === "canvas") {
       captureMode = null;
       state.captureModeActive = false;
@@ -27023,6 +27235,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (boardFileOperationActive) return;
     if (!isInteractiveMode() || globalThis.__FREEFLOW_KEYBOARD_FOCUS_OWNER === "ai-mirror") return;
     if (event.target?.closest?.(".canvas2d-workspace-panel, .canvas2d-workspace-menu, .canvas2d-workspace-confirm-backdrop")) return;
+    if (handleContextMenuKeyboard(event)) return;
     const key = String(event.key || "").toLowerCase();
     if (key === "escape" && pendingRichExternalLinkEdit) {
       event.preventDefault();
@@ -27193,6 +27406,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(window, "pointerdown", onGlobalPointerDown, true);
     bind(window, "canvas2d-hint-logo-loaded", onHintLogoLoaded);
     bind(refs.contextMenu, "click", onContextMenuClick);
+    bind(refs.fileQuickActions, "pointerdown", event => event.stopPropagation());
+    bind(refs.fileQuickActions, "click", onFileQuickAction);
     bind(refs.contextMenu, "pointerover", onContextMenuPointerOver);
     bind(refs.contextMenu, "pointerleave", onContextMenuPointerLeave);
     bind(refs.contextMenu, "focusin", onContextMenuFocusIn);
@@ -27398,6 +27613,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     deferredBlankEditExit = null;
     clearBlockedCanvasPointerDown();
     transientMinimap.unmount();
+    refs.fileQuickActions?.remove();
+    refs.fileQuickActions = null;
     sceneVectorRenderer.clear();
     sceneContentRenderer.clear();
     richTextSession.destroy();
@@ -27466,6 +27683,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function zoomIn() {
+    transientMinimap.handleZoom();
     cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale * 1.12, getCenterScenePoint());
@@ -27473,6 +27691,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function zoomOut() {
+    transientMinimap.handleZoom();
     cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = zoomAtScenePoint(state.board.view, state.board.view.scale / 1.12, getCenterScenePoint());
@@ -27480,6 +27699,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function zoomToFit() {
+    transientMinimap.handleZoom();
     cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = getZoomToFitView(state.board.items, getCanvasRect());
@@ -27488,6 +27708,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function resetView() {
+    transientMinimap.handleZoom();
     cancelFocusAnimation();
     finishPendingWheelSession({ persist: false });
     state.board.view = createView(DEFAULT_VIEW);
@@ -28297,6 +28518,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       shortcuts: ["Shift+Tab"],
       when: (context) => !hasSelectedMindNode(context),
     }, () => cycleKeyboardSelection(-1));
+    register({ id: "selection.duplicate", label: "创建副本", category: "selection", shortcuts: ["Ctrl+D"], when: hasSelection }, () => duplicateSelection());
+    register({ id: "selection.focus", label: "聚焦所选", category: "view", shortcuts: ["Shift+2", "Shift+@"], when: hasSelection }, () => focusSelection());
+    register({ id: "view.fit", label: "显示全部", category: "view", shortcuts: ["Shift+1", "Shift+!"] }, () => zoomToFit());
+    register({ id: "view.reset", label: "默认视图", category: "view", shortcuts: ["Shift+0", "Shift+)"] }, () => resetView());
+    register({ id: "file.reset-size", label: "恢复标准尺寸", category: "file-card", when: context => context.mutableSelectedItems.some(item => item.type === "fileCard") }, () => restoreFileCardSizes());
     register({ id: "selection.copy", label: "复制", category: "selection", shortcuts: ["Ctrl+C"], when: hasSelection }, () => copySelection());
     register({ id: "selection.cut", label: "剪切", category: "selection", shortcuts: ["Ctrl+X"], when: hasMutableSelection }, () => cutSelection());
     register({ id: "selection.paste", label: "粘贴", category: "selection", shortcuts: ["Ctrl+V"] }, (context, anchorPoint) => pasteFromSystemClipboard(anchorPoint || context.anchorPoint));
@@ -28346,6 +28572,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "image.memo", label: "切换图片标签", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, () => toggleSelectedMemo("image"));
     register({ id: "image.export", label: "导出图片", category: "image", elementTypes: ["image"], when: hasSingleType("image") }, (context) => exportImageElement(context.selectedItems[0].id));
     register({ id: "image.finish-edit", label: "完成图片编辑", category: "image", elementTypes: ["image"], when: (context) => context.editingType === "image" }, () => finishImageEdit());
+    register({ id: "file.relink", label: "重新关联文件", category: "file-card", when: hasSingleType("fileCard", { mutable: true }) }, context => relinkFileCard(context.selectedItems[0].id));
     register({ id: "file.open", label: "打开文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, () => openSelectedFileCard());
     register({ id: "file.preview", label: "预览文件", category: "file-card", elementTypes: ["fileCard"], when: hasSingleType("fileCard") }, (context) => openFileCardPreview(context.selectedItems[0]));
     register({ id: "file.convert", label: "转换文件格式", category: "file-card", when: hasSingleType("fileCard") }, () => openFileConversion());
@@ -28422,6 +28649,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     insertFileExcerpt,
     insertFilePageImage,
     insertWorkstationFiles,
+    locateWorkstationResults,
     confirmWordExportPreview,
     reorderWordExportPreview,
     closeWordExportPreview: clearWordExportPreviewRequest,
@@ -28614,6 +28842,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return structuredExportRuntime.buildSnapshot(state.board, options);
     },
     loadStructuredBoardForExport(board = {}, options = {}) {
+      transientMinimap.resetTransient();
       const nextBoard = repairMisclassifiedCodeBlocksOnBoard(board, DEFAULT_TEXT_FONT_SIZE);
       clearFileCardPreviewRequestsByItemIds(null, { restoreMemo: false, emit: false });
       cancelClipboardImports();

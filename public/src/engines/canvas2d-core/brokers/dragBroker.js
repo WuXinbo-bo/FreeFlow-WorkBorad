@@ -67,7 +67,7 @@ export function createDragBroker({
     let offset = 0;
     const basePoint = normalizeAnchorPoint(anchorPoint);
     for (const file of list) {
-      const point = { x: basePoint.x + offset, y: basePoint.y + offset };
+      const point = { x: basePoint.x, y: basePoint.y + offset };
       const resolvedPath = typeof getFilePath === "function" ? getFilePath(file) : "";
       if (resolvedPath && !file.path) {
         file.path = resolvedPath;
@@ -91,7 +91,7 @@ export function createDragBroker({
       } else {
         items.push(applyAttachmentSyncMetadata(createFileCardElement(file, point), file, syncReason));
       }
-      offset += 28;
+      offset += Math.max(1, Number(items.at(-1)?.height) || 128) + 24;
     }
 
     return items;
@@ -151,7 +151,7 @@ export function createDragBroker({
       if (!cleanPath) {
         continue;
       }
-      const point = { x: basePoint.x + offset, y: basePoint.y + offset };
+      const point = { x: basePoint.x, y: basePoint.y + offset };
       const name = getFileName(cleanPath);
       let fileId = "";
       if (typeof getFileId === "function") {
@@ -174,7 +174,7 @@ export function createDragBroker({
       } else {
         items.push(createFileCardElement(fakeFile, point));
       }
-      offset += 28;
+      offset += Math.max(1, Number(items.at(-1)?.height) || 128) + 24;
     }
 
     return items;

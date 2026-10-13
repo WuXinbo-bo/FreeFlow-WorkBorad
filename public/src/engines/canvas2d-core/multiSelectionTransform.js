@@ -234,6 +234,8 @@ export function computeMultiSelectionResizedBounds(
 
   if (preserveAspect) {
     const ratio = Math.max(0.0001, normalized.width / Math.max(1, normalized.height));
+    if (handle === "multi-e" || handle === "multi-w") nextHeight = Math.max(minHeight, nextWidth / ratio);
+    if (handle === "multi-n" || handle === "multi-s") nextWidth = Math.max(minWidth, nextHeight * ratio);
     if (nextWidth / Math.max(1, nextHeight) > ratio) {
       nextHeight = nextWidth / ratio;
     } else {
@@ -263,10 +265,10 @@ export function computeMultiSelectionResizedBounds(
         top = anchor.y;
         bottom = anchor.y + nextHeight;
       } else {
-        left = centerX - nextWidth / 2;
-        right = centerX + nextWidth / 2;
-        top = centerY - nextHeight / 2;
-        bottom = centerY + nextHeight / 2;
+        left = handle === "multi-e" ? normalized.left : handle === "multi-w" ? normalized.right - nextWidth : centerX - nextWidth / 2;
+        top = handle === "multi-s" ? normalized.top : handle === "multi-n" ? normalized.bottom - nextHeight : centerY - nextHeight / 2;
+        right = left + nextWidth;
+        bottom = top + nextHeight;
       }
     }
   }

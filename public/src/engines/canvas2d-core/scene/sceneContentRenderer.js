@@ -1,3 +1,4 @@
+import { getFileCardLayout, getFileCardNameLines, FILE_CARD_FONT } from "../fileCardLayout.js";
 import { getMemoLayout } from "../memoLayout.js";
 import { PRESENTATION_REPRESENTATIONS } from "../runtime/presentationQualityPlanner.js";
 
@@ -321,6 +322,8 @@ function syncTableNode(node, item, context) {
   return true;
 }
 
+let fileCardMeasureContext = null;
+
 function createFileCardNode() {
   const node = document.createElement("div");
   node.className = "canvas2d-scene-content-item canvas2d-scene-file-card-item";
@@ -360,18 +363,43 @@ function syncFileCardNode(node, item, context) {
   ) {
     return false;
   }
-  const extension = String(item.ext || "").toUpperCase() || "FILE";
-  tag.textContent = extension;
-  name.textContent = String(item.name || item.fileName || "未命名文件");
-  meta.textContent = extension;
+  const layout = getFileCardLayout(item);
+  const card = node.querySelector(".canvas2d-scene-file-card-body");
+  setStyle(card, "borderRadius", `${layout.radius}px`);
+  setStyle(card, "borderWidth", `${layout.scale}px`);
+  setStyle(card, "boxShadow", `0 ${2 * layout.scale}px ${8 * layout.scale}px rgba(15, 23, 42, 0.04)`);
+  for (const [target, box] of [[tag, layout.tag], [name, layout.name], [meta, layout.meta]]) {
+    setStyle(target, "left", `${box.x}px`);
+    setStyle(target, "top", `${box.y}px`);
+    setStyle(target, "width", `${box.width}px`);
+    setStyle(target, "fontSize", `${box.font}px`);
+  }
+  setStyle(tag, "height", `${layout.tag.height}px`);
+  setStyle(tag, "borderRadius", `${10 * layout.scale}px`);
+  setStyle(tag, "borderWidth", `${layout.scale}px`);
+  setStyle(name, "lineHeight", `${layout.name.lineHeight}px`);
+  setStyle(name, "height", `${layout.name.height}px`);
+  setStyle(meta, "lineHeight", `${16 * layout.scale}px`);
+  tag.textContent = layout.extension;
+  const fullName = String(item.name || item.fileName || "未命名文件");
+  const measureWidth = Math.round(layout.name.width / layout.scale * 1000) / 1000;
+  const signature = `${fullName}:${measureWidth}`;
+  if (name.dataset.layoutSignature !== signature) {
+    fileCardMeasureContext ||= document.createElement("canvas").getContext("2d");
+    fileCardMeasureContext.font = `600 16px ${FILE_CARD_FONT}`;
+    name.textContent = getFileCardNameLines(fullName, measureWidth, text => fileCardMeasureContext.measureText(text).width).join("\n");
+    name.dataset.layoutSignature = signature;
+  }
+  node.title = [fullName, item.sourcePath].filter(Boolean).join("\n");
+  meta.textContent = layout.metadata;
   tag.style.color = String(item.accentTextColor || "#1d4ed8");
   tag.style.background = String(item.accentSoftColor || "rgba(59, 130, 246, 0.12)");
   tag.style.borderColor = String(item.accentStrokeColor || "rgba(59, 130, 246, 0.18)");
-  const logicalHeight = Math.max(1, Number(item.height || 1));
-  setStyle(tag, "fontSize", `${Math.min(26, Math.max(10, logicalHeight * 0.12))}px`);
-  setStyle(name, "fontSize", `${Math.min(28, Math.max(10, logicalHeight * 0.15))}px`);
-  setStyle(meta, "fontSize", `${Math.min(24, Math.max(10, logicalHeight * 0.12))}px`);
   mark.style.display = item.marked ? "block" : "none";
+  setStyle(mark, "width", `${6 * layout.scale}px`);
+  setStyle(mark, "height", `${6 * layout.scale}px`);
+  setStyle(mark, "right", `${9 * layout.scale}px`);
+  setStyle(mark, "top", `${9 * layout.scale}px`);
   const showMemo = item.memoVisible && context.fileMemoEditingId !== item.id;
   memo.style.display = showMemo ? "flex" : "none";
   if (showMemo) {

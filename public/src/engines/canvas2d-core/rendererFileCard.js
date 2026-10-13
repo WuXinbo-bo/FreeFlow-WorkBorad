@@ -1,54 +1,10 @@
+import { getFileCardLayout, getFileCardNameLines, FILE_CARD_FONT } from "./fileCardLayout.js";
 import { getMemoLayout } from "./memoLayout.js";
 import { scaleSceneValue } from "./viewportMetrics.js";
 import { drawStableRoundedRectPath } from "./render/cornerRadius.js";
 
 function drawRoundedRect(ctx, x, y, width, height, radius = 18) {
-  drawStableRoundedRectPath(ctx, x, y, width, height, radius);
-}
-
-function wrapTextWithEllipsis(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
-  const raw = String(text || "");
-  const lines = raw.split("\n");
-  let row = 0;
-  const addEllipsis = (value) => {
-    const ellipsis = "…";
-    let trimmed = value;
-    while (trimmed && ctx.measureText(`${trimmed}${ellipsis}`).width > maxWidth) {
-      trimmed = trimmed.slice(0, -1);
-    }
-    return `${trimmed}${ellipsis}`;
-  };
-
-  for (const part of lines) {
-    if (row >= maxLines) break;
-    const words = part.split(/\s+/).filter(Boolean);
-    if (!words.length) {
-      row += 1;
-      continue;
-    }
-    let line = "";
-    for (const word of words) {
-      const nextLine = line ? `${line} ${word}` : word;
-      if (ctx.measureText(nextLine).width > maxWidth && line) {
-        if (row === maxLines - 1) {
-          ctx.fillText(addEllipsis(line), x, y + row * lineHeight);
-          return;
-        }
-        ctx.fillText(line, x, y + row * lineHeight);
-        line = word;
-        row += 1;
-        if (row >= maxLines) return;
-      } else {
-        line = nextLine;
-      }
-    }
-    if (row === maxLines - 1) {
-      ctx.fillText(addEllipsis(line), x, y + row * lineHeight);
-      return;
-    }
-    ctx.fillText(line, x, y + row * lineHeight);
-    row += 1;
-  }
+  drawStableRoundedRectPath(ctx, x, y, width, height, radius, { maxRadiusPx: Infinity, maxCornerRatio: 0.5 });
 }
 
 function wrapTextByChar(ctx, text, x, y, maxWidth, lineHeight, maxLines = 4) {
@@ -132,49 +88,13 @@ function countWrappedTextLines(ctx, text, maxWidth, maxLines = 4) {
 }
 
 export function drawFileCard(ctx, element, view, selected, hover, { drawSelectionFrame, drawHandles } = {}) {
-  const layout = {
-    nameFontRatio: 0.15,
-    metaFontRatio: 0.12,
-    tagFontRatio: 0.12,
-    paddingXRatio: 0.06,
-    paddingYRatio: 0.14,
-    tagWidthRatio: 0.22,
-    tagHeightRatio: 0.18,
-    minFont: 10,
-    maxFont: 28,
-    minPadding: 6,
-    minTagWidth: 36,
-    minTagHeight: 18,
-  };
-  const scale = Math.max(0.1, Number(view?.scale) || 1);
+  const layout = getFileCardLayout(element);
+  const scale = Math.max(0.01, Number(view?.scale) || 1);
   const x = Number(element.x || 0) * scale + Number(view?.offsetX || 0);
   const y = Number(element.y || 0) * scale + Number(view?.offsetY || 0);
-  const logicalWidth = Math.max(1, Number(element.width) || 1);
-  const logicalHeight = Math.max(1, Number(element.height) || 1);
-  const width = logicalWidth * scale;
-  const height = logicalHeight * scale;
-  const ext = String(element.ext || "").toUpperCase() || "FILE";
-  const name = element.name || "未命名文件";
-  const nameFontLogical = Math.min(
-    Math.max(layout.minFont, logicalHeight * layout.nameFontRatio),
-    layout.maxFont
-  );
-  const metaFontLogical = Math.min(
-    Math.max(layout.minFont, logicalHeight * layout.metaFontRatio),
-    layout.maxFont - 4
-  );
-  const tagFontLogical = Math.min(
-    Math.max(layout.minFont, logicalHeight * layout.tagFontRatio),
-    layout.maxFont - 2
-  );
-  const paddingX = scaleSceneValue(view, Math.max(layout.minPadding, logicalWidth * layout.paddingXRatio));
-  const paddingY = scaleSceneValue(view, Math.max(layout.minPadding, logicalHeight * layout.paddingYRatio));
-  const tagWidth = scaleSceneValue(view, Math.max(layout.minTagWidth, logicalWidth * layout.tagWidthRatio));
-  const tagHeight = scaleSceneValue(view, Math.max(layout.minTagHeight, logicalHeight * layout.tagHeightRatio));
-  const nameFontSize = scaleSceneValue(view, nameFontLogical);
-  const metaFontSize = scaleSceneValue(view, metaFontLogical);
-  const tagFontSize = scaleSceneValue(view, tagFontLogical);
-  const lineHeight = scaleSceneValue(view, Math.max(16, nameFontLogical * 1.2));
+  const width = Number(element.width) * scale;
+  const height = Number(element.height) * scale;
+  const unit = layout.scale * scale;
   const accentSoftColor = String(element.accentSoftColor || "rgba(59, 130, 246, 0.12)");
   const accentStrokeColor = String(element.accentStrokeColor || "rgba(59, 130, 246, 0.18)");
   const accentTextColor = String(element.accentTextColor || "#1d4ed8");
@@ -220,59 +140,49 @@ export function drawFileCard(ctx, element, view, selected, hover, { drawSelectio
     }
   }
 
-  drawRoundedRect(ctx, x, y, width, height, 18);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
-  ctx.strokeStyle = "rgba(203, 213, 225, 0.96)";
-  ctx.lineWidth = 1.25;
-  ctx.shadowColor = "rgba(15, 23, 42, 0.03)";
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 2;
+  drawRoundedRect(ctx, x, y, width, height, layout.radius * scale);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+  ctx.strokeStyle = "rgba(203, 213, 225, 0.8)";
+  ctx.lineWidth = unit;
+  ctx.shadowColor = "rgba(15, 23, 42, 0.04)";
+  ctx.shadowBlur = 8 * unit;
+  ctx.shadowOffsetY = 2 * unit;
   ctx.fill();
   ctx.shadowColor = "transparent";
   ctx.stroke();
-
   ctx.save();
-  drawRoundedRect(ctx, x, y, width, height, 18);
+  drawRoundedRect(ctx, x, y, width, height, layout.radius * scale);
   ctx.clip();
 
-  const contentWidth = Math.max(80, width - paddingX * 2);
-
-  drawRoundedRect(ctx, x + paddingX, y + paddingY, Math.min(tagWidth, contentWidth), tagHeight, Math.max(8, tagHeight * 0.45));
+  const tag = layout.tag;
+  drawRoundedRect(ctx, x + tag.x * scale, y + tag.y * scale, tag.width * scale, tag.height * scale, 10 * unit);
   ctx.fillStyle = accentSoftColor;
   ctx.strokeStyle = accentStrokeColor;
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = accentTextColor;
-  ctx.font = `600 ${tagFontSize}px "Segoe UI", "PingFang SC", sans-serif`;
+  ctx.font = `600 ${tag.font * scale}px ${FILE_CARD_FONT}`;
   ctx.textBaseline = "middle";
-  ctx.fillText(ext, x + paddingX + Math.min(tagWidth, contentWidth) * 0.2, y + paddingY + tagHeight / 2);
+  ctx.textAlign = "center";
+  ctx.fillText(layout.extension, x + (tag.x + tag.width / 2) * scale, y + (tag.y + tag.height / 2) * scale, (tag.width - 8 * layout.scale) * scale);
 
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
   ctx.fillStyle = "#0f172a";
-  ctx.font = `600 ${nameFontSize}px "Segoe UI", "PingFang SC", sans-serif`;
-  wrapTextWithEllipsis(
-    ctx,
-    name,
-    x + paddingX,
-    y + paddingY + tagHeight + paddingY * 0.8,
-    contentWidth,
-    lineHeight,
-    2
-  );
-
+  // Measure in base coordinates: changing viewport zoom cannot change line breaks.
+  ctx.font = `600 16px ${FILE_CARD_FONT}`;
+  const lines = getFileCardNameLines(element.name || element.fileName, Math.round(layout.name.width / layout.scale * 1000) / 1000, text => ctx.measureText(text).width);
+  ctx.font = `600 ${layout.name.font * scale}px ${FILE_CARD_FONT}`;
+  lines.forEach((line, index) => ctx.fillText(line, x + layout.name.x * scale, y + (layout.name.y + index * layout.name.lineHeight + 2 * layout.scale) * scale));
   ctx.fillStyle = "rgba(71, 85, 105, 0.92)";
-  ctx.font = `500 ${metaFontSize}px "Segoe UI", "PingFang SC", sans-serif`;
-  ctx.fillText(ext || "FILE", x + paddingX, y + height - paddingY * 0.7 - metaFontSize);
-
+  ctx.font = `500 ${layout.meta.font * scale}px ${FILE_CARD_FONT}`;
+  ctx.fillText(layout.metadata, x + layout.meta.x * scale, y + layout.meta.y * scale);
   if (element.marked) {
-    const ringInset = Math.max(4, Math.min(10, Math.min(width, height) * 0.04));
-    ctx.save();
-    drawRoundedRect(ctx, x + ringInset, y + ringInset, width - ringInset * 2, height - ringInset * 2, 16);
-    ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
-    ctx.lineWidth = Math.max(1, Math.min(3, ringInset * 0.35));
-    ctx.stroke();
-    ctx.restore();
+    ctx.fillStyle = "#d97706";
+    ctx.beginPath();
+    ctx.arc(x + width - 12 * unit, y + 12 * unit, 3 * unit, 0, Math.PI * 2);
+    ctx.fill();
   }
-
   ctx.restore();
 
   drawSelectionFrame?.(ctx, x, y, width, height, selected, hover);
