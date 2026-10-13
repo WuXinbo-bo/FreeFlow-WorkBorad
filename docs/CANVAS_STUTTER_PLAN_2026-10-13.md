@@ -49,6 +49,7 @@ Implemented shared changes:
 - Coalesced selection/resize/marquee pointer moves to one latest event per animation frame, including final pointer-up coordinates and cancellation cleanup.
 - Deferred store emissions and autosave work during active interaction; text serialization can preserve already-measured geometry instead of remeasuring the whole board.
 - Cached file-card filename wrapping and made minimap snapshot/viewport refreshes animation-frame scheduled.
+- Reused sanitized rich-text display HTML and extended bounded rich layout/run caches for larger visible scenes; cache keys remain the full content, so edits select new entries.
 - Added regression coverage for image cache concurrency/cancellation/reentry/release, retained-frame pause/recovery, scheduler timing, tile recovery, persistence geometry, native desktop drag/undo/redo, and mixed-scene desktop gestures.
 
 Verification on the isolated macOS Electron runtime (GPU enabled, 1440x960):
@@ -56,7 +57,7 @@ Verification on the isolated macOS Electron runtime (GPU enabled, 1440x960):
 - Shared browser suite passed through document preview, rich editing, text experience, media integrity, card UX, trackpad, and clipboard prerequisites. The clipboard fidelity test currently fails on both the pre-change baseline and current branch in the existing repeated paste/cancel assertion; it is not attributable to this patch.
 - Native desktop drag/click/undo/redo passed for 120 and 1200 file cards with no frame gap above 50ms in the measured click, drag, or recovery windows.
 - Mixed 360-element stress (120 images, 120 file cards, 120 rich text items) showed gesture RAF P95 around 8–17ms in the warm runs, with no >50ms gesture frame gaps; recovery returned to `steady` and resource reconciliation completed on the normal path.
-- 1200 text/file zoom remains functional; synthetic zoom can still produce occasional 50–92ms frame gaps while the browser is doing large text/layout work. This is diagnostic evidence, not a hardware-independent FPS guarantee.
+- Follow-up 1200 text/file zoom profiling found repeated DOM sanitization and bounded-cache thrash. After reusing sanitized markup and increasing run/layout entry limits to 512, the isolated profile recorded RAF P95 about 17ms, maximum about 33ms, and no >50ms gesture frame gaps. This is diagnostic evidence, not a hardware-independent FPS guarantee.
 - Full generated-bundle consistency check passed. The existing html2canvas duplicate-case warning remains vendor-only.
 
 Limitations: DOM scene images still retain their normal `<img>` representation while visible; the preview cache covers the Canvas2D fallback path. Native Windows runtime execution is unavailable on this macOS host and must be validated on Windows after cherry-pick.
