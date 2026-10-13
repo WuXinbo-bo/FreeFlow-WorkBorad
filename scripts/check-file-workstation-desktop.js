@@ -125,7 +125,12 @@ async function main() {
     await page.getByRole("button", { name: "添加到画布", exact: true }).click();
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items.length), countBefore + 2);
     await page.evaluate(() => window.__canvas2dEngine.undo()); assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items.length), countBefore);
-    await page.getByRole("button", { name: "关闭文件转换", exact: true }).click();
+    await page.evaluate(() => window.__canvas2dEngine.redo());
+    await page.getByRole("button", { name: "定位结果", exact: true }).click();
+    await page.waitForFunction(() => !window.__canvas2dEngine.getSnapshot().fileConversionRequest);
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.selectedIds.length), 2);
+    await page.evaluate(() => window.__canvas2dEngine.undo());
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items.length), countBefore);
     // Reading position and parser cleanup across close/reopen.
     await page.getByRole("button", { name: "关闭预览", exact: true }).click();
     await page.evaluate(() => { const engine = window.__canvas2dEngine; engine.openFileCardPreview(engine.getSnapshotData().items[0]); });

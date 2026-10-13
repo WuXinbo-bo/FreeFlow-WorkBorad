@@ -5,7 +5,7 @@ import { readChromePreference, writeChromePreference } from "./chromePreferences
 const DEFAULT_WIDTH = 164;
 const DEFAULT_HEIGHT = 96;
 const DEFAULT_PADDING = 12;
-const DEFAULT_HIDE_DELAY_MS = 520;
+const DEFAULT_HIDE_DELAY_MS = 800;
 const DEFAULT_MARGIN = 18;
 const DEFAULT_CANVAS_FILL = "rgba(248,250,252,0.92)";
 const DEFAULT_CANVAS_STROKE = "rgba(207, 216, 231, 0.92)";
@@ -239,7 +239,56 @@ export function createTransientMinimap({
   let toggleButton = null;
   let mounted = false;
   let collapsed = readChromePreference("minimapCollapsed", true);
+  let pinned = !collapsed;
+  let suppressGesture = false;
+  let hovered = false;
+  let hideTimer = 0;
+  let lastZoomAt = 0;
   let occluded = false;
+
+  function clearHideTimer() {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = 0;
+  }
+
+  function resetTransient() {
+    clearHideTimer();
+    suppressGesture = false;
+    lastZoomAt = 0;
+    hovered = false;
+    collapsed = !pinned;
+    applyCollapsedState();
+  }
+
+  function scheduleHide() {
+    clearHideTimer();
+    hideTimer = setTimeout(() => {
+      hideTimer = 0;
+      suppressGesture = false;
+      if (!pinned && !hovered && !shell?.querySelector(":focus-visible")) {
+        collapsed = true;
+        applyCollapsedState();
+        schedulePlacement();
+      }
+    }, DEFAULT_HIDE_DELAY_MS);
+  }
+
+  function handlePointerEnter() { hovered = true; }
+  function handlePointerLeave() { hovered = false; scheduleHide(); }
+  function handleFocusOut() { scheduleHide(); }
+
+  function handleZoom() {
+    if (!mounted || document.hidden) return;
+    const now = Date.now();
+    if (now - lastZoomAt >= DEFAULT_HIDE_DELAY_MS) suppressGesture = false;
+    lastZoomAt = now;
+    if (!pinned && !suppressGesture && collapsed) {
+      collapsed = false;
+      applyCollapsedState();
+      update();
+    }
+    scheduleHide();
+  }
   let lastSceneRevision = -1;
   let lastLayout = null;
   let lastBoardBounds = null;
@@ -269,7 +318,8 @@ export function createTransientMinimap({
   }
 
   function handleVisibilityChange() {
-    if (!document.hidden) update();
+    if (document.hidden) resetTransient();
+    else update();
   }
 
   function syncDebugStats() {
@@ -291,14 +341,19 @@ export function createTransientMinimap({
     shell.setAttribute("aria-expanded", collapsed ? "false" : "true");
     toggleButton.setAttribute("aria-label", collapsed ? "展开当前位置地图" : "收起当前位置地图");
     toggleButton.setAttribute("title", collapsed ? "展开当前位置地图" : "收起当前位置地图");
-    toggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
+    toggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
     toggleButton.textContent = collapsed ? "‹" : "–";
   }
 
   function handleToggleClick(event) {
     event.preventDefault();
     event.stopPropagation();
+    clearHideTimer();
     collapsed = !collapsed;
+    pinned = !collapsed;
+    suppressGesture = collapsed;
+    if (collapsed) lastZoomAt = Date.now();
+    if (collapsed) scheduleHide();
     writeChromePreference("minimapCollapsed", collapsed);
     applyCollapsedState();
     update();
@@ -334,6 +389,9 @@ export function createTransientMinimap({
       shell.id = "canvas2d-transient-minimap";
       shell.className = "canvas2d-transient-minimap canvas-chrome-surface canvas-chrome-minimap";
       shell.setAttribute("aria-hidden", "false");
+      shell.addEventListener("pointerenter", handlePointerEnter);
+      shell.addEventListener("pointerleave", handlePointerLeave);
+      shell.addEventListener("focusout", handleFocusOut);
 
       toggleButton = document.createElement("button");
       toggleButton.type = "button";
@@ -519,7 +577,10 @@ export function createTransientMinimap({
       applyCollapsedState();
       return true;
     },
+    resetTransient,
+    handleZoom,
     unmount() {
+      resetTransient();
       mounted = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       placementObserver?.disconnect();
