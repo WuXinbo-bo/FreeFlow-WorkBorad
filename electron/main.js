@@ -87,8 +87,8 @@ const DEFAULT_SHORTCUT_SETTINGS = Object.freeze({
   clickThroughAccelerator: "CommandOrControl+Shift+X",
 });
 let APP_URL = `http://127.0.0.1:${SERVER_PORT}/?desktop=1`;
-const PIN_LEVEL = "screen-saver";
-const PIN_RELATIVE_LEVEL = 1;
+const PIN_LEVEL = process.platform === "darwin" ? "floating" : "screen-saver";
+const PIN_RELATIVE_LEVEL = process.platform === "darwin" ? 0 : 1;
 const WORD_PREVIEW_TIMEOUT_MS = 45000;
 const EXPORT_SELF_TEST_INPUT = String(process.env.FREEFLOW_EXPORT_SELFTEST_INPUT || "").trim();
 const EXPORT_SELF_TEST_OUTPUT = String(process.env.FREEFLOW_EXPORT_SELFTEST_OUTPUT || "").trim();
@@ -2263,7 +2263,7 @@ function createMainWindow() {
   });
 
   window.on("blur", () => {
-    reinforcePinnedState();
+    if (process.platform !== "darwin") reinforcePinnedState();
   });
 
   window.on("focus", () => {

@@ -89,6 +89,21 @@ assert.strictEqual(
 console.log("[check-macos-window-interaction] selective macOS hit testing and recovery paths passed");
 
 const mainSource = fs.readFileSync(path.join(__dirname, "../electron/main.js"), "utf8");
+const pinLevelsSource = mainSource.match(/^const PIN_LEVEL = .+;\nconst PIN_RELATIVE_LEVEL = .+;/m)?.[0];
+const blurHandlerSource = mainSource.match(/window\.on\("blur", \(\) => \{([\s\S]*?)\n  \}\);/)?.[1];
+assert(pinLevelsSource && blurHandlerSource, "window pin policy or blur handler missing");
+for (const platform of ["darwin", "win32"]) {
+  let raised = 0;
+  const pinContext = vm.createContext({
+    process: { platform },
+    reinforcePinnedState: () => { raised += 1; },
+  });
+  const levels = vm.runInContext(`${pinLevelsSource}\n[PIN_LEVEL, PIN_RELATIVE_LEVEL]`, pinContext);
+  assert.deepStrictEqual(Array.from(levels), platform === "darwin" ? ["floating", 0] : ["screen-saver", 1]);
+  for (let i = 0; i < 10; i++) vm.runInContext(blurHandlerSource, pinContext);
+  assert.strictEqual(raised, platform === "darwin" ? 0 : 10, "Mac blur raised over IME, or Windows pinning changed");
+}
+console.log("[check-macos-window-interaction] macOS IME pin level and Windows blur policy passed");
 const trackingSource = mainSource.slice(
   mainSource.indexOf("function stopMacOSShapeInteractionTracking()"),
   mainSource.indexOf("function clearMainWindowRendererReadyTimer()")
