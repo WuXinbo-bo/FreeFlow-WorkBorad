@@ -11,7 +11,7 @@ import { sanitizeHtml } from "./utils.js";
 
 export const TEXT_LINE_HEIGHT_RATIO = TEXT_BODY_LINE_HEIGHT_RATIO;
 export const TEXT_FONT_FAMILY = '"Segoe UI", "PingFang SC", sans-serif';
-export const TEXT_FONT_WEIGHT = "500";
+export const TEXT_FONT_WEIGHT = "400";
 export const TEXT_BOLD_WEIGHT = "700";
 const DEFAULT_HIGHLIGHT = "#fff4a3";
 const RICH_RUN_CACHE_LIMIT = 256;
@@ -587,7 +587,10 @@ function applyElementStyle(style, element) {
   if (!element || !style) return style;
   const next = { ...style };
   const tag = normalizeTagName(element.tagName);
-  if (tag === "strong" || tag === "b") next.bold = true;
+  if (tag === "strong" || tag === "b") {
+    next.bold = true;
+    next.fontWeight = String(Math.max(Number(next.fontWeight) || 0, Number(TEXT_BOLD_WEIGHT)));
+  }
   if (tag === "em" || tag === "i") next.italic = true;
   if (tag === "u") next.underline = true;
   if (tag === "s" || tag === "strike" || tag === "del") next.strike = true;

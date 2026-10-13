@@ -88,6 +88,7 @@ async function main() {
       document.dispatchEvent(new Event('selectionchange'));
       await new Promise(resolve => requestAnimationFrame(resolve));
     });
+    await page.locator('#canvas2d-rich-toolbar [data-action="toggle-more-menu"]').click();
     await page.locator('#canvas2d-rich-toolbar [data-action="text-split"]').click();
     await page.waitForFunction(() => window.__canvas2dEngine.getSnapshotData().items.length === 2);
     assert.equal((await items()).length, 2, 'manual text split stopped working');
@@ -127,7 +128,7 @@ async function main() {
       });
       assert(Math.abs(display.width - edit.width) < 1, `width mismatch at ${scale}`);
       assert(Math.abs(display.height - edit.height) < 1, `height mismatch at ${scale}: ${JSON.stringify({display, edit})}`);
-      assert.deepEqual(edit.fonts, ['36px', '30px', '20px', '28px']);
+      assert.deepEqual(edit.fonts, ['40px', '34px', '20px', '28px']);
       await editor.press('End'); await page.keyboard.type(' edited');
       await page.evaluate(() => window.__canvas2dEngine.setTool('pan'));
       assert((await items())[0].text.includes('edited'));

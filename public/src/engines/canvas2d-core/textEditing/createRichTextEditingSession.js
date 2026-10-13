@@ -94,6 +94,7 @@ export function createRichTextEditingSession({
       return true;
     },
     clear({ destroyAdapter = false } = {}) {
+      if (host) delete host.dataset.ffComposing;
       syncHiddenState(true);
       if (destroyAdapter && adapter) {
         adapter.destroy();
@@ -110,6 +111,9 @@ export function createRichTextEditingSession({
     },
     isActive() {
       return Boolean(session?.itemId);
+    },
+    isComposing() {
+      return host?.dataset.ffComposing === "true";
     },
     getRevision() {
       return revision;

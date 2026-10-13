@@ -1143,6 +1143,10 @@ function parseElementToBlock(element) {
     return null;
   }
   const tag = element.tagName.toLowerCase();
+  if (element.hasAttribute("data-footnote-definition")) {
+    return { type: RICH_TEXT_BLOCK_TYPES.FOOTNOTE_DEFINITION,
+      blocks: parseBlockNodes(Array.from(element.childNodes)), attrs: { id: element.getAttribute("data-footnote-definition") }, meta: {} };
+  }
   if (element.getAttribute("data-role") === "math-block") {
     return {
       type: RICH_TEXT_BLOCK_TYPES.MATH_BLOCK,
@@ -1185,7 +1189,7 @@ function parseElementToBlock(element) {
   if (tag === "pre") {
     const code = element.querySelector("code");
     const languageClass = Array.from(code?.classList || []).find((value) => String(value || "").startsWith("language-")) || "";
-    const codePlainText = sanitizeText(htmlToPlainText(element.outerHTML || element.innerHTML || ""));
+    const codePlainText = sanitizeText(code?.textContent ?? element.textContent ?? "");
     return {
       type: RICH_TEXT_BLOCK_TYPES.CODE_BLOCK,
       plainText: codePlainText,

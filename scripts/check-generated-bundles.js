@@ -4,10 +4,11 @@ const { spawn } = require("child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const BUNDLES = [
+  "public/assets/vendor/markdown/markdown-parser.js",
   "public/assets/canvas2d-ui/current/canvas2d-ui.js",
   "public/assets/canvas-office/current/canvas-office-ui.js",
 ];
-const BUILD_SCRIPTS = ["scripts/build-canvas2d-ui.js", "scripts/build-canvas-office.js"];
+const BUILD_SCRIPTS = ["scripts/build-markdown-parser.js", "scripts/build-canvas2d-ui.js", "scripts/build-canvas-office.js"];
 
 async function runNodeScript(scriptPath) {
   await new Promise((resolve, reject) => {

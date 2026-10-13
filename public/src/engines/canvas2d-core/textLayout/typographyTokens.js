@@ -1,12 +1,12 @@
 export const TEXT_BODY_LINE_HEIGHT_RATIO = 1.5;
 
 export const TEXT_HEADING_FONT_SIZES = Object.freeze({
-  h1: 36,
-  h2: 30,
-  h3: 26,
-  h4: 22,
-  h5: 20,
-  h6: 18,
+  h1: 40,
+  h2: 34,
+  h3: 29,
+  h4: 25,
+  h5: 23,
+  h6: 21,
 });
 
 export const TEXT_HEADING_LINE_HEIGHT_RATIOS = Object.freeze({
@@ -20,7 +20,7 @@ export const TEXT_HEADING_LINE_HEIGHT_RATIOS = Object.freeze({
 
 export const TEXT_BLOCK_SPACING_EM = Object.freeze({
   paragraph: 0.6,
-  heading: 0.45,
+  heading: 0.5,
   listItem: 0.2,
   listBlock: 0.5,
   block: 0.6,
@@ -46,7 +46,8 @@ export function getHeadingFontSizeByLevel(level = 1, fallback = 20) {
 }
 
 export function getHeadingFontWeight(tagName = "") {
-  return /^h[12]$/.test(normalizeTagName(tagName)) ? "800" : "700";
+  const tag = normalizeTagName(tagName);
+  return /^h[12]$/.test(tag) ? "700" : /^h[34]$/.test(tag) ? "650" : "600";
 }
 
 export function getLineHeightRatioForTag(tagName = "") {
