@@ -42,6 +42,7 @@ export function takeHistorySnapshot(state, options = {}) {
     view: clone(state.board.view),
     editingId: null,
     editingType: null,
+    boardMeta: clone({ boardId: state.board.boardId, preferences: state.board.preferences, navigator: state.board.navigator }),
   };
 }
 
@@ -137,6 +138,7 @@ function cloneHistorySnapshot(snapshot) {
     view: clone(snapshot?.view || {}),
     editingId: snapshot?.editingId || null,
     editingType: snapshot?.editingType || null,
+    ...(snapshot?.boardMeta ? { boardMeta: clone(snapshot.boardMeta) } : {}),
   };
 }
 
@@ -207,6 +209,7 @@ function getPatchTargetSignature(entry, targetKey) {
       view: entry[`${targetKey}View`] || {},
       editingId: entry[`${targetKey}EditingId`] || null,
       editingType: entry[`${targetKey}EditingType`] || null,
+      boardMeta: entry[`${targetKey}BoardMeta`] || null,
     });
   } catch {
     return "";
@@ -274,6 +277,7 @@ function applyPatchEntryToSnapshot(entry, currentSnapshot, targetKey) {
   nextSnapshot.view = entry?.[`${targetKey}View`] ? clone(entry[`${targetKey}View`]) : nextSnapshot.view;
   nextSnapshot.editingId = entry?.[`${targetKey}EditingId`] || null;
   nextSnapshot.editingType = entry?.[`${targetKey}EditingType`] || null;
+  if (entry?.[`${targetKey}BoardMeta`]) nextSnapshot.boardMeta = clone(entry[`${targetKey}BoardMeta`]);
   return nextSnapshot;
 }
 
@@ -340,6 +344,8 @@ export function pushPatchHistory(history, patch, reason = "") {
     beforeEditingType: patch?.beforeEditingType || null,
     afterEditingId: patch?.afterEditingId || null,
     afterEditingType: patch?.afterEditingType || null,
+    beforeBoardMeta: patch?.beforeBoardMeta ? clone(patch.beforeBoardMeta) : null,
+    afterBoardMeta: patch?.afterBoardMeta ? clone(patch.afterBoardMeta) : null,
     reason,
     createdAt: Date.now(),
   };

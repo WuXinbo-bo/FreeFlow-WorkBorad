@@ -100,11 +100,17 @@ export async function renderSnapshotToTileExports(snapshot, options = {}) {
   }
 
   const scale = Math.max(0.1, Number(options.scale) || 1);
-  const tileSize = Math.max(256, roundPositiveInt(options.tileSize, 1024));
+  const tileSize = Math.min(2048, Math.max(256, roundPositiveInt(options.tileSize, 1024)));
   const plan = getTilePlan(bounds, tileSize);
+  const pixelWidth = Math.round(bounds.width * scale);
+  const pixelHeight = Math.round(bounds.height * scale);
+  if (!Number.isSafeInteger(pixelWidth) || !Number.isSafeInteger(pixelHeight) || pixelWidth > 16384 || pixelHeight > 16384 || pixelWidth * pixelHeight > 67_108_864 || !Number.isFinite(plan.tileCount) || plan.tileCount > 1024) {
+    return { ok: false, canceled: false, code: "TILE_EXPORT_SIZE_LIMIT", message: "画布范围过大，请缩小导出选区", tiles: [], tileCount: 0 };
+  }
   const originLeft = Number(bounds.left || 0) || 0;
   const originTop = Number(bounds.top || 0) || 0;
   const tiles = [];
+  let encodedBytes = 0;
   let tileIndex = 0;
   let exportImageFallbackCount = 0;
 
@@ -149,6 +155,8 @@ export async function renderSnapshotToTileExports(snapshot, options = {}) {
         };
       }
       const bytes = await createTileCanvasBytes(renderResult.canvas);
+      renderResult.canvas.width = 1;
+      renderResult.canvas.height = 1;
       if (options?.signal?.aborted) {
         return createCanceledTileResult();
       }
@@ -161,6 +169,10 @@ export async function renderSnapshotToTileExports(snapshot, options = {}) {
           tiles: [],
           tileCount: 0,
         };
+      }
+      encodedBytes += bytes.byteLength;
+      if (encodedBytes > 128 * 1024 * 1024) {
+        return { ok: false, canceled: false, code: "TILE_EXPORT_SIZE_LIMIT", message: "导出图片过大，请降低清晰度或缩小导出范围", tiles: [], tileCount: 0 };
       }
       exportImageFallbackCount = Math.max(
         exportImageFallbackCount,

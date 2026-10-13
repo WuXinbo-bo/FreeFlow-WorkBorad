@@ -172,14 +172,19 @@ function layoutBranch(parent, children, side, index, patchById) {
         ? Number(parent.x || 0) - MIND_NODE_HORIZONTAL_GAP - childWidth
         : Number(parent.x || 0) + Number(parent.width || 220) + MIND_NODE_HORIZONTAL_GAP;
     const nextY = cursorY + subtreeHeight / 2 - childHeight / 2;
-    patchById.set(String(child.id || ""), {
-      x: Math.round(nextX),
-      y: Math.round(nextY),
+    const patch = {
       depth: Math.max(0, Number(parent.depth || 0) + 1),
       rootId: String(parent.rootId || parent.id || child.rootId || child.id || ""),
       branchSide: side,
       order: siblingIndex,
-    });
+    };
+    // A locked node keeps its manually placed coordinates while remaining in
+    // the layout tree so descendants still receive stable spacing.
+    if (!child.locked) {
+      patch.x = Math.round(nextX);
+      patch.y = Math.round(nextY);
+    }
+    patchById.set(String(child.id || ""), patch);
     cursorY += subtreeHeight + MIND_NODE_VERTICAL_GAP;
     if (!child.collapsed) {
       const grandChildren = index.childrenByParent.get(String(child.id || "")) || [];

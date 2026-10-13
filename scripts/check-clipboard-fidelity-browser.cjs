@@ -73,7 +73,8 @@ async function main() {
     await reset();
     const samples = [
       { name: 'article selection', html: fixture('article-selection.html'), verify(result) {
-        assert.equal(result[0].text, 'BEFORE'); assert.equal(result.at(-1).text, 'AFTER'); assert(result.some(i => i.type === 'codeBlock'));
+        assert(result[0].text.startsWith('BEFORE')); assert(result[0].text.includes('Both surrounding paragraphs'));
+        assert.equal(result.at(-1).text, 'AFTER'); assert(result.some(i => i.type === 'codeBlock'));
       } },
       { name: 'merged table', html: fixture('merged-table.html'), verify(result) {
         const table = result[0].table; assert.equal(table.columns, 3); assert.equal(table.rows[0].cells[0].rowSpan, 2); assert.equal(table.rows[1].cells[0].colSpan, 2);

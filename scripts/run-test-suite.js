@@ -44,6 +44,7 @@ const CHECKS = [
   "scripts/check-canvas-resource-prewarm-runtime.js",
   "scripts/check-canvas-resource-budget-runtime.js",
   "scripts/check-canvas-state-history.js",
+  "scripts/check-canvas-integrity-boundaries.js",
   "scripts/check-canvas-runtime-hardening.js",
   "scripts/check-worker-lifetime.js",
   "scripts/check-canvas-file-paths.js",
@@ -182,6 +183,9 @@ async function main() {
     await runNodeScript("scripts/check-canvas-background-lifecycle.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
+    for (const script of ["scripts/check-canvas-edit-integrity.js", "scripts/check-canvas-rich-editing.js", "scripts/check-canvas-media-integrity-browser.js"]) {
+      await runNodeScript(script, { CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html` });
+    }
     await runNodeScript("scripts/check-canvas-trackpad-browser.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });

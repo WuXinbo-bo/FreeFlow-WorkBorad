@@ -1,6 +1,7 @@
 import {
   getBlockSpacingEmForTag,
   getHeadingFontSize,
+  getHeadingFontWeight,
   getLineHeightRatioForTag,
   normalizeTagName,
   TEXT_BODY_LINE_HEIGHT_RATIO,
@@ -592,6 +593,7 @@ function applyElementStyle(style, element) {
   if (tag === "s" || tag === "strike" || tag === "del") next.strike = true;
   if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
     next.bold = true;
+    next.fontWeight = getHeadingFontWeight(tag);
     next.lineHeightRatio = getLineHeightRatioForTag(tag);
     next.fontSize = getHeadingFontSize(tag, next.fontSize || style.fontSize || 20);
   }
@@ -719,7 +721,7 @@ function parseRichTextRuns(html = "") {
       pushLineBreak(
         spacingAfterEm > 0
           ? {
-              spacingAfterEm,
+              spacingAfterEm, fontSize: nextStyle.fontSize,
             }
           : {}
       );
@@ -779,9 +781,9 @@ function fontForRun(runStyle, baseFontSize, scale = 1, options = {}) {
   const fontScale = Math.max(0.1, Number(runStyle.fontScale || 1));
   const rawFont = Number(runStyle.fontSize || baseFontSize * fontScale);
   const fontSize = Math.max(10, rawFont) * Math.max(0.1, Number(scale) || 1);
-  const weight = runStyle.bold
+  const weight = runStyle.fontWeight || (runStyle.bold
     ? String(options.boldWeight || TEXT_BOLD_WEIGHT)
-    : String(options.fontWeight || TEXT_FONT_WEIGHT);
+    : String(options.fontWeight || TEXT_FONT_WEIGHT));
   const fontStyle = runStyle.italic ? "italic" : "normal";
   const fontFamily = sanitizeCanvasFontFamily(runStyle.fontFamily || options.fontFamily || TEXT_FONT_FAMILY);
   return `${fontStyle} ${weight} ${Math.max(1, fontSize)}px ${fontFamily}`;
@@ -884,7 +886,7 @@ function layoutRichRuns(runs, ctx, maxWidth, baseFontSize, scale = 1, options = 
     if (text === "\n") {
       const spacingAfterEm = Math.max(0, Number(style.spacingAfterEm || 0));
       if (spacingAfterEm > 0) {
-        current.spacingAfter = Math.max(current.spacingAfter, spacingAfterEm * baseFontSize * scaleValue);
+        current.spacingAfter = Math.max(current.spacingAfter, spacingAfterEm * (style.fontSize || baseFontSize) * scaleValue);
       }
       pushLine();
       return;

@@ -285,7 +285,7 @@ export function createRichTextAdapter(
     if (!(node instanceof HTMLElement)) {
       return false;
     }
-    return node.tagName === "STRONG" || node.tagName === "B";
+    return node.tagName === "STRONG" || node.tagName === "B" || node.style.fontWeight === "bold" || Number(node.style.fontWeight) >= 600;
   }
 
   function isHeadingElement(node) {
@@ -296,7 +296,7 @@ export function createRichTextAdapter(
     if (!(node instanceof HTMLElement)) {
       return false;
     }
-    return node.tagName === "EM" || node.tagName === "I";
+    return node.tagName === "EM" || node.tagName === "I" || node.style.fontStyle === "italic";
   }
 
   function isUnderlineElement(node) {
@@ -1667,11 +1667,12 @@ export function createRichTextAdapter(
     if (!(node instanceof Element)) {
       return node?.parentElement?.closest?.(selector) || null;
     }
-    return node.closest(selector);
+    const match = node.closest(selector);
+    return match && (match === element || element.contains(match)) ? match : null;
   }
 
   function getCurrentBlock() {
-    return getClosestWithinSelection("li, div, p, section, article, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th") || element;
+    return getClosestWithinSelection("h1,h2,h3,h4,h5,h6") || getClosestWithinSelection("li, div, p, section, article, blockquote, pre, td, th") || element;
   }
 
   function getSelectionEdgeBlock({ preferEnd = true } = {}) {
@@ -1703,19 +1704,33 @@ export function createRichTextAdapter(
   }
 
   function replaceCurrentBlockWithTag(tagName = "div") {
+    const range = getSelectionRange();
     const currentBlock = getCurrentBlock();
-    if (!(currentBlock instanceof HTMLElement)) {
-      return false;
-    }
-    if (currentBlock === element) {
-      return applyFormatBlock(tagName);
-    }
-    if (currentBlock.tagName.toLowerCase() === String(tagName || "div").toLowerCase()) {
-      return true;
-    }
-    const nextBlock = document.createElement(tagName);
-    nextBlock.innerHTML = currentBlock.innerHTML || "<br>";
-    return replaceNodeWithBlock(currentBlock, nextBlock);
+    const selector = "div,p,h1,h2,h3,h4,h5,h6,blockquote";
+    const blocks = range && !range.collapsed
+      ? Array.from(element.querySelectorAll(selector)).filter((node) =>
+          range.intersectsNode(node) && !node.parentElement?.closest("h1,h2,h3,h4,h5,h6") &&
+          (/^H[1-6]$/.test(node.tagName) || !node.querySelector(selector)))
+      : currentBlock === element ? [] : [currentBlock];
+    if (!blocks.length) return applyFormatBlock(tagName);
+    const replacementRange = document.createRange();
+    replacementRange.setStartBefore(blocks[0]);
+    replacementRange.setEndAfter(blocks[blocks.length - 1]);
+    const fragment = replacementRange.cloneContents();
+    const targets = Array.from(fragment.querySelectorAll(selector)).filter((node) =>
+      !node.parentElement?.closest("h1,h2,h3,h4,h5,h6") &&
+      (/^H[1-6]$/.test(node.tagName) || !node.querySelector(selector)));
+    targets.forEach((node) => {
+      const nextBlock = document.createElement(tagName);
+      ["textAlign", "color", "backgroundColor"].forEach((property) => {
+        if (node.style[property]) nextBlock.style[property] = node.style[property];
+      });
+      nextBlock.innerHTML = node.innerHTML || "<br>";
+      node.replaceWith(nextBlock);
+    });
+    const host = document.createElement("div"); host.appendChild(fragment);
+    setSelectionRange(replacementRange);
+    return exec("insertHTML", host.innerHTML);
   }
 
   function replaceCurrentBlockWithParagraph() {
@@ -3212,7 +3227,7 @@ export function createRichTextAdapter(
     },
     setBaseFontSize(size, { normalize = false } = {}) {
       const next = normalizeRichFontSize(size, 16);
-      element.style.fontSize = `${next}px`;
+      if (element.style.fontSize !== `${next}px`) element.style.fontSize = `${next}px`;
       if (normalize) {
         clearInlineFontSizes();
       }
@@ -3242,8 +3257,8 @@ export function createRichTextAdapter(
           fontSize = Math.round(parsed);
         }
       }
-      const blockElement =
-        getClosestWithinSelection("pre, blockquote, table, h1, h2, h3, h4, h5, h6, p, div, section, article, li") || null;
+      const blockElement = getClosestWithinSelection("h1,h2,h3,h4,h5,h6") ||
+        getClosestWithinSelection("pre, blockquote, table, p, div, section, article, li") || null;
       const block = blockElement?.tagName?.toLowerCase() || "";
       let blockType = "paragraph";
       if (codeBlock) {

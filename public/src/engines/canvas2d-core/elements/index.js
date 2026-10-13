@@ -38,6 +38,29 @@ function getRectBounds(element = {}) {
   };
 }
 
+function getImageBounds(element = {}) {
+  const base = getRectBounds(element);
+  const rotation = ((Number(element.rotation || 0) % 360) + 360) % 360;
+  if (!rotation) {
+    return base;
+  }
+  const radians = (rotation * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  const width = base.width * cos + base.height * sin;
+  const height = base.width * sin + base.height * cos;
+  const centerX = base.left + base.width / 2;
+  const centerY = base.top + base.height / 2;
+  return {
+    left: centerX - width / 2,
+    top: centerY - height / 2,
+    width,
+    height,
+    right: centerX + width / 2,
+    bottom: centerY + height / 2,
+  };
+}
+
 function getShapeBounds(element = {}) {
   if (!isLinearShape(element.shapeType)) {
     return getRectBounds(element);
@@ -253,6 +276,7 @@ function createBuiltinElementRegistry() {
     }),
     createDefinition("image", {
       normalize: normalizeImageElement,
+      getBounds: getImageBounds,
       capabilities: { lod: "image", hitTest: "bounds-image-memo", editor: "image", overlay: "image-memo", resource: "image", cache: "live", contentCopy: "image", copyExportProtocol: "image", semanticExport: ["png"], measurement: "resource-intrinsic", persistence: "asset-reference" },
     }),
     createDefinition("fileCard", {

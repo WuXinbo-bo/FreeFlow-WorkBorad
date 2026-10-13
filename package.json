@@ -108,7 +108,12 @@
     "dist:mac": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip",
     "dist:mac:local": "npm run prepare:desktop-build && npm run check:release-version && npm run check:desktop-packaging && electron-builder --mac dmg zip",
     "test:workbench-shared-recovery": "node scripts/check-workbench-shared-recovery.js",
-    "test:secret-storage": "node scripts/check-secret-storage-concurrency.js"
+    "test:secret-storage": "node scripts/check-secret-storage-concurrency.js",
+    "test:canvas-edit-integrity": "node scripts/check-canvas-edit-integrity.js",
+    "test:canvas-rich-editing": "node scripts/check-canvas-rich-editing.js",
+    "test:canvas-integrity-boundaries": "node scripts/check-canvas-integrity-boundaries.js",
+    "test:canvas-media-integrity": "node scripts/check-canvas-media-integrity-browser.js",
+    "test:canvas-export-integrity-desktop": "node scripts/check-canvas-export-integrity-desktop.js"
   },
   "keywords": [],
   "author": "Wu Xinbo",

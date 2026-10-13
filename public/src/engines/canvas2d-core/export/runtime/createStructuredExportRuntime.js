@@ -550,14 +550,18 @@ export function createStructuredExportRuntime({
     });
   }
 
-  async function hydrateSnapshotAssets(snapshot) {
+  async function hydrateSnapshotAssets(snapshot, options = {}) {
     if (snapshot?.assetsHydrated === true) {
       return snapshot;
     }
-    const sourceItems = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
+    const sourceItems = typeof assetAdapter?.prepareVisualItems === "function"
+      ? await assetAdapter.prepareVisualItems(snapshot?.items || [], options)
+      : (Array.isArray(snapshot?.items) ? snapshot.items : []);
     const hydratedItems = typeof assetAdapter?.hydrateImageItems === "function"
       ? await assetAdapter.hydrateImageItems(sourceItems)
       : sourceItems;
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
     let exportItems = hydratedItems;
     let imageFallbackCount = 0;
     if (typeof assetAdapter?.preloadImagesForItems === "function") {
@@ -567,6 +571,7 @@ export function createStructuredExportRuntime({
       }
       imageFallbackCount = Math.max(0, Number(preloadResult?.fallbackCount || 0) || 0);
     }
+    if (options.signal?.aborted) throw new DOMException("Export canceled", "AbortError");
     return {
       ...snapshot,
       items: buildExportReadyBoardItems(exportItems, { safeExport: true }),
@@ -576,7 +581,7 @@ export function createStructuredExportRuntime({
   }
 
   async function renderSnapshotToCanvas(snapshot, options = {}) {
-    const hydratedSnapshot = await hydrateSnapshotAssets(snapshot);
+    const hydratedSnapshot = await hydrateSnapshotAssets(snapshot, options);
     const renderResult = renderExportBoardToCanvas(hydratedSnapshot.items, {
       renderer,
       getElementBounds,
@@ -589,6 +594,8 @@ export function createStructuredExportRuntime({
       scale: options.scale ?? 1,
       devicePixelRatio: options.devicePixelRatio ?? 1,
       exportBounds: hydratedSnapshot?.bounds || null,
+      maxCanvasPixels: options.maxCanvasPixels,
+      maxCanvasSide: options.maxCanvasSide,
       allowUnsafeSize: Boolean(options.allowUnsafeSize),
     });
     if (renderResult && typeof renderResult === "object") {
@@ -648,7 +655,33 @@ export function createStructuredExportRuntime({
   }
 
   async function rerenderOversizedSnapshot(snapshot, baseRenderOptions = {}, onOversizeConfirm = null) {
-    return renderSnapshotToCanvas(snapshot, baseRenderOptions);
+    let renderOptions = { ...baseRenderOptions };
+    const safeResult = await renderSnapshotToCanvas(snapshot, renderOptions);
+    const requestedScale = Number(baseRenderOptions.scale || 1) || 1;
+    const needsConfirmation = Boolean(safeResult?.downgraded || safeResult?.errorCode === "EXPORT_SIZE_LIMIT");
+    if (!needsConfirmation) {
+      return safeResult;
+    }
+    if (typeof onOversizeConfirm === "function") {
+      // Compute the requested size before allocation. Even after confirmation
+      // the renderer keeps a hard ceiling on a single canvas allocation.
+      const pixelRatio = Number(safeResult?.devicePixelRatio || 1);
+      const requestedCanvasWidth = Math.max(1, Math.round(Number(safeResult?.width || 0) * requestedScale * pixelRatio));
+      const requestedCanvasHeight = Math.max(1, Math.round(Number(safeResult?.height || 0) * requestedScale * pixelRatio));
+      const decision = await onOversizeConfirm({
+        requestedCanvasWidth,
+        requestedCanvasHeight,
+        requestedTotalPixels: requestedCanvasWidth * requestedCanvasHeight,
+      });
+      if (baseRenderOptions.signal?.aborted || decision === false) {
+        return { canceled: true, errorCode: "PNG_EXPORT_CANCELED" };
+      }
+      renderOptions = { ...renderOptions, allowUnsafeSize: true, ...(decision && typeof decision === "object" ? decision : {}) };
+      if (safeResult?.canvas) { safeResult.canvas.width = 1; safeResult.canvas.height = 1; }
+    } else {
+      return safeResult;
+    }
+    return renderSnapshotToCanvas(snapshot, renderOptions);
   }
 
   async function exportBoardAsPng(board, options = {}) {
@@ -656,7 +689,7 @@ export function createStructuredExportRuntime({
       return createEmptyBinaryExportResult("PNG_EXPORT_CANCELED");
     }
     let snapshot = buildSnapshot(board, { scope: options.scope || "board" });
-    snapshot = await hydrateSnapshotAssets(snapshot);
+    snapshot = await hydrateSnapshotAssets(snapshot, options);
     const tileRenderOptions = {
       renderer,
       getElementBounds,
@@ -676,8 +709,10 @@ export function createStructuredExportRuntime({
       if (!tileResult?.ok) {
         return null;
       }
+      if (options.signal?.aborted) return createEmptyBinaryExportResult("EXPORT_CANCELED");
       const saved = await invokeDesktopShellSafely("saveTileCompositeImage", {
         ...tileResult,
+        taskId: options.taskId,
         defaultName: options.defaultName || resolveDefaultFileName(),
         background: options.background === "transparent" ? "transparent" : "#ffffff",
       });
@@ -746,6 +781,7 @@ export function createStructuredExportRuntime({
         backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
         backgroundGrid: options.includeGrid,
         backgroundPattern: options.backgroundPattern,
+        signal: options.signal,
       },
       options.onOversizeConfirm
     );
@@ -758,6 +794,7 @@ export function createStructuredExportRuntime({
         backgroundFill: options.background === "transparent" ? "transparent" : "#ffffff",
         backgroundGrid: options.includeGrid,
         backgroundPattern: options.backgroundPattern,
+        signal: options.signal,
       });
     }
     const dataUrl = safeCanvasToDataUrl(renderResult?.canvas);
@@ -768,6 +805,7 @@ export function createStructuredExportRuntime({
       );
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
+      signal: options.signal,
       defaultName: options.defaultName || resolveDefaultFileName(),
     });
     if (!saveResult?.ok) {
@@ -797,7 +835,7 @@ export function createStructuredExportRuntime({
       scope: options.scope || "board",
       items: Array.isArray(options.items) ? options.items : undefined,
     });
-    snapshot = await hydrateSnapshotAssets(snapshot);
+    snapshot = await hydrateSnapshotAssets(snapshot, options);
     const tileRenderOptions = {
       renderer,
       getElementBounds,
@@ -818,8 +856,10 @@ export function createStructuredExportRuntime({
       if (!tileResult?.ok) {
         return null;
       }
+      if (options.signal?.aborted) return createEmptyBinaryExportResult("EXPORT_CANCELED");
       const saved = await invokeDesktopShellSafely("saveTileCompositePdf", {
         ...tileResult,
+        taskId: options.taskId,
         defaultName: options.defaultName || resolveDefaultFileName(),
         background: options.background === "transparent" ? "transparent" : "#ffffff",
         orientation: options.orientation || "auto",
@@ -900,6 +940,7 @@ export function createStructuredExportRuntime({
         renderSnapshotToCanvasWithSafety(snapshot, {
           ...renderOptions,
           backgroundPattern: options.backgroundPattern,
+          signal: options.signal,
         }),
       options,
       {
@@ -911,6 +952,7 @@ export function createStructuredExportRuntime({
             backgroundGrid: options.includeGrid,
             backgroundPattern: options.backgroundPattern,
             allowUnsafeSize: true,
+            signal: options.signal,
           }),
       }
     );
@@ -931,6 +973,7 @@ export function createStructuredExportRuntime({
         backgroundFill: options.forceWhiteBackground ? "#ffffff" : "transparent",
         backgroundGrid: false,
         backgroundPattern: options.backgroundPattern,
+        signal: options.signal,
       },
       options.onOversizeConfirm
     );
@@ -947,12 +990,14 @@ export function createStructuredExportRuntime({
         backgroundFill: options.forceWhiteBackground ? "#ffffff" : "transparent",
         backgroundGrid: false,
         backgroundPattern: options.backgroundPattern,
+        signal: options.signal,
       });
       const fallbackDataUrl = safeCanvasToDataUrl(renderResult?.canvas);
       if (!fallbackDataUrl) {
         return createEmptyBinaryExportResult("PNG_EXPORT_CANVAS_TAINTED", "导出失败：离屏画布仍被图片资源污染，未能完成安全捕获");
       }
       const fallbackSaveResult = await fileAdapter?.saveDataUrlAsImage?.(fallbackDataUrl, {
+        signal: options.signal,
         defaultName: options.defaultName || "freeflow-export",
       });
       if (!fallbackSaveResult?.ok) {
@@ -974,6 +1019,7 @@ export function createStructuredExportRuntime({
       };
     }
     const saveResult = await fileAdapter?.saveDataUrlAsImage?.(dataUrl, {
+      signal: options.signal,
       defaultName: options.defaultName || "freeflow-export",
     });
     if (!saveResult?.ok) {
@@ -1017,6 +1063,7 @@ export function createStructuredExportRuntime({
     let saveResult = null;
     if (astHasContent && typeof fileAdapter?.saveWordAstAsDocxFile === "function") {
       saveResult = await fileAdapter.saveWordAstAsDocxFile(ast, {
+        signal: options.signal,
         defaultName: options.defaultName || item?.name || item?.title || "文本",
         title: "导出 Word",
         buttonLabel: "保存 Word",
@@ -1032,6 +1079,7 @@ export function createStructuredExportRuntime({
     }
     if ((saveResult == null || shouldFallbackToHtmlDocx) && html) {
       saveResult = await fileAdapter?.saveHtmlAsDocxWordFile?.(html, {
+        signal: options.signal,
         defaultName: options.defaultName || item?.name || item?.title || "文本",
         title: "导出 Word",
         buttonLabel: "保存 Word",
@@ -1095,6 +1143,7 @@ export function createStructuredExportRuntime({
       return { ok: false, canceled: false, code: "WORD_EXPORT_EMPTY", message: "所选元素暂时无法导出为 Word" };
     }
     const saveResult = await fileAdapter?.saveWordAstAsDocxFile?.(ast, {
+      signal: options.signal,
       defaultName: options.defaultName || "freeflow-selection-word",
       title: options.title || "导出 Word",
       buttonLabel: options.buttonLabel || "保存 Word",
@@ -1140,6 +1189,7 @@ export function createStructuredExportRuntime({
     return exportItemsAsImage(board, [item], {
       ...options,
       forceWhiteBackground: options.forceWhiteBackground !== false,
+      signal: options.signal,
       defaultName: options.defaultName || item?.name || item?.title || "文本",
     });
   }
@@ -1150,6 +1200,7 @@ export function createStructuredExportRuntime({
       return { ok: false, canceled: false, code: "TEXT_EXPORT_EMPTY", message: "文本为空" };
     }
     const saveResult = await fileAdapter?.saveTextAsFile?.(plain, {
+      signal: options.signal,
       defaultName: options.defaultName || item?.name || "文本",
     });
     if (!saveResult?.ok) {
@@ -1185,6 +1236,7 @@ export function createStructuredExportRuntime({
       const saveResult = await fileAdapter?.saveBlobAsFile?.(
         new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
         {
+          signal: options.signal,
           defaultName: options.defaultName || defaultName,
           extension: "md",
           title: "导出 Markdown 表格",
@@ -1212,6 +1264,7 @@ export function createStructuredExportRuntime({
       const saveResult = await fileAdapter?.saveBlobAsFile?.(
         new Blob([csv], { type: "text/csv;charset=utf-8" }),
         {
+          signal: options.signal,
           defaultName: options.defaultName || defaultName,
           extension: "csv",
           title: "导出 CSV 表格",
@@ -1237,6 +1290,7 @@ export function createStructuredExportRuntime({
     if (format === "txt") {
       const text = serializeTableMatrixToPlainText(matrix, { hasHeader: item?.table?.hasHeader !== false });
       const saveResult = await fileAdapter?.saveTextAsFile?.(text, {
+        signal: options.signal,
         defaultName: options.defaultName || defaultName,
       });
       if (!saveResult?.ok) {
@@ -1262,6 +1316,7 @@ export function createStructuredExportRuntime({
     });
     const bytes = applyTableWorkbookCellStyles(new Uint8Array(workbookBytes), matrix);
     const saveResult = await fileAdapter?.saveBytesAsFile?.(bytes, {
+      signal: options.signal,
       defaultName: options.defaultName || defaultName,
       extension: "xlsx",
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1300,6 +1355,7 @@ export function createStructuredExportRuntime({
       const saveResult = await fileAdapter?.saveBlobAsFile?.(
         new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
         {
+          signal: options.signal,
           defaultName: options.defaultName || defaultName,
           extension: "md",
           title: "导出 Markdown 代码块",
@@ -1328,6 +1384,7 @@ export function createStructuredExportRuntime({
     const saveResult = await fileAdapter?.saveBlobAsFile?.(
       new Blob([source], { type: "text/plain;charset=utf-8" }),
       {
+        signal: options.signal,
         defaultName: options.defaultName || defaultName,
         extension,
         title: "导出代码文件",
@@ -1370,6 +1427,7 @@ export function createStructuredExportRuntime({
     const extension = normalizedFormat === "mathml" ? "mathml" : "tex";
     const mimeType = normalizedFormat === "mathml" ? "application/mathml+xml;charset=utf-8" : "application/x-tex;charset=utf-8";
     const saveResult = await fileAdapter?.saveBlobAsFile?.(new Blob([source], { type: mimeType }), {
+      signal: options.signal,
       defaultName: options.defaultName || String(item?.title || "公式").trim() || "公式",
       extension,
       title: normalizedFormat === "mathml" ? "导出 MathML 公式" : "导出 LaTeX 公式",

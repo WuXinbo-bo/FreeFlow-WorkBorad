@@ -627,15 +627,19 @@ export function serializeRichTextBlockToHtml(block = null) {
   }
   const type = normalizeRichTextBlockType(block.type);
   const attrs = block.attrs && typeof block.attrs === "object" ? block.attrs : {};
+  const explicitFontSize = Number(attrs.fontSize);
+  const sizeAttribute = Number.isFinite(explicitFontSize) && explicitFontSize >= 8 && explicitFontSize <= 144
+    ? ` data-ff-font-size="${explicitFontSize}"`
+    : "";
   if (type === RICH_TEXT_BLOCK_TYPES.HTML) {
     return wrapBlocksHtml(block.html || "");
   }
   if (type === RICH_TEXT_BLOCK_TYPES.PARAGRAPH) {
-    return `<p>${serializeRichTextInlineNodesToHtml(block.content || [])}</p>`;
+    return `<p${sizeAttribute}>${serializeRichTextInlineNodesToHtml(block.content || [])}</p>`;
   }
   if (type === RICH_TEXT_BLOCK_TYPES.HEADING) {
     const level = clampHeadingLevel(attrs.level);
-    return `<h${level}>${serializeRichTextInlineNodesToHtml(block.content || [])}</h${level}>`;
+    return `<h${level}${sizeAttribute}>${serializeRichTextInlineNodesToHtml(block.content || [])}</h${level}>`;
   }
   if (type === RICH_TEXT_BLOCK_TYPES.BLOCKQUOTE) {
     return `<blockquote>${serializeRichTextBlocksToHtml(block.blocks || [])}</blockquote>`;
@@ -1160,6 +1164,7 @@ function parseElementToBlock(element) {
       content: normalizeInlineNodes(parseInlineNodes(Array.from(element.childNodes))),
       attrs: {
         level: Number(tag.slice(1)) || 1,
+        ...(readExplicitBlockFontSize(element) ? { fontSize: readExplicitBlockFontSize(element) } : {}),
         ...(readBlockAlign(element) ? { align: readBlockAlign(element) } : {}),
       },
       meta: {},
@@ -1208,10 +1213,16 @@ function createParagraphBlockFromElement(element) {
     type: RICH_TEXT_BLOCK_TYPES.PARAGRAPH,
     content: normalizeInlineNodes(parseInlineNodes(Array.from(element.childNodes))),
     attrs: {
+      ...(readExplicitBlockFontSize(element) ? { fontSize: readExplicitBlockFontSize(element) } : {}),
       ...(readBlockAlign(element) ? { align: readBlockAlign(element) } : {}),
     },
     meta: {},
   };
+}
+
+function readExplicitBlockFontSize(element) {
+  const value = Number(element.getAttribute("data-ff-font-size"));
+  return Number.isFinite(value) && value >= 8 && value <= 144 ? value : 0;
 }
 
 function parseListBlock(element, ordered = false) {
@@ -1438,10 +1449,10 @@ function extractMarksFromElement(element) {
   }
   const marks = [];
   const tag = element.tagName.toLowerCase();
-  if (tag === "strong" || tag === "b") {
+  if (tag === "strong" || tag === "b" || element.style.fontWeight === "bold" || Number(element.style.fontWeight) >= 600) {
     marks.push({ type: RICH_TEXT_MARK_TYPES.BOLD, attrs: {}, meta: {} });
   }
-  if (tag === "em" || tag === "i") {
+  if (tag === "em" || tag === "i" || element.style.fontStyle === "italic") {
     marks.push({ type: RICH_TEXT_MARK_TYPES.ITALIC, attrs: {}, meta: {} });
   }
   if (tag === "u") {
@@ -1540,6 +1551,8 @@ function readElementBackgroundColor(element) {
 }
 
 function readElementFontSize(element) {
+  const explicitSize = readExplicitBlockFontSize(element);
+  if (explicitSize) return `${explicitSize}px`;
   const style = String(element.style?.fontSize || "").trim();
   return normalizeStyleSizeValue(style);
 }

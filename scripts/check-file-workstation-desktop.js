@@ -31,7 +31,13 @@ async function main() {
     app = await electron.launch({ executablePath: require("electron"), args: [bootstrap], cwd: ROOT, env, timeout: 30000 });
     const page = await app.firstWindow(); const errors = []; page.on("pageerror", (error) => errors.push(error.message));
     await page.addInitScript(() => { window.__fileUnhandledErrors = []; window.addEventListener("unhandledrejection", (event) => window.__fileUnhandledErrors.push(String(event.reason))); });
-    await page.waitForFunction(() => window.__canvas2dEngine && window.desktopShell?.isDesktop && !document.body.classList.contains("app-booting")); await page.evaluate(() => window.__canvas2dEngine.whenReady());
+    try {
+      await page.waitForFunction(() => window.__canvas2dEngine && window.desktopShell?.isDesktop && !document.body.classList.contains("app-booting"));
+    } catch (error) {
+      console.error('[file-workstation:startup]', { url: page.url(), errors, state: await page.evaluate(() => ({ engine: Boolean(window.__canvas2dEngine), desktop: window.desktopShell?.isDesktop, bodyClass: document.body.className })) });
+      throw error;
+    }
+    await page.evaluate(() => window.__canvas2dEngine.whenReady());
     await page.evaluate(() => { window.__fileUnhandledErrors ||= []; window.addEventListener("unhandledrejection", (event) => window.__fileUnhandledErrors.push(String(event.reason))); });
     const assertModalShape = async (full) => {
       const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
@@ -63,6 +69,14 @@ async function main() {
     await page.locator(".canvas2d-file-preview-react").getByRole("button", { name: "文件操作", exact: true }).click();
     await page.getByRole("textbox", { name: "搜索文件内容" }).fill("unique-page-7"); await page.getByRole("button", { name: "查找", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".file-workstation-tools [role='status']")?.textContent.includes("第 7 页"));
+    await page.waitForTimeout(150);
+    assert((await page.locator('.file-workstation-tools').textContent()).includes('第 7 页'), 'search navigation cleared its own result');
+    await page.getByRole('spinbutton', { name: '跳转页码' }).fill('8');
+    await page.getByRole('spinbutton', { name: '跳转页码' }).press('Enter');
+    await page.waitForFunction(() => !document.querySelector(".file-workstation-tools [role='status']")?.textContent.includes("第 7 页"));
+    await page.getByRole('button', { name: '查找', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".file-workstation-tools [role='status']")?.textContent.includes("第 7 页"));
+    await page.waitForTimeout(150);
     await page.getByRole("button", { name: "添加文字到画布", exact: true }).click();
     await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().board.items.some((item) => item.type === "text" && item.sourceExcerpt?.page === 7));
     await page.evaluate(() => window.__canvas2dEngine.undo());

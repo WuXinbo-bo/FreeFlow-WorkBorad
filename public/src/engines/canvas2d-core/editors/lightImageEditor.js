@@ -98,8 +98,19 @@ export function createLightImageEditor(options = {}) {
     if (!width || !height) {
       return { x: 0, y: 0, inside: false };
     }
-    const nx = (Number(scenePoint?.x || 0) - Number(item.x || 0)) / width;
-    const ny = (Number(scenePoint?.y || 0) - Number(item.y || 0)) / height;
+    const centerX = Number(item.x || 0) + width / 2;
+    const centerY = Number(item.y || 0) + height / 2;
+    const dx = Number(scenePoint?.x || 0) - centerX;
+    const dy = Number(scenePoint?.y || 0) - centerY;
+    const radians = (-Number(item.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    let localX = dx * cos - dy * sin;
+    let localY = dx * sin + dy * cos;
+    if (item.flipX) localX = -localX;
+    if (item.flipY) localY = -localY;
+    const nx = localX / width + 0.5;
+    const ny = localY / height + 0.5;
     return {
       x: clamp(nx, 0, 1),
       y: clamp(ny, 0, 1),

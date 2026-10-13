@@ -1,4 +1,6 @@
-const MIN_EXPORT_SCALE = 1;
+const MIN_EXPORT_SCALE = 0.25;
+const DEFAULT_MAX_CANVAS_PIXELS = 16_777_216;
+const DEFAULT_MAX_CANVAS_SIDE = 8192;
 
 function toPositiveNumber(value, fallback) {
   const next = Number(value);
@@ -7,18 +9,6 @@ function toPositiveNumber(value, fallback) {
 
 function roundCanvasSize(value) {
   return Math.max(1, Math.round(Number(value) || 0));
-}
-
-function buildScaleCandidates(requestedScale) {
-  const start = Math.max(MIN_EXPORT_SCALE, Math.round(Number(requestedScale) || MIN_EXPORT_SCALE));
-  const candidates = [];
-  for (let scale = start; scale >= MIN_EXPORT_SCALE; scale -= 1) {
-    candidates.push(scale);
-  }
-  if (!candidates.length) {
-    candidates.push(MIN_EXPORT_SCALE);
-  }
-  return candidates;
 }
 
 function buildCanvasMetrics(width, height, scale, pixelRatio) {
@@ -37,14 +27,40 @@ export function resolvePdfExportScalePlan(input = {}) {
   const logicalHeight = roundCanvasSize(input.logicalHeight);
   const requestedScale = toPositiveNumber(input.requestedScale, MIN_EXPORT_SCALE);
   const pixelRatio = toPositiveNumber(input.pixelRatio, 1);
-  const requestedMetrics = buildCanvasMetrics(logicalWidth, logicalHeight, requestedScale, pixelRatio);
+  const maxCanvasPixels = toPositiveNumber(input.maxCanvasPixels, DEFAULT_MAX_CANVAS_PIXELS);
+  const maxCanvasSide = toPositiveNumber(input.maxCanvasSide, DEFAULT_MAX_CANVAS_SIDE);
+  const basePixels = Math.max(1, logicalWidth * logicalHeight * pixelRatio * pixelRatio);
+  const pixelScaleCap = Math.sqrt(maxCanvasPixels / basePixels);
+  const sideScaleCap = Math.min(maxCanvasSide / Math.max(1, logicalWidth * pixelRatio), maxCanvasSide / Math.max(1, logicalHeight * pixelRatio));
+  const allowedScale = Math.max(MIN_EXPORT_SCALE, Math.min(requestedScale, pixelScaleCap, sideScaleCap));
+  // Round down: rounding up could put the allocation above the pixel budget.
+  const scaleApplied = Math.max(MIN_EXPORT_SCALE, Math.floor(allowedScale * 10000) / 10000);
+  const metrics = buildCanvasMetrics(logicalWidth, logicalHeight, scaleApplied, pixelRatio);
+  const withinLimits = metrics.totalPixels <= maxCanvasPixels && Math.max(metrics.canvasWidth, metrics.canvasHeight) <= maxCanvasSide;
+  if (!withinLimits) {
+    return {
+      ok: false,
+      code: "EXPORT_SIZE_LIMIT",
+      requestedScale,
+      logicalWidth,
+      logicalHeight,
+      pixelRatio,
+      maxCanvasPixels,
+      maxCanvasSide,
+      downgraded: scaleApplied < requestedScale,
+      ...metrics,
+    };
+  }
   return {
     ok: true,
-    downgraded: false,
+    downgraded: scaleApplied < requestedScale,
     requestedScale,
+    scaleApplied,
     logicalWidth,
     logicalHeight,
     pixelRatio,
-    ...requestedMetrics,
+    maxCanvasPixels,
+    maxCanvasSide,
+    ...metrics,
   };
 }
