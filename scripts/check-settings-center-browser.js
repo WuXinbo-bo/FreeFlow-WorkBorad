@@ -24,7 +24,7 @@ async function openSettings(page) {
   });
   await page.waitForFunction(() => {
     const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
-    return rect && rect.left <= 14 && innerWidth - rect.right <= 14;
+    return rect && rect.left >= innerWidth * 0.45 && innerWidth - rect.right <= 14;
   });
   await page.waitForSelector("[data-settings-section=general]");
 }
@@ -378,11 +378,11 @@ async function main() {
         settingsVisualContract.navIconCount === 8 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
-        settingsVisualContract.frame.left <= 14 &&
+        settingsVisualContract.frame.left >= 1440 * 0.45 &&
         settingsVisualContract.frame.top <= 14 &&
         settingsVisualContract.frame.right <= 14 &&
         settingsVisualContract.frame.bottom <= 14 &&
-        settingsVisualContract.frame.width >= 1414 &&
+        settingsVisualContract.frame.width >= 500 &&
         settingsVisualContract.frame.height >= 874,
       "settings visual hierarchy regressed",
       settingsVisualContract
@@ -652,14 +652,14 @@ async function main() {
     });
     assert(
       restoredDesktop.left >= 0 &&
-        restoredDesktop.left <= 13 &&
+        restoredDesktop.left >= 640 &&
         restoredDesktop.top >= 0 &&
         restoredDesktop.top <= 13 &&
         restoredDesktop.right <= 1440 &&
         1440 - restoredDesktop.right <= 13 &&
         restoredDesktop.bottom <= 900 &&
         900 - restoredDesktop.bottom <= 13 &&
-        restoredDesktop.width >= 1414 &&
+        restoredDesktop.width >= 500 &&
         restoredDesktop.height >= 874,
       "settings center did not recover after rapid responsive changes",
       restoredDesktop
