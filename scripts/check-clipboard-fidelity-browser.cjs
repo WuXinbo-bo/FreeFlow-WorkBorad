@@ -227,6 +227,9 @@ async function main() {
     const [selectedText] = await dispatch(richSelection.drag, 'drop');
     assert.equal(selectedText.text, 'selected'); assert.match(selectedText.html, /<strong>/); checks++;
 
+    // Synthetic menu button clicks do not dismiss the menu like native pointer clicks.
+    // Close it before testing Escape's editor rollback rather than menu dismissal.
+    if (await page.locator('#canvas2d-context-menu').isVisible()) await page.locator(CANVAS).press('Escape');
     for (let i = 0; i < 3; i++) {
       await page.evaluate(() => window.__canvas2dEngine.runCommand('element.edit'));
       await page.locator('#canvas-rich-editor').waitFor({ state: 'visible' });

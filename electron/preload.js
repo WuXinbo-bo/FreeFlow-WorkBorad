@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   dismissAppUpdateVersion: (version) => ipcRenderer.invoke("desktop-shell:dismiss-app-update-version", version),
   clearDismissedAppUpdateVersion: () => ipcRenderer.invoke("desktop-shell:clear-dismissed-app-update-version"),
   openAppUpdateTarget: (url) => ipcRenderer.invoke("desktop-shell:open-app-update-target", url),
+  openExternal: (url) => ipcRenderer.invoke("desktop-shell:open-external", url),
   openPath: (targetPath) => ipcRenderer.invoke("desktop-shell:open-path", targetPath),
   revealPath: (targetPath) => ipcRenderer.invoke("desktop-shell:reveal-path", targetPath),
   pickCanvasBoardPath: (payload) => ipcRenderer.invoke("desktop-shell:pick-canvas-board-path", payload),

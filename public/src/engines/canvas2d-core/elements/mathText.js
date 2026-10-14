@@ -10,6 +10,8 @@ import {
 } from "./text.js";
 import { normalizeMathElement } from "./math.js";
 
+import { normalizeLatexSource } from "../textModel/latexSyntax.js";
+
 export function isStructuredMathTextElement(element = {}) {
   if (element?.type !== "text" || !element.structuredImport || typeof element.structuredImport !== "object") {
     return false;
@@ -31,7 +33,7 @@ export function getStructuredMathTextState(element = {}) {
   const blockRole = String(structuredImport.blockRole || "").trim().toLowerCase();
   const displayMode = sourceNodeType !== "mathinline" && blockRole !== "paragraph";
   return {
-    formula: String(canonicalFragment.text ?? element.plainText ?? element.text ?? ""),
+    formula: normalizeLatexSource(canonicalFragment.text ?? element.plainText ?? element.text),
     displayMode,
     sourceFormat: String(canonicalFragment?.attrs?.sourceFormat || "latex"),
     renderState: String(canonicalFragment?.attrs?.renderState || "ready"),
@@ -43,7 +45,7 @@ export function updateStructuredMathTextElement(element = {}, formula = "") {
   if (!mathState) {
     return element;
   }
-  const nextFormula = String(formula || "").trim();
+  const nextFormula = normalizeLatexSource(formula);
   const displayMode = mathState.displayMode;
   const html = displayMode
     ? `<div data-role="math-block">${escapeHtml(nextFormula)}</div>`

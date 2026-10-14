@@ -1,3 +1,4 @@
+import { readLatexSpan, normalizeLatexSource } from "../../../textModel/latexSyntax.js";
 import {
   INPUT_CHANNELS,
   INPUT_ENTRY_KINDS,
@@ -186,7 +187,7 @@ function createMathBlockNode(text, context, originId) {
       sourceFormat: "latex",
       displayMode: true,
     },
-    text: String(text || ""),
+    text: normalizeLatexSource(text),
     meta: buildNodeMeta(context.descriptor, context.parserId, originId, "latex-block"),
   });
 }
@@ -198,7 +199,7 @@ function createMathInlineNode(text) {
       sourceFormat: "latex",
       displayMode: false,
     },
-    text: String(text || ""),
+    text: normalizeLatexSource(text),
   });
 }
 
@@ -229,96 +230,22 @@ function parseMathInlineContent(text, context, originId) {
 }
 
 function findNextInlineMath(text, startIndex) {
-  const candidates = [];
-  const dollar = findDollarMath(text, startIndex);
-  if (dollar) {
-    candidates.push(dollar);
-  }
-  const paren = findWrappedMath(text, startIndex, "\\(", "\\)");
-  if (paren) {
-    candidates.push(paren);
-  }
-  if (!candidates.length) {
-    return null;
-  }
-  candidates.sort((a, b) => a.index - b.index);
-  return candidates[0];
-}
-
-function findDollarMath(text, startIndex) {
   for (let index = startIndex; index < text.length; index += 1) {
-    if (text[index] !== "$") {
-      continue;
-    }
-    if (text[index + 1] === "$") {
-      index += 1;
-      continue;
-    }
-    const closing = findClosingDollar(text, index + 1);
-    if (closing === -1) {
-      continue;
-    }
-    const content = text.slice(index + 1, closing).trim();
-    if (!looksLikeMathExpression(content)) {
-      continue;
-    }
-    return {
-      index,
-      end: closing + 1,
-      content,
-    };
+    if (text[index] !== "$" && text[index] !== "\\") continue;
+    const span = readLatexSpan(text, index);
+    if (span) return { index, end: span.end, content: span.formula };
+    if (text.startsWith("$$", index)) index += 1;
   }
   return null;
 }
 
-function findClosingDollar(text, startIndex) {
-  for (let index = startIndex; index < text.length; index += 1) {
-    if (text[index] !== "$") {
-      continue;
-    }
-    if (text[index - 1] === "\\") {
-      continue;
-    }
-    if (text[index + 1] === "$") {
-      continue;
-    }
-    return index;
-  }
-  return -1;
-}
-
-function findWrappedMath(text, startIndex, open, close) {
-  const openIndex = text.indexOf(open, startIndex);
-  if (openIndex === -1) {
-    return null;
-  }
-  const closeIndex = text.indexOf(close, openIndex + open.length);
-  if (closeIndex === -1) {
-    return null;
-  }
-  const content = text.slice(openIndex + open.length, closeIndex).trim();
-  if (!looksLikeMathExpression(content)) {
-    return null;
-  }
-  return {
-    index: openIndex,
-    end: closeIndex + close.length,
-    content,
-  };
-}
-
 function isDisplayWrapped(value) {
-  return /^\$\$[\s\S]*\$\$$/.test(value) || /^\\\[[\s\S]*\\\]$/.test(value);
+  const span = readLatexSpan(value);
+  return span?.displayMode && span.end === value.length;
 }
 
 function stripDisplayWrapper(value) {
-  if (/^\$\$[\s\S]*\$\$$/.test(value)) {
-    return value.replace(/^\$\$\s*/, "").replace(/\s*\$\$$/, "");
-  }
-  if (/^\\\[[\s\S]*\\\]$/.test(value)) {
-    return value.replace(/^\\\[\s*/, "").replace(/\s*\\\]$/, "");
-  }
-  return value;
+  return normalizeLatexSource(value);
 }
 
 function hasSurroundingText(value) {

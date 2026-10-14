@@ -1,3 +1,4 @@
+const { openExternalLink } = require("./externalLinks");
 const path = require("path");
 const { validateShortcutAccelerator, replaceShortcutRegistration } = require("./shortcutSettings");
 let electron = require("electron");
@@ -2179,7 +2180,7 @@ function createMainWindow() {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url).catch(() => {});
+    void openExternalLink(shell, url);
     return { action: "deny" };
   });
 
@@ -3651,6 +3652,8 @@ ipcMain.handle("desktop-shell:start-export-drag", async (event, payload) => {
     };
   }
 });
+
+ipcMain.handle("desktop-shell:open-external", (_event, url) => openExternalLink(shell, url));
 
 ipcMain.handle("desktop-shell:open-path", async (_event, targetPath) => {
   const normalizedPath = String(targetPath || "").trim();

@@ -117,6 +117,7 @@
     "test:secret-storage": "node scripts/check-secret-storage-concurrency.js",
     "test:canvas-edit-integrity": "node scripts/check-canvas-edit-integrity.js",
     "test:canvas-rich-editing": "node scripts/check-canvas-rich-editing.js",
+    "test:canvas-math-links-desktop": "node scripts/check-canvas-math-links-desktop.js",
     "test:canvas-text-experience": "node scripts/check-canvas-text-experience.js",
     "test:canvas-integrity-boundaries": "node scripts/check-canvas-integrity-boundaries.js",
     "test:canvas-media-integrity": "node scripts/check-canvas-media-integrity-browser.js",
