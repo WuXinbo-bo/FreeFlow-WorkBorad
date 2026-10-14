@@ -6360,6 +6360,21 @@ html[data-canvas-office-embedded="true"] .canvas-office-stage-body,
   contain: layout style;
 }
 
+/* These controls keep a screen-sized hit target. Reveal them again after the camera settles. */
+.canvas2d-scene-root[data-presentation-phase="active"] .canvas2d-scene-flow-node-connectors,
+.canvas2d-scene-root[data-presentation-phase="active"] .canvas2d-scene-flow-edge-endpoint,
+.canvas2d-scene-root[data-presentation-phase="active"] .canvas2d-scene-mind-relationship-badge {
+  visibility: hidden;
+}
+
+.canvas2d-scene-feedback-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 86;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
 .canvas2d-document-preview-layer {
   position: absolute;
   inset: 0;
@@ -15087,6 +15102,16 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   overflow-y: auto;
   pointer-events: auto;
   box-sizing: border-box;
+}
+
+.canvas2d-engine-utility-popover > .canvas2d-engine-search-panel,
+.canvas2d-engine-utility-popover > .canvas2d-engine-export-history-panel {
+  position: static;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+  overflow: visible !important;
+  animation: none;
 }
 
 .canvas2d-floating-card {

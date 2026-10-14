@@ -26,7 +26,7 @@ async function openSettings(page) {
     const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
     return rect && rect.left >= innerWidth * 0.45 && innerWidth - rect.right <= 14;
   });
-  await page.waitForSelector("[data-settings-section=general]");
+  await page.waitForSelector("[data-settings-section=ai]");
 }
 
 async function openSection(page, section) {
@@ -44,7 +44,7 @@ async function saveSettings(page) {
     await page.waitForFunction(() => !document.querySelector('[data-settings-action="save"]')?.disabled, null, { timeout: 5000 });
   } catch (error) {
     const detail = await page.evaluate(() => ({
-      value: document.querySelector('[data-settings-path="general.workspaceSubtitle"]')?.value,
+      value: document.querySelector('[data-settings-path="canvas.workspaceDirectory"]')?.value,
       state: document.querySelector(".settings-center-save-state")?.textContent,
       saveDisabled: document.querySelector('[data-settings-action="save"]')?.disabled,
       discardDisabled: document.querySelector('[data-settings-action="cancel"]')?.disabled,
@@ -374,8 +374,8 @@ async function main() {
     });
     assert(
       settingsVisualContract.headerText === "系统设置" &&
-        settingsVisualContract.navCount === 8 &&
-        settingsVisualContract.navIconCount === 8 &&
+        settingsVisualContract.navCount === 6 &&
+        settingsVisualContract.navIconCount === 6 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
         settingsVisualContract.frame.left >= 1440 * 0.45 &&
@@ -387,23 +387,30 @@ async function main() {
       "settings visual hierarchy regressed",
       settingsVisualContract
     );
-    await page.locator('[data-settings-path="general.workspaceSubtitle"]').fill("Draft preserved across Agent actions");
+    assert(JSON.stringify(await page.locator('.settings-center-nav-label').allTextContents()) === JSON.stringify(["AI 模型", "外观", "工作台习惯", "画布设置", "GitHub 同步", "应用更新"]), "settings navigation order is incorrect");
+    await openSection(page, "updates");
+    await page.locator('[data-settings-path="general.updateCheckEnabled"]').uncheck();
+    await page.locator('[data-settings-action="reset-section"]').click();
+    assert(await page.locator('[data-settings-path="general.updateCheckEnabled"]').isChecked() === snapshot.sections.general.updateCheckEnabled, "update page reset did not restore update policy");
+    assert(await page.locator('[data-settings-path^="general.workspace"]').count() === 0, "removed general controls leaked into updates");
+    await openSection(page, "canvas");
+    await page.locator('[data-settings-path="canvas.workspaceDirectory"]').fill("/tmp/freeflow-draft");
     await page.locator("#drawer-backdrop").evaluate((element) => element.click());
     const persistentDrawer = await page.evaluate(() => ({
       open: document.querySelector("#insight-drawer")?.classList.contains("is-open"),
-      draft: document.querySelector('[data-settings-path="general.workspaceSubtitle"]')?.value,
+      draft: document.querySelector('[data-settings-path="canvas.workspaceDirectory"]')?.value,
       backdropPointerEvents: getComputedStyle(document.querySelector("#drawer-backdrop")).pointerEvents,
       drawerBackdropFilter: getComputedStyle(document.querySelector("#insight-drawer")).backdropFilter,
     }));
     assert(
-      persistentDrawer.open && persistentDrawer.draft === "Draft preserved across Agent actions" && persistentDrawer.backdropPointerEvents === "none" && persistentDrawer.drawerBackdropFilter.includes("blur"),
+      persistentDrawer.open && persistentDrawer.draft === "/tmp/freeflow-draft" && persistentDrawer.backdropPointerEvents === "none" && persistentDrawer.drawerBackdropFilter.includes("blur"),
       "settings drawer did not remain as a non-modal frosted workspace",
       persistentDrawer
     );
     await page.locator("#drawer-close-btn").click();
     await page.waitForFunction(() => !document.querySelector("#insight-drawer")?.classList.contains("is-open"));
     await openSettings(page);
-    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Draft preserved across Agent actions", "ordinary close discarded the settings draft");
+    assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === "/tmp/freeflow-draft", "ordinary close discarded the settings draft");
     await openSection(page, "ai");
     const aiPlacement = await page.evaluate(() => ({
       cli: Boolean(document.querySelector("[data-agent-cli-path]")),
@@ -461,8 +468,8 @@ async function main() {
     assert(!codexApprovalOptions.includes("失败时询问"), "Codex settings exposed the unsupported on-failure approval policy", codexApprovalOptions);
     await page.locator('[data-settings-path="ai.agent.providers.codex.reasoningEffort"]').selectOption("xhigh");
     await page.locator('[data-settings-path="ai.agent.providers.codex.sandboxMode"]').selectOption("read-only");
-    await openSection(page, "general");
-    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Draft preserved across Agent actions", "Agent actions discarded an unrelated unsaved draft");
+    await openSection(page, "canvas");
+    assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === "/tmp/freeflow-draft", "Agent actions discarded an unrelated unsaved draft");
     await openSection(page, "ai");
     await saveSettings(page);
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("已保存"));
@@ -475,21 +482,19 @@ async function main() {
       "Codex defaults were not submitted"
     );
 
-    await openSection(page, "general");
-    await page.locator('[data-settings-path="general.workspaceName"]').fill("Saved Workspace");
-    await page.locator('[data-settings-path="general.assistantName"]').fill("Saved Assistant");
+    await openSection(page, "canvas");
+    await page.locator('[data-settings-path="canvas.workspaceDirectory"]').fill("/tmp/freeflow-saved");
     await saveSettings(page);
-    await page.waitForFunction(() => document.querySelector("#brand-name")?.textContent === "Saved Workspace");
-    assert((await page.locator("#prompt-input").getAttribute("placeholder"))?.includes("Saved Assistant"), "assistant name was not applied to the prompt");
-
-    await page.locator('[data-settings-path="general.workspaceSubtitle"]').fill("Unsaved conflict draft");
+    await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("已保存"));
+    assert(successfulPosts.at(-1).sections.general.workspaceName === "Browser Workspace" && successfulPosts.at(-1).sections.general.assistantName === "Browser Assistant", "hidden legacy identity fields changed");
+    await page.locator('[data-settings-path="canvas.workspaceDirectory"]').fill("/tmp/freeflow-conflict-draft");
     conflictNextSave = true;
     await saveSettings(page);
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("其他位置更新"));
-    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === "Unsaved conflict draft", "revision conflict discarded the local draft");
+    assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === "/tmp/freeflow-conflict-draft", "revision conflict discarded the local draft");
     await page.locator('[data-settings-action="reload"]').click();
-    await page.waitForSelector('[data-settings-path="general.workspaceSubtitle"]');
-    assert((await page.locator('[data-settings-path="general.workspaceSubtitle"]').inputValue()) === snapshot.sections.general.workspaceSubtitle, "reload did not recover the committed snapshot");
+    await page.waitForSelector('[data-settings-path="canvas.workspaceDirectory"]');
+    assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === snapshot.sections.canvas.workspaceDirectory, "reload did not recover the committed snapshot");
 
     const readThemeState = () => page.evaluate(() => ({
       root: getComputedStyle(document.documentElement).getPropertyValue("--app-bg-start-rgb"),
@@ -584,7 +589,8 @@ async function main() {
     await openSettings(page);
     await openSection(page, "appearance");
     assert(!(await page.locator('[data-theme-preset="midnight-slate-glow"]').evaluate((button) => button.classList.contains("is-active"))), "explicit discard retained the abandoned theme draft");
-    await openSection(page, "permissions");
+    await openSection(page, "ai");
+    await page.locator('[data-ai-section="permissions"]').click();
     await page.locator('#settings-center-host [data-permission-key="appControl"]').check();
     const postCountBeforeRisk = successfulPosts.length;
     await saveSettings(page);
@@ -618,7 +624,8 @@ async function main() {
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("已保存"));
     assert((await page.locator(".canvas-stage").getAttribute("data-workspace-dock")) === targetSide, "workbench preference was not applied");
 
-    await openSection(page, "diagnostics");
+    await openSection(page, "ai");
+    await page.locator('[data-ai-section="diagnostics"]').click();
     await page.locator('[data-settings-action="agent-create-backup"]').click();
     await page.waitForSelector("[data-agent-restore-backup]");
     await page.locator("[data-agent-restore-backup]").click();

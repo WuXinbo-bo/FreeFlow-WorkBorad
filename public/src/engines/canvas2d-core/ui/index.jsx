@@ -1472,22 +1472,17 @@ function Canvas2DControls({ engine }) {
     if (!searchHighlight?.bounds) {
       return null;
     }
-    const view = snapshot?.board?.view;
-    if (!view) {
-      return null;
-    }
-    const scale = Number(view.scale || 1);
-    const left = Number(searchHighlight.bounds.left || 0) * scale + Number(view.offsetX || 0);
-    const top = Number(searchHighlight.bounds.top || 0) * scale + Number(view.offsetY || 0);
-    const width = Math.max(1, Number(searchHighlight.bounds.width || 0) * scale);
-    const height = Math.max(1, Number(searchHighlight.bounds.height || 0) * scale);
+    const left = Number(searchHighlight.bounds.left || 0);
+    const top = Number(searchHighlight.bounds.top || 0);
+    const width = Math.max(1, Number(searchHighlight.bounds.width || 0));
+    const height = Math.max(1, Number(searchHighlight.bounds.height || 0));
     return {
       left: `${Math.round(left)}px`,
       top: `${Math.round(top)}px`,
       width: `${Math.round(width)}px`,
       height: `${Math.round(height)}px`,
     };
-  }, [searchHighlight, snapshot?.board?.view]);
+  }, [searchHighlight]);
 
   useEffect(() => {
     if (!editingTitle) {
@@ -2775,8 +2770,8 @@ function Canvas2DControls({ engine }) {
       </div>
       </div>
 
-      {searchHighlightStyle ? (
-        <div className="canvas2d-engine-search-highlight" style={searchHighlightStyle} />
+      {searchHighlightStyle && bridge.getSceneFeedbackPortalHost() ? createPortal(
+        <div className="canvas2d-engine-search-highlight" style={searchHighlightStyle} />, bridge.getSceneFeedbackPortalHost()
       ) : null}
 
       <FileConversionDialog request={snapshot?.fileConversionRequest} engine={engine} />

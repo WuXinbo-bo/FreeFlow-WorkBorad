@@ -116,6 +116,8 @@
     "test:workbench-shared-recovery": "node scripts/check-workbench-shared-recovery.js",
     "test:secret-storage": "node scripts/check-secret-storage-concurrency.js",
     "test:canvas-edit-integrity": "node scripts/check-canvas-edit-integrity.js",
+    "test:canvas-editor-camera": "node scripts/check-canvas-editor-camera.js",
+    "test:shortcut-recorder": "node scripts/check-shortcut-recorder-browser.js",
     "test:canvas-rich-editing": "node scripts/check-canvas-rich-editing.js",
     "test:canvas-math-links-desktop": "node scripts/check-canvas-math-links-desktop.js",
     "test:canvas-text-experience": "node scripts/check-canvas-text-experience.js",

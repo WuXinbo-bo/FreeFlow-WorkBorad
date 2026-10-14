@@ -163,16 +163,6 @@ body.desktop-mode .desktop-clear-stage.ui-workspace-surface,
   scrollbar-width: thin;
 }
 
-.canvas2d-engine-utility-popover > .canvas2d-engine-search-panel,
-.canvas2d-engine-utility-popover > .canvas2d-engine-export-history-panel {
-  position: static;
-  width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box;
-  overflow: visible !important;
-  animation: none;
-}
-
 .canvas2d-engine-tool:focus-visible,
 .canvas2d-zoom-btn:focus-visible,
 .canvas2d-engine-search-placeholder:focus-visible,
