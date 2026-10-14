@@ -1,4 +1,6 @@
-import { buildTextTitle, createId, sanitizeText } from "../utils.js";
+import { buildTextTitle, createId } from "../utils.js";
+
+import { normalizeLatexSource } from "../textModel/latexSyntax.js";
 
 export const MATH_MIN_WIDTH = 56;
 export const MATH_MIN_HEIGHT = 28;
@@ -45,7 +47,7 @@ function normalizeMathSourceMeta(value = {}) {
 
 export function createMathElement(point, formula = "", options = {}) {
   const displayMode = Boolean(options.displayMode ?? true);
-  const cleanFormula = sanitizeText(formula || "").trim();
+  const cleanFormula = normalizeLatexSource(formula);
   const sourceFormat = normalizeSourceFormat(options.sourceFormat || "latex");
   const size = estimateMathElementSize(cleanFormula, displayMode);
   return {
@@ -83,7 +85,7 @@ export function normalizeMathElement(element = {}) {
       renderState: element.renderState,
     }
   );
-  const cleanFormula = sanitizeText(element.formula || element.text || base.formula || "").trim();
+  const cleanFormula = normalizeLatexSource(element.formula || element.text || base.formula);
   const size = estimateMathElementSize(cleanFormula, displayMode);
   const structuredImport = normalizeStructuredMathMeta(element.structuredImport);
   const sourceMeta = normalizeMathSourceMeta(element.sourceMeta);
@@ -120,7 +122,7 @@ export function normalizeMathElement(element = {}) {
 }
 
 export function estimateMathElementSize(formula = "", displayMode = true) {
-  const clean = sanitizeText(formula || "").trim();
+  const clean = normalizeLatexSource(formula);
   if (displayMode) {
     const lines = clean.split("\n");
     const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
@@ -155,7 +157,7 @@ function normalizeSourceFormat(value = "") {
 }
 
 function buildFallbackText(formula = "", displayMode = true) {
-  const clean = sanitizeText(formula || "").trim();
+  const clean = normalizeLatexSource(formula);
   if (!clean) {
     return displayMode ? "[公式]" : "[行内公式]";
   }

@@ -1,5 +1,7 @@
 import { MarkdownIt, footnote } from '../../../../assets/vendor/markdown/markdown-parser.js';
 
+import { readLatexSpan } from "./latexSyntax.js";
+
 const parser = new MarkdownIt({ html: false, breaks: true, linkify: true }).use(footnote);
 const escape = parser.utils.escapeHtml;
 
@@ -24,43 +26,26 @@ parser.inline.ruler.before('escape', 'freeflow_inline_html', (state, silent) => 
   return true;
 });
 parser.inline.ruler.before('escape', 'freeflow_math', (state, silent) => {
-  const source = state.src.slice(state.pos);
-  const bracket = source.startsWith('\\(');
-  if (!bracket && (!source.startsWith('$') || source.startsWith('$$'))) return false;
-  const open = bracket ? 2 : 1;
-  const close = bracket ? '\\)' : '$';
-  if (!bracket && /\s/.test(source[open] || '')) return false;
-  let end = source.indexOf(close, open);
-  while (end > 0 && source[end - 1] === '\\' && !bracket) end = source.indexOf(close, end + 1);
-  if (end < open || source.slice(open, end).includes('\n') || !source.slice(open, end).trim()) return false;
-  if (!bracket && (/\s/.test(source[end - 1]) || /\d/.test(source[end + 1] || ''))) return false;
-  if (!silent) state.push('freeflow_math_inline', '', 0).content = source.slice(open, end).trim();
-  state.pos += end + close.length;
+  const span = readLatexSpan(state.src, state.pos);
+  if (!span) return false;
+  // $$ within a paragraph remains part of that paragraph; standalone $$ is a block.
+  if (!silent) state.push('freeflow_math_inline', '', 0).content = span.formula;
+  state.pos = span.end;
   return true;
 });
 parser.renderer.rules.freeflow_math_inline = (tokens, index) => `<span data-role="math-inline">${escape(tokens[index].content)}</span>`;
 parser.block.ruler.before('fence', 'freeflow_math_block', (state, start, end, silent) => {
   const startOffset = state.bMarks[start] + state.tShift[start];
   const first = state.src.slice(startOffset, state.eMarks[start]).trim();
-  const open = first.startsWith('$$') ? '$$' : first.startsWith('\\[') ? '\\[' : '';
-  if (!open) return false;
-  const close = open === '$$' ? '$$' : '\\]';
-  const body = [];
-  let last = start;
-  const initial = first.slice(open.length);
-  if (initial.endsWith(close)) body.push(initial.slice(0, -close.length));
-  else {
-    if (initial) body.push(initial);
-    for (last = start + 1; last < end; last++) {
-      const line = state.src.slice(state.bMarks[last] + state.tShift[last], state.eMarks[last]);
-      if (line.trimEnd().endsWith(close)) { body.push(line.trimEnd().slice(0, -close.length)); break; }
-      body.push(line);
-    }
-    if (last >= end) return false;
-  }
+  if (!first.startsWith('$$') && !first.startsWith('\\[')) return false;
+  const candidate = state.src.slice(startOffset, state.eMarks[end - 1]);
+  const span = readLatexSpan(candidate);
+  if (!span?.displayMode) return false;
+  const last = start + candidate.slice(0, span.end).split('\n').length - 1;
+  if (candidate.slice(span.end).split('\n')[0].trim()) return false;
   if (silent) return true;
   const token = state.push('freeflow_math_block', 'div', 0);
-  token.block = true; token.content = body.join('\n').trim(); token.map = [start, last + 1];
+  token.block = true; token.content = span.formula; token.map = [start, last + 1];
   state.line = last + 1;
   return true;
 }, { alt: ['paragraph', 'reference', 'blockquote', 'list'] });

@@ -1,3 +1,4 @@
+import { normalizeLatexSource, formatLatexSource } from "./latexSyntax.js";
 import {
   RICH_TEXT_BLOCK_TYPES,
   RICH_TEXT_INLINE_NODE_TYPES,
@@ -61,7 +62,7 @@ function serializeInlineNodeToMarkdown(node = null) {
     return `\`${escapeMarkdownCode(String(node.text || ""))}\``;
   }
   if (node.type === RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE) {
-    return `$${String(node.text || "").trim()}$`;
+    return formatLatexSource(node.text, false);
   }
   if (node.type === RICH_TEXT_INLINE_NODE_TYPES.LINK) {
     const label = serializeInlineNodesToMarkdown(node.content || []).trim() || escapeMarkdownText(String(node?.attrs?.href || ""));
@@ -193,7 +194,7 @@ function serializeBlockToMarkdown(block = null) {
     return "";
   }
   if (type === RICH_TEXT_BLOCK_TYPES.MATH_BLOCK) {
-    const formula = sanitizeText(String(block?.plainText || "")).trim();
+    const formula = normalizeLatexSource(block?.plainText);
     return ["$$", formula, "$$"].join("\n");
   }
   if (type === RICH_TEXT_BLOCK_TYPES.FOOTNOTE_DEFINITION) {
