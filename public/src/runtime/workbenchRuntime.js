@@ -7213,6 +7213,7 @@ function syncDesktopShellState(nextState = {}) {
     desktopStatusBannerTextEl.textContent = state.desktopShellState.pinned ? "固定中 · 始终置顶" : "";
   }
   document.body?.classList.toggle("is-desktop-pinned", state.desktopShellState.pinned);
+  document.body?.classList.toggle("is-desktop-fullscreen", state.desktopShellState.fullscreen);
   desktopPassThroughHintEl?.classList.toggle("is-hidden", !state.desktopShellState.fullClickThrough);
   renderConversationShellMenuState();
   syncDesktopPassThroughHintLayout();

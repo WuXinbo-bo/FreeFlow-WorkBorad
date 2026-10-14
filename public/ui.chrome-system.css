@@ -1134,3 +1134,37 @@ body.desktop-full-pass-through .canvas-chrome-surface {
     transition: none !important;
   }
 }
+
+/* Fullscreen controls sit close to the work area; the regular window keeps its floating inset. */
+body.is-desktop-fullscreen .app-global-shell-actions.canvas-chrome-status-dock {
+  top: max(8px, env(safe-area-inset-top)) !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+}
+
+body.is-desktop-fullscreen .ui-chrome-popover,
+body.is-desktop-fullscreen .conversation-shell-menu {
+  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
+  border-color: rgb(var(--app-pattern-rgb) / 0.32) !important;
+}
+
+.ui-chrome-popover::before,
+.conversation-shell-menu::before {
+  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
+  opacity: 1 !important;
+}
+
+.desktop-menu-item,
+.conversation-shell-menu-item,
+.screen-source-select-option {
+  color: var(--chrome-ink) !important;
+}
+
+.desktop-menu-item:hover,
+.desktop-menu-item:focus-visible,
+.conversation-shell-menu-item:hover,
+.conversation-shell-menu-item:focus-visible,
+.screen-source-select-option:hover,
+.screen-source-select-option:focus-visible {
+  color: var(--chrome-ink) !important;
+  background: var(--chrome-active) !important;
+}

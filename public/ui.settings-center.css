@@ -2481,3 +2481,46 @@
     grid-column: 1 / -1;
   }
 }
+
+/* Settings stay contextual: the canvas remains visible beside this right-side surface. */
+#insight-drawer.ui-chrome-drawer {
+  top: max(8px, env(safe-area-inset-top)) !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+  bottom: max(8px, env(safe-area-inset-bottom)) !important;
+  left: auto !important;
+  width: min(560px, 52vw) !important;
+  min-width: min(420px, calc(100vw - 16px)) !important;
+  max-width: calc(100vw - 16px) !important;
+  border-radius: 14px !important;
+  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
+  backdrop-filter: blur(24px) saturate(128%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(128%) !important;
+  box-shadow: 0 18px 52px rgb(var(--theme-pass-through-shadow-rgb) / 0.24) !important;
+}
+
+#insight-drawer.ui-chrome-drawer::before {
+  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
+  opacity: 1 !important;
+}
+
+#insight-drawer.ui-chrome-drawer .settings-center-frame-header,
+#insight-drawer.ui-chrome-drawer .settings-center-footer {
+  background: rgb(var(--theme-panel-surface-rgb) / 0.96) !important;
+}
+
+#insight-drawer.ui-chrome-drawer .settings-center-field small,
+#insight-drawer.ui-chrome-drawer .settings-center-section-heading p,
+#insight-drawer.ui-chrome-drawer .settings-center-group-heading p {
+  color: var(--settings-muted) !important;
+}
+
+@media (max-width: 760px) {
+  #insight-drawer.ui-chrome-drawer {
+    top: 6px !important;
+    right: 6px !important;
+    bottom: 6px !important;
+    left: 6px !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+}
