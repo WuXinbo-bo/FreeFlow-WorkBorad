@@ -3260,7 +3260,7 @@ export function createCanvas2DEngine(options = {}) {
   editorAdapterManager.register("math", { begin: beginMathEdit, sync: syncMathEditorLayout, commit: commitMathEdit, cancel: cancelMathEdit });
   editorAdapterManager.register("flow-node", { begin: beginFlowNodeEdit, sync: syncRichElementEditorLayout, commit: commitFlowNodeEdit, cancel: cancelFlowNodeEdit });
   editorAdapterManager.register("mind-node", { begin: beginMindNodeEdit, sync: syncRichElementEditorLayout, commit: commitMindNodeEdit, cancel: cancelMindNodeEdit });
-  editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, sync: syncCodeBlockEditorLayout, commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
+  editorAdapterManager.register("code-block", { begin: beginCodeBlockEdit, sync: (view) => syncCodeBlockEditorLayout("precise", view), commit: commitCodeBlockEdit, cancel: cancelCodeBlockEdit });
   editorAdapterManager.register("table", { begin: beginTableEdit, sync: syncTableEditorLayout, commit: commitTableEdit, cancel: cancelTableEdit });
   editorAdapterManager.register("file-memo", { begin: beginFileMemoEdit, sync: syncFileMemoLayout, commit: commitFileMemoEdit, cancel: cancelFileMemoEdit });
   editorAdapterManager.register("image-memo", { begin: beginImageMemoEdit, sync: syncImageMemoLayout, commit: commitImageMemoEdit, cancel: cancelImageMemoEdit });
@@ -3384,6 +3384,7 @@ export function createCanvas2DEngine(options = {}) {
     interactionCanvas: null,
     sceneRoot: null,
     documentPreviewLayer: null,
+    sceneFeedbackLayer: null,
     vectorLayer: null,
     contentLayer: null,
     ctx: null,
@@ -3651,7 +3652,7 @@ let tablePointerSelectionState = {
   const FILE_CARD_PREVIEW_MAX_SCALE = 1.9;
   const nonEditingSceneEventBridge = createSceneEventBridge({
     resolveScenePoint: (event) => toScenePoint(Number(event?.clientX || 0), Number(event?.clientY || 0)),
-    resolveTarget: (scenePoint) => hitTestCanvasElement(scenePoint, state.board.view.scale),
+    resolveTarget: (scenePoint) => hitTestCanvasElement(scenePoint, (visualCameraView || state.board.view).scale),
   });
   const richDisplayEventBridge = createStaticDisplayEventBridge({
     itemSelector: ".canvas2d-rich-item[data-id]",
@@ -4681,7 +4682,7 @@ let tablePointerSelectionState = {
   function queryVisibleItemsByTypes(types = [], options = {}) {
     const viewport = getViewportPixelSize();
     const sceneIndex = getSceneIndexRuntime(options);
-    return queryVisibleSceneItems(sceneIndex, state.board.view, viewport.width, viewport.height, {
+    return queryVisibleSceneItems(sceneIndex, visualCameraView || state.board.view, viewport.width, viewport.height, {
       marginPx: Number(options.marginPx ?? 220) || 220,
       types,
       excludeIds: Array.isArray(options.excludeIds) ? options.excludeIds : [],
@@ -5350,6 +5351,7 @@ let tablePointerSelectionState = {
       refs.documentPreviewLayer.style.transform = matrix;
       refs.documentPreviewLayer.dataset.cameraMatrix = matrix;
     }
+    if (refs.sceneFeedbackLayer instanceof HTMLDivElement) setStyleIfNeeded(refs.sceneFeedbackLayer, "transform", matrix);
     setStyleIfNeeded(refs.sceneRoot, "willChange", "transform");
     refs.sceneRoot.dataset.cameraRevision = String(presentation?.cameraRevision || 0);
     refs.sceneRoot.dataset.viewportRevision = String(presentation?.viewportRevision || 0);
@@ -5457,7 +5459,7 @@ let tablePointerSelectionState = {
     const viewportInteractionActive = isViewportInteractionActive();
     syncScenePresentation(frameContext);
     if (cameraFastPath) {
-      syncEditingRichEditorCamera(refs.richEditor, getActiveRichEditingItem(), frameView);
+      syncEditingCamera(frameView);
     }
     const sceneVectorState = cameraFastPath
       ? {
@@ -5615,6 +5617,9 @@ let tablePointerSelectionState = {
       largeViewportProgressivePending = false;
     }
     syncFileQuickActions();
+    for (const node of [refs.tableToolbar, refs.mindNodeChrome, refs.mindNodeLinkPanel, refs.richSelectionToolbar, refs.richExternalLinkPanel]) {
+      if (node instanceof HTMLElement) setStyleIfNeeded(node, "visibility", viewportInteractionActive ? "hidden" : "");
+    }
     // File-card Word previews are rendered by the Canvas2D React UI from state.
     if (!cameraFastPath) {
       syncCodeBlockToolbar();
@@ -9628,7 +9633,7 @@ let tablePointerSelectionState = {
   }
 
   function toScenePoint(clientX, clientY) {
-    return screenToScene(state.board.view, { x: clientX, y: clientY }, getCanvasRect());
+    return screenToScene(visualCameraView || state.board.view, { x: clientX, y: clientY }, getCanvasRect());
   }
 
   function updateLastPointerPoint(point) {
@@ -9850,6 +9855,14 @@ let tablePointerSelectionState = {
       refs.documentPreviewLayer.id = "canvas2d-document-preview-layer";
       refs.documentPreviewLayer.className = "canvas2d-document-preview-layer";
       refs.surface.appendChild(refs.documentPreviewLayer);
+    }
+
+    refs.sceneFeedbackLayer = refs.surface.querySelector("#canvas2d-scene-feedback-layer");
+    if (!(refs.sceneFeedbackLayer instanceof HTMLDivElement)) {
+      refs.sceneFeedbackLayer = document.createElement("div");
+      refs.sceneFeedbackLayer.id = "canvas2d-scene-feedback-layer";
+      refs.sceneFeedbackLayer.className = "canvas2d-scene-feedback-layer";
+      refs.surface.appendChild(refs.sceneFeedbackLayer);
     }
 
     refs.vectorLayer = refs.sceneRoot.querySelector("#canvas2d-vector-layer");
@@ -10431,7 +10444,7 @@ let tablePointerSelectionState = {
     refs.codeBlockToolbar?.classList.add("is-hidden");
   }
 
-  function syncRichElementEditorLayout(view = state.board.view) {
+  function syncRichElementEditorLayout(view = visualCameraView || state.board.view) {
     if (!(refs.richEditor instanceof HTMLDivElement)) {
       return;
     }
@@ -10478,7 +10491,42 @@ let tablePointerSelectionState = {
     refs.richEditor.classList.remove("is-hidden");
   }
 
-  function syncEditorLayout(view = state.board.view) {
+  // Full layout establishes a frame; camera-only frames transform it without rewriting drafts.
+  // The next full layout (including a new editing session) replaces that frame and clears the transform.
+  const screenEditorCameraFrames = new WeakMap();
+
+  function rememberScreenEditorCamera(node, view) {
+    if (!(node instanceof HTMLElement)) return;
+    node.style.transform = "none";
+    node.style.transformOrigin = "0 0";
+    screenEditorCameraFrames.set(node, {
+      view: createView(view),
+      left: parseFloat(node.style.left) || 0,
+      top: parseFloat(node.style.top) || 0,
+      itemId: state.editingId,
+    });
+  }
+
+  function syncEditingCamera(view) {
+    syncEditingRichEditorCamera(refs.richEditor, getActiveRichEditingItem(), view);
+    const node = ({ math: refs.editor, table: refs.tableEditor, "code-block": refs.codeBlockEditor,
+      "file-memo": refs.fileMemoEditor, "image-memo": refs.imageMemoEditor })[state.editingType];
+    const frame = node && screenEditorCameraFrames.get(node);
+    if (!frame || frame.itemId !== state.editingId || node.classList.contains("is-hidden")) return;
+    const ratio = Number(view.scale) / frame.view.scale;
+    const dx = (frame.left - frame.view.offsetX) * ratio + view.offsetX - frame.left;
+    const dy = (frame.top - frame.view.offsetY) * ratio + view.offsetY - frame.top;
+    setStyleIfNeeded(node, "transform", `translate(${dx}px, ${dy}px) scale(${ratio})`);
+  }
+
+  function scheduleEditingCallback(itemId, editingType, callback) {
+    const baseline = editBaselineSnapshot;
+    return requestAnimationFrame(() => {
+      if (state.editingId === itemId && state.editingType === editingType && editBaselineSnapshot === baseline) callback();
+    });
+  }
+
+  function syncEditorLayout(view = visualCameraView || state.board.view) {
     const hasEditing = Boolean(state.editingId);
     if (!hasEditing) {
       const preservePendingRichEditor = hasPendingRichEditorHide() && richTextSession.isActive();
@@ -10823,7 +10871,17 @@ let tablePointerSelectionState = {
     refs.richExternalLinkPanel.classList.remove("is-hidden");
     refs.richExternalLinkPanel.setAttribute("aria-hidden", "false");
     const hostRect = refs.surface.getBoundingClientRect();
-    const anchorRect = stateValue.anchorRect || null;
+    const anchorRect = stateValue.anchorRect ? (() => {
+      const view = visualCameraView || state.board.view;
+      const canvasRect = getCanvasRect();
+      const anchor = stateValue.anchorRect;
+      const base = stateValue.anchorView;
+      const ratio = view.scale / base.scale;
+      return { left: canvasRect.left + (anchor.left - stateValue.anchorCanvasLeft - base.offsetX) * ratio + view.offsetX,
+        right: canvasRect.left + (anchor.right - stateValue.anchorCanvasLeft - base.offsetX) * ratio + view.offsetX,
+        top: canvasRect.top + (anchor.top - stateValue.anchorCanvasTop - base.offsetY) * ratio + view.offsetY,
+        bottom: canvasRect.top + (anchor.bottom - stateValue.anchorCanvasTop - base.offsetY) * ratio + view.offsetY };
+    })() : null;
     const width = Math.max(280, refs.richExternalLinkPanel.offsetWidth || refs.richExternalLinkPanel.getBoundingClientRect().width || 320);
     const height = Math.max(1, refs.richExternalLinkPanel.offsetHeight || refs.richExternalLinkPanel.getBoundingClientRect().height || 0);
     const margin = 12;
@@ -10890,6 +10948,9 @@ let tablePointerSelectionState = {
       rawValue: normalizedPrefill,
       editingExistingLink: Boolean(editingExistingLink),
       autoDetected: Boolean(!editingExistingLink && normalizedSelectionText && normalizedPrefill && normalizedSelectionText === normalizedPrefill),
+      anchorView: createView(visualCameraView || state.board.view),
+      anchorCanvasLeft: getCanvasRect().left,
+      anchorCanvasTop: getCanvasRect().top,
       anchorRect:
         anchorRect && Number.isFinite(Number(anchorRect.left)) && Number.isFinite(Number(anchorRect.top))
           ? {
@@ -13398,7 +13459,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "text", () => {
       richTextSession.focus();
       syncRichTextToolbar();
     });
@@ -13413,7 +13474,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return isStructuredMathTextElement(item) ? item : null;
   }
 
-  function syncMathEditorLayout() {
+  function syncMathEditorLayout(view = visualCameraView || state.board.view) {
     const item = getMathEditItem();
     if (!item || !(refs.editor instanceof HTMLTextAreaElement)) {
       cancelMathEdit();
@@ -13423,7 +13484,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelMathEdit();
       return;
     }
-    const view = state.board.view;
     const scale = Math.max(0.1, Number(view?.scale || 1));
     const frame = getElementScreenBounds(view, item);
     Object.assign(refs.editor.style, {
@@ -13433,6 +13493,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       height: `${Math.max(72, frame.height)}px`,
       fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20)))}px`,
     });
+    rememberScreenEditorCamera(refs.editor, view);
     syncElementEditorHostIdentity(refs.editor, item, "math");
     refs.editor.classList.add("is-math");
     refs.editor.classList.remove("is-hidden");
@@ -13464,7 +13525,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.editor.setAttribute("aria-label", mathState.displayMode ? "编辑独立公式 LaTeX" : "编辑行内公式 LaTeX");
     syncMathEditorLayout();
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "math", () => {
       refs.editor?.focus?.({ preventScroll: true });
       refs.editor?.select?.();
     });
@@ -13549,7 +13610,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.richEditor.classList.remove("is-hidden");
     refs.editor?.classList.add("is-hidden");
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "flow-node", () => {
       richTextSession.focus();
       syncRichTextToolbar();
     });
@@ -13598,11 +13659,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       richTextSession.moveCaretToEnd?.();
     };
     focusMindNodeEditor();
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "mind-node", () => {
       ensureMindNodeRichTextSemanticDefaults(item);
       syncActiveRichEditingItemState({ emit: true, refreshToolbar: true, markDirty: false });
       focusMindNodeEditor();
-      requestAnimationFrame(() => focusMindNodeEditor());
+      scheduleEditingCallback(item.id, "mind-node", focusMindNodeEditor);
       syncRichTextToolbar();
     });
     return true;
@@ -14039,12 +14100,12 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return Math.min(safeMax, Math.max(safeMin, value));
   }
 
-  function getTableEditorScreenRect(item) {
-    return getElementScreenBounds(state.board.view, item);
+  function getTableEditorScreenRect(item, view = visualCameraView || state.board.view) {
+    return getElementScreenBounds(view, item);
   }
 
-  function resolveTableEditFrame(item) {
-    const screenRect = getTableEditorScreenRect(item);
+  function resolveTableEditFrame(item, view = visualCameraView || state.board.view) {
+    const screenRect = getTableEditorScreenRect(item, view);
     return {
       left: Math.round(screenRect.left),
       top: Math.round(screenRect.top),
@@ -14059,10 +14120,10 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return null;
     }
     if (!tableEditFrame || options.force) {
-      tableEditFrame = resolveTableEditFrame(item);
+      tableEditFrame = resolveTableEditFrame(item, options.view);
       return tableEditFrame;
     }
-    tableEditFrame = resolveTableEditFrame(item);
+    tableEditFrame = resolveTableEditFrame(item, options.view);
     return tableEditFrame;
   }
 
@@ -15484,13 +15545,16 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const editorRect = refs.tableEditor.getBoundingClientRect();
     const cellRect = cell.getBoundingClientRect();
+    const cameraFrame = screenEditorCameraFrames.get(refs.tableEditor);
+    const cameraRatio = refs.tableEditor.style.transform !== "none" && cameraFrame
+      ? (visualCameraView || state.board.view).scale / cameraFrame.view.scale : 1;
     const tableFontSize = Math.max(1, Number(refs.tableEditor.style.fontSize.replace("px", "")) || 13);
     refs.tableCellRichEditor.classList.remove("is-hidden");
     tableCellRichTextSession.applyFrame({
-      left: Math.round(cellRect.left - editorRect.left),
-      top: Math.round(cellRect.top - editorRect.top),
-      width: Math.round(cellRect.width),
-      height: Math.round(cellRect.height),
+      left: (cellRect.left - editorRect.left) / cameraRatio - refs.tableEditor.clientLeft,
+      top: (cellRect.top - editorRect.top) / cameraRatio - refs.tableEditor.clientTop,
+      width: cellRect.width / cameraRatio,
+      height: cellRect.height / cameraRatio,
       fontSize: tableFontSize,
       padding: `${refs.tableEditor.style.getPropertyValue("--canvas-table-editor-cell-pad-y") || "7px"} ${
         refs.tableEditor.style.getPropertyValue("--canvas-table-editor-cell-pad-x") || "10px"
@@ -15648,7 +15712,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.tableToolbar.classList.remove("is-hidden");
   }
 
-  function syncTableEditorLayout() {
+  function syncTableEditorLayout(view = visualCameraView || state.board.view) {
     if (!(refs.tableEditor instanceof HTMLDivElement)) {
       return;
     }
@@ -15680,7 +15744,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       setTableCellEditingState(0, 0, false);
       return;
     }
-    const frame = ensureTableEditFrame(item);
+    const frame = ensureTableEditFrame(item, { view });
     if (!frame) {
       resetTableInteractionUiState();
       refs.tableEditor.classList.add("is-hidden");
@@ -15702,7 +15766,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.tableEditor.style.width = `${frame.width}px`;
     refs.tableEditor.style.height = `${frame.height}px`;
     const tableGrid = getStructuredTableSceneGrid(item);
-    const scale = Math.max(0.1, Number(state.board.view?.scale || 1));
+    const scale = Math.max(0.1, Number(view?.scale || 1));
     const tableFontSize = Math.max(1, scaleSceneValue({ scale }, 12, { min: 9 }));
     const cellPadX = scaleSceneValue({ scale }, 8, { min: 5 });
     const cellPadY = scaleSceneValue({ scale }, 6, { min: 4 });
@@ -15714,6 +15778,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.tableEditor.style.setProperty("--canvas-table-editor-cell-pad-y", `${cellPadY}px`);
     refs.tableEditor.style.setProperty("--canvas-table-editor-line-height", `${lineHeight}px`);
     refs.tableEditor.style.setProperty("--canvas-table-editor-row-height", `${rowHeight}px`);
+    rememberScreenEditorCamera(refs.tableEditor, view);
     syncElementEditorHostIdentity(refs.tableEditor, item, "table");
     refs.tableEditor.classList.remove("is-hidden");
     syncTableToolbarLayout(item);
@@ -15911,7 +15976,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.codeBlockToolbar.classList.remove("is-hidden");
   }
 
-  function syncCodeBlockEditorLayout(layoutMode = "precise") {
+  function syncCodeBlockEditorLayout(layoutMode = "precise", view = visualCameraView || state.board.view) {
     if (!(refs.codeBlockEditor instanceof HTMLDivElement)) {
       return;
     }
@@ -15935,8 +16000,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       codeBlockEditor.clear();
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
-    const frame = getElementScreenBounds(state.board.view, item);
+    const scale = Math.max(0.1, Number(view.scale || 1));
+    const frame = getElementScreenBounds(view, item);
     const hasEditorDraft = codeBlockEditor.isEditing(item.id);
     const draftCode = hasEditorDraft ? codeBlockEditor.getValue() : "";
     const sessionCode = hasEditorDraft ? draftCode : getCodeBlockContent(item);
@@ -15970,6 +16035,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.codeBlockEditor.style.setProperty("box-shadow", "0 8px 24px rgba(15, 23, 42, 0.12)", "important");
     refs.codeBlockEditor.dataset.layoutMode = String(draftLayout.layoutMode || layoutMode || "precise");
     refs.codeBlockEditor.dataset.dirty = getCodeBlockDraftDirtyState(item) ? "1" : "0";
+    rememberScreenEditorCamera(refs.codeBlockEditor, view);
     syncElementEditorHostIdentity(refs.codeBlockEditor, item, "code-block");
     refs.codeBlockEditor.setAttribute(
       "title",
@@ -16006,7 +16072,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     syncCodeBlockEditorLayout("fast");
     scheduleCodeBlockEditorLayoutSync("precise");
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "code-block", () => {
       codeBlockEditor.focus();
       syncCodeBlockToolbar();
     });
@@ -16140,11 +16206,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     setTableEditSelection(selection?.rowIndex, selection?.columnIndex);
     setTableCellEditingState(tableEditSelection.rowIndex, tableEditSelection.columnIndex, false);
     resetTablePointerSelectionState();
-    tableEditFrame = resolveTableEditFrame(item, { baseFrame: null });
+    tableEditFrame = resolveTableEditFrame(item);
     lastTableEditItemId = null;
     syncTableEditorLayout();
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "table", () => {
       focusTableEditorCell(tableEditSelection.rowIndex, tableEditSelection.columnIndex);
     });
     return true;
@@ -16241,7 +16307,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     item.rows = structure.rows.length;
     const normalizedItem = updateTableElementStructure(item, structure);
     Object.assign(item, normalizedItem);
-    tableEditFrame = resolveTableEditFrame(item, { baseFrame: tableEditFrame });
+    tableEditFrame = resolveTableEditFrame(item);
     refs.tableEditor.innerHTML = buildTableEditorHtml(item);
     ensureTableCellRichEditorHost();
     syncTableEditorLayout();
@@ -16420,7 +16486,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
   }
 
-  function syncFileMemoLayout() {
+  function syncFileMemoLayout(view = visualCameraView || state.board.view) {
     if (!(refs.fileMemoEditor instanceof HTMLTextAreaElement)) {
       return;
     }
@@ -16439,15 +16505,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.fileMemoEditor.classList.add("is-hidden");
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const scale = Math.max(0.1, Number(view.scale || 1));
     const draftMemoText =
-      document.activeElement === refs.fileMemoEditor ? String(refs.fileMemoEditor.value || item.memo || "") : String(item.memo || "");
+      lastFileMemoItemId === item.id ? String(refs.fileMemoEditor.value ?? "") : String(item.memo || "");
     const memoLayout = getMemoLayout(item, { kind: "fileCard", textOverride: draftMemoText });
-    const left = Number(memoLayout.left || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(memoLayout.top || 0) * scale + Number(state.board.view.offsetY || 0);
+    const left = Number(memoLayout.left || 0) * scale + Number(view.offsetX || 0);
+    const top = Number(memoLayout.top || 0) * scale + Number(view.offsetY || 0);
     const memoWidth = Number(memoLayout.width || 0) * scale;
     const memoHeight = Number(memoLayout.height || 0) * scale;
-    if (lastFileMemoItemId !== item.id || document.activeElement !== refs.fileMemoEditor) {
+    if (lastFileMemoItemId !== item.id) {
       refs.fileMemoEditor.value = String(item.memo || "");
       lastFileMemoItemId = item.id;
     }
@@ -16456,6 +16522,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.fileMemoEditor.style.width = `${memoWidth}px`;
     refs.fileMemoEditor.style.height = `${memoHeight}px`;
     refs.fileMemoEditor.style.fontSize = `${Math.max(12, Number(memoLayout.fontSize || 14) * scale)}px`;
+    rememberScreenEditorCamera(refs.fileMemoEditor, view);
     syncElementEditorHostIdentity(refs.fileMemoEditor, item, "file-memo");
     refs.fileMemoEditor.classList.remove("is-hidden");
   }
@@ -16478,7 +16545,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     lastFileMemoItemId = item.id;
     syncFileMemoLayout();
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "file-memo", () => {
       refs.fileMemoEditor?.focus();
       refs.fileMemoEditor?.select();
     });
@@ -16532,7 +16599,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
-  function syncImageMemoLayout() {
+  function syncImageMemoLayout(view = visualCameraView || state.board.view) {
     if (!(refs.imageMemoEditor instanceof HTMLTextAreaElement)) {
       return;
     }
@@ -16551,15 +16618,15 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.imageMemoEditor.classList.add("is-hidden");
       return;
     }
-    const scale = Math.max(0.1, Number(state.board.view.scale || 1));
+    const scale = Math.max(0.1, Number(view.scale || 1));
     const draftMemoText =
-      document.activeElement === refs.imageMemoEditor ? String(refs.imageMemoEditor.value || item.memo || "") : String(item.memo || "");
+      lastImageMemoItemId === item.id ? String(refs.imageMemoEditor.value ?? "") : String(item.memo || "");
     const memoLayout = getMemoLayout(item, { kind: "image", textOverride: draftMemoText });
-    const left = Number(memoLayout.left || 0) * scale + Number(state.board.view.offsetX || 0);
-    const top = Number(memoLayout.top || 0) * scale + Number(state.board.view.offsetY || 0);
+    const left = Number(memoLayout.left || 0) * scale + Number(view.offsetX || 0);
+    const top = Number(memoLayout.top || 0) * scale + Number(view.offsetY || 0);
     const memoWidth = Number(memoLayout.width || 0) * scale;
     const memoHeight = Number(memoLayout.height || 0) * scale;
-    if (lastImageMemoItemId !== item.id || document.activeElement !== refs.imageMemoEditor) {
+    if (lastImageMemoItemId !== item.id) {
       refs.imageMemoEditor.value = String(item.memo || "");
       lastImageMemoItemId = item.id;
     }
@@ -16568,6 +16635,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     refs.imageMemoEditor.style.width = `${memoWidth}px`;
     refs.imageMemoEditor.style.height = `${memoHeight}px`;
     refs.imageMemoEditor.style.fontSize = `${Math.max(12, Number(memoLayout.fontSize || 14) * scale)}px`;
+    rememberScreenEditorCamera(refs.imageMemoEditor, view);
     syncElementEditorHostIdentity(refs.imageMemoEditor, item, "image-memo");
     refs.imageMemoEditor.classList.remove("is-hidden");
   }
@@ -16590,7 +16658,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     lastImageMemoItemId = item.id;
     syncImageMemoLayout();
     syncBoard({ persist: false, emit: true, sceneChange: false, fullOverlayRescan: false });
-    requestAnimationFrame(() => {
+    scheduleEditingCallback(item.id, "image-memo", () => {
       refs.imageMemoEditor?.focus();
       refs.imageMemoEditor?.select();
     });
@@ -28537,6 +28605,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return documentPreviewRuntime.getData(sessionId, generation, options);
     },
     getDocumentPreviewViewport() { const rect = getCanvasRect(); return { width: rect.width, height: rect.height }; },
+    getSceneFeedbackPortalHost() { return refs.sceneFeedbackLayer; },
     getDocumentPreviewPortalHost() {
       return refs.documentPreviewLayer instanceof HTMLDivElement ? refs.documentPreviewLayer : null;
     },

@@ -18,6 +18,8 @@ export async function createPdfVisiblePageRenderer({
   onStats = null,
   TextLayer = null,
   onError = null,
+  firstPage: suppliedFirstPage = null,
+  isCancelled = () => false,
   preloadRadius = 1,
   retentionRadius = 4,
 } = {}) {
@@ -40,7 +42,8 @@ export async function createPdfVisiblePageRenderer({
   let resizeObserver = null;
   let scrollFrame = 0;
 
-  const firstPage = await pdfDocument.getPage(1);
+  const firstPage = suppliedFirstPage || await pdfDocument.getPage(1);
+  if (isCancelled()) throw new DOMException("PDF preview closed", "AbortError");
   const firstViewport = firstPage.getViewport({ scale: 1 });
   const defaultWidth = Math.max(1, Math.round(firstViewport.width));
   const defaultHeight = Math.max(1, Math.round(firstViewport.height));
@@ -81,10 +84,10 @@ export async function createPdfVisiblePageRenderer({
 
   async function renderPage(pageNumber) {
     const record = records.get(pageNumber);
-    if (!record || disposed || record.state === "ready" || record.state === "rendering") return;
+    if (!record || disposed || isCancelled() || record.state === "ready" || record.state === "rendering") return;
     record.state = "rendering";
     const page = pageNumber === 1 ? firstPage : await pdfDocument.getPage(pageNumber);
-    if (disposed) return;
+    if (disposed || isCancelled()) return;
     const cssViewport = page.getViewport({ scale: 1 });
     const outputScale = Math.min(2, Math.max(1, Number(globalThis.devicePixelRatio || 1) || 1), Math.sqrt(2000000 / (cssViewport.width * cssViewport.height)));
     const renderViewport = page.getViewport({ scale: outputScale });
@@ -103,7 +106,7 @@ export async function createPdfVisiblePageRenderer({
     activeRenderTask = page.render({ canvasContext: context, viewport: renderViewport });
     try {
       await activeRenderTask.promise;
-      if (disposed) return;
+      if (disposed || isCancelled()) return;
       record.canvas = canvas;
       if (typeof TextLayer === "function") {
         const layer = document.createElement("div"); layer.className = "file-workstation-pdf-text textLayer";
@@ -112,7 +115,7 @@ export async function createPdfVisiblePageRenderer({
         record.textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport: cssViewport });
         await record.textLayer.render();
       }
-      if (disposed) return;
+      if (disposed || isCancelled()) return;
       record.state = "ready";
       emitStats();
     } finally {
@@ -121,15 +124,15 @@ export async function createPdfVisiblePageRenderer({
   }
 
   async function processQueue() {
-    if (processing || disposed) return;
+    if (processing || disposed || isCancelled()) return;
     processing = true;
     try {
-      while (queue.length && !disposed) {
+      while (queue.length && !disposed && !isCancelled()) {
         const pageNumber = queue.shift();
         queued.delete(pageNumber);
         if (Math.abs(pageNumber - visibleCenter) > retentionRadius) continue;
         try { await renderPage(pageNumber); } catch (error) {
-          if (!disposed) { const record = records.get(pageNumber); if (record) { record.state = "failed"; if (record.canvas) { record.canvas.width = 1; record.canvas.height = 1; } record.shell.textContent = "此页渲染失败，请刷新预览或使用系统应用打开"; } onError?.(error); }
+          if (!disposed && !isCancelled()) { const record = records.get(pageNumber); if (record) { record.state = "failed"; if (record.canvas) { record.canvas.width = 1; record.canvas.height = 1; } record.shell.textContent = "此页渲染失败，请刷新预览或使用系统应用打开"; } onError?.(error); }
         }
       }
     } finally {
@@ -149,7 +152,7 @@ export async function createPdfVisiblePageRenderer({
   }
 
   function updateVisibleCenter() {
-    if (disposed || !(scrollRoot instanceof HTMLElement)) return;
+    if (disposed || isCancelled() || !(scrollRoot instanceof HTMLElement)) return;
     const rootRect = scrollRoot.getBoundingClientRect();
     const surfaceRect = scrollRoot.closest('.canvas-engine-surface')?.getBoundingClientRect();
     const visibleTop = Math.max(0, rootRect.top, surfaceRect?.top ?? 0);
@@ -170,6 +173,33 @@ export async function createPdfVisiblePageRenderer({
     emitStats();
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    observer?.disconnect();
+    observer = null;
+    resizeObserver?.disconnect();
+    window.removeEventListener('resize', scheduleVisibleUpdate);
+    scrollRoot?.removeEventListener?.("scroll", scheduleVisibleUpdate);
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+    try {
+      activeRenderTask?.cancel?.();
+    } catch {
+      // Ignore pdf.js cancellation differences across builds.
+    }
+    records.forEach((record) => {
+      record.textLayer?.cancel?.();
+      if (record.canvas) {
+        record.canvas.width = 1;
+        record.canvas.height = 1;
+      }
+    });
+    records.clear();
+    queue.length = 0;
+    queued.clear();
+    void pdfDocument.cleanup?.().catch?.(() => {});
+  }
+
   if (typeof IntersectionObserver === "function" && scrollRoot instanceof HTMLElement) {
     observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) scheduleVisibleUpdate();
@@ -185,7 +215,10 @@ export async function createPdfVisiblePageRenderer({
     resizeObserver.observe(scrollRoot);
   }
   window.addEventListener('resize', scheduleVisibleUpdate);
-  await renderPage(1);
+  try {
+    await renderPage(1);
+    if (isCancelled()) throw new DOMException("PDF preview closed", "AbortError");
+  } catch (error) { dispose(); throw error; }
   enqueuePages(createVisiblePageWindow(1, pageCount, preloadRadius));
   emitStats();
 
@@ -197,31 +230,6 @@ export async function createPdfVisiblePageRenderer({
       records.get(pageNumber)?.shell.scrollIntoView({ block: "start" });
       visibleCenter = pageNumber; enqueuePages(createVisiblePageWindow(pageNumber, pageCount, preloadRadius)); releaseFarPages(); emitStats();
     },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      observer?.disconnect();
-      observer = null;
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', scheduleVisibleUpdate);
-      scrollRoot?.removeEventListener?.("scroll", scheduleVisibleUpdate);
-      if (scrollFrame) cancelAnimationFrame(scrollFrame);
-      try {
-        activeRenderTask?.cancel?.();
-      } catch {
-        // Ignore pdf.js cancellation differences across builds.
-      }
-      records.forEach((record) => {
-        record.textLayer?.cancel?.();
-        if (record.canvas) {
-          record.canvas.width = 1;
-          record.canvas.height = 1;
-        }
-      });
-      records.clear();
-      queue.length = 0;
-      queued.clear();
-      void pdfDocument.cleanup?.().catch?.(() => {});
-    },
+    dispose,
   });
 }

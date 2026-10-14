@@ -186,7 +186,7 @@ async function main() {
     await runNodeScript("scripts/check-canvas-background-lifecycle.js", {
       CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html`,
     });
-    for (const script of ["scripts/check-canvas-edit-integrity.js", "scripts/check-canvas-rich-editing.js", "scripts/check-canvas-text-experience.js", "scripts/check-canvas-media-integrity-browser.js"]) {
+    for (const script of ["scripts/check-canvas-edit-integrity.js", "scripts/check-canvas-rich-editing.js", "scripts/check-canvas-editor-camera.js", "scripts/check-shortcut-recorder-browser.js", "scripts/check-canvas-text-experience.js", "scripts/check-canvas-media-integrity-browser.js"]) {
       await runNodeScript(script, { CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html` });
     }
     await runNodeScript("scripts/check-canvas-card-ux.js", { CANVAS_TEST_URL: `${BASE_URL}/canvas-office.html` });
