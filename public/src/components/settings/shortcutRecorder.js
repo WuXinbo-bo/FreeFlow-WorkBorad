@@ -31,7 +31,9 @@ export function attachShortcutRecorder(host, { selector, desktopShell, getValue,
     recordingRequest = recordingRequest
       .catch(() => {})
       .then(() => desktopShell.setShortcutRecording(enabled))
-      .catch(() => {});
+      .then(result => {
+        if (result?.ok === false) throw new Error(result.error || "快捷键录入准备失败");
+      });
     return recordingRequest;
   }
 
@@ -47,13 +49,16 @@ export function attachShortcutRecorder(host, { selector, desktopShell, getValue,
       if (!accept || !activeCompleted) { activeInput.value = activeOriginal.display; onChange(activeOriginal); }
       activeInput.dataset.recording = "false";
     }
-    await setNativeRecording(false);
+    await setNativeRecording(false).catch(() => {});
   }
   function begin(target) {
     if (input === target || target.disabled) return;
     const current = ++generation;
     void stop(true, false).then(() => {
-      if (current !== generation || target.disabled) return;
+      if (current !== generation || target.disabled || !target.isConnected || document.activeElement !== target) {
+        target.dataset.recording = "false";
+        return;
+      }
       input = target;
       original = { ...getValue() };
       completed = false;
@@ -83,7 +88,7 @@ export function attachShortcutRecorder(host, { selector, desktopShell, getValue,
     if (input && event.target === input) { event.stopImmediatePropagation(); if (completed) input.value = getValue().display; }
   };
   const focusout = event => {
-    if (event.target === input && !event.relatedTarget?.closest?.(selector)) {
+    if (event.target.matches?.(selector) && !event.relatedTarget?.closest?.(selector)) {
       void stop();
     }
   };

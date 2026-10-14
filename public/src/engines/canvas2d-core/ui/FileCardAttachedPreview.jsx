@@ -347,6 +347,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
           host.replaceChildren(cachedShell);
         }
         const module = await loadVendorEsmModule("pdfjs-dist");
+        if (cancelled) return;
         const { getDocument, GlobalWorkerOptions, TextLayer } = module || {};
         if (typeof getDocument !== "function" || !GlobalWorkerOptions) {
           throw new Error("pdfjs-dist 未提供 PDF 渲染能力");
@@ -368,9 +369,12 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
         pdfRef.current = pdfDocument;
         pages = Number(pdfDocument.numPages || 0) || 0;
         const firstPage = await pdfDocument.getPage(1);
+        if (cancelled) return;
         setPageWidth(firstPage.getViewport({ scale: 1 }).width);
         pdfPageRenderer = await createPdfVisiblePageRenderer({
           pdfDocument,
+          firstPage,
+          isCancelled: () => cancelled,
           host,
           scrollRoot: scrollRef.current,
           preloadRadius: 1,

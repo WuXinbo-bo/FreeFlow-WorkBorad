@@ -7,14 +7,12 @@ import {
 } from "../../theme/themeSettings.js";
 
 const SECTION_DEFS = Object.freeze([
-  { key: "general", label: "通用", icon: "sliders" },
   { key: "ai", label: "AI 模型", icon: "bot" },
   { key: "appearance", label: "外观", icon: "palette" },
-  { key: "workbench", label: "工作台", icon: "panels" },
-  { key: "canvas", label: "画布", icon: "pen-tool" },
-  { key: "permissions", label: "权限", icon: "shield" },
+  { key: "workbench", label: "工作台习惯", icon: "panels" },
+  { key: "canvas", label: "画布设置", icon: "pen-tool" },
   { key: "github", label: "GitHub 同步", icon: "github" },
-  { key: "diagnostics", label: "诊断", icon: "activity" },
+  { key: "updates", label: "应用更新", icon: "activity" },
 ]);
 
 const SECTION_ICON_PATHS = Object.freeze({
@@ -23,7 +21,6 @@ const SECTION_ICON_PATHS = Object.freeze({
   palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 22a10 10 0 1 1 10-10c0 5.5-4.5 2-5.5 4-.8 1.6 1.5 2.5.5 4.1-1 1.5-3 1.9-5 1.9Z"/>',
   panels: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M9 9h12"/>',
   "pen-tool": '<path d="m12 19 7-7 3 3-7 7-3-3Z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
-  shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="m9 12 2 2 4-4"/>',
   activity: '<path d="M3 12h4l3-9 4 18 3-9h4"/>',
   github: '<path d="M9 19c-4 1.3-4-2-5.5-2m11 4v-3.9c0-1.1.1-1.4-.5-2.1 1.7-.2 3.5-.8 3.5-3.8 0-.8-.3-1.5-.8-2 .1-.2.3-1-.1-2 0 0-.7-.2-2.2.8a7.6 7.6 0 0 0-4 0C9.9 8 9.2 8.2 9.2 8.2c-.4 1-.2 1.8-.1 2-.5.5-.8 1.2-.8 2 0 3 1.8 3.6 3.5 3.8-.4.4-.5 1-.5 2.1V21"/>',
 });
@@ -140,6 +137,7 @@ export function mountSettingsCenter(host, options = {}) {
     onApplySnapshot = () => {},
     onStatus = () => {},
     onRequestClose = () => {},
+    onCheckUpdate = null,
     agentClient = null,
     prepareGitHubSyncBoard = null,
     prepareGitHubSyncWorkspace = null,
@@ -150,7 +148,9 @@ export function mountSettingsCenter(host, options = {}) {
   let shortcutSnapshot = clone(DEFAULT_SHORTCUT);
   let shortcutDraft = clone(DEFAULT_SHORTCUT);
   let shortcutRecorder = null;
-  let activeSection = "general";
+  let activeSection = "ai";
+  let aiSection = "setup";
+  let updateChecking = false;
   let phase = "idle";
   let message = "";
   let messageTone = "";
@@ -315,30 +315,34 @@ export function mountSettingsCenter(host, options = {}) {
     `).join("");
   }
 
-  function renderGeneral() {
-    const general = draft.general;
+  function renderUpdates() {
     return `
-      <div class="settings-center-section-heading">
-        <div><p>基本信息</p><h4>通用设置</h4></div>
-        <span>名称与更新策略</span>
-      </div>
+      <div class="settings-center-section-heading"><div><p>版本管理</p><h4>应用更新</h4></div></div>
       <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>产品与工作区</h5><p>产品品牌固定，工作区与助手名称分别管理。</p></div>
-        <div class="settings-center-form-grid">
-          ${renderField({ path: "general.productName", label: "产品名称", value: general.productName, note: "产品品牌由应用版本提供，不可修改。" }).replace("data-settings-path=", "disabled data-settings-path=")}
-          ${renderField({ path: "general.workspaceName", label: "工作区名称", value: general.workspaceName, maxlength: 40, placeholder: "例如 我的创作工作台" })}
-          ${renderField({ path: "general.workspaceSubtitle", label: "工作区副标题", value: general.workspaceSubtitle, maxlength: 80, placeholder: "例如 自由画布与 AI 工作台" })}
-          ${renderField({ path: "general.assistantName", label: "AI 助手名称", value: general.assistantName, maxlength: 40, placeholder: "例如 FreeFlow" })}
-        </div>
-      </section>
-      <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>应用更新</h5><p>启动后在后台检查新版本，不阻塞工作区。</p></div>
-        ${renderToggle("general.updateCheckEnabled", "自动检查更新", general.updateCheckEnabled, "关闭后仍可从更多菜单手动检查。")}
-      </section>
-    `;
+        <div class="settings-center-group-heading"><h5>更新检查</h5><p>检查新版本不会中断当前工作，也不会自动安装。</p></div>
+        ${renderToggle("general.updateCheckEnabled", "自动检查更新", draft.general.updateCheckEnabled, "启动后在后台检查新版本。")}
+        <div class="settings-center-inline-actions"><button type="button" data-settings-action="check-update"${!onCheckUpdate || updateChecking ? " disabled" : ""}>${updateChecking ? "正在检查" : "检查更新"}</button></div>
+      </section>`;
+  }
+
+  function selectSection(section) {
+    if (section === "permissions" || section === "diagnostics") {
+      activeSection = "ai";
+      aiSection = section;
+    } else if (section === "general") {
+      activeSection = "updates";
+    } else if (SECTION_DEFS.some((item) => item.key === section)) {
+      activeSection = section;
+    }
   }
 
   function renderAi() {
+    return `<div class="settings-center-provider-tabs" role="tablist" aria-label="AI 模型设置">
+      ${[["setup", "模型连接"], ["permissions", "权限与目录"], ["diagnostics", "诊断与备份"]].map(([key, label]) => `<button type="button" role="tab" data-ai-section="${key}" aria-selected="${aiSection === key}" class="${aiSection === key ? "is-active" : ""}">${label}</button>`).join("")}
+    </div>${aiSection === "permissions" ? renderPermissions() : aiSection === "diagnostics" ? renderDiagnostics() : renderAiSetup()}`;
+  }
+
+  function renderAiSetup() {
     const agent = draft.ai.agent || {};
     const runtime = agentRuntime || {};
     const providerId = agent.activeProvider === "claude" ? "claude" : "codex";
@@ -586,7 +590,7 @@ export function mountSettingsCenter(host, options = {}) {
     const claude = runtime.providers?.claude || {};
     return `
       <div class="settings-center-section-heading">
-        <div><p>运行信息</p><h4>设置诊断</h4></div>
+        <div><p>运行信息</p><h4>AI 诊断与备份</h4></div>
         <span>只读运行状态</span>
       </div>
       <section class="settings-center-group">
@@ -690,10 +694,9 @@ export function mountSettingsCenter(host, options = {}) {
       case "appearance": return renderAppearance();
       case "workbench": return renderWorkbench();
       case "canvas": return renderCanvas();
-      case "permissions": return renderPermissions();
       case "github": return renderGithubSyncPanel();
-      case "diagnostics": return renderDiagnostics();
-      default: return renderGeneral();
+      case "updates": return renderUpdates();
+      default: return renderAi();
     }
   }
 
@@ -717,7 +720,7 @@ export function mountSettingsCenter(host, options = {}) {
         <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "设置已保存"}</span></div>
         <div class="settings-center-footer-actions">
           ${conflictPending ? `<button type="button" data-settings-action="reload"${githubSyncAction ? " disabled" : ""}>重新载入最新设置</button>` : ""}
-          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction ? " disabled" : ""}>恢复本页</button>
+          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction || activeSection === "github" || (activeSection === "ai" && aiSection === "diagnostics") ? " disabled" : ""}>恢复本页</button>
           <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
           <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" || githubSyncAction ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
         </div>
@@ -763,10 +766,6 @@ export function mountSettingsCenter(host, options = {}) {
 
   function validateDraft() {
     const errors = {};
-    const general = draft.general;
-    if (!String(general.workspaceName || "").trim()) errors["general.workspaceName"] = "请输入工作区名称";
-    if (!String(general.workspaceSubtitle || "").trim()) errors["general.workspaceSubtitle"] = "请输入工作区副标题";
-    if (!String(general.assistantName || "").trim()) errors["general.assistantName"] = "请输入 AI 助手名称";
     if (!String(shortcutDraft.clickThroughAccelerator || shortcutDraft.clickThroughDisplay || "").trim()) errors["workbench.clickThroughShortcut"] = "请输入快捷键";
     return errors;
   }
@@ -855,7 +854,7 @@ export function mountSettingsCenter(host, options = {}) {
       return;
     }
     if (!confirmedRisk && getNewHighRiskPermissions().length) {
-      activeSection = "permissions";
+      selectSection("permissions");
       riskConfirmationPending = true;
       setMessage("需要确认新开启的高风险权限", "warning");
       render();
@@ -932,10 +931,12 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function resetActiveSection() {
-    if (!snapshot || !draft || activeSection === "diagnostics") return;
+    if (!snapshot || !draft || (activeSection === "ai" && aiSection === "diagnostics") || activeSection === "github") return;
     if (activeSection === "workbench") shortcutDraft = clone(shortcutSnapshot);
-    draft[activeSection] = clone(snapshot.sections[activeSection]);
-    if (activeSection === "ai") {
+    const section = activeSection === "ai" && aiSection === "permissions" ? "permissions" : activeSection;
+    if (section === "updates") draft.general.updateCheckEnabled = snapshot.sections.general.updateCheckEnabled;
+    else draft[section] = clone(snapshot.sections[section]);
+    if (section === "ai") {
       agentConnectionDrafts = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
         baseUrl: String(snapshot.sections.ai?.agent?.providers?.[provider]?.baseUrl || ""),
         apiKey: "",
@@ -1268,11 +1269,18 @@ export function mountSettingsCenter(host, options = {}) {
     const sectionButton = target?.closest("[data-settings-section]");
     if (sectionButton) {
       if (githubSyncAction) return;
-      activeSection = sectionButton.dataset.settingsSection;
+      selectSection(sectionButton.dataset.settingsSection);
       riskConfirmationPending = false;
       setMessage("", "");
       render();
       host.querySelector(".settings-center-content")?.focus({ preventScroll: true });
+      return;
+    }
+    const aiSectionButton = target?.closest("[data-ai-section]");
+    if (aiSectionButton) {
+      aiSection = aiSectionButton.dataset.aiSection;
+      riskConfirmationPending = false;
+      render();
       return;
     }
     const providerButton = target?.closest("[data-agent-provider]");
@@ -1344,6 +1352,18 @@ export function mountSettingsCenter(host, options = {}) {
     if (action === "github-open-device") {
       const url = githubDeviceFlow?.verification_uri || githubDeviceFlow?.verification_uri_complete;
       if (url) window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (action === "check-update") {
+      if (!onCheckUpdate || updateChecking) return;
+      updateChecking = true;
+      render();
+      try {
+        const result = await onCheckUpdate();
+        if (!result?.ok) setMessage(result?.errorMessage || result?.errorCode || "检查更新失败，请稍后重试", "error");
+        else setMessage(result.hasUpdate ? `发现新版本 v${result.latestVersion}` : `当前已是最新版本 ${result.currentVersion || ""}`.trim(), "success");
+      } catch (error) { setMessage(error.message || "检查更新失败", "error"); }
+      finally { updateChecking = false; render(); }
       return;
     }
     if (action === "reload") await load();
@@ -1507,7 +1527,7 @@ export function mountSettingsCenter(host, options = {}) {
   return {
     open,
     openSection(section) {
-      if (SECTION_DEFS.some((item) => item.key === section)) activeSection = section;
+      selectSection(section);
       render();
     },
     close,

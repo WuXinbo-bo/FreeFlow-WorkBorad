@@ -107,6 +107,22 @@ async function main() {
     await page.waitForFunction(() => Boolean(globalThis.__canvas2dEngine?.getSnapshot));
     await page.waitForFunction(() => document.querySelector("#canvas2d-react-ui-host")?.dataset?.canvas2dUiState === "mounted");
 
+    const lateInit = await page.evaluate(async () => {
+      const { createPdfVisiblePageRenderer } = await import('/src/engines/canvas2d-core/documentPreview/pdfVisiblePageRenderer.js');
+      const host = document.createElement('div'); host.textContent = 'new session'; document.body.appendChild(host);
+      let release, cancelled = false;
+      const pdfDocument = { numPages: 1, getPage: () => new Promise(resolve => { release = resolve; }) };
+      const pending = createPdfVisiblePageRenderer({ pdfDocument, host, scrollRoot: host, isCancelled: () => cancelled });
+      cancelled = true;
+      release({ getViewport: () => ({ width: 600, height: 800 }) });
+      let errorName;
+      try { await pending; } catch (error) { errorName = error.name; }
+      const content = host.textContent; host.remove();
+      return { errorName, content };
+    });
+    assert.strictEqual(lateInit.errorName, 'AbortError');
+    assert.strictEqual(lateInit.content, 'new session', 'closed PDF initialization overwrote the replacement host');
+
     await page.evaluate(() => {
       const item = {
         id: "preview-pdf-card",

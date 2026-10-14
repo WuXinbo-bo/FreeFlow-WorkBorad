@@ -1810,6 +1810,7 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onApplySnapshot: applySettingsCenterSnapshot,
   onStatus: setStatus,
   onRequestClose: requestSettingsDrawerClose,
+  onCheckUpdate: DESKTOP_SHELL?.checkForAppUpdate ? () => runAppUpdateCheck({ manual: true }) : null,
   agentClient,
   runGitHubBoardFileOperation: async (task) => {
     const engine = getModernCanvas2DEngine();
@@ -3797,7 +3798,7 @@ function requestSettingsDrawerClose() {
   }
 }
 
-async function openSettingsCenterSection(section = "general") {
+async function openSettingsCenterSection(section = "ai") {
   settingsCenter.openSection(section);
   if (!state.drawerOpen) {
     await suspendScreenSourceForDrawer();
@@ -3807,7 +3808,7 @@ async function openSettingsCenterSection(section = "general") {
 }
 
 window.addEventListener("freeflow:open-settings", (event) => {
-  void openSettingsCenterSection(event.detail?.section === "github" ? "github" : "general");
+  void openSettingsCenterSection(event.detail?.section || "ai");
 });
 
 function syncAgentRuntimeOverview(runtime, session) {

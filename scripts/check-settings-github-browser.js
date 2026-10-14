@@ -150,15 +150,23 @@ async function main() {
         desktopShell: window.__githubMock,
         isDesktop: true,
         agentClient: null,
+        onCheckUpdate: async () => ({ ok: true, currentVersion: "2.0.2", hasUpdate: false }),
         onThemePreview: (theme) => { window.__themePreview = theme; },
         onRequestClose: () => { window.__closeCount = (window.__closeCount || 0) + 1; },
       });
       await window.__settingsController.open();
     });
 
+    for (const [section, heading] of [["general", "应用更新"], ["permissions", "权限与目录"], ["diagnostics", "AI 诊断与备份"]]) {
+      await page.evaluate(section => window.__settingsController.openSection(section), section);
+      assert(await page.locator(`h4:has-text("${heading}")`).count() === 1, "legacy section alias failed", section);
+    }
+    await page.locator('[data-settings-section="updates"]').click();
+    await page.locator('[data-settings-action="check-update"]').click();
+    await page.waitForFunction(() => document.querySelector('.settings-center-save-state')?.textContent.includes('当前已是最新版本 2.0.2'));
     const nav = page.locator('[data-settings-section="github"]');
     assert(await nav.count() === 1, "GitHub sync is not a dedicated settings section");
-    assert(await page.locator('[data-settings-section]').count() >= 8, "settings navigation did not expose the GitHub section");
+    assert(await page.locator('[data-settings-section]').count() >= 6, "settings navigation did not expose the GitHub section");
     await nav.click();
     await page.waitForSelector("text=GitHub 画布同步");
 
@@ -198,7 +206,7 @@ async function main() {
     await page.waitForSelector("text=ABCD-EFGH");
     await page.locator('[data-settings-action="github-poll"]').click();
     await page.waitForFunction(() => document.body.textContent.includes("仍在等待授权"));
-    await page.locator('[data-settings-section="general"]').click();
+    await page.locator('[data-settings-section="updates"]').click();
     await page.locator('[data-settings-section="github"]').click();
     assert(await page.locator("text=ABCD-EFGH").count() === 1, "switching settings sections lost or stale-filled Device Flow state");
     await page.locator('[data-settings-action="github-poll"]').click();

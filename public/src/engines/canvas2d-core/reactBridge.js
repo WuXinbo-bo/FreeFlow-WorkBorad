@@ -99,6 +99,7 @@ export function createCanvas2DReactBridge(engine) {
       return engine?.getDocumentPreviewSessionData?.(sessionId, generation, options) || null;
     },
     getDocumentPreviewViewport() { return engine?.getDocumentPreviewViewport?.() || {}; },
+    getSceneFeedbackPortalHost() { return engine?.getSceneFeedbackPortalHost?.() || null; },
     getDocumentPreviewPortalHost() {
       return engine?.getDocumentPreviewPortalHost?.() || null;
     },
