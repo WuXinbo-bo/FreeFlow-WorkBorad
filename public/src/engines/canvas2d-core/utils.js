@@ -79,7 +79,7 @@ export function sanitizeHtml(value = "") {
     ALLOW_DATA_ATTR: true,
     ALLOW_ARIA_ATTR: true,
     ADD_ATTR: ["target"],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ftp|file|blob):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+    ALLOWED_URI_REGEXP: /^(?:freeflow:\/\/canvas\/item\/|(?:https?|mailto|tel|ftp|file|blob):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "foreignobject", "svg"],
     FORBID_ATTR: ["srcdoc"],
   });

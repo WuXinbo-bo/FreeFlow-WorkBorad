@@ -1,3 +1,4 @@
+import { normalizeLatexSource } from "../../textModel/latexSyntax.js";
 import { sanitizeText } from "../../utils.js";
 import { flattenTableStructureToMatrix } from "../../elements/table.js";
 import { getStructuredMathTextState, isStructuredMathTextElement } from "../../elements/mathText.js";
@@ -127,7 +128,7 @@ function downgradeTableItem(item, index) {
 
 function downgradeMathItem(item, index) {
   const mathState = getStructuredMathTextState(item);
-  const formula = sanitizeText(mathState?.formula ?? item?.formula ?? item?.text ?? "");
+  const formula = normalizeLatexSource(mathState?.formula ?? item?.formula ?? item?.text);
   const displayMode = Boolean(mathState?.displayMode ?? item?.displayMode ?? item?.type === "mathBlock");
   const sourceFormat = String(mathState?.sourceFormat || item?.sourceFormat || "latex").trim().toLowerCase();
   const fallbackText = String(item?.fallbackText || (displayMode ? `$$${formula}$$` : `$${formula}$`));

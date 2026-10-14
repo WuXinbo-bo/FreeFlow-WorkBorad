@@ -1,3 +1,5 @@
+import { normalizeLatexSource, formatLatexSource, readLatexSpan } from "../textModel/latexSyntax.js";
+import { normalizeRichMathHtml } from "../textModel/richMathSource.js";
 import { isComposingInput } from "../textEditing/inputComposition.js";
 import { normalizeRichHtml, normalizeRichHtmlInlineFontSizes, toFileUrl } from "../utils.js";
 
@@ -56,34 +58,12 @@ function normalizeMathElementType(type = "") {
   return normalized === "block" ? "block" : "inline";
 }
 
-function stripMathEditingDelimiters(value = "", type = "inline") {
-  const source = String(value || "").replace(/\u00a0/g, " ").trim();
-  if (!source) {
-    return "";
-  }
-  if (normalizeMathElementType(type) === "block") {
-    const fenced = source.match(/^\$\$\s*[\r\n]?([\s\S]*?)[\r\n]?\s*\$\$$/);
-    if (fenced) {
-      return String(fenced[1] || "").trim();
-    }
-    return source.replace(/^\$\$+/, "").replace(/\$\$+$/, "").trim();
-  }
-  const inlineWrapped = source.match(/^\$(?!\$)([\s\S]*?)(?<!\$)\$$/);
-  if (inlineWrapped) {
-    return String(inlineWrapped[1] || "").trim();
-  }
-  return source.replace(/^\$/, "").replace(/\$$/, "").trim();
+function stripMathEditingDelimiters(value = "") {
+  return normalizeLatexSource(value);
 }
 
 function formatMathForEditing(value = "", type = "inline") {
-  const source = stripMathEditingDelimiters(value, type);
-  if (!source) {
-    return "";
-  }
-  if (normalizeMathElementType(type) === "block") {
-    return `$$\n${source}\n$$`;
-  }
-  return `$${source}$`;
+  return formatLatexSource(value, normalizeMathElementType(type) === "block");
 }
 
 function getMathEditingAffixLengths(value = "", type = "inline") {
@@ -2080,6 +2060,14 @@ export function createRichTextAdapter(
       if (!(node instanceof HTMLElement)) {
         return;
       }
+      const raw = getNodeText(node);
+      const span = readLatexSpan(raw);
+      // Chromium may extend the last editable math span when typing after it.
+      // Reparse its complete formula plus trailing prose/formulas on the copy.
+      if (span && raw.slice(span.end).trim()) {
+        node.replaceWith(document.createTextNode(raw));
+        return;
+      }
       const source = getMathElementSource(node);
       node.textContent = source;
     });
@@ -2584,7 +2572,7 @@ export function createRichTextAdapter(
     container.innerHTML = htmlWithSerializedCodeBlocks;
     normalizeEditableLists(container);
     normalizeEditableFontSizeSpans(container);
-    return serializeEditableMathNodes(container);
+    return normalizeRichMathHtml(serializeEditableMathNodes(container));
   }
 
   function getText() {

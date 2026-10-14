@@ -7,6 +7,7 @@ import {
   TEXT_BODY_LINE_HEIGHT_RATIO,
 } from "./textLayout/typographyTokens.js";
 import { renderLatexToStaticHtml } from "./import/renderers/markdown/markdownStaticRenderer.js";
+import { normalizeLatexSource } from "./textModel/latexSyntax.js";
 import { sanitizeHtml } from "./utils.js";
 
 export const TEXT_LINE_HEIGHT_RATIO = TEXT_BODY_LINE_HEIGHT_RATIO;
@@ -149,7 +150,7 @@ function renderRichTextMathMarkup(html = "") {
   let next = source.replace(
     /<span\b([^>]*\bdata-role=(?:"|')math-inline(?:"|')[^>]*)>([\s\S]*?)<\/span>/gi,
     (match, _attrs, body) => {
-      const formula = decodeHtmlText(stripHtmlTags(body)).trim();
+      const formula = normalizeLatexSource(decodeHtmlText(stripHtmlTags(body)));
       if (!formula) {
         return match;
       }
@@ -164,7 +165,7 @@ function renderRichTextMathMarkup(html = "") {
   next = next.replace(
     /<(div|section|article)\b([^>]*\bdata-role=(?:"|')math-block(?:"|')[^>]*)>([\s\S]*?)<\/\1>/gi,
     (match, _tag, _attrs, body) => {
-      const formula = decodeHtmlText(stripHtmlTags(body)).trim();
+      const formula = normalizeLatexSource(decodeHtmlText(stripHtmlTags(body)));
       if (!formula) {
         return match;
       }
@@ -177,10 +178,6 @@ function renderRichTextMathMarkup(html = "") {
   );
 
   return next;
-}
-
-function hasAnchorMarkup(html = "") {
-  return /<a[\s>]/i.test(String(html || ""));
 }
 
 const RICH_TEXT_BLOCK_TAG_SET = new Set([
@@ -362,6 +359,10 @@ function collectHtmlPlainTextMapping(node, entries) {
   if (!node || !entries) {
     return;
   }
+  if (typeof Node !== "undefined" && node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+    node.childNodes.forEach(child => collectHtmlPlainTextMapping(child, entries));
+    return;
+  }
   if (typeof Node !== "undefined" && node.nodeType === Node.TEXT_NODE) {
     pushMappedChars(entries, String(node.nodeValue || ""), node, 0);
     return;
@@ -519,7 +520,7 @@ function materializeLinkTokensIntoHtml(text = "", html = "", linkTokens = []) {
       .reverse()
       .forEach((token) => {
         const fragments = collectTokenNodeFragments(mapping.entries, token);
-        if (!fragments.length) {
+        if (!fragments.length || fragments.some(fragment => fragment.node?.parentElement?.closest("a, pre, code, [data-role='math-inline'], [data-role='math-block']"))) {
           return;
         }
         if (fragments.length === 1) {
@@ -579,16 +580,13 @@ export function resolveRichTextDisplayHtml({ text = "", html = "", linkTokens = 
   if (!rawHtml) {
     return linkStyledHtml;
   }
-  const mathRenderedHtml = renderRichTextMathMarkup(rawHtml);
+  const linkedHtml = materializeLinkTokensIntoHtml(text, rawHtml, linkTokens);
+  const mathRenderedHtml = renderRichTextMathMarkup(linkedHtml);
   if (!Array.isArray(linkTokens) || !linkTokens.length) {
     putLruCache(richDisplayHtmlCache, sourceHtml, mathRenderedHtml, RICH_RUN_CACHE_LIMIT);
     return mathRenderedHtml;
   }
-  if (hasAnchorMarkup(mathRenderedHtml)) {
-    return mathRenderedHtml;
-  }
-  const mergedHtml = materializeLinkTokensIntoHtml(text, mathRenderedHtml, linkTokens);
-  return String(mergedHtml || mathRenderedHtml).trim() || linkStyledHtml || mathRenderedHtml;
+  return String(mathRenderedHtml).trim() || linkStyledHtml;
 }
 
 function applyElementStyle(style, element) {

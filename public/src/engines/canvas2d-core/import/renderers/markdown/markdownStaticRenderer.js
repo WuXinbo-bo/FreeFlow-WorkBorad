@@ -1,3 +1,4 @@
+import { normalizeLatexSource } from "../../../textModel/latexSyntax.js";
 import { sanitizeText } from "../../../utils.js";
 import {
   RICH_TEXT_BLOCK_TYPES,
@@ -16,7 +17,7 @@ export function renderMarkdownToStaticHtml(markdown = "", { inline = false } = {
 }
 
 export function renderLatexToStaticHtml(formula = "", { displayMode = false } = {}) {
-  const source = String(formula || "").trim();
+  const source = normalizeLatexSource(formula);
   if (!source) {
     return "";
   }

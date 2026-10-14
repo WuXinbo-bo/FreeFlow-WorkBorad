@@ -7,6 +7,9 @@ import {
   INLINE_FONT_SIZE_ATTR,
 } from "../utils.js";
 
+import { normalizeLatexSource } from "./latexSyntax.js";
+import { normalizeRichMathHtml } from "./richMathSource.js";
+
 export const RICH_TEXT_DOCUMENT_VERSION = 2;
 export const RICH_TEXT_DOCUMENT_KIND = "freeflow-rich-text";
 
@@ -53,25 +56,6 @@ export const RICH_TEXT_MARK_TYPES = Object.freeze({
 
 const DEFAULT_BLOCK_TYPE = RICH_TEXT_BLOCK_TYPES.PARAGRAPH;
 const DEFAULT_INLINE_NODE_TYPE = RICH_TEXT_INLINE_NODE_TYPES.TEXT;
-
-function stripLatexEditingDelimiters(value = "", displayMode = false) {
-  const source = sanitizeText(String(value || "")).trim();
-  if (!source) {
-    return "";
-  }
-  if (displayMode) {
-    const fenced = source.match(/^\$\$\s*[\r\n]?([\s\S]*?)[\r\n]?\s*\$\$$/);
-    if (fenced) {
-      return sanitizeText(String(fenced[1] || "")).trim();
-    }
-    return source.replace(/^\$\$+/, "").replace(/\$\$+$/, "").trim();
-  }
-  const inlineWrapped = source.match(/^\$(?!\$)([\s\S]*?)(?<!\$)\$$/);
-  if (inlineWrapped) {
-    return sanitizeText(String(inlineWrapped[1] || "")).trim();
-  }
-  return source.replace(/^\$/, "").replace(/\$$/, "").trim();
-}
 
 const BLOCK_TYPE_ALIASES = Object.freeze({
   "html-block": RICH_TEXT_BLOCK_TYPES.HTML,
@@ -497,7 +481,7 @@ export function normalizeRichTextInlineNode(node = null) {
   }
   return {
     type,
-    text,
+    text: type === RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE ? normalizeLatexSource(text) : text,
     marks,
     attrs,
     meta,
@@ -527,7 +511,7 @@ export function normalizeRichTextBlock(block = {}, index = 0) {
     id: String(safeBlock.id || `block-${index + 1}`),
     type,
     html,
-    plainText,
+    plainText: type === RICH_TEXT_BLOCK_TYPES.MATH_BLOCK ? normalizeLatexSource(plainText) : plainText,
     content,
     blocks,
     attrs: normalizeObject(safeBlock.attrs),
@@ -594,7 +578,7 @@ export function serializeRichTextInlineNodeToHtml(node = null) {
     return `<code>${escapeHtml(String(node.text || ""))}</code>`;
   }
   if (node.type === RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE) {
-    const math = escapeHtml(String(node.text || ""));
+    const math = escapeHtml(normalizeLatexSource(node.text));
     return `<span data-role="math-inline">${math}</span>`;
   }
   if (node.type === RICH_TEXT_INLINE_NODE_TYPES.LINK) {
@@ -681,7 +665,7 @@ export function serializeRichTextBlockToHtml(block = null) {
     return `<${tag}${alignAttr}>${serializeRichTextInlineNodesToHtml(block.content || [])}</${tag}>`;
   }
   if (type === RICH_TEXT_BLOCK_TYPES.MATH_BLOCK) {
-    return `<div data-role="math-block">${escapeHtml(String(block.plainText || ""))}</div>`;
+    return `<div data-role="math-block">${escapeHtml(normalizeLatexSource(block.plainText))}</div>`;
   }
   if (type === RICH_TEXT_BLOCK_TYPES.FOOTNOTE_DEFINITION) {
     const footnoteId = escapeAttribute(String(attrs.id || attrs.identifier || ""));
@@ -877,7 +861,7 @@ export function createRichTextDocument({
 
 export function createRichTextDocumentFromHtml(html = "", plainText = "", meta = {}) {
   const normalizedHtml = normalizeRichHtmlInlineFontSizes(
-    html || "",
+    normalizeRichMathHtml(html),
     Number(meta.baseFontSize || meta.fontSize || 20) || 20
   );
   const semanticBlocks = parseRichTextBlocksFromHtml(normalizedHtml);
@@ -1150,7 +1134,7 @@ function parseElementToBlock(element) {
   if (element.getAttribute("data-role") === "math-block") {
     return {
       type: RICH_TEXT_BLOCK_TYPES.MATH_BLOCK,
-      plainText: stripLatexEditingDelimiters(String(element.textContent || ""), true),
+      plainText: normalizeLatexSource(element.textContent),
       attrs: {
         sourceFormat: "latex",
         displayMode: true,
@@ -1390,7 +1374,7 @@ function parseInlineNodes(nodes = [], activeMarks = []) {
     if (element.getAttribute("data-role") === "math-inline") {
       result.push(createInlineNodeWithMarks({
         type: RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE,
-        text: stripLatexEditingDelimiters(String(element.textContent || ""), false),
+        text: normalizeLatexSource(element.textContent),
         attrs: {
           sourceFormat: "latex",
           displayMode: false,

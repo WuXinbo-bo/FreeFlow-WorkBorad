@@ -237,6 +237,7 @@ async function main() {
     await stopServer(server);
     fs.rmSync(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
+  await runNodeScript("scripts/check-canvas-math-links-desktop.js");
   console.log("[test] all checks passed");
 }
 

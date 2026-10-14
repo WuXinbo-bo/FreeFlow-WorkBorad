@@ -1515,52 +1515,6 @@ function resolveEditedTextLayoutConfig(item, content, fallbackFontSize = DEFAULT
   };
 }
 
-function extractStandaloneMathBlockSegments(html = "") {
-  if (typeof document === "undefined") {
-    return [];
-  }
-  const source = String(html || "").trim();
-  if (!source) {
-    return [];
-  }
-  const root = document.createElement("div");
-  root.innerHTML = source;
-  const segments = [];
-  const textBuffer = document.createElement("div");
-  const flushTextBuffer = () => {
-    const bufferHtml = String(textBuffer.innerHTML || "").trim();
-    textBuffer.innerHTML = "";
-    if (!bufferHtml) {
-      return;
-    }
-    const plainText = sanitizeText(htmlToPlainText(bufferHtml));
-    if (!plainText.trim() && !/<(?:img|table|blockquote|pre|ul|ol|hr)\b/i.test(bufferHtml)) {
-      return;
-    }
-    segments.push({
-      type: "text",
-      html: bufferHtml,
-      plainText,
-    });
-  };
-  Array.from(root.childNodes).forEach((node) => {
-    if (node instanceof HTMLElement && String(node.getAttribute("data-role") || "").trim().toLowerCase() === "math-block") {
-      flushTextBuffer();
-      const formula = sanitizeText(String(node.textContent || "")).trim();
-      if (formula) {
-        segments.push({
-          type: "math-block",
-          formula,
-        });
-      }
-      return;
-    }
-    textBuffer.appendChild(node.cloneNode(true));
-  });
-  flushTextBuffer();
-  return segments;
-}
-
 function extractTextSplitSegments(html = "") {
   if (typeof document === "undefined") {
     return [];
@@ -1691,78 +1645,6 @@ function buildSplitTextSegmentItem(baseItem, segment, { x = 0, y = 0, width = 24
   normalizedItem.width = width;
   normalizedItem.height = Math.max(40, Math.ceil(Number(measured.height || normalizedItem.height || 0) || 40));
   return normalizedItem;
-}
-
-function buildSplitMathBlockItem(baseItem, formula = "", { x = 0, y = 0, width = 240, fontSize = DEFAULT_TEXT_FONT_SIZE } = {}) {
-  const mathItem = buildTextElementFromMathElement(
-    {
-      formula,
-      displayMode: true,
-      sourceFormat: "latex",
-      renderState: "ready",
-      locked: Boolean(baseItem?.locked),
-    },
-    {
-      x,
-      y,
-      width,
-      fontSize: Math.max(fontSize, 22),
-    }
-  );
-  const measured = measureTextElementLayout(
-    {
-      ...mathItem,
-      width,
-      height: Math.max(72, Number(mathItem.height || 0) || 72),
-      textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
-      textResizeMode: TEXT_RESIZE_MODE_WRAP,
-      contentFit: true,
-    },
-    {
-      includeHtmlMeasurement: true,
-      widthHint: width,
-    }
-  );
-  const normalizedItem = normalizeTextElement({
-    ...mathItem,
-    x,
-    y,
-    width: Math.max(80, measured.frameWidth || width),
-    height: Math.max(72, Math.ceil(Number(measured.height || mathItem.height || 0) || 72)),
-    textBoxLayoutMode: TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT,
-    textResizeMode: TEXT_RESIZE_MODE_WRAP,
-    wrapMode: TEXT_WRAP_MODE_MANUAL,
-    color: baseItem?.color || "#0f172a",
-  });
-  normalizedItem.width = width;
-  normalizedItem.height = Math.max(72, Math.ceil(Number(measured.height || normalizedItem.height || 0) || 72));
-  return normalizedItem;
-}
-
-function buildStandaloneMathBlockSplitItems(baseItem, html = "", options = {}) {
-  const segments = extractStandaloneMathBlockSegments(html);
-  const hasStandaloneMath = segments.some((segment) => segment.type === "math-block");
-  if (!hasStandaloneMath) {
-    return null;
-  }
-  const x = Number(baseItem?.x || 0) || 0;
-  const startY = Number(baseItem?.y || 0) || 0;
-  const width = Math.max(160, Number(options.width || baseItem?.width || 0) || 240);
-  const fontSize = Number(options.fontSize || baseItem?.fontSize || DEFAULT_TEXT_FONT_SIZE) || DEFAULT_TEXT_FONT_SIZE;
-  const items = [];
-  let cursorY = startY;
-  segments.forEach((segment) => {
-    const nextItem =
-      segment.type === "math-block"
-        ? buildSplitMathBlockItem(baseItem, segment.formula, { x, y: cursorY, width, fontSize })
-        : buildSplitTextSegmentItem(baseItem, segment, { x, y: cursorY, width, fontSize });
-    if (!nextItem) {
-      return;
-    }
-    items.push(nextItem);
-    cursorY += Math.max(40, Number(nextItem.height || 0) || 40) + TEXT_BLOCK_SPLIT_GAP;
-  });
-  return items.length ? items : null;
 }
 
 function buildTextSplitItems(baseItem, html = "", options = {}) {
@@ -6649,69 +6531,36 @@ let tablePointerSelectionState = {
     });
   }
 
-  function openExternalUrl(url = "") {
+  async function openExternalUrl(url = "") {
     const rawUrl = String(url || "").trim();
-    if (!rawUrl) {
-      return false;
-    }
-    const looksLikeLocalPath =
-      /^[a-zA-Z]:[\\/]/.test(rawUrl) || /^\\\\[^\\]+\\[^\\]+/.test(rawUrl) || /^\/[^/]/.test(rawUrl);
-    if (looksLikeLocalPath && typeof globalThis?.desktopShell?.revealPath === "function") {
-      void globalThis.desktopShell.revealPath(rawUrl);
-      return true;
-    }
-    if (looksLikeLocalPath && typeof globalThis?.desktopShell?.openPath === "function") {
-      void globalThis.desktopShell.openPath(rawUrl);
-      return true;
-    }
-    const targetUrl = normalizeUserLinkInput(rawUrl) || rawUrl;
-    let parsedUrl = null;
+    if (!rawUrl) return false;
+    const targetUrl = normalizeUserLinkInput(rawUrl);
+    if (!targetUrl) return false;
+    let parsedUrl;
+    try { parsedUrl = new URL(targetUrl); } catch { return false; }
     try {
-      // Validate URL before trying to open.
-      parsedUrl = new URL(targetUrl);
-    } catch (_error) {
-      if (typeof globalThis?.desktopShell?.revealPath === "function") {
-        void globalThis.desktopShell.revealPath(rawUrl);
-        return true;
+      if (parsedUrl.protocol === "file:") {
+        const pathname = decodeURIComponent(parsedUrl.pathname);
+        const windows = globalThis.desktopShell?.platform === "win32";
+        const localPath = windows ? pathname.replace(/^\/([a-zA-Z]:\/)/, "$1").replace(/\//g, "\\") : pathname;
+        const filePath = parsedUrl.host ? (windows ? `\\\\${parsedUrl.host}${pathname.replace(/\//g, "\\")}` : `//${parsedUrl.host}${pathname}`) : localPath;
+        const shell = globalThis.desktopShell;
+        const result = typeof shell?.revealPath === "function"
+          ? await shell.revealPath(filePath)
+          : typeof shell?.openPath === "function" ? await shell.openPath(filePath) : null;
+        return result?.ok === true;
       }
-      if (typeof globalThis?.desktopShell?.openPath === "function") {
-        void globalThis.desktopShell.openPath(rawUrl);
-        return true;
+      if (!["http:", "https:", "mailto:", "tel:"].includes(parsedUrl.protocol)) return false;
+      if (typeof globalThis.desktopShell?.openExternal === "function") {
+        return (await globalThis.desktopShell.openExternal(targetUrl))?.ok === true;
       }
-      return false;
-    }
-    if (!parsedUrl || !["http:", "https:", "mailto:", "tel:", "file:"].includes(parsedUrl.protocol)) {
-      return false;
-    }
-    if (parsedUrl.protocol === "file:") {
-      const normalizedPathname = decodeURIComponent(String(parsedUrl.pathname || ""));
-      const localPath = normalizedPathname.replace(/^\/([a-zA-Z]:\/)/, "$1").replace(/\//g, "\\");
-      const filePath = parsedUrl.host
-        ? `\\\\${parsedUrl.host}${normalizedPathname.replace(/\//g, "\\")}`
-        : localPath;
-      if (typeof globalThis?.desktopShell?.revealPath === "function") {
-        void globalThis.desktopShell.revealPath(filePath || rawUrl);
-        return true;
-      }
-      if (typeof globalThis?.desktopShell?.openPath === "function") {
-        void globalThis.desktopShell.openPath(filePath || rawUrl);
-        return true;
-      }
-      if (typeof window?.open === "function") {
-        window.open(parsedUrl.toString(), "_blank", "noopener,noreferrer");
-        return true;
-      }
-      return false;
-    }
-    if (typeof globalThis?.desktopShell?.openExternal === "function") {
-      void globalThis.desktopShell.openExternal(targetUrl);
-      return true;
-    }
-    if (typeof window?.open === "function") {
+      // noopener intentionally returns null even when a browser opened a tab.
+      if (typeof window.open !== "function") return false;
       window.open(targetUrl, "_blank", "noopener,noreferrer");
       return true;
+    } catch {
+      return false;
     }
-    return false;
   }
 
   function waitForUiPaint() {
@@ -13867,52 +13716,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       }
       return true;
     }
-    const splitItems = buildStandaloneMathBlockSplitItems(item, draft.html, {
-      width: Math.max(80, Number(item.width || 0) || 80),
-      fontSize,
-    });
-    if (Array.isArray(splitItems) && splitItems.length) {
-      const beforeOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
-      clearCommittedTextDraftCacheEntry(item.id);
-      splitItems.forEach((entry) => {
-        if (entry?.type === "text") {
-          scheduleUrlMetaHydrationForItem(entry);
-        }
-      });
-      const itemIndex = state.board.items.findIndex((entry) => entry.id === item.id);
-      if (itemIndex >= 0) {
-        state.board.items.splice(itemIndex, 1, ...splitItems);
-      } else {
-        state.board.items.push(...splitItems);
-      }
-      if (state.hoverId === item.id) {
-        state.hoverId = splitItems[0]?.id || null;
-      }
-      state.editingId = null;
-      state.editingType = null;
-      state.board.selectedIds = splitItems.map((entry) => entry.id);
-      refs.richEditor.classList.add("is-hidden");
-      richTextSession.clear({ destroyAdapter: false });
-      editBaselineSnapshot = null;
-      const changedIds = [item.id, ...splitItems.map((entry) => entry.id)];
-      const afterOrderIds = state.board.items.map((entry) => String(entry?.id || "")).filter(Boolean);
-      const changed = commitItemsPatchHistory(before, changedIds, "拆分独立公式", "text-math-block-split", {
-        beforeOrderIds,
-        afterOrderIds,
-        fullOverlayRescan: true,
-      });
-      if (!changed) {
-        syncBoard({ persist: false, emit: true, markDirty: false });
-      } else {
-        setStatus("已拆分独立公式");
-        persistCommittedBoardIfPossible();
-      }
-      if (state.tool === "text" && shouldExitTextToolAfterEdit) {
-        shouldExitTextToolAfterEdit = false;
-        setTool("select");
-      }
-      return true;
-    }
     applyCommittedTextDraftToItem(item, draft);
     const precomputedDisplayHtml = resolveRichTextDisplayHtml({
       text: item.plainText || item.text || "",
@@ -19951,6 +19754,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function clearBlockedCanvasPointerDown() {
     blockedCanvasPointerDown = null;
+    cancelLinkPointerGesture();
   }
 
   function matchesBlockedCanvasPointerDown(event) {
@@ -25917,25 +25721,43 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     });
   }
 
-  function onRichDisplayClick(event) {
-    const descriptor = resolveLinkDescriptorFromAnchor(event.target);
-    if (!descriptor?.linkEl) {
-      richDisplayEventBridge.handleClick(event);
-      return;
-    }
+  let linkPointerGesture = null;
+
+  function onLinkPointerDown(event) {
+    const anchor = event.target instanceof Element ? event.target.closest("a[href], a[data-link-token='1']") : null;
+    linkPointerGesture = anchor ? { anchor, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: event.button !== 0 } : null;
+  }
+
+  function onLinkPointerMove(event) {
+    const gesture = linkPointerGesture;
+    if (gesture && gesture.pointerId === event.pointerId && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 5) gesture.moved = true;
+  }
+
+  function cancelLinkPointerGesture() { linkPointerGesture = null; }
+
+  function activateCanvasLink(event, { editing = false } = {}) {
+    const anchor = event.target instanceof Element ? event.target.closest("a[href], a[data-link-token='1']") : null;
+    if (!(anchor instanceof HTMLAnchorElement)) return false;
     event.preventDefault();
     event.stopPropagation();
-    event.stopImmediatePropagation?.();
-    if (descriptor.linkType === CANVAS_INTERNAL_LINK_TYPE) {
-      scheduleFocusCanvasLinkTarget(descriptor.canvasTargetId);
-      return;
-    }
-    if (!(event.ctrlKey || event.metaKey)) {
-      setStatus("按 Ctrl/Cmd+点击链接可打开网页");
-      return;
-    }
-    const opened = openExternalUrl(descriptor.url || descriptor.normalizedUrl || "");
-    setStatus(opened ? "已打开链接" : "链接打开失败");
+    const gesture = linkPointerGesture;
+    linkPointerGesture = null;
+    if (event.button > 0 || (event.detail !== 0 && gesture?.anchor === anchor && gesture.moved)) return true;
+    if (editing && !(event.ctrlKey || event.metaKey)) return true;
+    const url = String(anchor.getAttribute("data-link-url") || anchor.getAttribute("href") || "").trim();
+    const targetId = resolveCanvasInternalLinkTargetId(url);
+    if (targetId) { scheduleFocusCanvasLinkTarget(targetId); return true; }
+    const board = state.board;
+    void openExternalUrl(url).then(opened => {
+      if (mounted && state.board === board) setStatus(opened ? "已打开链接" : "链接打开失败", opened ? "neutral" : "warning");
+    });
+    return true;
+  }
+
+  function onRichEditorClick(event) { activateCanvasLink(event, { editing: true }); }
+
+  function onRichDisplayClick(event) {
+    if (!activateCanvasLink(event)) richDisplayEventBridge.handleClick(event);
   }
 
   function onRichDisplayPointerMove(event) {
@@ -25964,7 +25786,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         pointerId: Number.isFinite(pointerId) ? pointerId : null,
         expiresAt: (Number.isFinite(timeStamp) ? timeStamp : 0) + 180,
       };
-      event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
       return;
@@ -25978,7 +25799,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const linkTarget = event.target.closest("a[href], a[data-link-token='1']");
     if (linkTarget) {
-      event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
       return;
@@ -26348,16 +26168,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   }
 
   function onSceneTableClick(event) {
-    const link = event.target instanceof Element ? event.target.closest(".canvas2d-scene-table a[href]") : null;
-    if (!(link instanceof HTMLAnchorElement)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!(event.ctrlKey || event.metaKey)) {
-      setStatus("按 Ctrl/Cmd+点击链接可打开网页");
-      return;
-    }
-    const opened = openExternalUrl(link.getAttribute("href") || link.href || "");
-    setStatus(opened ? "已打开链接" : "链接打开失败", opened ? "neutral" : "warning");
+    if (event.target instanceof Element && event.target.closest(".canvas2d-scene-table a[href]")) activateCanvasLink(event);
   }
 
   function onTableEditorMouseDown(event) {
@@ -26368,13 +26179,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
   function onTableEditorClick(event) {
     const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
     if (link instanceof HTMLAnchorElement) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.ctrlKey || event.metaKey) {
-        openExternalUrl(link.getAttribute("href") || link.href || "");
-      } else {
-        setStatus("按 Ctrl/Cmd+点击链接可打开网页");
-      }
+      activateCanvasLink(event, { editing: true });
       return;
     }
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
@@ -27370,6 +27175,11 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
 
   function bindEvents() {
     bind(refs.fileImportInput, "change", onImportInputChange);
+    for (const host of [refs.richDisplayHost, refs.contentLayer, refs.richEditor, refs.tableEditor]) bind(host, "pointerdown", onLinkPointerDown, true);
+    bind(window, "pointermove", onLinkPointerMove, true);
+    bind(window, "pointerup", onLinkPointerMove, true);
+    bind(window, "pointercancel", cancelLinkPointerGesture);
+    bind(window, "blur", cancelLinkPointerGesture);
     bind(refs.contentLayer, "click", onSceneTableClick);
     bind(refs.imageImportInput, "change", onImportInputChange);
     bind(document, "visibilitychange", onCanvasVisibilityChange);
@@ -27414,6 +27224,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     bind(refs.richEditor, "dragstart", onEditorSelectionDragStart);
     bind(refs.richEditor, "cut", onRichEditorCut);
     bind(refs.richEditor, "dblclick", onRichEditorDoubleClick);
+    bind(refs.richEditor, "click", onRichEditorClick);
     bind(refs.richEditor, "paste", onRichEditorPaste);
     bind(refs.richEditor, "contextmenu", onRichEditorContextMenu);
     bind(refs.editor, "blur", onMathEditorBlur);

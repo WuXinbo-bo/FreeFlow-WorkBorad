@@ -1,3 +1,4 @@
+import { normalizeLatexSource } from "../../textModel/latexSyntax.js";
 import {
   ensureRichTextDocumentFields,
   createRichTextDocumentFromHtml,
@@ -297,7 +298,7 @@ function mapInlineNode(node = null, context) {
     }];
   }
   if (type === RICH_TEXT_INLINE_NODE_TYPES.MATH_INLINE) {
-    const latex = sanitizeText(String(node.text || "")).trim();
+    const latex = normalizeLatexSource(node.text);
     return latex ? [{ type: "mathInline", latex }] : [];
   }
   if (type === RICH_TEXT_INLINE_NODE_TYPES.FOOTNOTE_REF) {
@@ -399,7 +400,7 @@ function buildCodeBlockNode(block = {}) {
 function buildMathBlockNode(block = {}) {
   return {
     type: "mathBlock",
-    latex: sanitizeText(String(block?.plainText || "")).trim(),
+    latex: normalizeLatexSource(block?.plainText),
     align: mapAlign(block?.attrs?.align || "center"),
   };
 }
@@ -641,7 +642,7 @@ function buildSelectionCodeBlockNode(item) {
 }
 
 function buildSelectionMathBlockNode(item) {
-  const latex = sanitizeText(String(item?.formula || item?.plainText || item?.text || "")).trim();
+  const latex = normalizeLatexSource(item?.formula || item?.plainText || item?.text);
   if (!latex) {
     return null;
   }
