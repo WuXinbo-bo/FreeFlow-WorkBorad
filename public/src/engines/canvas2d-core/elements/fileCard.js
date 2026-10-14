@@ -223,7 +223,8 @@ export function getFileCardPreviewBounds(element = {}, options = {}) {
   const height = Math.max(FILE_CARD_MIN_HEIGHT, Number(element.height || FILE_CARD_DEFAULT_HEIGHT) || FILE_CARD_DEFAULT_HEIGHT);
   const expanded = Boolean(options.expanded);
   const previewWidth = Math.max(360, Math.round(width));
-  const previewHeight = expanded ? 920 : 468;
+  const heightRatio = Number(options.heightRatio ?? (expanded ? element.previewExpandedHeightRatio : element.previewHeightRatio));
+  const previewHeight = Math.min(5000, Math.max(260, heightRatio > 0 ? heightRatio * previewWidth : (expanded ? 920 : 468)));
   const gap = 8;
   const left = x;
   const top = y + height + gap;
@@ -236,12 +237,6 @@ export function getFileCardPreviewBounds(element = {}, options = {}) {
   };
 }
 
-export function fitFilePreviewBounds(bounds, view = {}, viewport = {}) {
-  const scale = Math.max(.1, Number(view.scale) || 1);
-  const width = Math.min(bounds.width, Math.max(260, (Number(viewport.width) || bounds.width * scale + 24) - 24) / scale);
-  const height = Math.min(bounds.height, Math.max(220, (Number(viewport.height) || bounds.height * scale + 24) - 24) / scale);
-  const offsetX = Number(view.offsetX) || 0; const offsetY = Number(view.offsetY) || 0;
-  const screenX = Math.max(12, Math.min(bounds.left * scale + offsetX, (viewport.width || width * scale + 24) - width * scale - 12));
-  const screenY = Math.max(12, Math.min(bounds.top * scale + offsetY, (viewport.height || height * scale + 24) - height * scale - 12));
-  return { ...bounds, left: (screenX - offsetX) / scale, top: (screenY - offsetY) / scale, width, height };
+export function fitFilePreviewBounds(bounds) {
+  return { ...bounds, width: Math.max(168, Number(bounds.width) || 360), height: Math.min(5000, Math.max(260, Number(bounds.height) || 468)) };
 }

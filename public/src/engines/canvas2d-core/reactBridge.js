@@ -87,6 +87,9 @@ export function createCanvas2DReactBridge(engine) {
     setFileCardPreviewZoom(requestId, zoom) {
       return engine?.setFileCardPreviewZoom?.(requestId, zoom);
     },
+    setFileCardPreviewHeight(requestId, height, relative = false) {
+      return engine?.setFileCardPreviewHeight?.(requestId, height, relative);
+    },
     retryFileCardPreview(requestId) {
       return typeof engine?.runCommand === "function"
         ? engine.runCommand("file.retry-preview", requestId)

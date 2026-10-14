@@ -13,6 +13,7 @@ import { createInitialState } from "../state/createInitialState.js";
 import { mountLemniscateBloomLoader } from "../components/loaders/lemniscateBloomLoader.js";
 import { createCanvasFeature } from "../features/canvas/index.js";
 import { createCanvasItemInteractionController } from "../features/canvas/interactions/canvasItemInteractions.js";
+import { attachShortcutRecorder } from "../components/settings/shortcutRecorder.js";
 import { mountSettingsCenter } from "../components/settings/settingsCenter.js";
 import { normalizeThemeSettings } from "../theme/themeSettings.js";
 import { applyThemeCssVariables } from "../theme/themeCssVariables.js";
@@ -222,7 +223,7 @@ function normalizeShortcutAcceleratorToken(token = "") {
     enter: "Enter",
     escape: "Escape",
     esc: "Escape",
-    plus: "+",
+    plus: "Plus",
   };
 
   return namedKeys[lower] || value;
@@ -311,12 +312,13 @@ function matchesShortcutKeyboardEvent(event, accelerator) {
   const key = String(parts.pop() || "").toLowerCase();
   const modifiers = new Set(parts);
   const expectsCtrl = modifiers.has("Control") || (DESKTOP_SHELL?.platform !== "darwin" && modifiers.has("CommandOrControl"));
-  const expectsMeta = modifiers.has("Command") || (DESKTOP_SHELL?.platform === "darwin" && modifiers.has("CommandOrControl"));
+  const expectsMeta = modifiers.has("Command") || modifiers.has("Super") || (DESKTOP_SHELL?.platform === "darwin" && modifiers.has("CommandOrControl"));
   const expectsShift = modifiers.has("Shift");
   const expectsAlt = modifiers.has("Alt");
 
+  const eventKey = /^Key[A-Z]$/.test(event?.code) ? event.code.slice(3) : /^Digit[0-9]$/.test(event?.code) ? event.code.slice(5) : ({ " ": "Space", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", "+": "Plus", "=": "Plus" })[event?.key] || event?.key;
   return (
-    String(event?.key || "").toLowerCase() === key &&
+    String(eventKey || "").toLowerCase() === key &&
     Boolean(event?.ctrlKey) === expectsCtrl &&
     Boolean(event?.metaKey) === expectsMeta &&
     Boolean(event?.shiftKey) === expectsShift &&
@@ -8093,21 +8095,31 @@ document.addEventListener(
   true
 );
 
+let legacyShortcutDraft = null;
+if (clickThroughShortcutInputEl) clickThroughShortcutInputEl.readOnly = true;
+const legacyShortcutRecorder = attachShortcutRecorder(document, {
+  selector: "#clickthrough-shortcut-input", desktopShell: DESKTOP_SHELL,
+  getValue: () => legacyShortcutDraft || { accelerator: state.shortcutSettings?.clickThroughAccelerator, display: getClickThroughShortcutDisplay() },
+  onChange: (draft) => { legacyShortcutDraft = draft; },
+});
+
 clickThroughShortcutSaveBtn?.addEventListener("click", async () => {
   if (!IS_DESKTOP_APP || !DESKTOP_SHELL?.setShortcutSettings) {
     setStatus("当前环境不支持全局快捷键配置", "warning");
     return;
   }
 
-  const rawValue = String(clickThroughShortcutInputEl?.value || "").trim();
+  await legacyShortcutRecorder.stop();
+  const rawValue = String(legacyShortcutDraft?.accelerator ?? state.shortcutSettings?.clickThroughAccelerator ?? "").trim();
   try {
     const response = await DESKTOP_SHELL.setShortcutSettings({
-      clickThroughAccelerator: rawValue || DEFAULT_CLICK_THROUGH_ACCELERATOR,
+      clickThroughAccelerator: rawValue,
     });
     if (!response?.ok) {
       throw new Error(response?.error || "保存快捷键失败");
     }
     state.shortcutSettings = normalizeShortcutSettings(response.settings || {});
+    legacyShortcutDraft = null;
     renderShortcutSettings();
     setStatus(`完全穿透快捷键已更新为 ${getClickThroughShortcutDisplay()}`, "success");
   } catch (error) {
@@ -8121,6 +8133,7 @@ clickThroughShortcutResetBtn?.addEventListener("click", async () => {
     return;
   }
 
+  await legacyShortcutRecorder.stop();
   try {
     const response = await DESKTOP_SHELL.setShortcutSettings({
       clickThroughAccelerator: DEFAULT_CLICK_THROUGH_ACCELERATOR,
@@ -8129,6 +8142,7 @@ clickThroughShortcutResetBtn?.addEventListener("click", async () => {
       throw new Error(response?.error || "恢复默认快捷键失败");
     }
     state.shortcutSettings = normalizeShortcutSettings(response.settings || {});
+    legacyShortcutDraft = null;
     renderShortcutSettings();
     setStatus("完全穿透快捷键已恢复默认", "success");
   } catch (error) {

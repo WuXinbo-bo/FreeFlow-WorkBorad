@@ -15140,8 +15140,8 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   z-index: 52;
   display: flex;
   flex-direction: column;
-  width: 164px;
-  height: 134px;
+  width: var(--canvas-chrome-minimap-expanded-width, 192px);
+  height: var(--canvas-chrome-minimap-expanded-height, 150px);
   padding: 8px;
   gap: 6px;
   box-sizing: border-box;
@@ -16280,3 +16280,15 @@ body.desktop-mode .workspace.left-collapsed.right-collapsed {
   position: static; min-width: 200px; padding: 4px 0 0; border: 0;
   box-shadow: none; background: transparent; overflow: visible;
 }
+
+/* Navigation overview stays crisp; its glass shell matches workspace controls. */
+.canvas2d-transient-minimap-title { font-weight: 600; gap: 6px; }
+.canvas2d-transient-minimap-status-dot { width: 6px; height: 6px; box-shadow: none; }
+.canvas2d-transient-minimap-canvas { border-radius: 8px; }
+
+.file-preview-height-handle { position: absolute; bottom: 0; left: 0; width: 100%; height: 12px; padding: 0; border: 0; border-radius: 0 0 12px 12px; background: rgba(248,250,252,.85); cursor: ns-resize; touch-action: none; display: flex; align-items: center; justify-content: center; }
+.file-preview-height-handle span { width: 30px; height: 3px; border-radius: 3px; background: #94a3b8; }
+.file-preview-height-handle:hover, .file-preview-height-handle:focus-visible { background: #dbeafe; }
+
+[data-settings-shortcut] { cursor: pointer; font-variant-numeric: tabular-nums; }
+[data-settings-shortcut][data-recording="true"], [data-settings-shortcut][data-recording="preparing"] { border-color: var(--air-accent, #3b82f6); box-shadow: 0 0 0 3px rgba(59,130,246,.12); }

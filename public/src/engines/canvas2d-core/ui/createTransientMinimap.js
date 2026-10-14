@@ -2,8 +2,8 @@ import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
 import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
 
-const DEFAULT_WIDTH = 164;
-const DEFAULT_HEIGHT = 96;
+const DEFAULT_WIDTH = 192;
+const DEFAULT_HEIGHT = 112;
 const DEFAULT_PADDING = 12;
 const DEFAULT_HIDE_DELAY_MS = 800;
 const DEFAULT_MARGIN = 18;
@@ -25,17 +25,20 @@ function createCanvas(width, height) {
 }
 
 function setCanvasResolution(canvas, width, height) {
+  const ratio = Math.min(3, Math.max(1, Number(globalThis.devicePixelRatio) || 1));
   if (!(canvas instanceof HTMLCanvasElement)) {
     return;
   }
   const safeWidth = Math.max(1, Math.round(Number(width || DEFAULT_WIDTH) || DEFAULT_WIDTH));
   const safeHeight = Math.max(1, Math.round(Number(height || DEFAULT_HEIGHT) || DEFAULT_HEIGHT));
-  if (canvas.width !== safeWidth) {
-    canvas.width = safeWidth;
+  if (canvas.width !== Math.round(safeWidth * ratio)) {
+    canvas.width = Math.round(safeWidth * ratio);
   }
-  if (canvas.height !== safeHeight) {
-    canvas.height = safeHeight;
+  if (canvas.height !== Math.round(safeHeight * ratio)) {
+    canvas.height = Math.round(safeHeight * ratio);
   }
+  canvas.__ffLogicalWidth = safeWidth;
+  canvas.__ffLogicalHeight = safeHeight;
 }
 
 function normalizeBounds(bounds = null) {
@@ -89,8 +92,8 @@ function resolveBoardBounds(items = []) {
   return expandBounds(baseBounds, 56);
 }
 
-function resolveItemFill() {
-  return DEFAULT_ITEM_FILL;
+function resolveItemFill(item) {
+  return ({ text: "rgba(100,116,139,.38)", image: "rgba(139,92,246,.38)", fileCard: "rgba(14,165,233,.38)", shape: "rgba(16,185,129,.38)" })[item?.type] || DEFAULT_ITEM_FILL;
 }
 
 function computeMinimapLayout(boardBounds, width = DEFAULT_WIDTH, height = DEFAULT_HEIGHT) {
@@ -168,7 +171,9 @@ function clearCanvas(canvas) {
   if (!ctx) {
     return null;
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(canvas.width / (canvas.__ffLogicalWidth || canvas.width), 0, 0, canvas.height / (canvas.__ffLogicalHeight || canvas.height), 0, 0);
   return ctx;
 }
 
@@ -243,7 +248,7 @@ export function createTransientMinimap({
   let suppressGesture = false;
   let hovered = false;
   let hideTimer = 0;
-  let lastZoomAt = 0;
+  let lastNavigationAt = 0;
   let occluded = false;
 
   function clearHideTimer() {
@@ -254,7 +259,7 @@ export function createTransientMinimap({
   function resetTransient() {
     clearHideTimer();
     suppressGesture = false;
-    lastZoomAt = 0;
+    lastNavigationAt = 0;
     hovered = false;
     collapsed = !pinned;
     applyCollapsedState();
@@ -277,11 +282,11 @@ export function createTransientMinimap({
   function handlePointerLeave() { hovered = false; scheduleHide(); }
   function handleFocusOut() { scheduleHide(); }
 
-  function handleZoom() {
+  function handleNavigation() {
     if (!mounted || document.hidden) return;
     const now = Date.now();
-    if (now - lastZoomAt >= DEFAULT_HIDE_DELAY_MS) suppressGesture = false;
-    lastZoomAt = now;
+    if (now - lastNavigationAt >= DEFAULT_HIDE_DELAY_MS) suppressGesture = false;
+    lastNavigationAt = now;
     if (!pinned && !suppressGesture && collapsed) {
       collapsed = false;
       applyCollapsedState();
@@ -330,6 +335,7 @@ export function createTransientMinimap({
       snapshotRenderCount,
       viewportRenderCount,
       sceneRevision: lastSceneRevision,
+      pixelRatio: canvas.width / lastCanvasWidth,
     });
   }
 
@@ -342,7 +348,7 @@ export function createTransientMinimap({
     toggleButton.setAttribute("aria-label", collapsed ? "展开当前位置地图" : "收起当前位置地图");
     toggleButton.setAttribute("title", collapsed ? "展开当前位置地图" : "收起当前位置地图");
     toggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    toggleButton.textContent = collapsed ? "‹" : "–";
+    toggleButton.innerHTML = collapsed ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Z M9 3v16 M15 5v16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>' : "–";
   }
 
   function handleToggleClick(event) {
@@ -352,7 +358,7 @@ export function createTransientMinimap({
     collapsed = !collapsed;
     pinned = !collapsed;
     suppressGesture = collapsed;
-    if (collapsed) lastZoomAt = Date.now();
+    if (collapsed) lastNavigationAt = Date.now();
     if (collapsed) scheduleHide();
     writeChromePreference("minimapCollapsed", collapsed);
     applyCollapsedState();
@@ -369,8 +375,8 @@ export function createTransientMinimap({
       return;
     }
     const rect = canvas.getBoundingClientRect();
-    const canvasX = ((Number(event.clientX || 0) - rect.left) / Math.max(1, rect.width)) * canvas.width;
-    const canvasY = ((Number(event.clientY || 0) - rect.top) / Math.max(1, rect.height)) * canvas.height;
+    const canvasX = ((Number(event.clientX || 0) - rect.left) / Math.max(1, rect.width)) * lastCanvasWidth;
+    const canvasY = ((Number(event.clientY || 0) - rect.top) / Math.max(1, rect.height)) * lastCanvasHeight;
     const scenePoint = mapMinimapPointToScenePoint({ x: canvasX, y: canvasY }, lastLayout);
     if (!scenePoint) {
       return;
@@ -444,7 +450,9 @@ export function createTransientMinimap({
     shell.style.setProperty("--canvas-chrome-minimap-expanded-height", `${canvasHeight + 38}px`);
     canvas.style.width = `${canvasWidth}px`;
     canvas.style.height = `${canvasHeight}px`;
+    const previousPixelWidth = canvas.width;
     setCanvasResolution(canvas, canvasWidth, canvasHeight);
+    if (canvas.width !== previousPixelWidth) lastSceneRevision = -1;
     setCanvasResolution(snapshotCanvas, canvasWidth, canvasHeight);
     applyCollapsedState();
   }
@@ -454,10 +462,10 @@ export function createTransientMinimap({
       return;
     }
     const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host;
-    const zoom = stage?.querySelector(".canvas2d-floating-card-zoom");
-    if (sizeObserver && zoom !== observedZoom) {
+    const controls = stage.closest(".desktop-clear-stage")?.querySelector('[data-stage-panel-controls="left"]');
+    if (sizeObserver && controls !== observedZoom) {
       if (observedZoom) sizeObserver.unobserve(observedZoom);
-      observedZoom = zoom || null;
+      observedZoom = controls || null;
       if (observedZoom) sizeObserver.observe(observedZoom);
     }
     const navigation = stage?.querySelector(".canvas2d-navigation-docks");
@@ -467,27 +475,30 @@ export function createTransientMinimap({
       if (observedNavigation) sizeObserver.observe(observedNavigation);
     }
     const hostRect = host.getBoundingClientRect();
-    const obstacles = Array.from(stage?.querySelectorAll(".canvas2d-navigation-docks:has(.canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open), .canvas2d-navigator-panel, .canvas2d-workspace-panel.is-open") || [])
+    const obstacles = Array.from(stage?.querySelectorAll(".canvas2d-navigation-docks, .canvas2d-engine-toolbar, .canvas-chrome-utility-dock") || [])
       .filter((element) => getComputedStyle(element).display !== "none")
       .map((element) => element.getBoundingClientRect());
-    const zoomRect = zoom?.getBoundingClientRect();
+    const controlsRect = controls?.getBoundingClientRect();
     const width = collapsed ? 38 : DEFAULT_WIDTH;
     const height = collapsed ? 38 : DEFAULT_HEIGHT + 38;
-    const right = zoomRect ? Math.max(8, hostRect.right - zoomRect.right) : DEFAULT_MARGIN;
-    const bottom = zoomRect ? Math.max(DEFAULT_MARGIN, hostRect.bottom - zoomRect.top + 10) : 64;
-    const left = host.clientWidth - width - right;
-    const top = host.clientHeight - height - bottom;
+    let left = Math.max(8, controlsRect?.width ? controlsRect.left - hostRect.left : DEFAULT_MARGIN);
+    let top = Math.max(8, controlsRect?.height ? controlsRect.bottom - hostRect.top + 10 : 52);
+    const overlaps = (rect) => rect.left < hostRect.left + left + width + 8 && rect.right > hostRect.left + left - 8 &&
+      rect.top < hostRect.top + top + height + 8 && rect.bottom > hostRect.top + top - 8;
+    for (const obstacle of obstacles) {
+      if (!overlaps(obstacle)) continue;
+      if (obstacle.bottom - hostRect.top + height + 10 <= host.clientHeight - 8) top = obstacle.bottom - hostRect.top + 10;
+      else left = obstacle.right - hostRect.left + 10;
+    }
     const wasOccluded = occluded;
-    occluded = top < 90 || left < 8 || obstacles.some((navigatorRect) =>
-      navigatorRect.left < hostRect.left + left + width + 8 && navigatorRect.right > hostRect.left + left - 8 &&
-      navigatorRect.top < hostRect.top + top + height + 8 && navigatorRect.bottom > hostRect.top + top - 8);
+    occluded = top + height > host.clientHeight - 8 || left + width > host.clientWidth - 8 || obstacles.some(overlaps);
     shell.style.visibility = occluded ? "hidden" : "visible";
     shell.style.pointerEvents = occluded || collapsed ? "none" : "auto";
     shell.setAttribute("aria-hidden", String(occluded));
-    shell.style.left = "auto";
-    shell.style.top = "auto";
-    shell.style.right = `${Math.round(right)}px`;
-    shell.style.bottom = `${Math.round(bottom)}px`;
+    shell.style.left = `${Math.round(left)}px`;
+    shell.style.top = `${Math.round(top)}px`;
+    shell.style.right = "auto";
+    shell.style.bottom = "auto";
     if (wasOccluded && !occluded && !collapsed) lastSceneRevision = -1;
   }
 
@@ -514,7 +525,7 @@ export function createTransientMinimap({
       return;
     }
     const ctx = clearCanvas(canvas);
-    ctx.drawImage(snapshotCanvas, 0, 0);
+    ctx.drawImage(snapshotCanvas, 0, 0, lastCanvasWidth, lastCanvasHeight);
     const viewport = getViewportSize?.();
     const view = getView?.();
     lastViewportBounds = normalizeBounds(
@@ -559,7 +570,7 @@ export function createTransientMinimap({
       sizeObserver.observe(host);
       sizeObserver.observe(shell);
       const stage = host.closest(".canvas-engine-stage, .canvas-office-main") || host.parentElement;
-      const placementSelector = ".canvas2d-navigation-docks, .canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom, .canvas2d-workspace-panel";
+      const placementSelector = ".canvas2d-navigation-docks, .canvas2d-navigator-panel, .canvas2d-navigator-tab, .canvas2d-floating-card-zoom, .canvas2d-workspace-panel, .stage-panel-controls, .canvas2d-engine-toolbar-wrap, .canvas2d-engine-search-stack";
       // React replaces directory DOM after the board update; measure that committed layout.
       placementObserver = new MutationObserver((records) => {
         if (records.some((record) => record.type === "attributes"
@@ -578,7 +589,7 @@ export function createTransientMinimap({
       return true;
     },
     resetTransient,
-    handleZoom,
+    handleZoom: handleNavigation,
     unmount() {
       resetTransient();
       mounted = false;
@@ -606,12 +617,15 @@ export function createTransientMinimap({
       toggleButton = null;
     },
     handlePanStart() {
+      handleNavigation();
       this.refreshViewport();
     },
     handlePanMove() {
+      handleNavigation();
       this.refreshViewport();
     },
     handlePanEnd() {
+      scheduleHide();
       this.refreshViewport();
     },
     refreshSceneSnapshot() {
