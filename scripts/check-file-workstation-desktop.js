@@ -61,6 +61,26 @@ async function main() {
       await page.waitForFunction(() => document.querySelector(".canvas2d-file-preview-react")?.dataset.renderState === "ready");
     };
     await load(pdfPath, "pdf");
+    await page.evaluate(() => { const e = window.__canvas2dEngine; e.setFileCardPreviewHeight(e.getSnapshot().fileCardPreviewRequests[0].id, 5000); });
+    await page.waitForTimeout(400);
+    const readMissingVisiblePages = () => page.locator('.canvas2d-file-preview-react-pdf-page').evaluateAll(nodes => {
+      const r = document.querySelector('.canvas2d-file-preview-react-scroll').getBoundingClientRect();
+      return nodes.filter(n => { const p = n.getBoundingClientRect(); return p.top < Math.min(innerHeight, r.bottom) && p.bottom > Math.max(0, r.top) && !n.querySelector('canvas'); }).map(n => n.dataset.pageNumber);
+    });
+    await page.waitForFunction(() => {
+      const root = document.querySelector('.canvas2d-file-preview-react-scroll');
+      if (!root) return false;
+      const r = root.getBoundingClientRect();
+      return ![...document.querySelectorAll('.canvas2d-file-preview-react-pdf-page')].some(n => { const p = n.getBoundingClientRect(); return p.top < Math.min(innerHeight, r.bottom) && p.bottom > Math.max(0, r.top) && !n.querySelector('canvas'); });
+    }, null, { timeout: 10000 });
+    await page.evaluate(() => window.__canvas2dEngine.runCommand('selection.set-geometry', { y: -1500 }));
+    await page.waitForTimeout(400);
+    assert.deepEqual(await readMissingVisiblePages(), [], 'long preview leaves visible pages blank after moving');
+    await page.evaluate(() => window.__canvas2dEngine.runCommand('selection.set-geometry', { y: 80 }));
+    await page.waitForTimeout(400);
+    assert.deepEqual(await readMissingVisiblePages(), [], 'long preview failed to restore first pages');
+    assert(await page.locator('.canvas2d-file-preview-react-pdf-canvas').count() <= 7, 'long preview exceeded PDF raster budget');
+    await page.evaluate(() => { const e = window.__canvas2dEngine; e.setFileCardPreviewHeight(e.getSnapshot().fileCardPreviewRequests[0].id, 468); });
     assert(await page.locator(".file-workstation-pdf-text span").count() > 0, "PDF text should be selectable");
     const initialView = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view);
     await page.getByRole("button", { name: "专注阅读", exact: true }).click();

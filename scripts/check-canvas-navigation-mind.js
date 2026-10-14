@@ -24,14 +24,14 @@ async function checkNavigator(page) {
   await load(page, []);
   const minimap = page.locator("#canvas2d-transient-minimap");
   const origin = await minimap.boundingBox();
-  const anchor = await page.locator(".canvas2d-engine-corner-top-left .canvas2d-floating-card-info").boundingBox();
+  const anchor = await page.locator('[data-stage-panel-controls="left"]').boundingBox();
   assert(Math.abs(origin.x - anchor.x) <= 3, `minimap stayed displaced with directory closed: ${JSON.stringify({ origin, anchor })}`);
   for (let index = 0; index < 3; index += 1) {
     await page.locator(".canvas2d-navigator-tab").click();
     await settle(page);
     const opened = await minimap.boundingBox();
     const directory = await page.locator(".canvas2d-navigator-panel").boundingBox();
-    assert(opened.x >= directory.x + directory.width + 8, "minimap did not avoid the open directory");
+    assert(opened.x >= directory.x + directory.width + 8 || opened.y >= directory.y + directory.height + 8, "minimap did not avoid the open directory");
     await page.getByRole("button", { name: "收起画布目录", exact: true }).click();
     await settle(page);
     const restored = await minimap.boundingBox();

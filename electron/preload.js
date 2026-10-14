@@ -127,6 +127,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   togglePin: () => ipcRenderer.invoke("desktop-shell:toggle-pin"),
   toggleFullscreen: () => ipcRenderer.invoke("desktop-shell:toggle-fullscreen"),
   reload: () => ipcRenderer.invoke("desktop-shell:reload"),
+  setShortcutRecording: (enabled) => ipcRenderer.invoke("desktop-shell:set-shortcut-recording", enabled),
   getShortcutSettings: () => ipcRenderer.invoke("desktop-shell:get-shortcut-settings"),
   setShortcutSettings: (payload) => ipcRenderer.invoke("desktop-shell:set-shortcut-settings", payload),
   openDoubaoWindow: () => ipcRenderer.invoke("desktop-shell:open-doubao-window"),

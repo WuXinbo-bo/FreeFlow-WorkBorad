@@ -37,6 +37,7 @@ export async function createPdfVisiblePageRenderer({
   let disposed = false;
   let visibleCenter = 1;
   let observer = null;
+  let resizeObserver = null;
   let scrollFrame = 0;
 
   const firstPage = await pdfDocument.getPage(1);
@@ -150,7 +151,11 @@ export async function createPdfVisiblePageRenderer({
   function updateVisibleCenter() {
     if (disposed || !(scrollRoot instanceof HTMLElement)) return;
     const rootRect = scrollRoot.getBoundingClientRect();
-    const viewportCenter = rootRect.top + rootRect.height / 2;
+    const surfaceRect = scrollRoot.closest('.canvas-engine-surface')?.getBoundingClientRect();
+    const visibleTop = Math.max(0, rootRect.top, surfaceRect?.top ?? 0);
+    const visibleBottom = Math.min(window.innerHeight, rootRect.bottom, surfaceRect?.bottom ?? window.innerHeight);
+    if (visibleBottom <= visibleTop || rootRect.right <= 0 || rootRect.left >= window.innerWidth) return;
+    const viewportCenter = (visibleTop + visibleBottom) / 2;
     // Binary search avoids a layout read for every page on every scroll event.
     let low = 1; let high = pageCount;
     while (low < high) {
@@ -175,6 +180,11 @@ export async function createPdfVisiblePageRenderer({
     if (!scrollFrame && !disposed) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; updateVisibleCenter(); });
   }
   scrollRoot?.addEventListener?.("scroll", scheduleVisibleUpdate, { passive: true });
+  if (typeof ResizeObserver === 'function' && scrollRoot instanceof HTMLElement) {
+    resizeObserver = new ResizeObserver(scheduleVisibleUpdate);
+    resizeObserver.observe(scrollRoot);
+  }
+  window.addEventListener('resize', scheduleVisibleUpdate);
   await renderPage(1);
   enqueuePages(createVisiblePageWindow(1, pageCount, preloadRadius));
   emitStats();
@@ -192,6 +202,8 @@ export async function createPdfVisiblePageRenderer({
       disposed = true;
       observer?.disconnect();
       observer = null;
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleVisibleUpdate);
       scrollRoot?.removeEventListener?.("scroll", scheduleVisibleUpdate);
       if (scrollFrame) cancelAnimationFrame(scrollFrame);
       try {

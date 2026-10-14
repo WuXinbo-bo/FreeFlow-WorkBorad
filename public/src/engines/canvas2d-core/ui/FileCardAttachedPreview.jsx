@@ -127,6 +127,8 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   const previewLabel = useMemo(() => getPreviewDisplayLabel(request), [request?.previewKind]);
   const portalHost = useMemo(() => bridge?.getDocumentPreviewPortalHost?.() || null, [bridge]);
   const [fitScale, setFitScale] = useState(1);
+  const resizeRef = useRef(null);
+  const [resizeHeight, setResizeHeight] = useState(null);
   const [contentHeight, setContentHeight] = useState(1123);
   const [renderState, setRenderState] = useState({
     status: String(request?.previewRenderState || request?.previewStatus || "loading"),
@@ -161,7 +163,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
           width: 360,
           height: request?.expanded ? 920 : 468,
         };
-    const bounds = fitFilePreviewBounds(anchorBounds, board?.view, bridge?.getDocumentPreviewViewport?.());
+    const bounds = fitFilePreviewBounds({ ...anchorBounds, height: resizeHeight ?? anchorBounds.height });
     const scale = Math.max(0.1, Number(board?.view?.scale || 1));
     return {
       screenWidth: bounds.width * scale,
@@ -173,7 +175,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
         height: `${bounds.height}px`,
       },
     };
-  }, [board?.view, item, request?.expanded, request?.open]);
+  }, [board?.view, item, request?.expanded, request?.open, resizeHeight]);
   const style = placement?.style || null;
   const livePreviewSuppressed = Boolean(!reading && placement && (placement.screenWidth < 260 || placement.screenHeight < 220));
 
@@ -209,6 +211,10 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   useEffect(() => {
     zoomRef.current = previewZoom;
   }, [previewZoom]);
+
+  useEffect(() => {
+    if (previewKind === 'pdf') rendererRef.current?.refresh?.();
+  }, [previewKind, board?.view, style?.left, style?.top, style?.height]);
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -739,6 +745,47 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
   }
   useEffect(() => () => { regionRef.current?.marker.remove(); regionRef.current = null; }, [reading, regionMode]);
 
+  function finishResize(commit = false) {
+    const resize = resizeRef.current;
+    if (!resize) return;
+    resizeRef.current = null;
+    if (resize.node.hasPointerCapture?.(resize.pointerId)) resize.node.releasePointerCapture(resize.pointerId);
+    if (commit) bridge?.setFileCardPreviewHeight?.(request.id, resize.height);
+    setResizeHeight(null);
+  }
+  function beginResize(event) {
+    if (event.button !== 0 || item?.locked) return;
+    event.preventDefault(); event.stopPropagation();
+    const node = event.currentTarget;
+    node.setPointerCapture(event.pointerId);
+    resizeRef.current = { node, pointerId: event.pointerId, y: event.clientY, startHeight: Number.parseFloat(style.height), height: Number.parseFloat(style.height), scale: Math.max(.1, Number(board?.view?.scale) || 1) };
+  }
+  function moveResize(event) {
+    const resize = resizeRef.current;
+    if (!resize) return;
+    event.preventDefault(); event.stopPropagation();
+    resize.height = clamp(resize.startHeight + (event.clientY - resize.y) / resize.scale, 260, 5000);
+    setResizeHeight(resize.height);
+  }
+  useEffect(() => {
+    setResizeHeight(null);
+    const cancel = (event) => {
+      if (event.key === "Escape" && resizeRef.current) {
+        event.preventDefault(); event.stopImmediatePropagation(); finishResize(false);
+      }
+    };
+    document.addEventListener("keydown", cancel, true);
+    const blur = () => finishResize(false);
+    window.addEventListener("blur", blur);
+    return () => {
+      document.removeEventListener("keydown", cancel, true);
+      window.removeEventListener("blur", blur);
+      const resize = resizeRef.current;
+      resizeRef.current = null;
+      if (resize?.node.hasPointerCapture?.(resize.pointerId)) resize.node.releasePointerCapture(resize.pointerId);
+    };
+  }, [request?.id, reading]);
+
   if (!request?.open) {
     return null;
   }
@@ -773,6 +820,7 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
       data-document-preview-anchor="true"
       data-item-id={String(request?.itemId || "")}
       data-expanded={request?.expanded ? "true" : "false"}
+      data-resize-height-ratio={resizeHeight != null ? resizeHeight / Number.parseFloat(style.width) : undefined}
     >
       <div className="canvas2d-file-preview-react-head">
         <div className="canvas2d-file-preview-react-title">
@@ -827,6 +875,9 @@ export function FileCardAttachedPreview({ request = null, board = null, bridge =
           </div>
         ) : null}
       </div>
+      {!reading ? <button type="button" disabled={Boolean(item?.locked)} className="file-preview-height-handle" aria-label="调整预览高度" title="拖动调整高度；方向键微调，Esc 取消" onPointerDown={beginResize} onPointerMove={moveResize} onPointerUp={(event) => { event.stopPropagation(); finishResize(true); }} onPointerCancel={() => finishResize(false)} onLostPointerCapture={() => finishResize(false)} onKeyDown={(event) => {
+        if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); bridge?.setFileCardPreviewHeight?.(request.id, (event.key === "ArrowDown" ? 1 : -1) * (event.shiftKey ? 100 : 20), true); }
+      }}><span /></button> : null}
     </div>
   );
   return reading ? createPortal(<div className="file-workstation-backdrop" data-shape-include="true" onClick={() => setReading(false)}>{React.cloneElement(previewElement, { onClick: (event) => event.stopPropagation() })}</div>, document.getElementById("global-overlay-layer") || document.body) : portalHost instanceof HTMLElement ? createPortal(previewElement, portalHost) : previewElement;

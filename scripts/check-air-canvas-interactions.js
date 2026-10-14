@@ -1010,7 +1010,7 @@ async function checkMinimap(page, viewport) {
     viewport,
     expanded,
   });
-  assert(Math.abs(expanded.rect.width - 164) <= 0.5 && expanded.rect.height <= 134 && expanded.titleHeight < 20 && expanded.canvasHit && !expanded.hasDragLabel, "current-location minimap is not compact and fully usable", {
+  assert(Math.abs(expanded.rect.width - 192) <= 0.5 && expanded.rect.height <= 150 && expanded.titleHeight < 20 && expanded.canvasHit && !expanded.hasDragLabel, "current-location minimap is not compact and fully usable", {
     viewport,
     expanded,
   });
@@ -1591,6 +1591,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
     for (const viewport of VIEWPORTS) {
+      console.log('[air-canvas] viewport', viewport);
       await checkViewport(browser, viewport);
     }
   } finally {

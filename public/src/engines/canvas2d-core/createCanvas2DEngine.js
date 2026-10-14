@@ -3742,7 +3742,8 @@ let tablePointerSelectionState = {
     getView: () => visualCameraView || state.board.view,
     presentView: (nextView, metadata) => {
       visualCameraView = createView(nextView);
-      transientMinimap.refreshViewport();
+      if (/pan/.test(String(metadata?.reason || ""))) transientMinimap.handlePanMove();
+      else transientMinimap.refreshViewport();
       ensureRenderScheduler().flushNow(
         {
           lane: CANVAS_PERFORMANCE_LANES.INPUT,
@@ -5483,7 +5484,7 @@ let tablePointerSelectionState = {
           node.style.visibility = "hidden";
           return;
         }
-        const bounds = fitFilePreviewBounds(getFileCardPreviewBounds(item, { expanded: node.dataset.expanded === "true" }), state.board.view, getCanvasRect());
+        const bounds = fitFilePreviewBounds(getFileCardPreviewBounds(item, { expanded: node.dataset.expanded === "true", heightRatio: node.dataset.resizeHeightRatio || undefined }));
         setStyleIfNeeded(node, "left", `${bounds.left}px`);
         setStyleIfNeeded(node, "top", `${bounds.top}px`);
         setStyleIfNeeded(node, "width", `${bounds.width}px`);
@@ -18598,6 +18599,18 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function setFileCardPreviewHeight(requestId, height, relative = false) {
+    const request = findFileCardPreviewRequest(requestId);
+    const item = request && sceneRegistry.getItemById(request.itemId, "fileCard");
+    if (!item || isLockedItem(item) || !Number.isFinite(Number(height))) return false;
+    const before = takeHistorySnapshot(state);
+    const bounds = getFileCardPreviewBounds(item, { expanded: request.expanded });
+    const key = request.expanded ? "previewExpandedHeightRatio" : "previewHeightRatio";
+    item[key] = Math.min(5000, Math.max(260, Number(height) + (relative ? bounds.height : 0))) / bounds.width;
+    commitHistory(before, "调整文件预览高度");
+    return true;
+  }
+
   function setFileCardPreviewZoom(requestId = "", zoom = 0.82) {
     const expectedRequestId = String(requestId || "").trim();
     if (!expectedRequestId) {
@@ -28707,6 +28720,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     closeFileCardPreview: clearFileCardPreviewRequest,
     toggleFileCardPreviewExpanded,
     setFileCardPreviewZoom,
+    setFileCardPreviewHeight,
     retryFileCardPreview,
     getDocumentPreviewSessionData(sessionId, generation, options) {
       return documentPreviewRuntime.getData(sessionId, generation, options);
