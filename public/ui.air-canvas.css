@@ -88,6 +88,28 @@
   --blur: 0px;
 }
 
+/* Fullscreen uses the available work area; the normal window keeps its floating inset. */
+body.is-desktop-fullscreen .page-shell {
+  padding: 4px !important;
+}
+
+body.is-desktop-fullscreen .workspace,
+body.is-desktop-fullscreen .workspace.left-collapsed,
+body.is-desktop-fullscreen .workspace.right-collapsed,
+body.is-desktop-fullscreen .workspace.left-collapsed.right-collapsed {
+  height: calc(100vh - 8px) !important;
+}
+
+body.is-desktop-fullscreen .desktop-clear-stage,
+body.is-desktop-fullscreen .conversation-panel {
+  border-radius: 14px !important;
+}
+
+body.is-desktop-fullscreen .app-global-shell-actions {
+  top: max(8px, env(safe-area-inset-top)) !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+}
+
 html {
   background: transparent !important;
 }

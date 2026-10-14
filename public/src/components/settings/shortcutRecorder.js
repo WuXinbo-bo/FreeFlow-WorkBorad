@@ -24,33 +24,45 @@ export function attachShortcutRecorder(host, { selector, desktopShell, getValue,
   let original = null;
   let completed = false;
   let generation = 0;
-  async function stop(accept = true) {
-    ++generation;
-    if (input) {
-      if (!accept || !completed) { input.value = original.display; onChange(original); }
-      input.dataset.recording = "false";
-      input = null;
+  let recordingRequest = Promise.resolve();
+
+  function setNativeRecording(enabled) {
+    if (typeof desktopShell?.setShortcutRecording !== "function") return Promise.resolve();
+    recordingRequest = recordingRequest
+      .catch(() => {})
+      .then(() => desktopShell.setShortcutRecording(enabled))
+      .catch(() => {});
+    return recordingRequest;
+  }
+
+  async function stop(accept = true, invalidate = true) {
+    if (invalidate) ++generation;
+    const activeInput = input;
+    const activeOriginal = original;
+    const activeCompleted = completed;
+    input = null;
+    original = null;
+    completed = false;
+    if (activeInput) {
+      if (!accept || !activeCompleted) { activeInput.value = activeOriginal.display; onChange(activeOriginal); }
+      activeInput.dataset.recording = "false";
     }
-    if (original) {
-      original = null;
-      await desktopShell?.setShortcutRecording?.(false).catch(() => {});
-    }
+    await setNativeRecording(false);
   }
   function begin(target) {
     if (input === target || target.disabled) return;
-    void stop();
-    input = target;
-    original = { ...getValue() };
-    completed = false;
-    input.dataset.recording = "true";
-    input.value = "请按下快捷键组合…";
     const current = ++generation;
-    if (desktopShell?.setShortcutRecording) {
+    void stop(true, false).then(() => {
+      if (current !== generation || target.disabled) return;
+      input = target;
+      original = { ...getValue() };
+      completed = false;
       input.dataset.recording = "preparing";
-      void desktopShell.setShortcutRecording(true).then(() => {
-        if (current === generation && input) input.dataset.recording = "true";
-      }).catch(() => { if (current === generation) { void stop(false); } });
-    }
+      input.value = "请按下快捷键组合…";
+      return setNativeRecording(true).then(() => {
+        if (current === generation && input === target) input.dataset.recording = "true";
+      }).catch(() => { if (current === generation) void stop(false); });
+    });
   }
   const focus = event => { if (event.target.matches?.(selector)) begin(event.target); };
   const keydown = event => {
@@ -70,7 +82,11 @@ export function attachShortcutRecorder(host, { selector, desktopShell, getValue,
   const keyup = event => {
     if (input && event.target === input) { event.stopImmediatePropagation(); if (completed) input.value = getValue().display; }
   };
-  const focusout = event => { if (event.target === input) void stop(); };
+  const focusout = event => {
+    if (event.target === input && !event.relatedTarget?.closest?.(selector)) {
+      void stop();
+    }
+  };
   host.addEventListener("focusin", focus);
   host.addEventListener("click", focus);
   host.addEventListener("keydown", keydown, true);
