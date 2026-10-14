@@ -1,4 +1,5 @@
 const path = require("path");
+const { validateShortcutAccelerator, replaceShortcutRegistration } = require("./shortcutSettings");
 let electron = require("electron");
 if (typeof electron === "string") {
   const electronBinaryPath = electron;
@@ -107,6 +108,8 @@ let desktopShellBoundsTransitionTimer = null;
 let displayMetricsSyncTimer = null;
 let displayLifecycleHandlersRegistered = false;
 let desktopShortcutRegistered = false;
+let desktopShortcutRecording = false;
+let shortcutSaveQueue = Promise.resolve();
 let lastClickThroughToggleAt = 0;
 let mainWindowRendererReadyTimer = null;
 let mainWindowBootShapeLocked = true;
@@ -823,7 +826,7 @@ function normalizeAcceleratorToken(token = "") {
     enter: "Enter",
     escape: "Escape",
     esc: "Escape",
-    plus: "+",
+    plus: "Plus",
   };
 
   return namedKeys[lower] || value;
@@ -909,16 +912,39 @@ function loadShortcutSettings() {
 }
 
 async function saveShortcutSettings(input = {}) {
-  desktopShortcutSettings = normalizeShortcutSettings({
-    ...desktopShortcutSettings,
-    ...input,
+  const accelerator = validateShortcutAccelerator(input.clickThroughAccelerator);
+  const operation = shortcutSaveQueue.catch(() => {}).then(async () => {
+    const next = { clickThroughAccelerator: accelerator };
+    const previous = getNativeAccelerator(desktopShortcutSettings.clickThroughAccelerator);
+    if (desktopShortcutRecording) setDesktopShortcutRecording(false);
+    await replaceShortcutRegistration({
+      accelerator: getNativeAccelerator(accelerator), previous,
+      globalShortcut, onTrigger: toggleClickThrough,
+      persist: async () => {
+        await fs.promises.mkdir(DATA_DIR, { recursive: true });
+        const tempPath = `${SHORTCUT_SETTINGS_FILE}.tmp`;
+        try {
+          await fs.promises.writeFile(tempPath, JSON.stringify(next, null, 2), "utf8");
+          await fs.promises.rename(tempPath, SHORTCUT_SETTINGS_FILE);
+        } finally { await fs.promises.rm(tempPath, { force: true }).catch(() => {}); }
+      },
+    });
+    desktopShortcutSettings = next;
+    desktopShortcutRegistered = true;
+    return getShortcutSettingsPayload();
   });
-  await fs.promises.mkdir(DATA_DIR, { recursive: true });
-  await fs.promises.writeFile(SHORTCUT_SETTINGS_FILE, JSON.stringify(desktopShortcutSettings, null, 2), "utf8");
-  if (app.isReady()) {
-    registerDesktopShortcuts();
-  }
-  return getShortcutSettingsPayload();
+  shortcutSaveQueue = operation;
+  return operation;
+}
+
+function setDesktopShortcutRecording(enabled) {
+  const next = Boolean(enabled);
+  if (desktopShortcutRecording === next) return;
+  desktopShortcutRecording = next;
+  if (next) {
+    globalShortcut.unregister(getNativeAccelerator(desktopShortcutSettings.clickThroughAccelerator));
+    desktopShortcutRegistered = false;
+  } else if (app.isReady()) registerDesktopShortcuts();
 }
 
 function matchesAcceleratorInput(input, accelerator) {
@@ -928,12 +954,13 @@ function matchesAcceleratorInput(input, accelerator) {
   const modifierSet = new Set(parts);
 
   const expectsCtrl = modifierSet.has("Control") || (process.platform !== "darwin" && modifierSet.has("CommandOrControl"));
-  const expectsMeta = modifierSet.has("Command") || (process.platform === "darwin" && modifierSet.has("CommandOrControl"));
+  const expectsMeta = modifierSet.has("Command") || modifierSet.has("Super") || (process.platform === "darwin" && modifierSet.has("CommandOrControl"));
   const expectsShift = modifierSet.has("Shift");
   const expectsAlt = modifierSet.has("Alt");
 
+  const inputKey = /^Key[A-Z]$/.test(input?.code) ? input.code.slice(3) : /^Digit[0-9]$/.test(input?.code) ? input.code.slice(5) : ({ " ": "Space", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", "+": "Plus", "=": "Plus" })[input?.key] || input?.key;
   return (
-    String(input?.key || "").toLowerCase() === key &&
+    String(inputKey || "").toLowerCase() === key &&
     Boolean(input?.control) === expectsCtrl &&
     Boolean(input?.meta) === expectsMeta &&
     Boolean(input?.shift) === expectsShift &&
@@ -2016,6 +2043,7 @@ function registerWindowShortcutFallback(window) {
     if (input?.type !== "keyDown") {
       return;
     }
+    if (desktopShortcutRecording) return;
     const key = String(input?.key || "").toLowerCase();
     const reloadRequested = key === "f5" || ((input?.control || input?.meta) && key === "r");
     if (reloadRequested) {
@@ -2023,7 +2051,7 @@ function registerWindowShortcutFallback(window) {
       void reloadMainWindow("keyboard-reload");
       return;
     }
-    if (!desktopShortcutRegistered && matchesAcceleratorInput(input, desktopShortcutSettings.clickThroughAccelerator)) {
+    if (!desktopShortcutRecording && !desktopShortcutRegistered && matchesAcceleratorInput(input, desktopShortcutSettings.clickThroughAccelerator)) {
       event.preventDefault();
       toggleClickThrough();
     }
@@ -2162,6 +2190,7 @@ function createMainWindow() {
 
   window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
+      setDesktopShortcutRecording(false);
       beginMainWindowNavigation(window, "main-frame-navigation");
     }
   });
@@ -2253,6 +2282,7 @@ function createMainWindow() {
   });
 
   window.on("closed", () => {
+    setDesktopShortcutRecording(false);
     mainWindowCloseInFlight = false;
     stopMacOSShapeInteractionTracking();
     cleanupDesktopEmbeddedSurfaces("main-window-closed");
@@ -2263,6 +2293,7 @@ function createMainWindow() {
   });
 
   window.on("blur", () => {
+    setDesktopShortcutRecording(false);
     if (process.platform !== "darwin") reinforcePinnedState();
   });
 
@@ -4347,6 +4378,11 @@ ipcMain.handle("desktop-shell:toggle-click-through", () => {
   }
 
   return { clickThrough: toggleClickThrough() };
+});
+
+ipcMain.handle("desktop-shell:set-shortcut-recording", (_event, enabled) => {
+  setDesktopShortcutRecording(enabled === true);
+  return { ok: true };
 });
 
 ipcMain.handle("desktop-shell:get-shortcut-settings", () => {

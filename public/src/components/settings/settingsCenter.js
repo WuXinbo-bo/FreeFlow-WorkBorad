@@ -1,3 +1,4 @@
+import { attachShortcutRecorder } from "./shortcutRecorder.js";
 import { PERMISSION_META, THEME_PRESET_DEFS } from "../../config/ui-meta.js";
 import {
   DEFAULT_THEME_SETTINGS,
@@ -148,6 +149,7 @@ export function mountSettingsCenter(host, options = {}) {
   let draft = null;
   let shortcutSnapshot = clone(DEFAULT_SHORTCUT);
   let shortcutDraft = clone(DEFAULT_SHORTCUT);
+  let shortcutRecorder = null;
   let activeSection = "general";
   let phase = "idle";
   let message = "";
@@ -509,7 +511,7 @@ export function mountSettingsCenter(host, options = {}) {
       </section>
       <section class="settings-center-group">
         <div class="settings-center-group-heading"><h5>完全穿透快捷键</h5><p>${isDesktop ? "在桌面模式中全局生效。" : "网页版仅保存展示值，桌面模式中生效。"}</p></div>
-        <label class="settings-center-field"><span>快捷键组合</span><input type="text" data-settings-shortcut value="${escapeHtml(shortcutDraft.clickThroughDisplay || shortcutDraft.clickThroughAccelerator)}" maxlength="60" placeholder="Ctrl+Shift+X" /><small>至少包含一个按键；支持 Ctrl、Shift、Alt、Cmd 与字母数字。</small><em data-field-error="workbench.clickThroughShortcut"></em></label>
+        <label class="settings-center-field"><span>快捷键组合</span><input type="text" readonly${phase === "saving" ? " disabled" : ""} aria-label="完全穿透快捷键" data-settings-shortcut value="${escapeHtml(shortcutDraft.clickThroughDisplay || shortcutDraft.clickThroughAccelerator)}" maxlength="60" placeholder="点击后按下快捷键" /><small>点击后直接按组合键，例如 Ctrl + X 或 Cmd + Shift + X。需要修饰键和一个主键；Esc 取消。</small><em data-field-error="workbench.clickThroughShortcut"></em></label>
       </section>
     `;
   }
@@ -696,6 +698,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function render() {
+    void shortcutRecorder?.stop();
     if (phase === "load-error") {
       host.innerHTML = `<div class="settings-center-load-error"><strong>设置读取失败</strong><p>${escapeHtml(message)}</p><button type="button" data-settings-action="reload">重新载入</button></div>`;
       return;
@@ -843,6 +846,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   async function save({ confirmedRisk = false } = {}) {
+    await shortcutRecorder?.stop();
     if (!snapshot || !draft || phase === "saving") return;
     fieldErrors = validateDraft();
     if (Object.keys(fieldErrors).length) {
@@ -1403,12 +1407,6 @@ export function mountSettingsCenter(host, options = {}) {
       if (discardButton) discardButton.disabled = !hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction);
       return;
     }
-    if (target.matches("[data-settings-shortcut]")) {
-      shortcutDraft.clickThroughAccelerator = target.value.trim();
-      shortcutDraft.clickThroughDisplay = target.value.trim();
-      markDraftChanged();
-      return;
-    }
     if (target.dataset.themeColor) {
       draft.appearance = deriveCustomThemeSettings({
         ...draft.appearance,
@@ -1456,8 +1454,18 @@ export function mountSettingsCenter(host, options = {}) {
     if ((target.tagName === "SELECT" || target.type === "radio") && !target.closest(".settings-center-agent-policy")) render();
   });
 
+  shortcutRecorder = attachShortcutRecorder(host, {
+    selector: "[data-settings-shortcut]", desktopShell,
+    getValue: () => ({ accelerator: shortcutDraft.clickThroughAccelerator, display: shortcutDraft.clickThroughDisplay }),
+    onChange: ({ accelerator, display }) => {
+      shortcutDraft = { clickThroughAccelerator: accelerator, clickThroughDisplay: display };
+      markDraftChanged();
+    },
+  });
+
   function close() {
     if (phase === "saving") return false;
+    void shortcutRecorder?.stop();
     if (themePreviewActive || snapshot?.sections?.appearance) restoreThemePreview();
     return true;
   }

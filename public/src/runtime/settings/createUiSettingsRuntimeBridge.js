@@ -189,17 +189,16 @@ export function createUiSettingsRuntimeBridge(deps) {
       });
     } catch (error) {
       state.uiSettings = normalizeUiSettings({
+        ...cached,
         ...startupUiSettings,
         ...startupWorkbenchPreferences,
-        ...cached,
       });
       setStatus(`界面设置读取失败：${error.message}`, "warning");
     }
 
-    state.workbenchPreferences = pickWorkbenchPreferences({
-      ...state.uiSettings,
-      ...startupWorkbenchPreferences,
-    });
+    // The HTTP store may be newer than the main process snapshot after a reload.
+    state.workbenchPreferences = pickWorkbenchPreferences(state.uiSettings);
+    writeStartupContextUiSettings(state.uiSettings);
     writeUiSettingsCache(state.uiSettings);
     applyUiSettings();
   }

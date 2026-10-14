@@ -97,9 +97,10 @@ async function checkCanvasCardUx(page) {
   if (!(await collapsed())) await map.locator('button').click();
   await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60));
   await page.waitForTimeout(850);
-  // Trusted wheel zoom via Control; scroll pan must not open the map.
+  // Both trusted scroll pan and Control-wheel zoom reveal the navigation map.
   await page.mouse.wheel(20, 20); await page.waitForTimeout(200);
-  assert(await collapsed());
+  assert(!(await collapsed()), 'scroll pan did not open map');
+  await page.waitForTimeout(900); assert(await collapsed(), 'pan map did not auto close');
   await page.keyboard.down('Control'); await page.mouse.wheel(0, -50); await page.keyboard.up('Control');
   await page.waitForFunction(() => !document.querySelector('#canvas2d-transient-minimap').classList.contains('is-collapsed'));
   const stats = await map.locator('canvas').evaluate(node => node.__ffMinimapStats);
