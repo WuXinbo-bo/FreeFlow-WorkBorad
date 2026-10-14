@@ -1,3 +1,37 @@
+.canvas-engine-stage,
+.canvas2d-engine-menu-portal,
+.canvas2d-navigator-context-menu,
+.canvas2d-workspace-menu,
+.canvas2d-workspace-confirm {
+  /* The canvas and its glass controls retain a light surface in every shell theme. */
+  --air-ink: var(--chrome-ink);
+  --air-ink-muted: var(--chrome-ink-muted);
+  --air-ink-soft: #9299a2;
+  --air-line: var(--chrome-line);
+  --air-hover: var(--chrome-hover);
+  --air-active: var(--chrome-active);
+  --air-accent: var(--chrome-accent);
+  --canvas-popover-bg: rgba(255, 255, 255, 0.96);
+  color-scheme: light;
+}
+
+.desktop-clear-stage.ui-workspace-surface,
+body.desktop-mode .desktop-clear-stage.ui-workspace-surface,
+.desktop-clear-stage.ui-workspace-surface:hover,
+.desktop-clear-stage.ui-workspace-surface:focus-within {
+  border-color: transparent !important;
+}
+
+.desktop-clear-stage.ui-workspace-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--canvas-edge-line, rgba(110, 120, 135, 0.22));
+  pointer-events: none;
+}
+
 .canvas2d-engine-topbar {
   z-index: 85;
   top: 6px !important;
@@ -109,10 +143,102 @@
 }
 
 .canvas-chrome-viewport-dock .canvas2d-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   width: var(--canvas-chrome-control-size) !important;
   min-width: var(--canvas-chrome-control-size) !important;
   height: var(--canvas-chrome-control-size) !important;
   padding: 0 !important;
+}
+
+.canvas2d-engine-utility-popover {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--chrome-popover-radius);
+  box-shadow: var(--chrome-shadow-active);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.canvas2d-engine-utility-popover > .canvas2d-engine-search-panel,
+.canvas2d-engine-utility-popover > .canvas2d-engine-export-history-panel {
+  position: static;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+  overflow: visible !important;
+  animation: none;
+}
+
+.canvas2d-engine-tool:focus-visible,
+.canvas2d-zoom-btn:focus-visible,
+.canvas2d-engine-search-placeholder:focus-visible,
+.canvas2d-engine-export-history-trigger:focus-visible,
+.canvas2d-info-collapse-toggle:focus-visible,
+.canvas2d-transient-minimap-toggle:focus-visible {
+  outline: 2px solid var(--chrome-accent) !important;
+  outline-offset: -3px;
+}
+
+.canvas2d-engine-utility-popover .canvas2d-engine-export-history-panel {
+  padding: 12px !important;
+}
+
+.canvas2d-engine-export-history-panel-head strong {
+  font-weight: 600;
+}
+
+.canvas2d-engine-export-history-item {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  transition: background-color var(--chrome-motion-fast);
+}
+
+.canvas2d-engine-export-history-item:hover:not(.is-disabled) {
+  background: var(--chrome-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.canvas2d-engine-export-history-kind {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border-radius: 6px;
+}
+
+.canvas2d-engine-export-history-item-main strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.canvas2d-engine-export-history-item-meta {
+  gap: 2px;
+}
+
+.canvas2d-engine-export-history-item-meta span {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  font-weight: 500;
+}
+
+.canvas2d-engine-export-history-empty {
+  padding: 16px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.canvas2d-engine-export-history-empty strong {
+  font-weight: 500;
 }
 
 .canvas-chrome-panel-controls {
@@ -127,23 +253,29 @@
   flex-direction: column;
   width: var(--canvas-chrome-minimap-expanded-width);
   height: var(--canvas-chrome-minimap-expanded-height);
-  padding: 8px;
+  padding: 6px;
+  box-sizing: border-box;
   border-radius: var(--canvas-chrome-radius) !important;
-  gap: 6px;
+  gap: 4px;
   pointer-events: auto;
-  transition:
-    width 180ms ease,
-    height 180ms ease,
-    padding 180ms ease,
-    border-radius 180ms ease,
-    opacity 160ms ease,
-    transform 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease !important;
+  opacity: 1;
+  border-color: rgba(110, 120, 135, 0.13) !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 2px 8px rgba(31, 38, 46, 0.025) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  transition: opacity 160ms ease !important;
 }
 
-.canvas-chrome-minimap.is-collapsed {
+.canvas-chrome-minimap:hover,
+.canvas-chrome-minimap:focus-within {
+  opacity: 1;
+  border-color: rgba(110, 120, 135, 0.22) !important;
+  background: rgba(255, 255, 255, 0.5) !important;
+  box-shadow: 0 3px 12px rgba(31, 38, 46, 0.04) !important;
+}
+
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) {
   width: var(--canvas-chrome-minimap-collapsed-size);
   height: var(--canvas-chrome-minimap-collapsed-size);
   padding: 0;
@@ -157,24 +289,24 @@
   pointer-events: none;
 }
 
-.canvas-chrome-minimap.is-collapsed:hover,
-.canvas-chrome-minimap.is-collapsed:focus-within {
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained):hover,
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained):focus-within {
   opacity: 1;
 }
 
 .canvas-chrome-minimap .canvas2d-transient-minimap-toggle {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 1px;
+  right: 1px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-color: transparent !important;
   border-radius: 6px !important;
-  color: var(--air-ink-muted) !important;
+  color: var(--chrome-ink-muted) !important;
   background: transparent !important;
   font-size: 13px;
   font-weight: 800;
@@ -189,22 +321,13 @@
   align-items: center;
   justify-content: flex-start;
   padding: 0 24px 0 2px;
-  color: var(--air-ink-muted);
-  font-size: 12px;
-  font-weight: 700;
+  height: 14px;
+  color: var(--chrome-ink-muted);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
   text-align: left;
   user-select: none;
-}
-
-.canvas-chrome-minimap .canvas2d-transient-minimap-title {
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.canvas-chrome-minimap .canvas2d-transient-minimap-status-dot {
-  width: 6px;
-  height: 6px;
-  box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.72);
 }
 
 .canvas-chrome-minimap .canvas2d-transient-minimap-toggle:hover,
@@ -214,19 +337,19 @@
   background: var(--air-active) !important;
 }
 
-.canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-toggle {
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) .canvas2d-transient-minimap-toggle {
   top: 7px !important;
   right: 7px !important;
   width: 24px !important;
   height: 24px !important;
   border-color: transparent !important;
   background: transparent !important;
-  color: var(--air-ink-muted) !important;
+  color: var(--chrome-ink-muted) !important;
   font-size: 14px !important;
 }
 
-.canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-toggle:hover,
-.canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-toggle:focus-visible {
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) .canvas2d-transient-minimap-toggle:hover,
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) .canvas2d-transient-minimap-toggle:focus-visible {
   color: var(--air-accent) !important;
   background: var(--air-active) !important;
 }
@@ -234,15 +357,15 @@
 .canvas-chrome-minimap .canvas2d-transient-minimap-canvas {
   display: block;
   align-self: stretch;
-  border-color: rgba(181, 196, 211, 0.52) !important;
+  border: 0 !important;
   border-radius: 6px !important;
-  background: rgba(255, 255, 255, 0.4) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+  background: transparent !important;
+  box-shadow: none !important;
   cursor: pointer;
 }
 
-.canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-label,
-.canvas-chrome-minimap.is-collapsed .canvas2d-transient-minimap-canvas {
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) .canvas2d-transient-minimap-label,
+.canvas-chrome-minimap:is(.is-collapsed, .is-space-constrained) .canvas2d-transient-minimap-canvas {
   display: none;
 }
 
@@ -367,7 +490,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .canvas-chrome-minimap,
+  .canvas2d-engine-utility-popover,
   .canvas-chrome-edge-rail::after {
-    transition: none;
+    transition: none !important;
   }
 }

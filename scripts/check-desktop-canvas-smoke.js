@@ -5,6 +5,7 @@ const path = require("node:path");
 const { _electron: electron } = require("playwright");
 const { checkCanvasTrackpad } = require("./fixtures/check-canvas-trackpad");
 const { checkWorkspaceChrome } = require("./fixtures/check-workspace-chrome");
+const { checkCanvasHarmony } = require("./fixtures/check-canvas-harmony");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -100,8 +101,10 @@ async function main() {
     const recoveredScale = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.view.scale);
     assert(Math.abs(recoveredScale / beforePinch - 1) < 0.03, "native reverse pinch did not recover the camera scale");
     await cdp.detach();
+    await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap")?.classList.contains("is-collapsed"), null, { timeout: 3000 });
     await workspace.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await checkWorkspaceChrome(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
+    await checkCanvasHarmony(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
     if (process.env.FREEFLOW_SCREENSHOT_DIR) {
       await fs.mkdir(process.env.FREEFLOW_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "native-electron.png") });

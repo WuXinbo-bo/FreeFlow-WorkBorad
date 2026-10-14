@@ -97,6 +97,7 @@ for (const platform of ["darwin", "win32"]) {
   const pinContext = vm.createContext({
     process: { platform },
     reinforcePinnedState: () => { raised += 1; },
+    setDesktopShortcutRecording: (enabled) => assert.strictEqual(enabled, false),
   });
   const levels = vm.runInContext(`${pinLevelsSource}\n[PIN_LEVEL, PIN_RELATIVE_LEVEL]`, pinContext);
   assert.deepStrictEqual(Array.from(levels), platform === "darwin" ? ["floating", 0] : ["screen-saver", 1]);

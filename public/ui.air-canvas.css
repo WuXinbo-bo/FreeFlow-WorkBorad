@@ -703,9 +703,9 @@ body:has(.canvas2d-engine-search-stack.is-overlay-active) .pane-restore-btn {
 .canvas2d-navigator-context-menu {
   padding: 6px !important;
   border: 1px solid var(--air-line) !important;
-  border-radius: 8px !important;
+  border-radius: var(--chrome-popover-radius, 12px) !important;
   color: var(--air-ink) !important;
-  background: #fff !important;
+  background: var(--canvas-popover-bg, #fff) !important;
   box-shadow: var(--air-shadow-float) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

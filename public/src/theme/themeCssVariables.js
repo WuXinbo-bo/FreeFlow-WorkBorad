@@ -67,6 +67,7 @@ export function buildThemeCssVariables(payload = {}) {
     "--app-color-scheme": isLightTheme ? "light" : "dark",
     "--air-canvas": "#ffffff",
     "--air-canvas-surface": "#ffffff",
+    "--canvas-edge-line": isLightTheme ? "rgba(110, 120, 135, 0.22)" : "rgba(225, 230, 238, 0.24)",
     "--air-canvas-strong": theme.shellPanelColor,
     "--air-workspace": theme.backgroundColor,
     "--air-ink": theme.shellPanelTextColor,

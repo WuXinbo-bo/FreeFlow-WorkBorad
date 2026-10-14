@@ -990,7 +990,7 @@ async function checkMinimap(page, viewport) {
   const expanded = await minimap.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const navigatorRect = document.querySelector(".canvas2d-navigator-panel")?.getBoundingClientRect();
-    const titleRect = element.querySelector(".canvas2d-transient-minimap-title")?.getBoundingClientRect();
+    const titleRect = element.querySelector(".canvas2d-transient-minimap-label")?.getBoundingClientRect();
     const canvas = element.querySelector("canvas");
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     return {
@@ -1010,11 +1010,11 @@ async function checkMinimap(page, viewport) {
     viewport,
     expanded,
   });
-  assert(Math.abs(expanded.rect.width - 192) <= 0.5 && expanded.rect.height <= 150 && expanded.titleHeight < 20 && expanded.canvasHit && !expanded.hasDragLabel, "current-location minimap is not compact and fully usable", {
+  assert(Math.abs(expanded.rect.width - 164) <= 0.5 && Math.abs(expanded.rect.height - 120) <= 0.5 && expanded.titleHeight > 0 && expanded.titleHeight < 20 && expanded.canvasHit && !expanded.hasDragLabel, "current-location minimap is not compact and fully usable", {
     viewport,
     expanded,
   });
-  assert(expanded.background === "rgba(255, 255, 255, 0.58)", "current-location minimap does not use shared glass", {
+  assert(expanded.background === "rgba(255, 255, 255, 0.22)", "current-location minimap does not use subtle translucent glass", {
     viewport,
     expanded,
   });
@@ -1485,7 +1485,7 @@ async function checkViewport(browser, viewport) {
     await shareMenu.getByRole("menuitem", { name: "导出为图片（PNG）" }).click();
     assert((await shareMenu.getByRole("menuitem", { name: "标准" }).count()) === 1, "share submenus were not exclusive", viewport);
     const shareSurface = await readSurface(page, ".canvas2d-engine-menu-share");
-    assert(shareSurface.background === "rgb(255, 255, 255)" && shareSurface.hitInside, "share menu is not a usable white surface", {
+    assert(shareSurface.background === "rgba(255, 255, 255, 0.96)" && shareSurface.hitInside, "share menu is not a usable white surface", {
       viewport,
       shareSurface,
     });
@@ -1504,7 +1504,7 @@ async function checkViewport(browser, viewport) {
     assert((await menu.getByRole("menuitem", { name: "背景" }).getAttribute("aria-expanded")) === "false", "background submenu did not close", viewport);
     assert(await menu.locator(".canvas2d-engine-menu-group-about").isVisible(), "about submenu did not open", viewport);
     const menuSurface = await readSurface(page, ".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide");
-    assert(menuSurface.background === "rgb(255, 255, 255)" && menuSurface.hitInside, "main menu is not a usable white surface", {
+    assert(menuSurface.background === "rgba(255, 255, 255, 0.96)" && menuSurface.hitInside, "main menu is not a usable white surface", {
       viewport,
       menuSurface,
     });

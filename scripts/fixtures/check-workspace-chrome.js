@@ -148,17 +148,24 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     const originalLeftWidth = (await rect(".desktop-clear-stage")).width;
     await resizePanel("left", 320);
     const occluded = overlap(await rect(".canvas2d-navigator-panel"), await rect("#canvas2d-transient-minimap"));
-    await page.waitForFunction((blocked) => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === (blocked ? "hidden" : "visible"), occluded);
+    await page.waitForFunction((blocked) => {
+      const map = document.querySelector("#canvas2d-transient-minimap");
+      return blocked ? getComputedStyle(map).visibility === "hidden" || map.classList.contains("is-space-constrained") : getComputedStyle(map).visibility === "visible";
+    }, occluded);
     assert.equal(await mapCollapsed(), false, "temporary occlusion changed the minimap preference");
     const hiddenStats = await stats();
     await addSceneItem("minimap-occluded-edit");
-    if (occluded) assert.equal((await stats()).snapshotRenderCount, hiddenStats.snapshotRenderCount, "occluded minimap kept redrawing snapshots");
+    const constrained = await minimap.evaluate((element) => element.classList.contains("is-space-constrained"));
+    if (occluded || constrained) assert.equal((await stats()).snapshotRenderCount, hiddenStats.snapshotRenderCount, "occluded minimap kept redrawing snapshots");
     else await page.waitForFunction((count) => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.snapshotRenderCount > count, hiddenStats.snapshotRenderCount);
     await setDirectory(true);
     const workspaceCollapse = page.locator(".canvas2d-workspace-panel").getByRole("button", { name: "收起画布工作区", exact: true });
     if (await workspaceCollapse.isVisible()) await workspaceCollapse.click();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
-    if (occluded) await page.waitForFunction((count) => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.snapshotRenderCount > count, hiddenStats.snapshotRenderCount);
+    await page.waitForFunction(() => {
+      const map = document.querySelector("#canvas2d-transient-minimap");
+      return getComputedStyle(map).visibility === "visible" && !map.classList.contains("is-space-constrained");
+    });
+    if (occluded || constrained) await page.waitForFunction((count) => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.snapshotRenderCount > count, hiddenStats.snapshotRenderCount);
     assert.equal(await mapCollapsed(), false, "minimap did not restore after occlusion");
     const recoveredStats = await stats();
     assert(recoveredStats.snapshotRenderCount > 0 && recoveredStats.viewportRenderCount > 0, "restored minimap is blank");

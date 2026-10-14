@@ -2,15 +2,16 @@ import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
 import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
 
-const DEFAULT_WIDTH = 192;
-const DEFAULT_HEIGHT = 112;
+const DEFAULT_WIDTH = 164;
+const DEFAULT_HEIGHT = 88;
+const SHELL_INSET = 14;
+const SHELL_HEADER_HEIGHT = 32;
+const COLLAPSED_SIZE = 38;
 const DEFAULT_PADDING = 12;
 const DEFAULT_HIDE_DELAY_MS = 800;
 const DEFAULT_MARGIN = 18;
-const DEFAULT_CANVAS_FILL = "rgba(248,250,252,0.92)";
-const DEFAULT_CANVAS_STROKE = "rgba(207, 216, 231, 0.92)";
-const DEFAULT_VIEWPORT_STROKE = "rgba(37, 99, 235, 0.96)";
-const DEFAULT_VIEWPORT_FILL = "rgba(59, 130, 246, 0.12)";
+const DEFAULT_VIEWPORT_STROKE = "rgba(53, 106, 230, 0.8)";
+const DEFAULT_VIEWPORT_FILL = "rgba(53, 106, 230, 0.06)";
 const DEFAULT_ITEM_FILL = "rgba(148, 163, 184, 0.34)";
 const DEFAULT_ITEM_STROKE = "rgba(100, 116, 139, 0.78)";
 
@@ -161,11 +162,6 @@ function drawRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function clipRoundedRect(ctx, x, y, width, height, radius) {
-  drawRoundedRect(ctx, x, y, width, height, radius);
-  ctx.clip();
-}
-
 function clearCanvas(canvas) {
   const ctx = canvas?.getContext?.("2d");
   if (!ctx) {
@@ -182,15 +178,6 @@ function drawBoardSnapshot(ctx, items = [], layout) {
     return;
   }
   ctx.clearRect(0, 0, layout.width, layout.height);
-  ctx.save();
-  clipRoundedRect(ctx, 0.5, 0.5, layout.width - 1, layout.height - 1, 18);
-  ctx.fillStyle = DEFAULT_CANVAS_FILL;
-  ctx.fillRect(0, 0, layout.width, layout.height);
-  ctx.restore();
-  drawRoundedRect(ctx, 0.5, 0.5, layout.width - 1, layout.height - 1, 18);
-  ctx.strokeStyle = DEFAULT_CANVAS_STROKE;
-  ctx.lineWidth = 1;
-  ctx.stroke();
   for (const item of Array.isArray(items) ? items : []) {
     if (!item || item.type === "flowEdge" || item.type === "mindRelationship") {
       continue;
@@ -223,7 +210,15 @@ function drawViewportFrame(ctx, viewportBounds, layout) {
   ctx.fillStyle = DEFAULT_VIEWPORT_FILL;
   ctx.strokeStyle = DEFAULT_VIEWPORT_STROKE;
   ctx.lineWidth = 1.5;
-  drawRoundedRect(ctx, rect.left, rect.top, rect.width, rect.height, 8);
+  const left = Math.max(1, rect.left);
+  const top = Math.max(1, rect.top);
+  const right = Math.min(layout.width - 1, rect.right);
+  const bottom = Math.min(layout.height - 1, rect.bottom);
+  if (right <= left || bottom <= top) {
+    ctx.restore();
+    return;
+  }
+  drawRoundedRect(ctx, left, top, right - left, bottom - top, 4);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -344,11 +339,15 @@ export function createTransientMinimap({
       return;
     }
     shell.classList.toggle("is-collapsed", collapsed);
-    shell.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    shell.classList.toggle("is-space-constrained", occluded && !collapsed);
+    shell.setAttribute("aria-expanded", collapsed || occluded ? "false" : "true");
     toggleButton.setAttribute("aria-label", collapsed ? "展开当前位置地图" : "收起当前位置地图");
-    toggleButton.setAttribute("title", collapsed ? "展开当前位置地图" : "收起当前位置地图");
-    toggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    toggleButton.innerHTML = collapsed ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Z M9 3v16 M15 5v16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>' : "–";
+    toggleButton.setAttribute("title", occluded && !collapsed ? "空间不足，扩大工作区后恢复；点击收起地图" : collapsed ? "展开当前位置地图" : "收起当前位置地图");
+    const expanded = collapsed || occluded ? "false" : "true";
+    if (toggleButton.getAttribute("aria-expanded") !== expanded) {
+      toggleButton.innerHTML = expanded === "false" ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Z M9 3v16 M15 5v16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>' : "–";
+      toggleButton.setAttribute("aria-expanded", expanded);
+    }
   }
 
   function handleToggleClick(event) {
@@ -407,12 +406,7 @@ export function createTransientMinimap({
 
       label = document.createElement("div");
       label.className = "canvas2d-transient-minimap-label";
-      label.innerHTML = `
-        <span class="canvas2d-transient-minimap-title">
-          <span class="canvas2d-transient-minimap-status-dot"></span>
-          <span>当前位置</span>
-        </span>
-      `;
+      label.textContent = "当前位置";
       shell.appendChild(label);
 
       canvas = createCanvas(DEFAULT_WIDTH, DEFAULT_HEIGHT);
@@ -440,14 +434,14 @@ export function createTransientMinimap({
       return;
     }
     const shellWidth = DEFAULT_WIDTH;
-    const canvasWidth = shellWidth - 16;
+    const canvasWidth = shellWidth - SHELL_INSET;
     const canvasHeight = DEFAULT_HEIGHT;
     lastCanvasWidth = canvasWidth;
     lastCanvasHeight = canvasHeight;
     shell.dataset.expandedWidth = String(shellWidth);
-    shell.dataset.expandedHeight = String(canvasHeight + 38);
+    shell.dataset.expandedHeight = String(canvasHeight + SHELL_HEADER_HEIGHT);
     shell.style.setProperty("--canvas-chrome-minimap-expanded-width", `${shellWidth}px`);
-    shell.style.setProperty("--canvas-chrome-minimap-expanded-height", `${canvasHeight + 38}px`);
+    shell.style.setProperty("--canvas-chrome-minimap-expanded-height", `${canvasHeight + SHELL_HEADER_HEIGHT}px`);
     canvas.style.width = `${canvasWidth}px`;
     canvas.style.height = `${canvasHeight}px`;
     const previousPixelWidth = canvas.width;
@@ -479,8 +473,9 @@ export function createTransientMinimap({
       .filter((element) => getComputedStyle(element).display !== "none")
       .map((element) => element.getBoundingClientRect());
     const controlsRect = controls?.getBoundingClientRect();
-    const width = collapsed ? 38 : DEFAULT_WIDTH;
-    const height = collapsed ? 38 : DEFAULT_HEIGHT + 38;
+    // Reserve the expanded footprint even when collapsed so toggling does not move the anchor.
+    const width = DEFAULT_WIDTH;
+    const height = DEFAULT_HEIGHT + SHELL_HEADER_HEIGHT;
     let left = Math.max(8, controlsRect?.width ? controlsRect.left - hostRect.left : DEFAULT_MARGIN);
     let top = Math.max(8, controlsRect?.height ? controlsRect.bottom - hostRect.top + 10 : 52);
     const overlaps = (rect) => rect.left < hostRect.left + left + width + 8 && rect.right > hostRect.left + left - 8 &&
@@ -491,14 +486,26 @@ export function createTransientMinimap({
       else left = obstacle.right - hostRect.left + 10;
     }
     const wasOccluded = occluded;
-    occluded = top + height > host.clientHeight - 8 || left + width > host.clientWidth - 8 || obstacles.some(overlaps);
-    shell.style.visibility = occluded ? "hidden" : "visible";
+    const fitsExpanded = top + height <= host.clientHeight - 8 && left + width <= host.clientWidth - 8 && !obstacles.some(overlaps);
+    if (!fitsExpanded) {
+      left = Math.max(8, controlsRect?.width ? controlsRect.left - hostRect.left : DEFAULT_MARGIN);
+      top = Math.max(8, controlsRect?.height ? controlsRect.bottom - hostRect.top + 10 : 52);
+      for (const rect of obstacles) {
+        if (rect.left < hostRect.left + left + COLLAPSED_SIZE + 8 && rect.right > hostRect.left + left - 8 && rect.top < hostRect.top + top + COLLAPSED_SIZE + 8 && rect.bottom > hostRect.top + top - 8) {
+          top = rect.bottom - hostRect.top + 10;
+        }
+      }
+    }
+    occluded = !fitsExpanded;
+    const compactFits = top + COLLAPSED_SIZE <= host.clientHeight - 8 && left + COLLAPSED_SIZE <= host.clientWidth - 8;
+    shell.style.visibility = !fitsExpanded && !compactFits ? "hidden" : "visible";
     shell.style.pointerEvents = occluded || collapsed ? "none" : "auto";
-    shell.setAttribute("aria-hidden", String(occluded));
+    shell.setAttribute("aria-hidden", String(!fitsExpanded && !compactFits));
     shell.style.left = `${Math.round(left)}px`;
     shell.style.top = `${Math.round(top)}px`;
     shell.style.right = "auto";
     shell.style.bottom = "auto";
+    applyCollapsedState();
     if (wasOccluded && !occluded && !collapsed) lastSceneRevision = -1;
   }
 
