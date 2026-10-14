@@ -1,5 +1,6 @@
 const { chromium } = require("playwright");
 const { checkWorkspaceChrome } = require("./fixtures/check-workspace-chrome");
+const { checkCanvasHarmony } = require("./fixtures/check-canvas-harmony");
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
@@ -13,6 +14,7 @@ async function main() {
     });
     await page.goto(process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1");
     await checkWorkspaceChrome(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
+    await checkCanvasHarmony(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
   } finally {
     await browser.close();
   }

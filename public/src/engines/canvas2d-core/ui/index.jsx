@@ -12,7 +12,7 @@ import {
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
-import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info, X } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import {
   buildCanvasSearchIndex,
@@ -184,23 +184,7 @@ function InsertIcon() {
 function ExportHistoryIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path d="M12 4.6v8.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path
-        d="M8.8 10.8 12 13.9l3.2-3.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M6.2 15.6v1.2a2 2 0 0 0 2 2h7.6a2 2 0 0 0 2-2v-1.2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M3 10a9 9 0 1 1 2.5 8.2M3 4v6h6M12 7v5l3 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -235,6 +219,10 @@ function FloatingToolbarMenu({
   align = "start",
   layoutKey = "",
   className = "",
+  surfaceClassName = "canvas2d-engine-menu",
+  preferredWidth = 0,
+  role = "menu",
+  ariaLabel,
   children,
 }) {
   useLayoutEffect(() => {
@@ -258,7 +246,7 @@ function FloatingToolbarMenu({
       const rootRect = boundaryRef.current?.getBoundingClientRect?.();
       const boundaryRect = rootRect?.width && rootRect?.height ? rootRect : viewportBoundary;
       panel.style.visibility = "hidden";
-      panel.style.width = "max-content";
+      panel.style.width = preferredWidth ? `${Math.min(preferredWidth, Math.max(0, boundaryRect.width - 24))}px` : "max-content";
       panel.style.maxWidth = `${Math.max(120, Math.round(boundaryRect.width - 24))}px`;
       panel.style.maxHeight = `${Math.max(120, Math.round(boundaryRect.height - 24))}px`;
       const panelRect = panel.getBoundingClientRect();
@@ -285,21 +273,27 @@ function FloatingToolbarMenu({
     updatePosition();
     window.addEventListener("resize", schedulePosition);
     window.addEventListener("scroll", schedulePosition, true);
+    window.addEventListener("freeflow:workspace-panel-resize-end", schedulePosition);
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedulePosition) : null;
     observer?.observe(anchor);
     observer?.observe(panel);
     if (boundaryRef.current instanceof HTMLElement) {
       observer?.observe(boundaryRef.current);
     }
+    const stage = boundaryRef.current?.closest(".desktop-clear-stage");
+    const moveObserver = stage && typeof MutationObserver === "function" ? new MutationObserver(schedulePosition) : null;
+    moveObserver?.observe(stage, { attributes: true, attributeFilter: ["style", "class"] });
     return () => {
       if (frameId) {
         cancelAnimationFrame(frameId);
       }
       observer?.disconnect();
+      moveObserver?.disconnect();
       window.removeEventListener("resize", schedulePosition);
       window.removeEventListener("scroll", schedulePosition, true);
+      window.removeEventListener("freeflow:workspace-panel-resize-end", schedulePosition);
     };
-  }, [align, anchorRef, boundaryRef, layoutKey, open, panelRef]);
+  }, [align, anchorRef, boundaryRef, layoutKey, open, panelRef, preferredWidth]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -308,8 +302,11 @@ function FloatingToolbarMenu({
   return createPortal(
     <div
       ref={panelRef}
-      className={`canvas2d-engine-menu canvas2d-engine-menu-portal${className ? ` ${className}` : ""}`}
-      role="menu"
+      className={`${surfaceClassName} canvas2d-engine-menu-portal${className ? ` ${className}` : ""}`.trim()}
+      role={role}
+      aria-label={ariaLabel}
+      data-shape-include="true"
+      data-shape-padding="0"
       style={{ visibility: "hidden" }}
     >
       {children}
@@ -1203,6 +1200,8 @@ function Canvas2DControls({ engine }) {
   const mainMenuPanelRef = useRef(null);
   const searchRef = useRef(null);
   const exportHistoryRef = useRef(null);
+  const searchPanelRef = useRef(null);
+  const exportHistoryPanelRef = useRef(null);
   const searchInputRef = useRef(null);
   const searchHighlightTimerRef = useRef(null);
   const infoPanelAutoCollapseLockUntilRef = useRef(0);
@@ -1303,13 +1302,10 @@ function Canvas2DControls({ engine }) {
         return;
       }
       if (
-        [drawMenuPanelRef, imageMenuPanelRef, insertMenuPanelRef, captureMenuPanelRef, mainMenuPanelRef].some(
+        [drawMenuPanelRef, imageMenuPanelRef, insertMenuPanelRef, captureMenuPanelRef, mainMenuPanelRef, searchPanelRef, exportHistoryPanelRef].some(
           (ref) => ref.current?.contains?.(event.target)
         )
       ) {
-        return;
-      }
-      if (toolbarRef.current && toolbarRef.current.contains(event.target)) {
         return;
       }
       if (searchRef.current && searchRef.current.contains(event.target)) {
@@ -1334,10 +1330,19 @@ function Canvas2DControls({ engine }) {
 
   useEffect(() => {
     function onKeyDown(event) {
-      if (event.key !== "Escape" || !(drawMenuOpen || imageMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen)) {
+      if (event.isComposing) return;
+      if ((searchOpen || exportHistoryOpen) && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k" &&
+          [searchPanelRef, exportHistoryPanelRef].some((ref) => ref.current?.contains(event.target))) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (searchOpen) closeSearch();
+        else openSearch();
         return;
       }
-      const trigger = toolbarRef.current?.querySelector?.('[aria-expanded="true"]');
+      if (event.key !== "Escape" || !(drawMenuOpen || imageMenuOpen || insertMenuOpen || captureMenuOpen || menuOpen || searchOpen || exportHistoryOpen)) {
+        return;
+      }
+      const trigger = searchOpen ? searchRef.current?.querySelector("button") : exportHistoryOpen ? exportHistoryRef.current?.querySelector("button") : toolbarRef.current?.querySelector?.('[aria-expanded="true"]');
       event.preventDefault();
       event.stopPropagation();
       setDrawMenuOpen(false);
@@ -1351,11 +1356,13 @@ function Canvas2DControls({ engine }) {
       setAlignmentSnapMenuOpen(false);
       setBackgroundMenuOpen(false);
       setAboutMenuOpen(false);
+      if (searchOpen) closeSearch();
+      setExportHistoryOpen(false);
       trigger?.focus?.({ preventScroll: true });
     }
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [captureMenuOpen, drawMenuOpen, imageMenuOpen, insertMenuOpen, menuOpen]);
+  }, [captureMenuOpen, drawMenuOpen, imageMenuOpen, insertMenuOpen, menuOpen, searchOpen, exportHistoryOpen]);
 
   useEffect(() => {
     const message = String(snapshot?.boardSaveToastMessage || "").trim();
@@ -1498,10 +1505,11 @@ function Canvas2DControls({ engine }) {
     if (!searchOpen) {
       return;
     }
-    requestAnimationFrame(() => {
+    const frameId = requestAnimationFrame(() => {
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
     });
+    return () => cancelAnimationFrame(frameId);
   }, [searchOpen]);
 
   useEffect(() => {
@@ -1617,12 +1625,8 @@ function Canvas2DControls({ engine }) {
     scope: "global",
     shortcuts: ["Ctrl+K"],
     execute: () => {
-      const nextOpen = !searchOpen;
-      setSearchOpen(nextOpen);
-      if (!nextOpen) {
-        setSearchQuery("");
-        setSearchActiveIndex(0);
-      }
+      if (searchOpen) closeSearch();
+      else openSearch();
       return true;
     },
   }), [bridge, searchOpen]);
@@ -1692,6 +1696,7 @@ function Canvas2DControls({ engine }) {
 
   const openSearch = () => {
     setDrawMenuOpen(false);
+    setImageMenuOpen(false);
     setInsertMenuOpen(false);
     setCaptureMenuOpen(false);
     setCapturePdfMenuOpen(false);
@@ -1711,6 +1716,7 @@ function Canvas2DControls({ engine }) {
     setSearchActiveIndex(0);
     setSearchFilterKey(CANVAS_SEARCH_FILTER_KEYS.ALL);
     setSearchQuery("");
+    searchRef.current?.querySelector("button")?.focus({ preventScroll: true });
   };
 
   const handleSearchFilterChange = (nextKey) => {
@@ -1762,6 +1768,7 @@ function Canvas2DControls({ engine }) {
   };
 
   const handleSearchKeyDown = (event) => {
+    if (event.isComposing || event.nativeEvent?.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeSearch();
@@ -2670,6 +2677,11 @@ function Canvas2DControls({ engine }) {
               onHoverResult={setSearchActiveIndex}
               onSelectResult={handleSearchSelect}
               inputRef={searchInputRef}
+              renderPanel={(panel) => (
+                <FloatingToolbarMenu open={searchOpen} anchorRef={searchRef} boundaryRef={rootRef} panelRef={searchPanelRef} align="end" preferredWidth={430} surfaceClassName="" className="canvas2d-engine-utility-popover" role="dialog" ariaLabel="画布搜索">
+                  {panel}
+                </FloatingToolbarMenu>
+              )}
             />
           </div>
           <div ref={exportHistoryRef} className="canvas2d-engine-export-history-wrap" aria-label="导出历史入口">
@@ -2680,6 +2692,7 @@ function Canvas2DControls({ engine }) {
                 setExportHistoryOpen((value) => {
                   const next = !value;
                   setDrawMenuOpen(false);
+                  setImageMenuOpen(false);
                   setInsertMenuOpen(false);
                   setCaptureMenuOpen(false);
                   setCapturePdfMenuOpen(false);
@@ -2695,6 +2708,8 @@ function Canvas2DControls({ engine }) {
               }
               title="查看最近导出记录"
               aria-label="查看最近导出记录"
+              aria-expanded={exportHistoryOpen}
+              aria-controls={exportHistoryOpen ? "canvas2d-export-history-panel" : undefined}
             >
               <span className="canvas2d-engine-export-history-icon" aria-hidden="true">
                 <ExportHistoryIcon />
@@ -2702,16 +2717,14 @@ function Canvas2DControls({ engine }) {
             </button>
           </div>
         </div>
-        <div className="canvas2d-engine-export-history-layer">
-          {exportHistoryOpen ? (
-            <div className="canvas2d-engine-export-history-panel">
+        <FloatingToolbarMenu open={exportHistoryOpen} anchorRef={exportHistoryRef} boundaryRef={rootRef} panelRef={exportHistoryPanelRef} align="end" preferredWidth={430} surfaceClassName="" className="canvas2d-engine-utility-popover" role="dialog" ariaLabel="最近导出">
+            <div id="canvas2d-export-history-panel" className="canvas2d-engine-export-history-panel">
               <div className="canvas2d-engine-export-history-panel-head">
                 <strong>最近导出</strong>
-                <span className="canvas2d-engine-export-history-count">{exportHistory.length || 0}</span>
+                <button type="button" className="canvas2d-engine-search-close" aria-label="关闭最近导出" onClick={() => { setExportHistoryOpen(false); exportHistoryRef.current?.querySelector("button")?.focus({ preventScroll: true }); }}><X size={16} /></button>
               </div>
               <div className="canvas2d-engine-export-history-panel-meta">
-                <span>保留最近 10 条</span>
-                <span>点击可直接打开本地结果</span>
+                <span>最近 {exportHistory.length || 0} 条 · 点击打开文件</span>
               </div>
               <div className="canvas2d-engine-export-history-list">
                 {exportHistory.length ? (
@@ -2752,13 +2765,12 @@ function Canvas2DControls({ engine }) {
                 ) : (
                   <div className="canvas2d-engine-export-history-empty">
                     <strong>还没有导出记录</strong>
-                    <span>导出 Word、PDF 或 PNG 后，会在这里出现最近记录。</span>
+                    <span>导出的文件会显示在这里。</span>
                   </div>
                 )}
               </div>
             </div>
-          ) : null}
-        </div>
+        </FloatingToolbarMenu>
       </div>
       </div>
       </div>
