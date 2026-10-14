@@ -36,8 +36,6 @@
   --canvas-chrome-height: var(--chrome-height);
   --canvas-chrome-radius: var(--chrome-radius);
   --canvas-chrome-status-dock-width: calc(var(--chrome-control-size) * 2 + 8px);
-  --canvas-chrome-minimap-expanded-width: 164px;
-  --canvas-chrome-minimap-expanded-height: 134px;
   --canvas-chrome-minimap-collapsed-size: 38px;
   --chrome-global-actions-reserve: calc(var(--canvas-chrome-status-dock-width) + 18px);
 }

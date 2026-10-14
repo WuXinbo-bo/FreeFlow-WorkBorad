@@ -11753,17 +11753,6 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   color: #0f172a;
 }
 
-.canvas2d-engine-export-history-layer {
-  display: flex;
-  justify-content: flex-end;
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 100%;
-  z-index: 18;
-  pointer-events: none;
-}
-
 .canvas2d-engine-export-history-panel {
   position: relative;
   width: min(430px, calc(100vw - 36px));
@@ -11812,21 +11801,6 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   color: #64748b;
   font-size: 0.7rem;
   font-weight: 750;
-}
-
-.canvas2d-engine-export-history-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  min-width: 28px;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
-  color: #334155 !important;
-  font-size: 0.68rem !important;
-  font-weight: 900 !important;
 }
 
 .canvas2d-engine-export-history-list {

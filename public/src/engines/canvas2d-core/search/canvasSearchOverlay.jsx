@@ -126,22 +126,24 @@ export function CanvasSearchOverlay({
   workspaceSupported = false,
   loading = false,
   warnings = [],
+  renderPanel,
 }) {
-  if (!isOpen) {
-    return (
+  const trigger = (
       <button
         type="button"
         className="canvas2d-engine-search-placeholder"
         title="打开画布全局搜索"
         aria-label="打开画布搜索"
-        onClick={onOpen}
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? "canvas2d-search-panel" : undefined}
+        onClick={isOpen ? onClose : onOpen}
       >
         <span className="canvas2d-engine-search-icon" aria-hidden="true">
           <SearchGlyph />
         </span>
       </button>
-    );
-  }
+  );
+  if (!isOpen) return trigger;
 
   const hasQuery = normalizeSearchText(query).length > 0;
   const hasResults = results.length > 0;
@@ -184,8 +186,8 @@ export function CanvasSearchOverlay({
     return parts;
   };
 
-  return (
-    <div className="canvas2d-engine-search-panel">
+  const panel = (
+    <div id="canvas2d-search-panel" className="canvas2d-engine-search-panel">
       <div className="canvas2d-engine-search-panel-top">
         <label className="canvas2d-engine-search-input-wrap">
           <span className="canvas2d-engine-search-input-leading" aria-hidden="true">
@@ -293,4 +295,5 @@ export function CanvasSearchOverlay({
       ) : null}
     </div>
   );
+  return <>{trigger}{renderPanel ? renderPanel(panel) : panel}</>;
 }
