@@ -144,6 +144,16 @@ async function main() {
     },
   });
   await fs.appendFile(OUT_FILE, `\n/* FreeFlow canvas2d-ui version: ${packageJson.version} */\n`, "utf8");
+  // Loaded only when a user opens the feature tour; the canvas engine remains
+  // a native module and is not duplicated into this UI bundle.
+  await esbuild.build({
+    entryPoints: [path.join(PUBLIC_DIR, "src/runtime/tutorial-system/showcaseUI.jsx")],
+    bundle: true, format: "esm", platform: "browser", target: ["es2022"], minify: true,
+    outfile: path.join(PUBLIC_DIR, "assets/feature-showcase/current/showcase-ui.js"),
+    external: ["/src/*"],
+    define: { "process.env.NODE_ENV": '"production"' },
+    loader: { ".js": "jsx", ".jsx": "jsx" },
+  });
 }
 
 main().catch((error) => {
