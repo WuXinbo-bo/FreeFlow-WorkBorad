@@ -671,6 +671,7 @@ function drawMindNodeCompact(ctx, element, view, selected, hover) {
   };
   drawTextElement(ctx, textElement, view, false, false, false, () => {}, () => {}, {
     renderText: true,
+    fontWeight: getMindNodeStyle(element).fontWeight,
   });
 }
 

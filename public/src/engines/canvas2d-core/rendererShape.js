@@ -25,7 +25,7 @@ export function drawShapeElement(ctx, element, view, selected, hover, helpers) {
   ctx.strokeStyle = element.strokeColor || "#334155";
   ctx.fillStyle = element.fillColor || "#ffffff";
   ctx.lineWidth = Math.max(0.75, scaleSceneValue(view, Number(element.strokeWidth || 2)));
-  ctx.setLineDash(element.shapeType === "line" && element.lineDash ? [8, 6] : []);
+  ctx.setLineDash(isLinearShape(element.shapeType) && element.lineDash ? [8, 6] : []);
   if (rotation) {
     ctx.translate(centerX, centerY);
     ctx.rotate((rotation * Math.PI) / 180);
@@ -55,6 +55,15 @@ export function drawShapeElement(ctx, element, view, selected, hover, helpers) {
       ctx.fillStyle = element.strokeColor || "#334155";
       ctx.fill();
     }
+  } else if (element.shapeType === "diamond") {
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height / 2);
+    ctx.lineTo(x + width / 2, y + height);
+    ctx.lineTo(x, y + height / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
   } else {
     drawRoundedRect(ctx, x, y, width, height, element.shapeType === "highlight" ? 16 : Number(element.radius || 18));
     if (element.shapeType === "highlight") {

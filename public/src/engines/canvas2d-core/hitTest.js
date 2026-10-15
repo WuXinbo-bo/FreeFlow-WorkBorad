@@ -100,6 +100,17 @@ export function hitTestElement(items, point, scale = 1) {
       continue;
     }
     const bounds = candidate.baseBounds || getElementBounds(item);
+    if (item.type === "shape" && item.shapeType === "diamond") {
+      const width = Math.max(1, Number(item.width || 1));
+      const height = Math.max(1, Number(item.height || 1));
+      const dx = Number(point?.x || 0) - Number(item.x || 0) - width / 2;
+      const dy = Number(point?.y || 0) - Number(item.y || 0) - height / 2;
+      const radians = -Number(item.rotation || 0) * Math.PI / 180;
+      const localX = Math.abs((dx * Math.cos(radians) - dy * Math.sin(radians)) / (width / 2));
+      const localY = Math.abs((dx * Math.sin(radians) + dy * Math.cos(radians)) / (height / 2));
+      if (localX + localY <= 1 + tolerance / Math.max(1, Math.min(width, height) / 2)) return item;
+      continue;
+    }
     if (item.type === "image" ? pointInImageLocalBounds(point, item, tolerance) : pointInBounds(point, bounds, tolerance)) {
       return item;
     }

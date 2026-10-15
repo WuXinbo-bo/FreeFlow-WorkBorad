@@ -39,7 +39,7 @@ export function createShapeElement(shapeType = "rect", startPoint, endPoint = st
     strokeWidth: isLinear ? 2.5 : isHighlight ? 8 : 2,
     lineDash: false,
     rotation: 0,
-    radius: shapeType === "rect" ? 18 : 0,
+    radius: shapeType === "rect" ? 18 : shapeType === "roundRect" ? 28 : 0,
     createdAt: Date.now(),
   };
 }
@@ -82,7 +82,7 @@ export function moveShapeElement(element, dx, dy) {
 }
 
 export function normalizeShapeElement(element = {}) {
-  const shapeType = ["rect", "ellipse", "line", "arrow", "highlight"].includes(element.shapeType)
+  const shapeType = ["rect", "roundRect", "ellipse", "diamond", "line", "arrow", "highlight"].includes(element.shapeType)
     ? element.shapeType
     : "rect";
   const base = createShapeElement(

@@ -161,7 +161,7 @@ export function getTextMinSize(element = {}, options = {}) {
     minHeight: layout.minHeight,
     maxWidth: layout.maxWidth,
     lineHeightRatio: TEXT_LINE_HEIGHT_RATIO,
-    fontWeight: "500",
+    fontWeight: options.fontWeight || "500",
     boldWeight: "700",
   });
   if (measured?.frameWidth && measured?.frameHeight) {
