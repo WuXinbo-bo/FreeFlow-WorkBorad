@@ -1,0 +1,11 @@
+{
+  "id": "ai-assistant",
+  "version": "1.0.0",
+  "platform": "win32",
+  "apiVersion": 1,
+  "dataSchemaVersion": 3,
+  "filename": "freeflow-ai-assistant-1.0.0-win32.ffext",
+  "sha256": "febbd060ae6425b466b64d585eb29cf511b10154840b49af8515bfb71ffeb52c",
+  "sizeBytes": 104460,
+  "url": "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/assistant-v1.0.0/freeflow-ai-assistant-1.0.0-win32.ffext"
+}

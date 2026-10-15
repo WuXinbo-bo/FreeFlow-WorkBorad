@@ -57,9 +57,7 @@ function createSettingsCenterService(deps) {
           assistantName: uiSettings.assistantName || PRODUCT_NAME,
           updateCheckEnabled: uiSettings.updateCheckEnabled !== false,
         },
-        ai: {
-          agent: { ...agentSettings },
-        },
+        ...(agentSettings ? { ai: { agent: { ...agentSettings } } } : {}),
         appearance: pickThemeSettings(uiSettings),
         workbench: pickWorkbenchPreferences(uiSettings),
         canvas: {
@@ -116,6 +114,7 @@ function createSettingsCenterService(deps) {
       uiPatch.updateCheckEnabled = sections.general.updateCheckEnabled !== false;
     }
 
+    if (sections.ai && !stores.agentSettings) throw createSettingsError("AI 助手扩展未启用", { code: "EXTENSION_DISABLED", statusCode: 409 });
     if (sections.ai) {
       if (sections.ai.agent && typeof sections.ai.agent === "object") {
         const agent = sections.ai.agent;
@@ -194,6 +193,7 @@ function createSettingsCenterService(deps) {
       }
       const sections = payload.sections && typeof payload.sections === "object" ? payload.sections : {};
       const patches = buildPatches(sections, stores);
+      if (JSON.stringify(sections.ai) === JSON.stringify(currentSnapshot.sections.ai)) patches.agentPatch = null;
       const changed = [];
       try {
         if (Object.keys(patches.uiPatch).length) {
