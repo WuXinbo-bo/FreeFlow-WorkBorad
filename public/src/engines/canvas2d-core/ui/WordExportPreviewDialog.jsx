@@ -326,9 +326,7 @@ export function WordExportPreviewDialog({
         <details className="canvas2d-word-export-note"><summary>内容统计</summary><TypeSummary summary={model.typeSummary || {}} /></details>
 
         <div className="canvas2d-word-export-body" aria-label="Word 预览">
-          {/* A fresh realm keeps JSZip's queued callbacks valid after reordering;
-              document.open() removes the old window's message listeners. */}
-          <WordDocxPreviewPane key={`${request.id}:${request.previewGeneration || 0}`} request={request} />
+          <WordDocxPreviewPane request={request} />
         </div>
 
         {skippedItems.length ? (

@@ -28,9 +28,6 @@ const REQUIRED_PATHS = [
   "electron/preload.js",
   "server.js",
   "public/index.html",
-  "public/feature-showcase.html",
-  "public/ui.feature-showcase.css",
-  "public/assets/feature-showcase/current/showcase-ui.js",
   "public/assets/canvas2d-ui/current/canvas2d-ui.js",
   "public/assets/canvas-office/current/canvas-office-ui.js",
 ];

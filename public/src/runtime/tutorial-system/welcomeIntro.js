@@ -40,8 +40,7 @@ export function renderWelcomeIntro(renderIcon, renderClose) {
           <div class="tutorial-intro-step">${renderIcon("screen")}<strong>与 AI 协作</strong><small>一起探索更多可能</small></div>
         </div>
         <div class="tutorial-intro-actions" data-welcome-reveal>
-          <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-action="feature-showcase"><span>观看特色导览</span>${renderIcon("play")}</button>
-          <button type="button" class="canvas2d-tutorial-overlay-btn is-secondary" data-global-tutorial-open-center><span>使用说明</span></button>
+          <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-open-center><span>开始快速了解</span>${renderIcon("arrow")}</button>
           <button type="button" class="canvas2d-tutorial-overlay-btn is-secondary" data-global-tutorial-dismiss-intro>稍后再看</button>
         </div>
       </div>
