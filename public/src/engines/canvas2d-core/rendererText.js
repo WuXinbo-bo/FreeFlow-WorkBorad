@@ -1286,6 +1286,7 @@ function drawTextBody(ctx, element, view, selected, hover, editing, drawSelectio
           color: element.color || "#0f172a",
           fontSize: logicalFontSize,
           scale,
+          fontWeight: options.fontWeight || element.fontWeight || TEXT_FONT_WEIGHT,
           precomputedRuns,
         })
       : false;
@@ -1316,5 +1317,6 @@ export function drawTextElement(ctx, element, view, selected, hover, editing, dr
     hideWhenEditing: true,
     html: element.html || "",
     linkTokens: element?.structuredImport?.linkTokens || element?.linkTokens || [],
+    fontWeight: options.fontWeight || element.fontWeight || TEXT_FONT_WEIGHT,
   });
 }

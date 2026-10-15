@@ -15,17 +15,7 @@ import {
   MIND_BRANCH_RIGHT,
   MIND_SUMMARY_TYPE,
 } from "./mindMap.js";
-
-function resolveMindNodeLevelFontSize(depth = 0) {
-  const safeDepth = Math.max(0, Number(depth) || 0);
-  if (safeDepth <= 0) {
-    return 18;
-  }
-  if (safeDepth === 1) {
-    return 16;
-  }
-  return 14;
-}
+import { getMindNodeFontSize } from "./mindStyle.js";
 
 function normalizeMindNodeLinks(links = []) {
   if (!Array.isArray(links)) {
@@ -53,7 +43,7 @@ function normalizeMindNodeLinks(links = []) {
 
 export function createMindNodeElement(point, title = "") {
   const cleanTitle = sanitizeText(title);
-  const fontSize = resolveMindNodeLevelFontSize(0);
+  const fontSize = getMindNodeFontSize(0);
   const content = normalizeTextContentModel(
     {
       html: "",
@@ -126,7 +116,7 @@ export function normalizeMindNodeElement(element = {}) {
     y: Number(element.y ?? base.y) || 0,
     width: Math.max(160, Number(element.width ?? base.width) || base.width),
     height: Math.max(72, Number(element.height ?? base.height) || base.height),
-    fontSize: resolveMindNodeLevelFontSize(Number(element.depth ?? base.depth) || 0),
+    fontSize: getMindNodeFontSize(Number(element.depth ?? base.depth) || 0),
     color: String(element.color || base.color),
     layoutMode: normalizeMindLayoutMode(element.layoutMode, base.layoutMode),
     branchSide: normalizeMindBranchSide(element.branchSide, base.branchSide),

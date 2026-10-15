@@ -1,5 +1,5 @@
 import { getTextMinSize, TEXT_BOX_LAYOUT_MODE_AUTO_HEIGHT, TEXT_RESIZE_MODE_WRAP } from "./text.js";
-import { MIND_NODE_PADDING, getMindNodeFooterHeight } from "./mindStyle.js";
+import { MIND_NODE_PADDING, getMindNodeFooterHeight, getMindNodeFontSize, getMindNodeStyle } from "./mindStyle.js";
 
 export const MIND_LAYOUT_MODE_HORIZONTAL = "horizontal";
 export const MIND_BRANCH_AUTO = "auto";
@@ -64,6 +64,7 @@ export function syncMindNodeTextMetrics(item = {}) {
       widthHint: width - MIND_NODE_PADDING.x * 2,
       heightHint: 40,
       fontSize: Math.max(12, Number(next.fontSize || 18) || 18),
+      fontWeight: getMindNodeStyle(next).fontWeight,
     }
   );
   next.width = width;
@@ -198,7 +199,24 @@ export function applyMindMapAutoLayout(items = [], rootId = "", options = {}) {
   if (!safeRootId) {
     return Array.isArray(items) ? items.slice() : [];
   }
-  const nextItems = Array.isArray(items) ? items.slice() : [];
+  const sourceItems = Array.isArray(items) ? items : [];
+  const sourceIndex = buildMindMapIndex(sourceItems);
+  const depthById = new Map();
+  const pending = [{ id: safeRootId, depth: 0 }];
+  while (pending.length) {
+    const current = pending.pop();
+    if (depthById.has(current.id)) continue;
+    depthById.set(current.id, current.depth);
+    const children = sourceIndex.childrenByParent.get(current.id) || [];
+    children.forEach((child) => pending.push({ id: String(child.id || ""), depth: current.depth + 1 }));
+  }
+  const nextItems = sourceItems.map((item) => {
+    const depth = depthById.get(String(item?.id || ""));
+    if (!isMindMapNode(item) || depth == null) return item;
+    const fontSize = getMindNodeFontSize(depth);
+    if (Number(item.depth) === depth && Number(item.fontSize) === fontSize) return item;
+    return syncMindNodeTextMetrics({ ...item, depth, fontSize });
+  });
   const index = buildMindMapIndex(nextItems);
   const root = index.byId.get(safeRootId);
   if (!root) {

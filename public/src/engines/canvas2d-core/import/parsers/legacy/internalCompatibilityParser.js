@@ -336,7 +336,8 @@ function normalizeFlowEdgeStyle(value) {
 
 function normalizeShapeType(value) {
   const shapeType = String(value || "").toLowerCase();
-  return ["rect", "ellipse", "line", "arrow", "highlight"].includes(shapeType) ? shapeType : "rect";
+  if (shapeType === "roundrect") return "roundRect";
+  return ["rect", "ellipse", "diamond", "line", "arrow", "highlight"].includes(shapeType) ? shapeType : "rect";
 }
 
 function buildTypeGroups(items) {

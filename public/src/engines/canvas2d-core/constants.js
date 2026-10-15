@@ -17,10 +17,12 @@ export const TOOL_SHORTCUTS = Object.freeze({
   v: "select",
   t: "text",
   r: "rect",
+  q: "roundRect",
+  d: "diamond",
   a: "arrow",
   l: "line",
   e: "ellipse",
   m: "highlight",
 });
 
-export const DRAW_TOOLS = Object.freeze(["rect", "ellipse", "arrow", "line", "highlight"]);
+export const DRAW_TOOLS = Object.freeze(["rect", "roundRect", "ellipse", "diamond", "arrow", "line", "highlight"]);

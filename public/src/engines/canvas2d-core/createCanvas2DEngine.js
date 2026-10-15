@@ -45,7 +45,7 @@ import { createFileCardElement, FILE_CARD_DEFAULT_WIDTH, FILE_CARD_DEFAULT_HEIGH
 import { FLOW_NODE_WRAP_MODE, getFlowNodeMinSize } from "./elements/flow.js";
 import { getImageMemoBounds } from "./elements/media.js";
 import { isLinearShape } from "./elements/shapes.js";
-import { getMindNodeStyle, MIND_NODE_PADDING, getMindNodeFooterHeight } from "./elements/mindStyle.js";
+import { getMindNodeStyle, getMindNodeFontSize, MIND_NODE_PADDING, getMindNodeFooterHeight } from "./elements/mindStyle.js";
 import {
   createMindNodeElement,
   createMindSummaryElement,
@@ -2889,6 +2889,11 @@ function syncEditingRichEditorFrame(editor, item, view, { forceTypography = fals
     return;
   }
   const scale = Math.max(0.1, Number(view?.scale || 1));
+  if (item.type === "mindNode" || item.type === "mindSummary") {
+    editor.dataset.mindDepth = String(Math.max(0, Number(item.depth) || 0));
+  } else {
+    delete editor.dataset.mindDepth;
+  }
   // Lay out editing content in scene units, exactly like the display DOM.
   // Scale the whole surface so headings, inline sizes, spacing and wrapping
   // all share the same camera transform without persisting screen sizes.
@@ -9998,7 +10003,9 @@ let tablePointerSelectionState = {
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
+              <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-ellipse">椭圆</button>
+              <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-diamond">菱形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-arrow">箭头</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-line">直线</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-highlight">高亮</button>
@@ -10509,6 +10516,10 @@ let tablePointerSelectionState = {
 
   function syncEditingCamera(view) {
     syncEditingRichEditorCamera(refs.richEditor, getActiveRichEditingItem(), view);
+    if (state.editingType === "math") {
+      syncMathEditorLayout(view);
+      return;
+    }
     const node = ({ math: refs.editor, table: refs.tableEditor, "code-block": refs.codeBlockEditor,
       "file-memo": refs.fileMemoEditor, "image-memo": refs.imageMemoEditor })[state.editingType];
     const frame = node && screenEditorCameraFrames.get(node);
@@ -10614,14 +10625,7 @@ let tablePointerSelectionState = {
   }
 
   function resolveMindNodeFixedFontSize(item = null) {
-    const depth = getMindNodeDepth(item);
-    if (depth <= 0) {
-      return 18;
-    }
-    if (depth === 1) {
-      return 16;
-    }
-    return 14;
+    return getMindNodeFontSize(getMindNodeDepth(item));
   }
 
   function ensureMindNodeRichTextSemanticDefaults(item = null) {
@@ -12765,6 +12769,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         node.classList.remove("is-locked");
         node.dataset.classSignature = classSignature;
       }
+      if (item.type === "mindNode" || item.type === "mindSummary") {
+        node.dataset.mindDepth = String(Math.max(0, Number(item.depth) || 0));
+        node.dataset.mindSummary = item.type === "mindSummary" ? "true" : "false";
+      } else {
+        delete node.dataset.mindDepth;
+        delete node.dataset.mindSummary;
+      }
 
       const isFlowNode = item.type === "flowNode";
       const isMindNode = item.type === "mindNode" || item.type === "mindSummary";
@@ -13484,14 +13495,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       cancelMathEdit();
       return;
     }
-    const scale = Math.max(0.1, Number(view?.scale || 1));
     const frame = getElementScreenBounds(view, item);
     Object.assign(refs.editor.style, {
       left: `${frame.left}px`,
       top: `${frame.top}px`,
-      width: `${Math.max(220, frame.width)}px`,
-      height: `${Math.max(72, frame.height)}px`,
-      fontSize: `${Math.max(14, Math.min(22, Number(item.fontSize || 20)))}px`,
+      width: `${Math.max(220, Math.min(640, frame.width))}px`,
+      height: `${Math.max(92, Math.min(320, frame.height))}px`,
+      fontSize: "15px",
     });
     rememberScreenEditorCamera(refs.editor, view);
     syncElementEditorHostIdentity(refs.editor, item, "math");
@@ -15321,8 +15331,8 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const toolbar = chrome.querySelector(".canvas-mind-node-chrome-group");
     const leftSideControl = chrome.querySelector(".canvas-mind-node-side-control.is-left");
     const rightSideControl = chrome.querySelector(".canvas-mind-node-side-control.is-right");
-    const toolbarWidth = Math.max(152, Number(toolbar?.clientWidth || 168) || 168);
-    const toolbarHeight = Math.max(28, Number(toolbar?.clientHeight || 30) || 30);
+    const toolbarWidth = Math.max(152, Number(toolbar?.offsetWidth || 254) || 254);
+    const toolbarHeight = Math.max(28, Number(toolbar?.offsetHeight || 38) || 38);
     const sideButtonSize = Math.round(Math.max(16, Math.min(30, scaleSceneValue(state.board.view, 24))));
     const sideButtonInset = Math.max(1, Math.round(sideButtonSize * 0.08));
     const sideIconSpan = Math.max(8, Math.round(sideButtonSize * 0.4));
@@ -15335,6 +15345,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const sideControlCenterY = Math.round(Math.max(1, visibleRect.height) / 2);
     const left = clampTableEditorValue(Math.round(visibleRect.left), 0, Math.max(0, overlayWidth - Math.max(1, Math.round(visibleRect.width))));
     const top = clampTableEditorValue(Math.round(visibleRect.top), 0, Math.max(0, overlayHeight - Math.max(1, Math.round(visibleRect.height))));
+    if (toolbar instanceof HTMLElement) {
+      toolbar.style.left = `${clamp(nodeRect.left + nodeRect.width / 2 - toolbarWidth / 2, 8, Math.max(8, overlayWidth - toolbarWidth - 8)) - left}px`;
+      const toolbarTop = nodeRect.top >= toolbarHeight + 10
+        ? nodeRect.top - toolbarHeight - 10
+        : Math.min(overlayHeight - toolbarHeight - 8, nodeRect.bottom + 10);
+      toolbar.style.top = `${Math.max(8, toolbarTop) - top}px`;
+    }
     chrome.style.left = `${left}px`;
     chrome.style.top = `${top}px`;
     chrome.style.width = `${Math.max(1, Math.round(visibleRect.width))}px`;
@@ -21586,7 +21603,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const start = { x: Number(anchorPoint?.x) || 0, y: Number(anchorPoint?.y) || 0 };
     const presets = {
       rect: { width: 200, height: 120 },
+      roundRect: { width: 220, height: 120 },
       ellipse: { width: 200, height: 120 },
+      diamond: { width: 180, height: 140 },
       highlight: { width: 240, height: 80 },
       line: { width: 220, height: 0 },
       arrow: { width: 220, height: 0 },
@@ -22487,7 +22506,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const useAspect =
         (pointer.baseItem?.type === "image" && (event.shiftKey || Number(pointer.baseItem.rotation || 0) % 360 !== 0)) ||
         (pointer.baseItem?.type === "shape" &&
-          (pointer.baseItem.shapeType === "rect" || pointer.baseItem.shapeType === "ellipse") &&
+          ["rect", "roundRect", "ellipse", "diamond"].includes(pointer.baseItem.shapeType) &&
           event.shiftKey);
       state.board.items = state.board.items.map((item) => {
         if (item.id !== pointer.itemId) {
@@ -23667,7 +23686,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-ellipse">椭圆</button>
+                <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-diamond">菱形</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-arrow">箭头</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-line">直线</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-highlight">高亮</button>
@@ -23688,7 +23709,9 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
+              <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-ellipse">椭圆</button>
+              <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-diamond">菱形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-arrow">箭头</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-line">直线</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-highlight">高亮</button>
@@ -23891,6 +23914,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     if (action === "add-shape-rect") {
       createShapeAt(getContextMenuScenePoint(), "rect");
+      hideContextMenu();
+    }
+    if (action === "add-shape-round-rect") {
+      createShapeAt(getContextMenuScenePoint(), "roundRect");
+      hideContextMenu();
+    }
+    if (action === "add-shape-diamond") {
+      createShapeAt(getContextMenuScenePoint(), "diamond");
       hideContextMenu();
     }
     if (action === "add-shape-ellipse") {
@@ -28129,7 +28160,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     }
     const selectedIds = new Set(mutableItems.map((item) => item.id));
     const targets = state.board.items.filter(
-      (item) => item.type === "shape" && item.shapeType === "line" && selectedIds.has(item.id)
+      (item) => item.type === "shape" && isLinearShape(item.shapeType) && selectedIds.has(item.id)
     );
     if (!targets.length) {
       return false;
@@ -28137,7 +28168,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const nextDash = !targets.every((item) => Boolean(item.lineDash));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     state.board.items = state.board.items.map((item) => {
-      if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id) || isLockedItem(item)) {
+      if (item.type !== "shape" || !isLinearShape(item.shapeType) || !selectedIds.has(item.id) || isLockedItem(item)) {
         return item;
       }
       return {
@@ -28158,7 +28189,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
     state.board.items = state.board.items.map((item) => {
-      if (item.type !== "shape" || item.shapeType !== "line" || !selectedIds.has(item.id)) {
+      if (item.type !== "shape" || !isLinearShape(item.shapeType) || !selectedIds.has(item.id)) {
         return item;
       }
       if (item.strokeColor === color) {
@@ -28183,7 +28214,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (!nextColor || !state.board.selectedIds.length) {
       return false;
     }
-    const allowed = new Set(["rect", "ellipse", "line", "arrow"]);
+    const allowed = new Set(["rect", "roundRect", "ellipse", "diamond", "line", "arrow", "highlight"]);
     const selectedIds = new Set(state.board.selectedIds);
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
@@ -28208,12 +28239,37 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     return true;
   }
 
+  function setSelectedShapeStyle(patch = {}) {
+    const allowed = { strokeColor: "color", fillColor: "fill", strokeWidth: "width", lineDash: "dash" };
+    const nextPatch = {};
+    for (const [key, type] of Object.entries(allowed)) {
+      if (!(key in patch)) continue;
+      if (type === "color" || type === "fill") nextPatch[key] = String(patch[key] || "transparent");
+      else if (type === "width") nextPatch[key] = clamp(Number(patch[key]) || 2, 1, 12);
+      else nextPatch[key] = Boolean(patch[key]);
+    }
+    const mutableItems = getMutableSelectedItems(["shape"]);
+    if (!mutableItems.length || !Object.keys(nextPatch).length) return false;
+    const ids = mutableItems.map((item) => item.id);
+    const before = takeItemsHistorySnapshot(ids);
+    let changed = false;
+    state.board.items = state.board.items.map((item) => {
+      if (!ids.includes(item.id) || item.type !== "shape") return item;
+      if (Object.entries(nextPatch).every(([key, value]) => item[key] === value)) return item;
+      changed = true;
+      return { ...item, ...nextPatch };
+    });
+    if (!changed) return false;
+    commitItemsPatchHistory(before, ids, "调整图形样式", "shape-style-batch");
+    return true;
+  }
+
   function toggleShapeFill() {
     const mutableItems = getMutableSelectedItems(["shape"]);
     if (!mutableItems.length) {
       return false;
     }
-    const allowed = new Set(["rect", "ellipse"]);
+    const allowed = new Set(["rect", "roundRect", "ellipse", "diamond"]);
     const selectedIds = new Set(mutableItems.map((item) => item.id));
     const before = takeItemsHistorySnapshot(Array.from(selectedIds));
     let changed = false;
@@ -28403,7 +28459,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     };
     const hasActiveTable = (context) => context.editingType === "table" || hasSingleType("table", { mutable: true })(context);
     const hasActiveRichText = (context) => ["text", "flow-node", "mind-node", "table"].includes(context.editingType);
-    const hasSelectedMindNode = (context) => context.selectedCount === 1 && context.selectedItems[0]?.type === "mindNode" && !context.selectedItems[0]?.locked;
+    const hasSelectedMindNode = (context) => context.tool === "select" && !context.editingId && context.selectedCount === 1 && context.selectedItems[0]?.type === "mindNode" && !context.selectedItems[0]?.locked;
     const hasEditableSelection = (context) => {
       if (context.tool !== "select" || context.editingId || context.selectedCount !== 1 || context.mutableSelectedCount !== 1) {
         return false;
@@ -28502,12 +28558,13 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "selection.nudge-down", label: "向下微移", category: "arrange", shortcuts: ["ArrowDown", "Shift+ArrowDown"], when: hasMutableSelection }, (context) => nudgeSelection(0, getNudgeStep(context)));
     register({ id: "selection.nudge-left", label: "向左微移", category: "arrange", shortcuts: ["ArrowLeft", "Shift+ArrowLeft"], when: hasMutableSelection }, (context) => nudgeSelection(-getNudgeStep(context), 0));
     register({ id: "selection.nudge-right", label: "向右微移", category: "arrange", shortcuts: ["ArrowRight", "Shift+ArrowRight"], when: hasMutableSelection }, (context) => nudgeSelection(getNudgeStep(context), 0));
-    register({ id: "element.edit", label: "编辑", category: "element", shortcuts: ["Enter"], when: hasEditableSelection }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
+    register({ id: "element.edit", label: "编辑", category: "element", shortcuts: ["Enter", "F2"], when: context => hasEditableSelection(context) && (context.keyboardEvent?.key === "F2" || context.selectedItems[0]?.type !== "mindNode" || !context.keyboardEvent) }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
     register({ id: "text.convert-code", label: "转为代码块", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("codeBlock"));
     register({ id: "text.convert-table", label: "转为表格", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("table"));
     register({ id: "shape.reverse", label: "反向箭头", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => reverseArrowSelection());
     register({ id: "shape.toggle-dash", label: "切换虚线", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleLineDash());
     register({ id: "shape.toggle-fill", label: "切换填充", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => toggleShapeFill());
+    register({ id: "shape.set-style", label: "设置图形样式", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, (_context, patch) => setSelectedShapeStyle(patch));
     register({ id: "image.crop", label: "裁剪", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, () => startSelectedImageCrop());
     register({ id: "image.rotate", label: "旋转", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, (_context, delta) => rotateSelectedImage(delta));
     register({ id: "image.flip", label: "翻转", category: "image", elementTypes: ["image"], when: hasSingleType("image", { mutable: true }) }, (_context, axis) => flipSelectedImage(axis));
@@ -28543,7 +28600,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "text.inline-math", label: "插入行内公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-inline"));
     register({ id: "text.block-math", label: "插入独立公式", category: "text", elementTypes: ["text"], when: hasActiveRichText }, () => applyRichTextCommand("insert-math-block"));
     register({ id: "mind.child", label: "添加子节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Tab"], when: hasSelectedMindNode }, (context, nodeId) => createMindChildNode(nodeId || context.selectedItems[0]?.id));
-    register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Shift+Enter"], when: hasSelectedMindNode }, (context, nodeId) => createMindSiblingNode(nodeId || context.selectedItems[0]?.id));
+    register({ id: "mind.sibling", label: "添加同级节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Enter", "Shift+Enter"], when: hasSelectedMindNode }, (context, nodeId) => { const node = getMindNodeById(nodeId || context.selectedItems[0]?.id); return node?.parentId ? createMindSiblingNode(node.id) : createMindChildNode(node?.id); });
     register({ id: "mind.promote", label: "提升节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Shift+Tab"], when: hasSelectedMindNode }, (context, nodeId) => promoteMindNode(nodeId || context.selectedItems[0]?.id));
     register({ id: "mind.demote", label: "降低节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Ctrl+Tab"], when: hasSelectedMindNode }, (context, nodeId) => demoteMindNode(nodeId || context.selectedItems[0]?.id));
     register({ id: "mind.collapse", label: "折叠/展开节点", category: "mind", elementTypes: ["mindNode"], shortcuts: ["Space"], when: hasSelectedMindNode }, (context, nodeId) => toggleMindNodeCollapsed(nodeId || context.selectedItems[0]?.id));
@@ -28565,6 +28622,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       return boardStateReadyPromise;
     },
     setTool,
+    setSelectedShapeStyle,
     setMode,
     setStatus,
     refreshTheme() {

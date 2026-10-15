@@ -12,7 +12,7 @@ import {
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
-import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info, X, Square, RectangleHorizontal, Circle, Diamond, MoveUpRight, Minus, Highlighter } from "lucide-react";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import {
   buildCanvasSearchIndex,
@@ -27,11 +27,13 @@ import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../../tuto
 import { TUTORIAL_EVENT_TYPES } from "../../../tutorial-core/tutorialTypes.js";
 
 const DRAW_TOOLS = [
-  { key: "rect", icon: "▢", label: "矩形", shortcut: "R" },
-  { key: "ellipse", icon: "◯", label: "椭圆", shortcut: "E" },
-  { key: "arrow", icon: "→", label: "箭头", shortcut: "A" },
-  { key: "line", icon: "—", label: "直线", shortcut: "L" },
-  { key: "highlight", icon: "▭", label: "高亮", shortcut: "M" },
+  { key: "rect", Icon: Square, label: "矩形", shortcut: "R", group: "形状" },
+  { key: "roundRect", Icon: RectangleHorizontal, label: "圆角矩形", shortcut: "Q", group: "形状" },
+  { key: "ellipse", Icon: Circle, label: "椭圆", shortcut: "E", group: "形状" },
+  { key: "diamond", Icon: Diamond, label: "菱形", shortcut: "D", group: "形状" },
+  { key: "arrow", Icon: MoveUpRight, label: "箭头", shortcut: "A", group: "线条" },
+  { key: "line", Icon: Minus, label: "直线", shortcut: "L", group: "线条" },
+  { key: "highlight", Icon: Highlighter, label: "高亮", shortcut: "M", group: "标注" },
 ];
 
 const INSERT_TOOLS = [
@@ -1395,6 +1397,29 @@ function Canvas2DControls({ engine }) {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const activeDrawTool = DRAW_TOOLS.find((tool) => tool.key === activeTool) || DRAW_TOOLS[0];
   const drawActive = DRAW_TOOLS.some((tool) => tool.key === activeTool);
+  const selectedShapeItems = useMemo(() => {
+    const selectedIds = snapshot?.board?.selectedIds || [];
+    if (!selectedIds.length) return [];
+    const ids = new Set(selectedIds);
+    const selected = (snapshot?.board?.items || []).filter((item) => ids.has(item.id));
+    return selected.length && selected.every((item) => item.type === "shape" && !item.locked) ? selected : [];
+  }, [snapshot?.board?.items, snapshot?.board?.selectedIds]);
+  const shapeStylePosition = useMemo(() => {
+    if (!selectedShapeItems.length) return null;
+    const canvas = document.querySelector("#canvas-office-canvas");
+    const rect = canvas?.getBoundingClientRect?.();
+    if (!rect) return null;
+    const bounds = selectedShapeItems.map((item) => getElementBounds(item));
+    const left = Math.min(...bounds.map((entry) => entry.left));
+    const right = Math.max(...bounds.map((entry) => entry.right));
+    const top = Math.min(...bounds.map((entry) => entry.top));
+    const view = snapshot?.board?.view || {};
+    const scale = Number(view.scale || 1);
+    return {
+      left: Math.max(180, Math.min(window.innerWidth - 180, rect.left + (left + right) / 2 * scale + Number(view.offsetX || 0))),
+      top: Math.max(54, Math.min(window.innerHeight - 54, rect.top + top * scale + Number(view.offsetY || 0) - 14)),
+    };
+  }, [selectedShapeItems, snapshot?.board?.view]);
   const boardFileName = snapshot?.boardFileName || "未命名画布";
   const boardDisplayName = boardFileName.toLowerCase().endsWith(".json")
     ? boardFileName.slice(0, -5)
@@ -2005,7 +2030,7 @@ function Canvas2DControls({ engine }) {
               title="画图工具"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <DrawIcon />
+                {drawActive ? <activeDrawTool.Icon size={18} strokeWidth={1.8} /> : <DrawIcon />}
               </span>
               <span className="canvas2d-engine-tool-shortcut">{activeDrawTool.shortcut}</span>
             </button>
@@ -2015,21 +2040,25 @@ function Canvas2DControls({ engine }) {
               boundaryRef={rootRef}
               panelRef={drawMenuPanelRef}
             >
-                {DRAW_TOOLS.map((tool) => (
-                  <button
-                    key={tool.key}
-                    type="button"
-                    className={`canvas2d-engine-menu-item${activeTool === tool.key ? " is-active" : ""}`}
-                    onClick={() => {
-                      bridge.setTool(tool.key);
-                      setDrawMenuOpen(false);
-                    }}
-                    role="menuitem"
-                  >
-                    <span className="canvas2d-engine-menu-icon" aria-hidden="true">{tool.icon}</span>
-                    <span>{tool.label}</span>
-                    <kbd>{tool.shortcut}</kbd>
-                  </button>
+                {DRAW_TOOLS.map((tool, index) => (
+                  <React.Fragment key={tool.key}>
+                    {(index === 0 || DRAW_TOOLS[index - 1].group !== tool.group) ? (
+                      <div className="canvas2d-engine-menu-section-label">{tool.group}</div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`canvas2d-engine-menu-item${activeTool === tool.key ? " is-active" : ""}`}
+                      onClick={() => {
+                        bridge.setTool(tool.key);
+                        setDrawMenuOpen(false);
+                      }}
+                      role="menuitem"
+                    >
+                      <span className="canvas2d-engine-menu-icon" aria-hidden="true"><tool.Icon size={16} strokeWidth={1.8} /></span>
+                      <span>{tool.label}</span>
+                      <kbd>{tool.shortcut}</kbd>
+                    </button>
+                  </React.Fragment>
                 ))}
             </FloatingToolbarMenu>
           </div>
@@ -2769,6 +2798,78 @@ function Canvas2DControls({ engine }) {
       </div>
       </div>
       </div>
+
+      {activeTool === "select" && !captureModeActive && shapeStylePosition ? createPortal(
+        <div
+          className="canvas2d-shape-style-popover"
+          role="toolbar"
+          aria-label="图形样式"
+          data-canvas-ui-focus-scope="shape-style"
+          style={{ left: shapeStylePosition.left, top: shapeStylePosition.top }}
+        >
+          <div className="canvas2d-shape-style-group" aria-label="边框颜色">
+            {[["#334155", "深灰"], ["#dc2626", "红色"], ["#2563eb", "蓝色"], ["#16835d", "绿色"], ["#7c3aed", "紫色"]].map(([color, label]) => (
+              <button
+                key={color}
+                type="button"
+                className={`canvas2d-shape-color-swatch${selectedShapeItems.every(item => item.strokeColor === color) ? " is-active" : ""}`}
+                style={{ "--shape-swatch-color": color }}
+                onClick={() => bridge.setSelectedShapeStyle({ strokeColor: color })}
+                aria-label={`边框颜色：${label}`}
+                aria-pressed={selectedShapeItems.every(item => item.strokeColor === color)}
+                title={`边框：${label}`}
+              />
+            ))}
+          </div>
+          <span className="canvas2d-shape-style-divider" aria-hidden="true" />
+          {!selectedShapeItems.every((item) => ["line", "arrow"].includes(item.shapeType)) ? <div className="canvas2d-shape-style-group" aria-label="填充">
+            {[["transparent", "无填充"], ["#dbeafe", "浅蓝"], ["#dcfce7", "浅绿"], ["#fef3c7", "浅黄"]].map(([color, label]) => (
+              <button
+                key={color}
+                type="button"
+                className={`canvas2d-shape-fill-swatch${selectedShapeItems.every(item => item.fillColor === color) ? " is-active" : ""}${color === "transparent" ? " is-clear" : ""}`}
+                style={color === "transparent" ? undefined : { "--shape-swatch-color": color }}
+                onClick={() => bridge.setSelectedShapeStyle({ fillColor: color })}
+                aria-label={`填充：${label}`}
+                aria-pressed={selectedShapeItems.every(item => item.fillColor === color)}
+                title={`填充：${label}`}
+              >
+                {color === "transparent" ? "∅" : null}
+              </button>
+            ))}
+          </div> : null}
+          {!selectedShapeItems.every((item) => ["line", "arrow"].includes(item.shapeType)) ? <span className="canvas2d-shape-style-divider" aria-hidden="true" /> : null}
+          <div className="canvas2d-shape-style-group" aria-label="线宽">
+            {[1, 2, 4].map((width) => (
+              <button
+                key={width}
+                type="button"
+                className={`canvas2d-shape-width-option${selectedShapeItems.every(item => Number(item.strokeWidth || 2) === width) ? " is-active" : ""}`}
+                onClick={() => bridge.setSelectedShapeStyle({ strokeWidth: width })}
+                aria-label={`线宽 ${width}`}
+                aria-pressed={selectedShapeItems.every(item => Number(item.strokeWidth || 2) === width)}
+                title={`线宽 ${width}`}
+              >
+                <span style={{ height: `${width}px` }} />
+              </button>
+            ))}
+          </div>
+          {selectedShapeItems.every((item) => ["line", "arrow"].includes(item.shapeType)) ? (
+            <>
+              <span className="canvas2d-shape-style-divider" aria-hidden="true" />
+              <button
+                type="button"
+                className={`canvas2d-shape-dash-toggle${selectedShapeItems.every((item) => item.lineDash) ? " is-active" : ""}`}
+                onClick={() => bridge.setSelectedShapeStyle({ lineDash: !selectedShapeItems.every((item) => item.lineDash) })}
+                aria-label="切换虚线"
+                aria-pressed={selectedShapeItems.every((item) => item.lineDash)}
+                title="切换实线或虚线"
+              ><span aria-hidden="true" /></button>
+            </>
+          ) : null}
+        </div>,
+        document.body
+      ) : null}
 
       {searchHighlightStyle && bridge.getSceneFeedbackPortalHost() ? createPortal(
         <div className="canvas2d-engine-search-highlight" style={searchHighlightStyle} />, bridge.getSceneFeedbackPortalHost()

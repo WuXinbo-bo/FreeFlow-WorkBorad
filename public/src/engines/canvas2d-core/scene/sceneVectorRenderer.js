@@ -58,7 +58,7 @@ function createShapeNode() {
 function syncShapeNode(node, item) {
   const shapeType = String(item.shapeType || "rect");
   if (node.dataset.shapeType !== shapeType) {
-    const body = createSvgElement(shapeType === "ellipse" ? "ellipse" : shapeType === "line" || shapeType === "arrow" ? "line" : "rect");
+    const body = createSvgElement(shapeType === "ellipse" ? "ellipse" : shapeType === "line" || shapeType === "arrow" ? "line" : shapeType === "diamond" ? "polygon" : "rect");
     body.classList.add("canvas2d-scene-shape-body");
     node.replaceChildren(body);
     if (shapeType === "arrow") {
@@ -80,7 +80,7 @@ function syncShapeNode(node, item) {
   setAttribute(body, "stroke-width", Math.max(0.75, Number(item.strokeWidth || 2)));
   setAttribute(body, "stroke-linecap", "round");
   setAttribute(body, "stroke-linejoin", "round");
-  setOptionalAttribute(body, "stroke-dasharray", shapeType === "line" && item.lineDash ? "8 6" : "");
+  setOptionalAttribute(body, "stroke-dasharray", (shapeType === "line" || shapeType === "arrow") && item.lineDash ? "8 6" : "");
   setAttribute(body, "fill-opacity", shapeType === "highlight" ? 0.95 : 1);
   setAttribute(body, "stroke-opacity", shapeType === "highlight" ? 0.42 : 1);
   if (shapeType === "ellipse") {
@@ -100,6 +100,17 @@ function syncShapeNode(node, item) {
       setAttribute(arrow, "points", getArrowPoints(start, end));
       setAttribute(arrow, "fill", stroke);
     }
+  } else if (shapeType === "diamond") {
+    const left = Number(item.x || 0);
+    const top = Number(item.y || 0);
+    const width = Math.max(1, Number(item.width || 1));
+    const height = Math.max(1, Number(item.height || 1));
+    setAttribute(body, "points", [
+      [left + width / 2, top],
+      [left + width, top + height / 2],
+      [left + width / 2, top + height],
+      [left, top + height / 2],
+    ].map((point) => point.join(",")).join(" "));
   } else {
     setAttribute(body, "x", Number(item.x || 0));
     setAttribute(body, "y", Number(item.y || 0));
@@ -460,16 +471,18 @@ function syncMindNodeNode(node, item, selectedIds, view) {
   }
   const bounds = getElementBounds(item);
   const style = getMindNodeStyle(item);
+  const selected = selectedIds.has(String(item.id || ""));
+  node.dataset.mindDepth = String(Math.max(0, Number(item.depth) || 0));
+  node.dataset.selected = selected ? "true" : "false";
   setAttribute(body, "x", bounds.left);
   setAttribute(body, "y", bounds.top);
   setAttribute(body, "width", bounds.width);
   setAttribute(body, "height", bounds.height);
   setAttribute(body, "rx", style.radius);
   setAttribute(body, "fill", style.fill);
-  setAttribute(body, "stroke", style.stroke);
-  setAttribute(body, "stroke-width", style.strokeWidth);
+  setAttribute(body, "stroke", selected ? "#367eaa" : style.stroke);
+  setAttribute(body, "stroke-width", selected ? Math.max(style.strokeWidth, 2 / Math.max(0.1, Number(view?.scale || 1))) : style.strokeWidth);
   setOptionalAttribute(body, "stroke-dasharray", style.dash.join(" "));
-  const selected = selectedIds.has(String(item.id || ""));
   syncMindNodeLink(link, item, bounds, selected);
   syncMindCollapsedBadge(collapsed, item);
   return true;
