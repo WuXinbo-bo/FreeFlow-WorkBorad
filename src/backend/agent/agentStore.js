@@ -45,6 +45,7 @@ class AgentStore {
     const integrity = String(this.db.prepare("PRAGMA quick_check").get()?.quick_check || "");
     if (integrity !== "ok") throw new Error(`Agent 数据库完整性检查失败：${integrity || "unknown"}`);
     const currentVersion = Number(this.db.prepare("PRAGMA user_version").get()?.user_version || 0);
+    if (currentVersion > AGENT_STORE_SCHEMA_VERSION) { this.close(); throw new Error("AI 会话数据库来自更新版本，请升级扩展后再打开"); }
     const hasExistingSchema = Boolean(this.db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'agent_sessions'").get());
     if (hasExistingSchema && currentVersion < AGENT_STORE_SCHEMA_VERSION) this.createBackup(`schema-v${currentVersion}-to-v${AGENT_STORE_SCHEMA_VERSION}`);
     this.db.exec(`

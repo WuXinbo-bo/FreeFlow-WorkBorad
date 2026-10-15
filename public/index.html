@@ -178,7 +178,8 @@
     <link rel="stylesheet" href="./ui.canvas-chrome.css" />
     <link rel="stylesheet" href="./ui.delivery.css" />
     <link rel="stylesheet" href="./ui.settings-center.css" />
-    <link rel="stylesheet" href="./ui.agent-assistant.css" />
+    <link rel="stylesheet" href="./ui.workbench.css" />
+    <!-- assistant:styles -->
     <link rel="stylesheet" href="./ui.workspace.css" />
     <link rel="stylesheet" href="./ui.file-workstation.css" />
   </head>
@@ -519,7 +520,7 @@
 
         <div id="right-pane-resizer" class="pane-resizer is-left-corner" role="separator" aria-label="调整对话工作区尺寸"></div>
 
-        <section class="conversation-panel glass-panel chat-sidebar ui-workspace-surface ui-chrome-workspace">
+        <section class="conversation-panel screen-view-active glass-panel chat-sidebar ui-workspace-surface ui-chrome-workspace">
           <div class="workspace-drag-band canvas-chrome-edge-rail is-top" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-right" data-stage-panel-frame="right" aria-hidden="true"></div>
           <div class="workspace-drag-band canvas-chrome-edge-rail is-bottom" data-stage-panel-frame="right" aria-hidden="true"></div>
@@ -557,13 +558,13 @@
                   <span id="right-panel-window-slider" class="right-panel-window-slider" aria-hidden="true"></span>
                   <button
                     id="right-panel-tab-assistant"
-                    class="right-panel-window-tab is-active"
+                    class="right-panel-window-tab"
                     type="button"
                     role="tab"
                     aria-selected="true"
                     aria-label="AI 助手"
                     title="AI 助手"
-                    data-right-panel-view="assistant"
+                    data-right-panel-view="assistant" hidden
                   >
                     <span class="right-panel-tab-label">AI 助手</span><span class="right-panel-tab-label-short" aria-hidden="true">助手</span>
                   </button>
@@ -711,65 +712,10 @@
                 </div>
               </div>
             </div>
-            <div class="conversation-heading">
-              <div class="conversation-title-stack">
-                <div class="agent-session-title-row">
-                  <button id="agent-history-toggle-btn" class="agent-icon-button" type="button" title="会话历史" aria-label="会话历史" aria-expanded="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
-                  </button>
-                  <div>
-                    <h2 id="conversation-title">新会话</h2>
-                    <div class="agent-session-meta">
-                      <div id="conversation-mode-pill" class="conversation-mode-pill">Codex · 正在连接</div>
-                      <span id="agent-runtime-status" class="agent-runtime-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>连接中</span></span>
-                    </div>
-                  </div>
-                </div>
-                <input
-                  id="conversation-title-input"
-                  class="panel-input conversation-title-input is-hidden"
-                  type="text"
-                  maxlength="40"
-                  placeholder="输入会话名称"
-                />
-              </div>
-            </div>
-            <div class="conversation-actions">
-              <button id="agent-rename-session-btn" class="agent-icon-button" type="button" title="重命名会话" aria-label="重命名会话">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
-              </button>
-              <button id="agent-fork-session-btn" class="agent-icon-button" type="button" title="创建会话分支" aria-label="创建会话分支">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="19" r="2" /><path d="M6 7v3c0 2 2 3 6 3s6-1 6-3V7M12 13v4" /></svg>
-              </button>
-              <details id="agent-session-more" class="agent-session-more">
-                <summary class="agent-icon-button" title="会话操作" aria-label="会话操作">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg>
-                </summary>
-                <div class="agent-session-menu ui-chrome-popover">
-                  <button type="button" data-agent-session-action="rename">重命名</button>
-                  <button type="button" data-agent-session-action="fork">创建分支</button>
-                </div>
-              </details>
-              <button id="clear-btn" class="agent-icon-button is-primary" type="button" title="新建会话" aria-label="新建会话">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-              </button>
-            </div>
+          <!-- assistant:heading -->
           </header>
 
-          <aside id="agent-history-panel" class="agent-history-panel is-hidden" aria-hidden="true">
-            <div class="agent-history-head">
-              <strong>会话</strong>
-              <button id="agent-history-close-btn" class="agent-icon-button" type="button" title="关闭会话历史" aria-label="关闭会话历史">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <label class="agent-history-search">
-              <span class="sr-only">搜索会话</span>
-              <input id="agent-history-search-input" type="search" placeholder="搜索会话" autocomplete="off" />
-            </label>
-            <div id="agent-history-list" class="agent-history-list"></div>
-          </aside>
-
+          <!-- assistant:history -->
           <section id="screen-source-panel" class="screen-source-panel is-hidden" aria-label="AI 镜像窗口">
             <div class="screen-source-stage">
               <div id="screen-source-shell-wrap" class="screen-source-shell-wrap">
@@ -799,67 +745,7 @@
             </div>
           </section>
 
-          <div id="thread-viewport" class="thread-viewport">
-            <div id="chat-log" class="chat-log"></div>
-            <button id="agent-scroll-bottom" class="agent-scroll-bottom is-hidden" type="button" title="回到底部" aria-label="回到底部">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              <span>回到底部</span>
-            </button>
-          </div>
-
-          <section id="agent-queue-tray" class="agent-queue-tray is-hidden" aria-label="待发送消息" aria-live="polite"></section>
-
-          <form id="chat-form" class="composer glass-inset ui-chrome-composer">
-            <div class="composer-top">
-              <div class="composer-input-shell">
-                <div id="composer-attachments" class="composer-attachments is-hidden" aria-label="当前附件"></div>
-                <textarea
-                  id="prompt-input"
-                  rows="1"
-                  maxlength="12000"
-                  placeholder="给 FreeFlow 发送消息..."
-                ></textarea>
-              </div>
-            </div>
-
-              <div class="composer-bar">
-                <div class="agent-composer-tools">
-                  <button id="agent-attach-btn" class="agent-icon-button" type="button" title="添加附件" aria-label="添加附件">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7L9.5 18a2 2 0 0 1-2.8-2.8L16 6" /></svg>
-                  </button>
-                  <input id="agent-file-input" type="file" multiple hidden />
-                  <select id="agent-submit-mode" class="agent-submit-mode is-hidden" aria-label="运行中消息处理方式">
-                    <option value="queue">排队发送</option>
-                    <option value="steer">即时引导</option>
-                  </select>
-                  <span id="agent-composer-status" class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
-                </div>
-                <div class="composer-actions">
-                  <button
-                    id="composer-thinking-btn"
-                    class="ghost-btn composer-thinking-btn is-hidden"
-                    type="button"
-                    aria-pressed="false"
-                    aria-label="切换 Thinking"
-                    title="切换 Thinking"
-                  >
-                    <span class="composer-thinking-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24">
-                        <path d="M9 18h6" />
-                        <path d="M10 21h4" />
-                        <path d="M8.5 14.5c-1.55-1.17-2.5-3.02-2.5-5.1A6 6 0 0 1 12 3.4a6 6 0 0 1 6 6c0 2.08-.95 3.93-2.5 5.1-.56.42-.86 1.02-.86 1.66V17h-5.28v-.84c0-.64-.3-1.24-.86-1.66Z" />
-                      </svg>
-                    </span>
-                  </button>
-                  <button id="stop-btn" class="agent-icon-button is-stop" type="button" disabled title="停止" aria-label="停止">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1" /></svg>
-                  </button>
-                  <button id="send-btn" class="agent-icon-button is-primary" type="submit" title="发送" aria-label="发送">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 17 8-17 8 4-8Z" /><path d="M8 12h13" /></svg>
-                  </button>
-                </div>
-              </div>
-            </form>
+          <!-- assistant:composer -->
           </div>
           </div>
         </section>

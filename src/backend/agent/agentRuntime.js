@@ -122,6 +122,11 @@ class AgentRuntime extends EventEmitter {
 
   async initialize() {
     if (this.initialized) return;
+    if (!this.initializePromise) this.initializePromise = this._initialize().catch((error) => { this.store.close(); throw error; }).finally(() => { this.initializePromise = null; });
+    return this.initializePromise;
+  }
+
+  async _initialize() {
     this.store.open();
     this.store.recoverOrphanedState();
     await Promise.all([
@@ -323,6 +328,7 @@ class AgentRuntime extends EventEmitter {
   }
 
   async shutdown() {
+    if (this.initializePromise) await this.initializePromise.catch(() => {});
     if (this.initialized) {
       this.store.recoverOrphanedState("FreeFlow closed before this task completed").forEach((event) => this._publish(event));
     }

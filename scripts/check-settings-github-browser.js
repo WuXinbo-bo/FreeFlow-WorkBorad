@@ -157,10 +157,11 @@ async function main() {
       await window.__settingsController.open();
     });
 
-    for (const [section, heading] of [["general", "应用更新"], ["permissions", "权限与目录"], ["diagnostics", "AI 诊断与备份"]]) {
+    for (const [section, heading] of [["general", "应用更新"], ["permissions", "画布扩展"], ["diagnostics", "画布扩展"]]) {
       await page.evaluate(section => window.__settingsController.openSection(section), section);
       assert(await page.locator(`h4:has-text("${heading}")`).count() === 1, "legacy section alias failed", section);
     }
+    assert(await page.locator('[data-settings-section="ai"]').count() === 0, "disabled assistant exposed AI settings");
     await page.locator('[data-settings-section="updates"]').click();
     await page.locator('[data-settings-action="check-update"]').click();
     await page.waitForFunction(() => document.querySelector('.settings-center-save-state')?.textContent.includes('当前已是最新版本 2.0.2'));
