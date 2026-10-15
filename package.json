@@ -64,6 +64,7 @@
     "test:canvas-command-integration": "node scripts/check-canvas-command-integration.js",
     "test:canvas-desktop-ui": "node scripts/check-canvas-desktop-ui-contract.js",
     "test:canvas-advanced-elements": "node scripts/check-canvas-advanced-element-interactions.js",
+    "test:canvas-shapes-mind-polish": "node scripts/check-canvas-shapes-mind-polish.js",
     "test:file-workstation": "node scripts/check-file-workstation.js",
     "test:image-thumbnails": "node scripts/check-image-thumbnails.js",
     "test:file-ui-desktop": "node scripts/check-file-ui-desktop.js",

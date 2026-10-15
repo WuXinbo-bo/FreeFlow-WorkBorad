@@ -187,6 +187,9 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
       const frame = await restore.boundingBox();
       const viewportHeight = await page.evaluate(() => window.innerHeight);
       assert(Math.abs(frame.y + frame.height / 2 - viewportHeight / 2) <= 2, `${side} restore control did not stay vertically centered`);
+      assert(Math.abs(frame.width - 26) <= 1 && Math.abs(frame.height - 72) <= 1, `${side} restore control is not the slim edge handle: ${JSON.stringify(frame)}`);
+      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      assert(side === "left" ? frame.x <= 1 : Math.abs(frame.x + frame.width - viewportWidth) <= 1, `${side} restore control is not aligned to the viewport edge: ${JSON.stringify(frame)}`);
     }
     await capture("both-panels-collapsed");
     for (const side of ["left", "right"]) {

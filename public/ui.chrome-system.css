@@ -1017,13 +1017,13 @@ body.desktop-mode .composer.ui-chrome-composer {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  width: 36px !important;
-  min-width: 36px !important;
-  max-width: 36px;
-  height: 36px !important;
+  width: 26px !important;
+  min-width: 26px !important;
+  max-width: 26px;
+  height: 72px !important;
   box-sizing: border-box;
   flex: 0 0 auto;
-  min-height: 36px !important;
+  min-height: 72px !important;
   padding: 0 !important;
   color: var(--chrome-ink-muted) !important;
   writing-mode: horizontal-tb !important;
@@ -1042,21 +1042,28 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn:not(.pane-restore-btn-right),
 #restore-right-pane-btn:not(.pane-restore-btn-right) {
-  left: 8px !important;
+  left: 0 !important;
   right: auto !important;
-  border-radius: 6px !important;
+  border-radius: 0 9px 9px 0 !important;
 }
 
 #restore-left-pane-btn.pane-restore-btn-right,
 #restore-right-pane-btn.pane-restore-btn-right {
   left: auto !important;
-  right: 8px !important;
-  border-radius: 6px !important;
+  right: 0 !important;
+  border-radius: 9px 0 0 9px !important;
 }
 
 .pane-restore-btn:hover,
 .pane-restore-btn:focus-visible {
   color: var(--chrome-ink) !important;
+  background-color: rgba(255, 255, 255, 0.97) !important;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.13) !important;
+}
+
+.pane-restore-btn:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.9) !important;
+  outline-offset: 2px;
 }
 
 .ui-recovery-control {
@@ -1077,19 +1084,19 @@ body.desktop-mode .composer.ui-chrome-composer {
 
 #restore-left-pane-btn.ui-icon-only,
 #restore-right-pane-btn.ui-icon-only {
-  width: 36px !important;
-  min-width: 36px !important;
-  height: 36px !important;
-  min-height: 36px !important;
+  width: 26px !important;
+  min-width: 26px !important;
+  height: 72px !important;
+  min-height: 72px !important;
 }
 
 #restore-left-pane-btn .ui-control-icon,
 #restore-right-pane-btn .ui-control-icon,
 #restore-left-pane-btn .ui-control-icon svg,
 #restore-right-pane-btn .ui-control-icon svg {
-  width: 12px;
-  height: 18px;
-  flex-basis: 12px;
+  width: 13px;
+  height: 24px;
+  flex-basis: 13px;
 }
 
 body.desktop-full-pass-through .canvas-chrome-surface {

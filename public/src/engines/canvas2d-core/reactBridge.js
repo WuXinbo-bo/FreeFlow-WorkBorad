@@ -6,6 +6,11 @@ export function createCanvas2DReactBridge(engine) {
     setTool(tool) {
       return typeof engine?.runCommand === "function" ? engine.runCommand("tool.set", tool) : engine?.setTool?.(tool);
     },
+    setSelectedShapeStyle(patch) {
+      return typeof engine?.runCommand === "function"
+        ? engine.runCommand("shape.set-style", patch)
+        : engine?.setSelectedShapeStyle?.(patch);
+    },
     undo() {
       return typeof engine?.runCommand === "function" ? engine.runCommand("canvas.undo") : engine?.undo?.();
     },

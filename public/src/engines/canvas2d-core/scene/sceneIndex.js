@@ -279,6 +279,14 @@ function buildAnchors(bounds = {}) {
 function buildGenericRecord(item, itemIndex) {
   const bounds = toSizedBounds(getElementBounds(item));
   let queryBounds = bounds;
+  if (item.type === "shape" && item.shapeType === "diamond" && Number(item.rotation)) {
+    const radians = Number(item.rotation) * Math.PI / 180;
+    const width = bounds.width * Math.abs(Math.cos(radians)) + bounds.height * Math.abs(Math.sin(radians));
+    const height = bounds.width * Math.abs(Math.sin(radians)) + bounds.height * Math.abs(Math.cos(radians));
+    const left = bounds.left + (bounds.width - width) / 2;
+    const top = bounds.top + (bounds.height - height) / 2;
+    queryBounds = { left, top, right: left + width, bottom: top + height, width, height };
+  }
   let memoBounds = null;
   const hitTestPolicy = getElementDefinition(item)?.capabilities?.hitTest || "bounds";
   if (hitTestPolicy === "bounds-file-memo" && item.memoVisible) {
