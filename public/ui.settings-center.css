@@ -2414,3 +2414,49 @@
     min-width: 0 !important;
   }
 }
+
+.settings-extension-card { display: grid; gap: 14px; }
+.settings-extension-card .settings-extension-note { margin: 0; color: var(--ui-text-secondary, #526074); line-height: 1.7; }
+.settings-extension-card > small { color: var(--ui-text-secondary, #526074); line-height: 1.65; }
+.assistant-extension-disabled #right-panel-tab-assistant,
+.assistant-extension-disabled #right-panel-window-slider,
+.assistant-extension-disabled #right-panel-switch-lock-btn { display: none !important; }
+.assistant-extension-disabled #right-panel-window-strip { background: transparent; box-shadow: none; pointer-events: none; }
+.assistant-extension-disabled #right-panel-tab-screen { background: transparent; box-shadow: none; }
+
+[data-right-panel-view="assistant"][hidden] { display: none !important; }
+
+.settings-center-agent-state,
+.settings-center-agent-account {
+  padding: 5px 8px;
+  border: 1px solid var(--settings-border, rgb(var(--app-pattern-rgb) / 0.22));
+  border-radius: 5px;
+  color: var(--settings-muted, rgb(var(--theme-panel-text-rgb) / 0.64));
+  background: var(--settings-control-strong, rgb(var(--theme-control-surface-rgb) / 0.7));
+  font-size: 0.71rem;
+  font-weight: 740;
+}
+
+.settings-center-agent-state.is-ready,
+.settings-center-agent-account.is-ready {
+  color: #126d67;
+}
+
+.settings-center-agent-state.is-error,
+.settings-center-runtime-error {
+  color: #9e403d;
+}
+
+.settings-center-runtime-error {
+  padding: 9px 10px;
+  border: 1px solid rgb(176 68 68 / 0.2);
+  border-radius: 6px;
+  background: rgb(176 68 68 / 0.07);
+  font-size: 0.73rem;
+}
+
+.settings-center-login-link {
+  color: #126d67;
+  font-size: 0.77rem;
+  font-weight: 700;
+}

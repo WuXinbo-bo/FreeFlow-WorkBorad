@@ -18,10 +18,9 @@ import { mountSettingsCenter } from "../components/settings/settingsCenter.js";
 import { normalizeThemeSettings } from "../theme/themeSettings.js";
 import { applyThemeCssVariables } from "../theme/themeCssVariables.js";
 import { API_ROUTES, readJsonResponse } from "../api/http.js";
-import { createAgentClient } from "../api/agentClient.js";
+import { assistantEnabled, loadAssistantModule, optionalAgentClient, watchAssistantMigration } from "./assistantExtensionBridge.js";
 import { listAiMirrorTargets, prepareAiMirrorTarget, stopAiMirrorTarget } from "./aiMirrorClient.js";
 import { createConversationAssistantChrome } from "./conversationAssistant/chrome.js";
-import { createAgentController } from "./conversationAssistant/agentController.js";
 import { getConversationAssistantElements } from "./conversationAssistant/dom.js";
 import { dispatchTutorialUiEvent } from "../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../tutorial-core/tutorialTypes.js";
@@ -50,7 +49,13 @@ import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js
 import { createLatestAsyncCommitter } from "../utils/latestAsyncCommitter.js";
 
 const state = createInitialState();
-const agentClient = createAgentClient();
+const agentClient = optionalAgentClient;
+function persistAssistantDraft() {
+  if (!assistantEnabled) return;
+  const input = document.querySelector("#prompt-input");
+  if (input) localStorage.setItem(`freeflow_agent_draft_v1:${localStorage.getItem("freeflow_agent_current_session_v1") || "unbound"}`, input.value);
+}
+window.addEventListener("beforeunload", persistAssistantDraft);
 const APP_CLIPBOARD_TTL_MS = 120000;
 const CANVAS_MODE_LEGACY = "legacy";
 const SCREEN_SOURCE_EMBED_FIT_MODES = Object.freeze(["contain", "cover", "fill"]);
@@ -1817,6 +1822,14 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onRequestClose: requestSettingsDrawerClose,
   onCheckUpdate: DESKTOP_SHELL?.checkForAppUpdate ? () => runAppUpdateCheck({ manual: true }) : null,
   agentClient,
+  assistantEnabled,
+  beforeExtensionChange: async () => {
+    if (settingsCenter.isDirty()) throw new Error("请先保存或放弃设置修改，再管理扩展");
+    const engine = getModernCanvas2DEngine();
+    if (IS_DESKTOP_APP && engine?.getSnapshot?.().boardFilePath && !(await engine.saveBoard({ silent: true, exactPath: true }))) throw new Error("当前画布保存失败，已停止扩展变更");
+    engine?.flushLocalPersistence?.();
+    persistAssistantDraft();
+  },
   runGitHubBoardFileOperation: async (task) => {
     const engine = getModernCanvas2DEngine();
     if (!engine?.withBoardFileOperation) throw new Error("当前画布尚未就绪，请稍后重试");
@@ -1839,14 +1852,24 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
     return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace() || boardPath.replace(/[\\/][^\\/]+$/, "") };
   },
 });
-agentController = createAgentController({
-  client: agentClient,
-  desktopShell: DESKTOP_SHELL,
-  setStatus,
-  setRichContent: setRichMessageContent,
-  onOpenSettings: openSettingsCenterSection,
-  onRuntime: syncAgentRuntimeOverview,
-});
+let assistantActivation = null;
+async function activateAssistant() {
+  if (!assistantEnabled) return;
+  if (assistantActivation) return assistantActivation;
+  assistantActivation = (async () => {
+    const { createAgentController } = await loadAssistantModule();
+    agentController ||= createAgentController({
+      client: agentClient,
+      desktopShell: DESKTOP_SHELL,
+      setStatus,
+      setRichContent: setRichMessageContent,
+      onOpenSettings: openSettingsCenterSection,
+      onRuntime: syncAgentRuntimeOverview,
+    });
+    await agentController.initialize();
+  })().catch((error) => { assistantActivation = null; setStatus(`AI 助手加载失败：${error.message}`, "warning"); });
+  return assistantActivation;
+}
 window.addEventListener("canvas2d-engine-ready", applyCanvasPreferencesToRuntime);
 window.addEventListener("canvas-preferences-changed", handleCanvasPreferencesChanged);
 const hasLegacyCanvasShell =
@@ -2086,7 +2109,7 @@ function getCanvasTitle() {
 }
 
 function normalizeRightPanelView(value) {
-  return String(value || "").trim() === "screen" ? "screen" : "assistant";
+  return !assistantEnabled || String(value || "").trim() === "screen" ? "screen" : "assistant";
 }
 
 function getModelSourceLabel(modelName) {
@@ -3438,6 +3461,7 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
 }
 
 function renderRightPanelView() {
+  document.body.classList.toggle("assistant-extension-disabled", !assistantEnabled);
   const activeView = normalizeRightPanelView(state.activeRightPanelView);
   state.activeRightPanelView = activeView;
   setActiveClipboardZone(activeView === "screen" ? "screen" : "assistant");
@@ -3476,6 +3500,7 @@ function renderRightPanelView() {
 
 async function setActiveRightPanelView(view, { persist = true, ensureCapture = false } = {}) {
   state.activeRightPanelView = normalizeRightPanelView(view);
+  if (state.activeRightPanelView === "assistant") await activateAssistant();
   if (persist) {
     localStorage.setItem(CONFIG.rightPanelViewKey, state.activeRightPanelView);
   }
@@ -5598,8 +5623,16 @@ async function bootstrap() {
   observeScreenSourcePreviewSize();
   observeScreenSourceToolbarSize();
   updatePromptPlaceholder();
-  await agentController.initialize();
   scheduleDesktopWindowShapeSync();
+  if (assistantEnabled && state.activeRightPanelView === "assistant") void activateAssistant();
+  void watchAssistantMigration(async () => {
+    const engine = getModernCanvas2DEngine();
+    if (engine?.getSnapshot?.().editingId || settingsCenter.isDirty()) return;
+    if (IS_DESKTOP_APP && engine?.getSnapshot?.().boardFilePath && !(await engine.saveBoard({ silent: true, exactPath: true }))) return;
+    engine?.flushLocalPersistence?.();
+    persistAssistantDraft();
+    window.location.reload();
+  });
   markBootMilestone("renderer-ready");
   try {
     DESKTOP_SHELL?.notifyRendererReady?.();
@@ -7872,14 +7905,15 @@ const removeBootstrapTimeoutListener = DESKTOP_SHELL?.onBootstrapTimeout?.((payl
 });
 window.addEventListener("beforeunload", () => removeBootstrapTimeoutListener?.(), { once: true });
 
-chatForm.addEventListener("submit", async (event) => {
+chatForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await agentController.submit();
+  await activateAssistant();
+  await agentController?.submit();
   autoresize();
 });
 
-stopBtn.addEventListener("click", () => {
-  void agentController.stop();
+stopBtn?.addEventListener("click", () => {
+  void agentController?.stop();
 });
 
 composerThinkingBtn?.addEventListener("click", async () => {
@@ -7888,8 +7922,9 @@ composerThinkingBtn?.addEventListener("click", async () => {
   await setThinkingEnabledForActiveModel(!getModelProfile(activeModel).thinkingEnabled);
 });
 
-clearBtn.addEventListener("click", async () => {
-  await agentController.newSession();
+clearBtn?.addEventListener("click", async () => {
+  await activateAssistant();
+  await agentController?.newSession();
 });
 
 clearHistoryBtn.addEventListener("click", async () => {
@@ -9073,15 +9108,17 @@ addRootBtn?.addEventListener("click", async () => {
   await savePermissions().catch(() => {});
 });
 
-promptInput.addEventListener("input", autoresize);
-promptInput.addEventListener("input", syncConversationEmptyStateVisibility);
-promptInput.addEventListener("focus", () => {
+promptInput?.addEventListener("input", autoresize);
+promptInput?.addEventListener("input", persistAssistantDraft);
+if (promptInput) promptInput.value = localStorage.getItem(`freeflow_agent_draft_v1:${localStorage.getItem("freeflow_agent_current_session_v1") || "unbound"}`) || "";
+promptInput?.addEventListener("input", syncConversationEmptyStateVisibility);
+promptInput?.addEventListener("focus", () => {
   setActiveClipboardZone("assistant");
   void syncDesktopKeyboardFocusOwner("assistant", {
     sourceId: "renderer:prompt-input",
   });
 });
-promptInput.addEventListener("paste", async (event) => {
+promptInput?.addEventListener("paste", async (event) => {
   if (event.defaultPrevented) {
     return;
   }
@@ -9097,7 +9134,7 @@ promptInput.addEventListener("paste", async (event) => {
   }
 });
 
-promptInput.addEventListener("keydown", (event) => {
+promptInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     chatForm.requestSubmit();
@@ -9860,7 +9897,7 @@ clipboardListEl?.addEventListener("click", async (event) => {
   }
 });
 
-chatLog.addEventListener("click", async (event) => {
+chatLog?.addEventListener("click", async (event) => {
   const suggestionBtn = event.target.closest("[data-suggestion]");
   if (suggestionBtn) {
     promptInput.value = suggestionBtn.dataset.suggestion || "";
@@ -10347,6 +10384,7 @@ function updateAssistantMessage(content, streamingOrOptions = false, legacyThink
 function renderCurrentSession() {
   if (agentController?.isInitialized()) return;
   const session = getCurrentSession();
+  if (!chatLog) return;
   chatLog.innerHTML = "";
   renderCurrentSessionHeader();
 
@@ -10921,7 +10959,7 @@ function renderEmptyState() {
 
 function clearEmptyState() {
   chatLog?.classList.remove("has-empty-state");
-  const emptyState = chatLog.querySelector('[data-empty-state="true"]');
+  const emptyState = chatLog?.querySelector('[data-empty-state="true"]');
   if (emptyState) {
     emptyState.remove();
   }
@@ -11836,11 +11874,12 @@ function getSessionPreview(session) {
 
 function scrollThreadToBottom() {
   requestAnimationFrame(() => {
-    threadViewport.scrollTop = threadViewport.scrollHeight;
+    if (threadViewport) threadViewport.scrollTop = threadViewport.scrollHeight;
   });
 }
 
 function autoresize() {
+  if (!promptInput) return;
   const panelHeight = Math.max(1, Number(conversationPanel?.clientHeight || window.innerHeight || 1));
   const maxInputHeight = Math.max(72, Math.min(220, Math.floor(panelHeight * 0.32)));
   promptInput.style.height = "auto";

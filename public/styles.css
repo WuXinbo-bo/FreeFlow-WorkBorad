@@ -13707,7 +13707,7 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 
 .canvas2d-shape-style-popover {
   position: fixed;
-  z-index: 3201;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;

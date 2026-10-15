@@ -118,15 +118,19 @@ function checkDesktopLauncher() {
   const signals = [];
   child.kill = (signal) => signals.push(signal);
   let spawned;
+  let extensionBuild;
+  host.execPath = "/mock/node";
   vm.runInNewContext(source, {
     __dirname, process: host, console: { error: () => {} },
     require: (id) => {
       if (id === "path") return path;
       if (id === "electron") return "/mock/electron";
-      if (id === "child_process") return { spawn: (...args) => { spawned = args; return child; } };
+      if (id === "child_process") return { spawn: (...args) => { spawned = args; return child; }, spawnSync: (...args) => { extensionBuild = args; return { status: 0 }; } };
       throw new Error(`Unexpected module: ${id}`);
     },
   });
+  assert.equal(extensionBuild[0], "/mock/node");
+  assert.equal(path.basename(extensionBuild[1][0]), "build-assistant-extension.js");
   assert.equal(spawned[0], "/mock/electron");
   assert.equal(spawned[1][1], "--test-option");
   assert.equal(spawned[2].env.ELECTRON_RUN_AS_NODE, undefined);
