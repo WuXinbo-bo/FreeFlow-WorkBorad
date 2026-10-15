@@ -35,7 +35,7 @@ export const MAIN_SHELL_TUTORIAL_CHAPTERS = Object.freeze([
       createStep(
         "main-shell-settings-sections",
         "系统设置分成多个设置板块",
-        "这里集中放置工作台与画布、主题设置、全局快捷键和画布扩展等配置。后续可以在各自模块里继续细化每一项的实际交互。",
+        "这里集中放置 AI 模型调用、工作台与画布、主题设置、全局快捷键等配置。后续可以在各自模块里继续细化每一项的实际交互。",
         { targetId: "globalSettingsDrawer", placement: "left" }
       ),
       createStep(

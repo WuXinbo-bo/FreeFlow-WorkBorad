@@ -34,7 +34,6 @@ async function checkCanvasHarmony(page, { screenshotDir } = {}) {
         width: r.width, parent: el.parentElement.id, shape: el.dataset.shapeInclude,
         inside: r.left >= boundary.left + 10 && r.right <= boundary.right - 10 && r.top >= boundary.top + 10 && r.bottom <= boundary.bottom - 10,
         clickable: points.every(([x, y]) => el.contains(document.elementFromPoint(r.x + x, r.y + y))),
-        hits: points.map(([x, y]) => document.elementFromPoint(r.x + x, r.y + y)?.className),
         fitsContent: el.scrollWidth <= el.clientWidth + 1,
       };
     });

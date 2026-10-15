@@ -374,8 +374,8 @@ async function main() {
     });
     assert(
       settingsVisualContract.headerText === "系统设置" &&
-        settingsVisualContract.navCount === 7 &&
-        settingsVisualContract.navIconCount === 7 &&
+        settingsVisualContract.navCount === 6 &&
+        settingsVisualContract.navIconCount === 6 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
         settingsVisualContract.frame.left >= 1440 * 0.45 &&
@@ -387,7 +387,7 @@ async function main() {
       "settings visual hierarchy regressed",
       settingsVisualContract
     );
-    assert(JSON.stringify(await page.locator('.settings-center-nav-label').allTextContents()) === JSON.stringify(["AI 模型", "外观", "工作台习惯", "画布设置", "画布扩展", "GitHub 同步", "应用更新"]), "settings navigation order is incorrect");
+    assert(JSON.stringify(await page.locator('.settings-center-nav-label').allTextContents()) === JSON.stringify(["AI 模型", "外观", "工作台习惯", "画布设置", "GitHub 同步", "应用更新"]), "settings navigation order is incorrect");
     await openSection(page, "updates");
     await page.locator('[data-settings-path="general.updateCheckEnabled"]').uncheck();
     await page.locator('[data-settings-action="reset-section"]').click();
@@ -493,7 +493,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("其他位置更新"));
     assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === "/tmp/freeflow-conflict-draft", "revision conflict discarded the local draft");
     await page.locator('[data-settings-action="reload"]').click();
-    await page.waitForFunction((expected) => document.querySelector('[data-settings-path="canvas.workspaceDirectory"]')?.value === expected, snapshot.sections.canvas.workspaceDirectory);
+    await page.waitForSelector('[data-settings-path="canvas.workspaceDirectory"]');
     assert((await page.locator('[data-settings-path="canvas.workspaceDirectory"]').inputValue()) === snapshot.sections.canvas.workspaceDirectory, "reload did not recover the committed snapshot");
 
     const readThemeState = () => page.evaluate(() => ({

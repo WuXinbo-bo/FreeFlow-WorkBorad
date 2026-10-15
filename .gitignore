@@ -39,5 +39,3 @@ tmp-board.json
 *.lnk
 Thumbs.db
 Desktop.ini
-
-build/extensions/

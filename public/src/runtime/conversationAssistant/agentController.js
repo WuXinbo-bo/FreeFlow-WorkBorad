@@ -99,7 +99,6 @@ export function createAgentController(options = {}) {
   const onRuntime = options.onRuntime || (() => {});
   const refs = getElements(doc);
   let initialized = false;
-  let eventController = null;
   let runtime = null;
   let sessions = [];
   let session = null;
@@ -452,13 +451,9 @@ export function createAgentController(options = {}) {
     }, 55);
   }
 
-  function persistDraft() {
-    if (refs.prompt) localStorage.setItem(`freeflow_agent_draft_v1:${session?.id || localStorage.getItem(CURRENT_SESSION_KEY) || "unbound"}`, refs.prompt.value);
-  }
   async function selectSession(sessionId, { closeHistory = true } = {}) {
     const id = String(sessionId || "").trim();
     if (!id) return;
-    persistDraft();
     const generation = ++selectionGeneration;
     unsubscribe?.();
     unsubscribe = null;
@@ -473,7 +468,6 @@ export function createAgentController(options = {}) {
       session = next;
       followThread = true;
       localStorage.setItem(CURRENT_SESSION_KEY, id);
-      if (refs.prompt) refs.prompt.value = localStorage.getItem(`freeflow_agent_draft_v1:${id}`) || "";
       if (closeHistory) setHistoryOpen(false);
       subscribeToSession(id, next.revision, generation);
       render();
@@ -514,7 +508,6 @@ export function createAgentController(options = {}) {
     try {
       const result = await client.startTurn(session.id, input);
       if (refs.prompt) refs.prompt.value = "";
-      persistDraft();
       selectedAttachmentIds = [];
       if (result.queued) setStatus("消息已加入队列", "success");
       else if (result.steered) setStatus("已更新当前任务方向", "success");
@@ -724,15 +717,12 @@ export function createAgentController(options = {}) {
   }
 
   function bindEvents() {
-    eventController?.abort();
-    eventController = new AbortController();
-    const listen = (target, type, handler, options = {}) => target?.addEventListener(type, handler, { ...options, signal: eventController.signal });
-    listen(refs.historyToggle, "click", () => setHistoryOpen(!historyOpen));
-    listen(refs.historyClose, "click", () => setHistoryOpen(false));
-    listen(refs.historySearch, "input", renderHistory);
-    listen(refs.rename, "click", renameSession);
-    listen(refs.fork, "click", forkSession);
-    listen(refs.panel, "click", (event) => {
+    refs.historyToggle?.addEventListener("click", () => setHistoryOpen(!historyOpen));
+    refs.historyClose?.addEventListener("click", () => setHistoryOpen(false));
+    refs.historySearch?.addEventListener("input", renderHistory);
+    refs.rename?.addEventListener("click", renameSession);
+    refs.fork?.addEventListener("click", forkSession);
+    refs.panel?.addEventListener("click", (event) => {
       const sessionAction = event.target.closest("[data-agent-session-action]");
       if (sessionAction) {
         refs.sessionMore?.removeAttribute("open");
@@ -740,10 +730,10 @@ export function createAgentController(options = {}) {
         if (sessionAction.dataset.agentSessionAction === "fork") void forkSession();
       }
     });
-    listen(refs.attach, "click", () => refs.fileInput?.click());
-    listen(refs.fileInput, "change", () => void addFiles(refs.fileInput.files));
-    listen(refs.submitMode, "change", renderComposer);
-    listen(refs.historyList, "click", (event) => {
+    refs.attach?.addEventListener("click", () => refs.fileInput?.click());
+    refs.fileInput?.addEventListener("change", () => void addFiles(refs.fileInput.files));
+    refs.submitMode?.addEventListener("change", renderComposer);
+    refs.historyList?.addEventListener("click", (event) => {
       const deleteTarget = event.target.closest("[data-agent-delete-session]");
       if (deleteTarget) {
         event.preventDefault();
@@ -754,28 +744,28 @@ export function createAgentController(options = {}) {
       const target = event.target.closest("[data-agent-session]");
       if (target) void selectSession(target.dataset.agentSession);
     });
-    listen(refs.attachments, "click", (event) => {
+    refs.attachments?.addEventListener("click", (event) => {
       const target = event.target.closest("[data-agent-remove-attachment]");
       if (target) void removeAttachment(target.dataset.agentRemoveAttachment);
     });
-    listen(refs.chatLog, "click", (event) => {
+    refs.chatLog?.addEventListener("click", (event) => {
       if (event.target.closest("[data-agent-open-settings]")) onOpenSettings("ai");
       const retryTarget = event.target.closest("[data-agent-retry-turn]");
       if (retryTarget) void retryTurn(retryTarget.dataset.agentRetryTurn);
       const decisionTarget = event.target.closest("[data-agent-approval-decision]");
       if (decisionTarget) void resolveApproval(decisionTarget.closest("[data-agent-approval]"), decisionTarget.dataset.agentApprovalDecision);
     });
-    listen(refs.queueTray, "click", (event) => {
+    refs.queueTray?.addEventListener("click", (event) => {
       const queueTarget = event.target.closest("[data-agent-queue-action]");
       if (queueTarget) void handleQueueAction(queueTarget.closest("[data-agent-queue]"), queueTarget.dataset.agentQueueAction);
     });
-    listen(refs.threadViewport, "scroll", updateScrollFollowing, { passive: true });
-    listen(refs.scrollBottom, "click", () => {
+    refs.threadViewport?.addEventListener("scroll", updateScrollFollowing, { passive: true });
+    refs.scrollBottom?.addEventListener("click", () => {
       followThread = true;
       if (refs.threadViewport) refs.threadViewport.scrollTop = refs.threadViewport.scrollHeight;
       updateScrollFollowing();
     });
-    listen(window, "freeflow:agent-data-restored", handleDataRestored);
+    window.addEventListener("freeflow:agent-data-restored", handleDataRestored);
   }
 
   async function initialize() {
@@ -832,9 +822,6 @@ export function createAgentController(options = {}) {
   }
 
   function destroy() {
-    persistDraft();
-    eventController?.abort();
-    eventController = null;
     ++selectionGeneration;
     unsubscribe?.();
     unsubscribe = null;
