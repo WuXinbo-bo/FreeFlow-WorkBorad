@@ -17,10 +17,6 @@ if exist "%ROOT_ELECTRON_BIN%" (
 goto missing_electron
 
 :start_desktop
-set "ELECTRON_RUN_AS_NODE=1"
-call "%ELECTRON_BIN%" "%~dp0scripts\build-assistant-extension.js"
-if errorlevel 1 goto startup_failed
-set "ELECTRON_RUN_AS_NODE="
 call "%ELECTRON_BIN%" .
 if errorlevel 1 goto startup_failed
 goto end

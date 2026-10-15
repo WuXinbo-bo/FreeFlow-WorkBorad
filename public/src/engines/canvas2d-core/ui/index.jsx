@@ -2868,7 +2868,7 @@ function Canvas2DControls({ engine }) {
             </>
           ) : null}
         </div>,
-        document.getElementById("global-overlay-layer") || document.body
+        document.body
       ) : null}
 
       {searchHighlightStyle && bridge.getSceneFeedbackPortalHost() ? createPortal(

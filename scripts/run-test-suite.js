@@ -17,9 +17,6 @@ const CHECKS = [
   "scripts/check-agent-provider-stack.js",
   "scripts/check-agent-claude-runtime.js",
   "scripts/check-agent-http.js",
-  "scripts/check-assistant-extension.js",
-  "scripts/check-assistant-extension-browser.js",
-  "scripts/check-assistant-extension-desktop.js",
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
@@ -131,7 +128,6 @@ async function stopServer(child) {
 }
 
 async function main() {
-  await runNodeScript("scripts/build-assistant-extension.js");
   for (const scriptPath of CHECKS) {
     await runNodeScript(scriptPath);
   }
@@ -146,10 +142,6 @@ async function main() {
     lastTutorialIntroVersion: version,
     dismissedTutorialIntroVersion: version,
   }));
-  const { ExtensionManager } = require("../src/backend/extensions/extensionManager");
-  const catalog = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "src/backend/extensions/assistantCatalog.json"), "utf8"));
-  const extensions = new ExtensionManager({ dataDir: testData, catalog, localPackage: path.join(ROOT_DIR, "build/extensions", catalog.filename) });
-  await extensions.initialize(); await extensions.change("install"); await extensions.change("enable");
   const server = spawn(process.execPath, ["server.js"], {
     cwd: ROOT_DIR,
     env: {

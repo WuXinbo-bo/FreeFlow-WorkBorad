@@ -5,9 +5,7 @@
   "description": "一站式打造属于你的专属办公白板",
   "main": "electron/main.js",
   "scripts": {
-    "prestart": "node scripts/build-assistant-extension.js",
     "start": "node server.js",
-    "prestart:web": "node scripts/build-assistant-extension.js",
     "start:web": "node server.js",
     "start:desktop": "node scripts/start-desktop.js",
     "build:canvas-office": "node scripts/build-canvas-office.js",
@@ -114,11 +112,7 @@
     "test:canvas-text-experience": "node scripts/check-canvas-text-experience.js",
     "test:canvas-integrity-boundaries": "node scripts/check-canvas-integrity-boundaries.js",
     "test:canvas-media-integrity": "node scripts/check-canvas-media-integrity-browser.js",
-    "test:canvas-export-integrity-desktop": "node scripts/check-canvas-export-integrity-desktop.js",
-    "build:assistant-extension": "node scripts/build-assistant-extension.js",
-    "test:assistant-extension": "node scripts/check-assistant-extension.js",
-    "test:assistant-extension-browser": "node scripts/check-assistant-extension-browser.js",
-    "test:assistant-extension-desktop": "node scripts/check-assistant-extension-desktop.js"
+    "test:canvas-export-integrity-desktop": "node scripts/check-canvas-export-integrity-desktop.js"
   },
   "keywords": [],
   "author": "Wu Xinbo",
@@ -174,14 +168,7 @@
       "!desktop-agent/**/*",
       "!tmp/**/*",
       "!docs/**/*",
-      "!build/icon.png",
-      "!src/backend/agent/**/*",
-      "!public/src/api/agentClient.js",
-      "!public/src/runtime/conversationAssistant/agentController.js",
-      "!public/src/runtime/conversationAssistant/activityPresentation.js",
-      "!public/ui.agent-assistant.css",
-      "!extensions/**/*",
-      "!build/extensions/**/*"
+      "!build/icon.png"
     ],
     "asar": true,
     "asarUnpack": [
