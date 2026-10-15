@@ -20,10 +20,11 @@ const clipboardStoreService = require("../services/clipboardStoreService");
 const sessionService = require("../services/sessionService");
 const canvasBoardService = require("../services/canvasBoardService");
 const { createSettingsCenterService } = require("../services/settingsCenterService");
-const { ExtensionManager } = require("../extensions/extensionManager");
-const { AssistantHost } = require("../extensions/assistantHost");
-const { registerExtensionRoutes } = require("../extensions/extensionRoutes");
-const assistantCatalog = require("../extensions/assistantCatalog.json");
+const { AgentRuntime } = require("../agent/agentRuntime");
+const agentSettingsService = require("../agent/agentSettingsService");
+const { createAgentApiSecurity } = require("../agent/agentApiSecurity");
+const { createAgentRouter } = require("../agent/agentRoutes");
+const { createAgentConnectionService } = require("../agent/agentConnectionService");
 const { registerAppRoutes } = require("../routes");
 const { createGitHubSyncRouter } = require("../routes/githubSyncRoutes");
 const packageInfo = require("../../../package.json");
@@ -36,6 +37,11 @@ const {
   DESKTOP_DIR,
   WORKSPACE_DIR,
   AGENT_SCREENSHOT_FILE,
+  AGENT_DATABASE_FILE,
+  AGENT_ATTACHMENTS_DIR,
+  AGENT_PROFILES_DIR,
+  AGENT_BACKUPS_DIR,
+  AGENT_WORKSPACES_DIR,
 } = paths;
 const {
   PORT,
@@ -111,18 +117,21 @@ loadEnvFileSync(path.join(ROOT_DIR, ".env"));
 
 const app = express();
 let modelProviderSettingsCache = null;
-const extensionManager = new ExtensionManager({ dataDir: DATA_DIR, catalog: assistantCatalog,
-  localPackage: fsSync.existsSync(path.join(ROOT_DIR, "extensions/ai-assistant/server.js"))
-    ? path.join(ROOT_DIR, "build/extensions", assistantCatalog.filename) : "" });
-const assistantHost = new AssistantHost(extensionManager, ROOT_DIR);
-const { createRequire } = require("module");
-const hostRequire = createRequire(path.join(ROOT_DIR, "package.json"));
-globalThis.__freeflowHostRequire = (id) => hostRequire(id.startsWith("src/") || id === "package.json" ? `./${id}` : id);
-const agentSettingsService = {
-  readAgentSettings: async () => extensionManager.enabled()
-    ? require(path.join(extensionManager.directory(), "settingsBackend.cjs")).readAgentSettings() : null,
-  writeAgentSettings: (settings) => assistantHost.settings("POST", settings),
-};
+const agentRuntime = new AgentRuntime({
+  databaseFile: AGENT_DATABASE_FILE,
+  attachmentsDir: AGENT_ATTACHMENTS_DIR,
+  profilesDir: AGENT_PROFILES_DIR,
+  backupsDir: AGENT_BACKUPS_DIR,
+  workspacesDir: AGENT_WORKSPACES_DIR,
+  appVersion: packageInfo.version,
+  settingsService: agentSettingsService,
+  permissionsService,
+  legacySessionService: sessionService,
+});
+const agentConnectionService = createAgentConnectionService({
+  settingsService: agentSettingsService,
+  validateRuntime: (provider) => agentRuntime.validateProviderRuntime(provider),
+});
 
 let desktopBridge = {
   chatWithDoubao: null,
@@ -135,14 +144,7 @@ function setStaticValidationHeaders(res) {
 
 app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
-const extensionRoutes = registerExtensionRoutes(app, extensionManager, assistantHost, PUBLIC_DIR);
-// Legacy AI endpoints must not bypass the optional assistant capability.
-app.use((req, res, next) => {
-  if (!extensionManager.enabled() && /^\/api\/(?:chat(?:-once)?|meta|model-profiles|model-provider-settings|control\/execute|doubao-web)(?:\/|$)/.test(req.path)) {
-    return res.status(404).json({ ok: false, code: "EXTENSION_DISABLED", error: "AI 助手扩展未启用" });
-  }
-  next();
-});
+app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity(), connections: agentConnectionService }));
 app.use("/api/github-sync", createGitHubSyncRouter({ clientId: FREEFLOW_GITHUB_CLIENT_ID }));
 app.use(
   "/vendor",
@@ -154,7 +156,6 @@ app.use(
 );
 app.use(
   express.static(PUBLIC_DIR, {
-    index: false,
     etag: true,
     lastModified: true,
     setHeaders: setStaticValidationHeaders,
@@ -2777,14 +2778,15 @@ app.post("/api/agent/execute", async (req, res) => {
   }
 });
 
-app.get(/.*/, extensionRoutes.renderIndex);
+app.get(/.*/, (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
 
 let serverInstance = null;
 let serverStartup = null;
 
 function logStartup(port) {
   console.log(`FreeFlow UI running at http://localhost:${port}`);
-  if (!extensionManager.enabled()) return;
   console.log(
     `AI provider: ${getProviderLabel()} (${AI_PROVIDER === "bigmodel" ? getConfiguredCloudProviderKind() : AI_PROVIDER})`
   );
@@ -2802,18 +2804,16 @@ function logStartup(port) {
 }
 
 function startServer(port = PORT) {
-  assistantHost.closed = false;
   if (serverInstance) {
     return Promise.resolve(serverInstance);
   }
 
   if (!serverStartup) {
-    serverStartup = extensionManager.initialize()
+    serverStartup = Promise.all([ensureModelProviderSettingsLoaded(), agentRuntime.initialize()])
       .then(() => listenOnLoopback(http.createServer(app), Number(port)))
       .then((server) => {
         serverInstance = server;
         logStartup(server.address().port);
-        if (extensionManager.state?.legacyAvailable) setImmediate(() => { void extensionManager.restoreLegacy(); });
         return server;
       })
       .finally(() => { serverStartup = null; });
@@ -2834,8 +2834,7 @@ async function stopServer() {
       resolve();
     });
   }) : Promise.resolve();
-  assistantHost.closed = true;
-  await assistantHost.stop();
+  await agentRuntime.shutdown().catch(() => {});
   await closePromise;
 }
 
@@ -2851,8 +2850,7 @@ module.exports = {
   startServer,
   stopServer,
   registerDesktopBridge,
-  extensionManager,
-  assistantHost,
+  agentRuntime,
 };
 
 if (require.main === module) {

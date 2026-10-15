@@ -19,8 +19,6 @@ fail() {
 mkdir -p "$log_dir"
 cd "$project_root"
 unset ELECTRON_RUN_AS_NODE
-# Keep the source checkout's optional package current before the backend pins its checksum.
-ELECTRON_RUN_AS_NODE=1 "$electron_app/Contents/MacOS/Electron" "$project_root/scripts/build-assistant-extension.js" || fail "AI 扩展构建失败，请查看上面的错误。"
 
 # LaunchServices owns the process so closing Terminal will not stop FreeFlow.
 if ! /usr/bin/open -n -a "$electron_app" --env ELECTRON_RUN_AS_NODE \

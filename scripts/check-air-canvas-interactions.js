@@ -219,12 +219,11 @@ async function checkChromeStates(page, viewport) {
       background: style.backgroundColor,
       backingBackground: backing.backgroundColor,
       backingOpacity: Number(backing.opacity),
-      expectedBacking: `rgba(${getComputedStyle(document.documentElement).getPropertyValue("--theme-floating-surface-rgb").trim().split(/\s+/).join(", ")}, 0.96)`,
       borderRadius: style.borderRadius,
       firstItemBackground: firstItem ? getComputedStyle(firstItem).backgroundColor : "",
     };
   });
-  assert(shellMenuSurface.background === "rgba(0, 0, 0, 0)" && shellMenuSurface.backingBackground === shellMenuSurface.expectedBacking && shellMenuSurface.backingOpacity === 1 && shellMenuSurface.borderRadius === "12px", "global more menu does not use the readable themed popover surface", {
+  assert(shellMenuSurface.background === "rgba(0, 0, 0, 0)" && shellMenuSurface.backingBackground === "rgba(255, 255, 255, 0.58)" && shellMenuSurface.backingOpacity === 0.84 && shellMenuSurface.borderRadius === "12px", "global more menu does not use the shared popover surface", {
     viewport,
     shellMenuSurface,
   });
@@ -558,7 +557,6 @@ async function checkRightWorkspaceGlass(page, viewport) {
     return {
       trigger: read("#screen-source-header-menu > summary"),
       popover: read(".screen-source-header-panel"),
-      expectedPopoverBacking: `rgba(${getComputedStyle(document.documentElement).getPropertyValue("--theme-floating-surface-rgb").trim().split(/\s+/).join(", ")}, 0.96)`,
       picker: read(".screen-source-picker"),
       pickerHead: read(".screen-source-picker-head"),
       targetRow: read(".screen-source-target-row"),
@@ -591,7 +589,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
     };
   });
   assert(
-    mappingGlass.trigger.backingBackground === "rgba(255, 255, 255, 0.8)" && mappingGlass.popover.background === "rgba(0, 0, 0, 0)" && mappingGlass.popover.backingBackground === mappingGlass.expectedPopoverBacking && mappingGlass.popover.backingOpacity === 1 && mappingGlass.popover.backingFilter.includes("blur(16px)"),
+    mappingGlass.trigger.backingBackground === "rgba(255, 255, 255, 0.8)" && mappingGlass.popover.background === "rgba(0, 0, 0, 0)" && mappingGlass.popover.backingBackground === "rgba(255, 255, 255, 0.58)" && mappingGlass.popover.backingOpacity === 0.84 && mappingGlass.popover.backingFilter.includes("blur(16px)"),
     "mapping controls do not use the shared trigger and popover glass",
     { viewport, mappingGlass }
   );
@@ -1270,9 +1268,8 @@ async function checkPanelLayoutControls(page, viewport) {
   });
   assert(
     Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 2 && collapsedRestore.left <= 10 &&
-      collapsedRestore.right - collapsedRestore.left >= 24 &&
-      collapsedRestore.bottom - collapsedRestore.top >= 64 &&
-      collapsedRestore.bottom - collapsedRestore.top > collapsedRestore.right - collapsedRestore.left,
+      collapsedRestore.right - collapsedRestore.left >= 32 &&
+      collapsedRestore.bottom - collapsedRestore.top >= 32,
     "collapsed canvas restore control is not accessible at the left midpoint",
     { viewport, collapsedRestore }
   );
@@ -1291,9 +1288,8 @@ async function checkPanelLayoutControls(page, viewport) {
   });
   assert(
     Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 2 && Math.abs(viewport.width - rightRestore.right) <= 10 &&
-      rightRestore.right - rightRestore.left >= 24 &&
-      rightRestore.bottom - rightRestore.top >= 64 &&
-      rightRestore.bottom - rightRestore.top > rightRestore.right - rightRestore.left,
+      rightRestore.right - rightRestore.left >= 32 &&
+      rightRestore.bottom - rightRestore.top >= 32,
     "collapsed conversation restore control is not accessible at the right midpoint",
     { viewport, rightRestore }
   );

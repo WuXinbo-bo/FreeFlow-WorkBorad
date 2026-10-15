@@ -23,7 +23,6 @@ function warnIfMissing(relativePath, message) {
   }
 }
 
-runNodeScript(path.join("scripts", "build-assistant-extension.js"));
 runNodeScript(path.join("scripts", "build-markdown-parser.js"));
 runNodeScript(path.join("scripts", "build-canvas2d-ui.js"));
 runNodeScript(path.join("scripts", "build-canvas-office.js"));

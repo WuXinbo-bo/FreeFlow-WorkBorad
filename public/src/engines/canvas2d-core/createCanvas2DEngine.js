@@ -28615,7 +28615,6 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     resize,
     subscribe: store.subscribe,
     getSnapshot: store.getSnapshot,
-    flushLocalPersistence() { syncActiveDraftEditingState({ markDirty: true }); store.flushPersist?.({ force: true }); },
     getInteractionPrioritySnapshot,
     getCanvasPerformanceSnapshot,
     getCanvasPerformanceLifecycleSnapshot,
