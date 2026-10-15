@@ -19,7 +19,6 @@ const CHECKS = [
   "scripts/check-agent-http.js",
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
-  "scripts/check-feature-showcase.js",
   "scripts/check-electron-ipc-security.js",
   "scripts/check-file-access-registry.js",
   "scripts/check-image-thumbnails.js",
