@@ -316,6 +316,7 @@ function createCenterMarkup(snapshot) {
         ${hasProgress ? `<button type="button" class="tutorial-resume-bar" data-global-tutorial-action="resume">${renderTutorialIcon("play")}<span><strong>继续上次进度</strong><small>${escapeHtml(snapshot?.currentStep?.title || "继续教程")}</small></span>${renderTutorialIcon("arrow")}</button>` : ""}
         <div class="tutorial-center-grid">${items.map(renderTutorialCard).join("")}</div>
         <div class="tutorial-center-tools">
+          <button type="button" data-global-tutorial-action="feature-showcase">${renderTutorialIcon("play")}<span><strong>观看特色导览</strong><small>从带格式导入，到生成 Word</small></span></button>
           <button type="button" data-global-tutorial-open-board>${renderTutorialIcon("canvas")}<span><strong>打开示例画布</strong><small>在独立示例中自由练习</small></span></button>
           <button type="button" data-global-tutorial-action="shortcut-guide">${renderTutorialIcon("keyboard")}<span><strong>快捷键说明</strong><small>快速查看常用操作</small></span></button>
         </div>
@@ -389,6 +390,8 @@ export function mountGlobalTutorialHost({
   let cleanupWelcome = () => {};
   let welcomePlayed = false;
   let returnFocus = null;
+  let featureShowcase = null;
+  let destroyed = false;
 
   function stopMeasureLoop() {
     if (measureFrame) {
@@ -502,6 +505,27 @@ export function mountGlobalTutorialHost({
   function handleAction(actionId) {
     const action = String(actionId || "").trim().toLowerCase();
     if (!action) {
+      return;
+    }
+    if (action === "feature-showcase") {
+      dismissIntroForCurrentVersion();
+      closeCenter();
+      void import("./showcaseHost.js").then(({ openFeatureShowcase }) => {
+        if (destroyed) return;
+        featureShowcase = openFeatureShowcase({
+          onShapeChange: () => { requestShapeSync(); requestFinalShapeSync(); },
+          onMirrorTutorial: () => {
+            const restore = document.querySelector("#restore-right-pane-btn");
+            if (restore && !restore.classList.contains("is-hidden")) restore.click();
+            document.querySelector("#right-panel-tab-screen")?.click();
+            runtime.startAiMirrorTutorial();
+            startMeasureLoop();
+          },
+        });
+      }).catch((error) => {
+        console.error("[feature-showcase] 导览加载失败", error);
+        if (!destroyed) runtime.openCenter();
+      });
       return;
     }
     if (action === "shortcut-guide") {
@@ -647,6 +671,8 @@ export function mountGlobalTutorialHost({
       runtime.openCenter();
     },
     destroy() {
+      destroyed = true;
+      featureShowcase?.close();
       cleanupWelcome();
       stopMeasureLoop();
       unsubscribeBus();

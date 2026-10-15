@@ -3102,7 +3102,7 @@ function applyInlineFontSizingToContainer(container, scale = 1) {
 
 export function createCanvas2DEngine(options = {}) {
   const useLocalFileSystem = typeof globalThis?.desktopShell?.writeFile === "function";
-  const store = createCanvas2DStore({ ...options, disableLocalStorage: useLocalFileSystem });
+  const store = createCanvas2DStore({ ...options, disableLocalStorage: useLocalFileSystem || options.disableLocalStorage === true });
   const { state } = store;
   state.alignmentSnapConfig = createAlignmentSnapConfig(options.alignmentSnap);
   state.alignmentSnap = createAlignmentSnapState();
@@ -27450,7 +27450,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     if (mounted) {
       unmount();
     }
-    clearLegacyBoardStorage();
+    if (options.disableLocalStorage !== true) clearLegacyBoardStorage();
     ensureDom(hostElement);
     cleanupFns.push(canvasUiRuntime.registerHost("toolbar", Object.freeze({
       rich: refs.richToolbar,
@@ -28559,6 +28559,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
     register({ id: "selection.nudge-left", label: "向左微移", category: "arrange", shortcuts: ["ArrowLeft", "Shift+ArrowLeft"], when: hasMutableSelection }, (context) => nudgeSelection(-getNudgeStep(context), 0));
     register({ id: "selection.nudge-right", label: "向右微移", category: "arrange", shortcuts: ["ArrowRight", "Shift+ArrowRight"], when: hasMutableSelection }, (context) => nudgeSelection(getNudgeStep(context), 0));
     register({ id: "element.edit", label: "编辑", category: "element", shortcuts: ["Enter", "F2"], when: context => hasEditableSelection(context) && (context.keyboardEvent?.key === "F2" || context.selectedItems[0]?.type !== "mindNode" || !context.keyboardEvent) }, (context) => beginElementEdit(context.mutableSelectedItems[0], { explicit: true }));
+    register({ id: "element.commit-edit", label: "完成编辑", category: "element", when: context => Boolean(context.editingType) }, () => commitRichEdit());
     register({ id: "text.convert-code", label: "转为代码块", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("codeBlock"));
     register({ id: "text.convert-table", label: "转为表格", category: "text", when: hasSingleType("text", { mutable: true }) }, () => convertSelectedTextContent("table"));
     register({ id: "shape.reverse", label: "反向箭头", category: "shape", elementTypes: ["shape"], when: hasOnlyMutableType("shape") }, () => reverseArrowSelection());
