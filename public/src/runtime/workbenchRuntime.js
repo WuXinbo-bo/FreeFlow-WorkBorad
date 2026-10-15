@@ -1785,7 +1785,6 @@ const globalTutorialHost = mountGlobalTutorialHost({
   overlayRoot: globalOverlayLayerEl,
   onShapeChange: () => {
     scheduleDesktopWindowShapeSync();
-    syncEmbeddedWindowOverlayVisibility();
   },
   onFinalShapeChange: () => {
     desktopWindowShapeScheduler.requestFinalShapeSync(48);
@@ -2189,7 +2188,6 @@ function shouldHideEmbeddedWindowForOverlay() {
   return Boolean(
     !isScreenSourcePreviewAvailable() ||
       state.drawerOpen ||
-      document.querySelector(".feature-showcase-host") ||
       !desktopMenuPanel?.classList.contains("is-hidden") ||
       !conversationShellMenuEl?.classList.contains("is-hidden") ||
       screenSourceHeaderMenuOpen ||
