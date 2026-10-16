@@ -15,7 +15,7 @@ import { getMindNodeStyle, MIND_NODE_PADDING, MIND_CONNECTION_STYLE, getMindNode
 import { drawFileCard } from "./rendererFileCard.js";
 import { drawShapeElement } from "./rendererShape.js";
 import { getElementScreenBounds, getScreenFixed, getScreenPoint, getViewScale, scaleSceneValue } from "./viewportMetrics.js";
-import { createBackgroundPatternCache, createViewportCuller } from "./rendererPerf.js";
+import { createBackgroundPatternCache, createViewportCuller, drawBackgroundPatternFallback } from "./rendererPerf.js";
 import { createTileSceneCache } from "./render/tileSceneCache.js";
 import { createRetainedCameraFrame } from "./render/retainedCameraFrame.js";
 import { drawStableRoundedRectPath, resolveScreenCornerRadius } from "./render/cornerRadius.js";
@@ -331,70 +331,9 @@ function drawMultiSelectionHandles(ctx, view, selectedItems = []) {
   ctx.restore();
 }
 
-function drawBackgroundPatternFallback(ctx, width, height, view, resolvedPattern) {
-  const scale = Math.max(0.4, Number(view?.scale) || 1);
-  const step = 18 * scale;
-  const offsetX = ((Number(view?.offsetX || 0) % step) + step) % step;
-  const offsetY = ((Number(view?.offsetY || 0) % step) + step) % step;
-  if (resolvedPattern === "dots") {
-    ctx.fillStyle = "rgba(76, 110, 245, 0.18)";
-    for (let x = offsetX; x < width; x += step) {
-      for (let y = offsetY; y < height; y += step) {
-        ctx.fillRect(x, y, 1.6, 1.6);
-      }
-    }
-  } else if (resolvedPattern === "grid") {
-    ctx.strokeStyle = "rgba(76, 110, 245, 0.16)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = offsetX; x < width; x += step) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-    }
-    for (let y = offsetY; y < height; y += step) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-    }
-    ctx.stroke();
-  } else if (resolvedPattern === "lines") {
-    const lineStep = step * 1.6;
-    const lineOffsetY = ((Number(view?.offsetY || 0) % lineStep) + lineStep) % lineStep;
-    ctx.strokeStyle = "rgba(76, 110, 245, 0.14)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let y = lineOffsetY; y < height; y += lineStep) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-    }
-    ctx.stroke();
-  } else if (resolvedPattern === "engineering") {
-    const majorStep = step * 5;
-    const majorOffsetX = ((Number(view?.offsetX || 0) % majorStep) + majorStep) % majorStep;
-    const majorOffsetY = ((Number(view?.offsetY || 0) % majorStep) + majorStep) % majorStep;
-    ctx.strokeStyle = "rgba(76, 110, 245, 0.08)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = offsetX; x < width; x += step) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-    }
-    for (let y = offsetY; y < height; y += step) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(37, 99, 235, 0.16)";
-    ctx.beginPath();
-    for (let x = majorOffsetX; x < width; x += majorStep) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-    }
-    for (let y = majorOffsetY; y < height; y += majorStep) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-    }
-    ctx.stroke();
-  }
+function getBackgroundStyleSignature(options = {}) {
+  const { fill = "#ffffff", grid = true, pattern = grid ? "dots" : "none" } = options || {};
+  return JSON.stringify([fill, String(pattern || (grid ? "dots" : "none")).trim().toLowerCase()]);
 }
 
 function drawBackground(ctx, width, height, view, options = {}, backgroundPatternCache = null) {
@@ -1398,6 +1337,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
   let lastDynamicVisualSignature = "";
   let lastInteractionVisualSignature = "";
   let lastViewVisualSignature = "";
+  let lastBackgroundStyleSignature = "";
   let lastRenderModeSignature = "";
   let lastStaticItemCount = 0;
   let retainedFrameExpectedKey = "";
@@ -1459,6 +1399,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
     lastDynamicVisualSignature = "";
     lastInteractionVisualSignature = "";
     lastViewVisualSignature = "";
+    lastBackgroundStyleSignature = "";
     lastRenderModeSignature = "";
     lastStaticItemCount = 0;
     retainedFrameExpectedKey = "";
@@ -1569,7 +1510,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         imageEditState,
       });
       const retainedPresentation = cameraFastPath && viewportInteractionActive
-        ? retainedCameraFrame.present({ ctx, view, width, height, dpr, key: retainedFrameExpectedKey })
+        ? retainedCameraFrame.present({
+            ctx, view, width, height, dpr, key: retainedFrameExpectedKey,
+            beforeContent: () => drawBackground(ctx, width, height, view, backgroundStyle, backgroundPatternCache),
+          })
         : { presented: false, reason: "inactive" };
       if (retainedPresentation.presented) {
         const fastVisibleItems = Array.isArray(visibleItems) ? visibleItems : [];
@@ -1634,11 +1578,12 @@ export function createRenderer({ customRenderers = [] } = {}) {
           },
           renderedItems: fastVisibleItems.length,
           layerReuse: {
-            backgroundReused: true,
+            backgroundReused: false,
             staticSceneReused: true,
             dynamicSceneReused: true,
             interactionReused: false,
           },
+          background: backgroundPatternCache.getStats(),
           renderReason: String(layerState?.renderReason || dirtyState?.reason || "camera-retained"),
           renderReasons: Array.isArray(layerState?.reasons) ? layerState.reasons.slice() : [],
           runtimeMode: {
@@ -1794,7 +1739,10 @@ export function createRenderer({ customRenderers = [] } = {}) {
         (Array.isArray(selectedIds) && selectedIds.length >= 1) ||
         frameVisibleItems.some((item) => item?.locked)
       ) || Boolean(hoveredItem);
-      const effectiveBackgroundDirty = Boolean(layerDirty.background || forceViewRedraw);
+      const backgroundStyleSignature = getBackgroundStyleSignature(backgroundStyle);
+      const effectiveBackgroundDirty = Boolean(
+        layerDirty.background || forceViewRedraw || backgroundStyleSignature !== lastBackgroundStyleSignature
+      );
       const effectiveStaticSceneDirty = Boolean(
         staticSurfaceNeedsClear ||
         (hasStaticContent && (
@@ -1852,6 +1800,7 @@ export function createRenderer({ customRenderers = [] } = {}) {
       if (effectiveBackgroundDirty) {
         clearLayerContext(backgroundLayer, width, height);
         drawBackground(backgroundLayer.ctx, width, height, view, backgroundStyle, backgroundPatternCache);
+        lastBackgroundStyleSignature = backgroundStyleSignature;
       }
 
       if (effectiveStaticSceneDirty) {
@@ -2052,14 +2001,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
         dpr,
         view,
         draw: ({ ctx: retainedCtx, view: retainedView, width: retainedWidth, height: retainedHeight }) => {
-          drawBackground(
-            retainedCtx,
-            retainedWidth,
-            retainedHeight,
-            retainedView,
-            backgroundStyle,
-            backgroundPatternCache
-          );
           if (staticItems.length && sceneIndex && sceneKey) {
             staticTileLayer.draw({
               ctx: retainedCtx,
@@ -2154,9 +2095,6 @@ export function createRenderer({ customRenderers = [] } = {}) {
               sceneVectorOwnedIds: sceneVectorOwned,
             });
             drawDraftElement(retainedCtx, draftElement, retainedView);
-          }
-          if (hasEmptyBoardHint) {
-            drawHint(retainedCtx, retainedWidth, retainedHeight);
           }
         },
       });

@@ -142,9 +142,17 @@ async function main() {
     assert.equal((await snapshot()).length, 1, 'standalone math was detached from document');
     await load([{ id: 'links', type: 'text', x: 300, y: 180, width: 650, html: '<p><a href="https://example.com/good"><strong>打开网页</strong></a> <a href="https://fail.example">失败链接</a></p>' }]);
     const link = page.locator('.canvas2d-rich-item[data-id="links"] a').first();
+    await page.evaluate(() => {
+      window.__mathLinkStatuses = [];
+      window.__mathLinkUnsubscribe = window.__canvas2dEngine.subscribe(snapshot => window.__mathLinkStatuses.push(snapshot.statusText));
+    });
+    assert.deepEqual(await app.evaluate(() => global.__openedLinks), [], 'setup opened an external webpage');
     await link.click();
-    await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().statusText === '已打开链接');
-    assert.equal((await app.evaluate(() => global.__openedLinks)).length, 1);
+    // Startup path settings can emit a second status immediately after link success.
+    // Observe the real notification instead of polling a transient shared status value.
+    await page.waitForFunction(() => window.__mathLinkStatuses.includes('已打开链接'));
+    const firstOpened = await app.evaluate(() => global.__openedLinks);
+    assert.equal(firstOpened.length, 1, `single click opened ${JSON.stringify(firstOpened)}`);
     await link.click({ modifiers: [process.platform === 'darwin' ? 'Meta' : 'Control'] });
     assert.equal((await app.evaluate(() => global.__openedLinks)).length, 2);
     const box = await link.boundingBox();
@@ -152,7 +160,8 @@ async function main() {
     await page.mouse.move(box.x + 40, box.y + 5); await page.mouse.move(box.x + 5, box.y + 5); await page.mouse.up();
     assert.equal((await app.evaluate(() => global.__openedLinks)).length, 2, 'link drag opened a webpage');
     await page.locator('.canvas2d-rich-item[data-id="links"] a').nth(1).click();
-    await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().statusText === '链接打开失败');
+    await page.waitForFunction(() => window.__mathLinkStatuses.includes('链接打开失败'));
+    await page.evaluate(() => window.__mathLinkUnsubscribe());
     await edit();
     const editorLink = page.locator('#canvas-rich-editor a').first();
     await editorLink.click();

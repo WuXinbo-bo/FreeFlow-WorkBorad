@@ -19,104 +19,78 @@ function createPatternCanvas(width, height) {
   return null;
 }
 
-function drawDotsTile(ctx, size) {
-  ctx.fillStyle = "rgba(76, 110, 245, 0.18)";
-  ctx.fillRect(0, 0, 1.6, 1.6);
-}
+const BACKGROUND_WORLD_STEP = 18;
+const MIN_BACKGROUND_SCREEN_STEP = 8;
 
-function drawGridTile(ctx, size) {
-  ctx.strokeStyle = "rgba(76, 110, 245, 0.16)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0.5, 0);
-  ctx.lineTo(0.5, size);
-  ctx.moveTo(0, 0.5);
-  ctx.lineTo(size, 0.5);
-  ctx.stroke();
-}
-
-function drawLinesTile(ctx, size) {
-  ctx.strokeStyle = "rgba(76, 110, 245, 0.14)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, 0.5);
-  ctx.lineTo(size, 0.5);
-  ctx.stroke();
-}
-
-function drawEngineeringTile(ctx, minorStep, majorStep) {
-  ctx.strokeStyle = "rgba(76, 110, 245, 0.08)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0.5; x <= majorStep; x += minorStep) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, majorStep);
+export function getBackgroundPatternGeometry(view = {}, patternType = "dots") {
+  const requestedScale = Number(view.scale);
+  const scale = Number.isFinite(requestedScale) && requestedScale > 0 ? requestedScale : 1;
+  let worldStep = BACKGROUND_WORLD_STEP * (patternType === "lines" ? 1.6 : 1);
+  // Thin the original world lattice instead of clamping the camera scale.
+  if (worldStep * scale < MIN_BACKGROUND_SCREEN_STEP) {
+    worldStep *= 2 ** Math.ceil(Math.log2(MIN_BACKGROUND_SCREEN_STEP / (worldStep * scale)));
   }
-  for (let y = 0.5; y <= majorStep; y += minorStep) {
+  const step = worldStep * scale;
+  const period = step * (patternType === "engineering" ? 5 : 1);
+  const phase = (value, interval) => ((Number(value || 0) % interval) + interval) % interval;
+  return {
+    step,
+    period,
+    offsetX: phase(view.offsetX, period),
+    offsetY: phase(view.offsetY, period),
+  };
+}
+
+function drawPatternLines(ctx, width, height, step, offsetX, offsetY, horizontalOnly = false) {
+  ctx.beginPath();
+  if (!horizontalOnly) {
+    for (let x = offsetX - step; x <= width; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+    }
+  }
+  for (let y = offsetY - step; y <= height; y += step) {
     ctx.moveTo(0, y);
-    ctx.lineTo(majorStep, y);
+    ctx.lineTo(width, y);
   }
-  ctx.stroke();
-
-  ctx.strokeStyle = "rgba(37, 99, 235, 0.16)";
-  ctx.beginPath();
-  ctx.moveTo(0.5, 0);
-  ctx.lineTo(0.5, majorStep);
-  ctx.moveTo(0, 0.5);
-  ctx.lineTo(majorStep, 0.5);
   ctx.stroke();
 }
 
-function buildPatternTile(patternType, step) {
-  const safeStep = Math.max(4, Number(step) || 18);
-  if (patternType === "none") {
-    return null;
-  }
-  if (patternType === "engineering") {
-    const majorStep = Math.max(20, safeStep * 5);
-    const tileSize = Math.max(8, Math.min(2048, Math.round(majorStep)));
-    const tile = createPatternCanvas(tileSize, tileSize);
-    if (!tile) {
-      return null;
-    }
-    const tileCtx = tile.getContext("2d");
-    if (!tileCtx) {
-      return null;
-    }
-    drawEngineeringTile(tileCtx, safeStep, tileSize);
-    return { tile, size: tileSize };
-  }
-  if (patternType === "lines") {
-    const lineStep = Math.max(6, safeStep * 1.6);
-    const tileSize = Math.max(8, Math.min(1024, Math.round(lineStep)));
-    const tile = createPatternCanvas(tileSize, tileSize);
-    if (!tile) {
-      return null;
-    }
-    const tileCtx = tile.getContext("2d");
-    if (!tileCtx) {
-      return null;
-    }
-    drawLinesTile(tileCtx, tileSize);
-    return { tile, size: tileSize };
-  }
-  const tileSize = Math.max(8, Math.min(1024, Math.round(safeStep)));
-  const tile = createPatternCanvas(tileSize, tileSize);
-  if (!tile) {
-    return null;
-  }
-  const tileCtx = tile.getContext("2d");
-  if (!tileCtx) {
-    return null;
-  }
+function drawBackgroundPatternGeometry(ctx, width, height, geometry, patternType) {
+  const { step, period, offsetX, offsetY } = geometry;
   if (patternType === "dots") {
-    drawDotsTile(tileCtx, tileSize);
-  } else if (patternType === "grid") {
-    drawGridTile(tileCtx, tileSize);
-  } else {
-    return null;
+    ctx.fillStyle = "rgba(76, 110, 245, 0.18)";
+    for (let x = offsetX - step; x < width; x += step) {
+      for (let y = offsetY - step; y < height; y += step) {
+        ctx.fillRect(x, y, 1.6, 1.6);
+      }
+    }
+  } else if (patternType === "grid" || patternType === "lines" || patternType === "engineering") {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = patternType === "grid" ? "rgba(76, 110, 245, 0.16)"
+      : patternType === "lines" ? "rgba(76, 110, 245, 0.14)" : "rgba(76, 110, 245, 0.08)";
+    drawPatternLines(ctx, width, height, step, offsetX % step, offsetY % step, patternType === "lines");
+    if (patternType === "engineering") {
+      ctx.strokeStyle = "rgba(37, 99, 235, 0.16)";
+      drawPatternLines(ctx, width, height, period, offsetX, offsetY);
+    }
   }
-  return { tile, size: tileSize };
+}
+
+export function drawBackgroundPatternFallback(ctx, width, height, view, patternType) {
+  drawBackgroundPatternGeometry(ctx, width, height, getBackgroundPatternGeometry(view, patternType), patternType);
+}
+
+function buildPatternTile(patternType, size, rasterDpr) {
+  const tile = createPatternCanvas(size, size);
+  const ctx = tile?.getContext("2d");
+  if (!ctx) return null;
+  const period = size / rasterDpr;
+  ctx.setTransform(rasterDpr, 0, 0, rasterDpr, 0, 0);
+  // Tile periods may be rounded for caching; the pattern matrix restores their exact world size.
+  const geometry = { step: period / (patternType === "engineering" ? 5 : 1), period, offsetX: 0, offsetY: 0 };
+  drawBackgroundPatternGeometry(ctx, period, period, geometry, patternType);
+  return tile;
 }
 
 export function createBackgroundPatternCache() {
@@ -128,27 +102,21 @@ export function createBackgroundPatternCache() {
   let hits = 0;
   let misses = 0;
 
-  function getPattern(ctx, patternType, step) {
-    const quantizedStep = Math.max(1, Math.round(step * 2) / 2);
-    const key = `${patternType}|${quantizedStep}`;
+  function getPattern(ctx, patternType, period) {
+    const transform = ctx.getTransform?.();
+    const rasterDpr = Math.max(1, Math.hypot(Number(transform?.a || 1), Number(transform?.b || 0)));
+    const tileSize = Math.max(1, Math.min(patternType === "engineering" ? 2048 : 1024, Math.round(period * rasterDpr)));
+    const key = `${patternType}|${tileSize}|${rasterDpr}`;
     const cached = cache.get(key);
     if (cached) {
       hits += 1;
       return cached;
     }
-    const built = buildPatternTile(patternType, quantizedStep);
-    if (!built) {
-      return null;
-    }
-    const pattern = ctx.createPattern(built.tile, "repeat");
-    if (!pattern) {
-      return null;
-    }
-    const entry = {
-      pattern,
-      tileSize: built.size,
-      byteSize: Math.max(1, Number(built.tile?.width || 0)) * Math.max(1, Number(built.tile?.height || 0)) * 4,
-    };
+    const tile = buildPatternTile(patternType, tileSize, rasterDpr);
+    if (!tile) return null;
+    const pattern = ctx.createPattern(tile, "repeat");
+    if (!pattern) return null;
+    const entry = { pattern, tileSize, byteSize: tile.width * tile.height * 4 };
     cache.set(key, entry);
     misses += 1;
     return entry;
@@ -156,47 +124,28 @@ export function createBackgroundPatternCache() {
 
   return {
     draw(ctx, width, height, view, patternType) {
-      if (patternType === "none") {
-        return false;
-      }
-      const scale = Math.max(0.4, Number(view?.scale) || 1);
-      const step = 18 * scale;
-      const entry = getPattern(ctx, patternType, step);
-      if (!entry) {
-        return false;
-      }
-
-      const tileSize = Math.max(1, Number(entry.tileSize) || 1);
-      const rawOffsetX = Number(view?.offsetX || 0);
-      const rawOffsetY = Number(view?.offsetY || 0);
-      const offsetX = ((rawOffsetX % tileSize) + tileSize) % tileSize;
-      const offsetY = ((rawOffsetY % tileSize) + tileSize) % tileSize;
-      const pattern = entry.pattern;
-
+      if (!["dots", "grid", "lines", "engineering"].includes(patternType)) return false;
+      const geometry = getBackgroundPatternGeometry(view, patternType);
+      const entry = getPattern(ctx, patternType, geometry.period);
+      if (!entry) return false;
+      const ratio = geometry.period / entry.tileSize;
       ctx.save();
-      if (typeof pattern?.setTransform === "function" && typeof DOMMatrix !== "undefined") {
-        const matrix = new DOMMatrix();
-        matrix.e = offsetX;
-        matrix.f = offsetY;
-        pattern.setTransform(matrix);
-        ctx.fillStyle = pattern;
+      if (typeof entry.pattern.setTransform === "function") {
+        entry.pattern.setTransform({ a: ratio, b: 0, c: 0, d: ratio, e: geometry.offsetX, f: geometry.offsetY });
+        ctx.fillStyle = entry.pattern;
         ctx.fillRect(0, 0, width, height);
       } else {
-        ctx.translate(offsetX, offsetY);
-        ctx.fillStyle = pattern;
-        ctx.fillRect(-offsetX, -offsetY, width + tileSize, height + tileSize);
+        ctx.translate(geometry.offsetX, geometry.offsetY);
+        ctx.scale(ratio, ratio);
+        ctx.fillStyle = entry.pattern;
+        ctx.fillRect(-geometry.offsetX / ratio, -geometry.offsetY / ratio, width / ratio, height / ratio);
       }
       ctx.restore();
       return true;
     },
     getStats() {
       const stats = cache.getStats();
-      return {
-        ...stats,
-        cacheSize: stats.size,
-        cacheHits: hits,
-        cacheMisses: misses,
-      };
+      return { ...stats, cacheSize: stats.size, cacheHits: hits, cacheMisses: misses };
     },
     trimToBytes(maxBytes) {
       return cache.trimToBytes(maxBytes);

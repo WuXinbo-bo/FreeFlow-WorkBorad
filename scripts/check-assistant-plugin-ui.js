@@ -153,6 +153,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
     await page.evaluate(() => center.reload());
     assert.equal(await page.evaluate(() => aiCalls), 0, "ordinary reload does not start assistant");
     await page.locator("[data-settings-section=canvas]").click();
+    await page.locator('[data-settings-action="toggle-path-details"][data-path-target="canvas.workspaceDirectory"]').click();
     await page.locator('[data-settings-path="canvas.workspaceDirectory"]').fill("/tmp/my-workspace");
     await page.locator("[data-settings-section=ai]").click();
     await page.waitForFunction(() => window.aiCalls === 2);
