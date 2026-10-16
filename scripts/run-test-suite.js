@@ -11,6 +11,7 @@ const CHECKS = [
   "scripts/check-assistant-plugin-manager.js",
   "scripts/check-assistant-plugin-routes.js",
   "scripts/check-assistant-plugin-ui.js",
+  "scripts/check-settings-drawer-layout.js",
   "scripts/check-generated-bundles.js",
   "scripts/check-backend-security.js",
   "scripts/check-settings-center.js",
