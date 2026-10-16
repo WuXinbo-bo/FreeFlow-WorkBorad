@@ -12,6 +12,7 @@ const SECTION_DEFS = Object.freeze([
   { key: "workbench", label: "工作台习惯", icon: "panels" },
   { key: "canvas", label: "画布设置", icon: "pen-tool" },
   { key: "github", label: "GitHub 同步", icon: "github" },
+  { key: "plugins", label: "画布插件", icon: "puzzle" },
   { key: "updates", label: "应用更新", icon: "activity" },
 ]);
 
@@ -22,6 +23,7 @@ const SECTION_ICON_PATHS = Object.freeze({
   panels: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M9 9h12"/>',
   "pen-tool": '<path d="m12 19 7-7 3 3-7 7-3-3Z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
   activity: '<path d="M3 12h4l3-9 4 18 3-9h4"/>',
+  puzzle: '<path d="M19 13h-2a2 2 0 1 1 0-4h2V5h-6V3a2 2 0 1 0-4 0v2H3v6h2a2 2 0 1 1 0 4H3v6h6v-2a2 2 0 1 1 4 0v2h6Z"/>',
   github: '<path d="M9 19c-4 1.3-4-2-5.5-2m11 4v-3.9c0-1.1.1-1.4-.5-2.1 1.7-.2 3.5-.8 3.5-3.8 0-.8-.3-1.5-.8-2 .1-.2.3-1-.1-2 0 0-.7-.2-2.2.8a7.6 7.6 0 0 0-4 0C9.9 8 9.2 8.2 9.2 8.2c-.4 1-.2 1.8-.1 2-.5.5-.8 1.2-.8 2 0 3 1.8 3.6 3.5 3.8-.4.4-.5 1-.5 2.1V21"/>',
 });
 
@@ -138,6 +140,7 @@ export function mountSettingsCenter(host, options = {}) {
     onStatus = () => {},
     onRequestClose = () => {},
     onCheckUpdate = null,
+    onPluginStatus = () => {},
     agentClient = null,
     prepareGitHubSyncBoard = null,
     prepareGitHubSyncWorkspace = null,
@@ -148,7 +151,7 @@ export function mountSettingsCenter(host, options = {}) {
   let shortcutSnapshot = clone(DEFAULT_SHORTCUT);
   let shortcutDraft = clone(DEFAULT_SHORTCUT);
   let shortcutRecorder = null;
-  let activeSection = "ai";
+  let activeSection = "appearance";
   let aiSection = "setup";
   let updateChecking = false;
   let phase = "idle";
@@ -180,6 +183,168 @@ export function mountSettingsCenter(host, options = {}) {
   let githubClientId = "";
   let githubAppType = "github-app";
   let githubAuthMethod = "token";
+  let settingsOpen = false;
+  let plugin = { installed: false, activeEnabled: false, desiredEnabled: false, phase: "idle" };
+  let pluginError = "";
+  let pluginAction = "";
+  let pluginPollTimer = 0;
+  let pluginRequestSequence = 0;
+  let pluginTransferSample = null;
+  let pluginTransferSpeed = 0;
+  let uninstallConfirmation = false;
+  let disableConfirmation = false;
+  let agentDetailsLoaded = false;
+  let agentDetailsLoading = false;
+  let agentDetailsSequence = 0;
+
+  function availableSections() {
+    return SECTION_DEFS.filter((section) => section.key !== "ai" || plugin.activeEnabled);
+  }
+
+  function isPluginInstalling() {
+    return plugin.operationPending === true || ["downloading", "verifying", "extracting", "installing", "checking", "self-testing", "testing"].includes(plugin.phase) || plugin.progress?.active === true;
+  }
+
+  function stopPluginPolling() {
+    if (pluginPollTimer) window.clearTimeout(pluginPollTimer);
+    pluginPollTimer = 0;
+  }
+
+  function schedulePluginPolling() {
+    stopPluginPolling();
+    if (!settingsOpen || activeSection !== "plugins" || document.hidden || !isPluginInstalling()) return;
+    pluginPollTimer = window.setTimeout(() => {
+      pluginPollTimer = 0;
+      void refreshPluginStatus().catch(() => {});
+    }, 700);
+  }
+
+  function applyPluginStatus(next) {
+    if (!next || typeof next !== "object") return;
+    const wasActive = plugin.activeEnabled;
+    const received = Number(next.progress?.receivedBytes ?? next.progress?.downloadedBytes) || 0;
+    const sampledAt = performance.now();
+    if (next.phase === "downloading") {
+      if (pluginTransferSample && received >= pluginTransferSample.bytes && sampledAt - pluginTransferSample.at > 200) {
+        pluginTransferSpeed = (received - pluginTransferSample.bytes) * 1000 / (sampledAt - pluginTransferSample.at);
+      }
+      pluginTransferSample = { bytes: received, at: sampledAt };
+    } else { pluginTransferSample = null; pluginTransferSpeed = 0; }
+    plugin = next;
+    if (!plugin.activeEnabled) {
+      agentDetailsLoaded = false;
+      agentDetailsLoading = false;
+      ++agentDetailsSequence;
+      agentRuntime = null;
+      agentBackups = [];
+      if (activeSection === "ai") activeSection = "plugins";
+    }
+    if (wasActive !== plugin.activeEnabled) uninstallConfirmation = false;
+    onPluginStatus(plugin);
+  }
+
+  async function pluginRequest(path, options = {}) {
+    const response = await fetch(`/api/plugins/assistant/${path}`, { cache: "no-store", ...options, headers: { ...options.headers, "X-FreeFlow-Plugin": "1" } });
+    const data = await readJsonResponse(response, "AI 助手插件");
+    if (!response.ok || !data.ok) throw new Error(data.error || "插件操作失败");
+    return data.plugin;
+  }
+
+  async function refreshPluginStatus({ renderResult = true } = {}) {
+    const sequence = ++pluginRequestSequence;
+    try {
+      const next = await pluginRequest("status");
+      if (sequence !== pluginRequestSequence) return;
+      applyPluginStatus(next);
+      pluginError = "";
+    } catch (error) {
+      if (sequence !== pluginRequestSequence) return;
+      pluginError = error.message || "无法读取插件状态";
+    } finally {
+      if (sequence === pluginRequestSequence) {
+        if (renderResult && settingsOpen && activeSection === "plugins") render();
+        schedulePluginPolling();
+      }
+    }
+  }
+
+  async function runPluginAction(action, file = null) {
+    if (pluginAction) return;
+    pluginAction = action;
+    ++pluginRequestSequence;
+    pluginError = "";
+    uninstallConfirmation = false;
+    disableConfirmation = false;
+    stopPluginPolling();
+    render();
+    try {
+      const route = action === "enable" || action === "disable" ? "enabled" : action;
+      const next = await pluginRequest(route, {
+        method: "POST",
+        headers: { "Content-Type": action === "import" ? "application/octet-stream" : "application/json" },
+        body: action === "import" ? file : JSON.stringify(action === "enable" || action === "disable" ? { enabled: action === "enable" } : {}),
+      });
+      applyPluginStatus(next);
+      if (action === "disable" || action === "uninstall") await refreshSettingsPreservingDraft(false);
+      setMessage(action === "disable" ? "AI 助手已停用，AI 镜像可以继续使用" : action === "uninstall" ? "插件已卸载，会话和配置已保留" : action === "enable" ? "已设置在下次启动时启用 AI 助手" : "", "success");
+    } catch (error) {
+      pluginError = error.message || "插件操作失败";
+    } finally {
+      pluginAction = "";
+      if (settingsOpen) render();
+      schedulePluginPolling();
+    }
+  }
+
+  async function loadAgentDetails() {
+    if (!settingsOpen || activeSection !== "ai" || !plugin.activeEnabled || agentDetailsLoaded || agentDetailsLoading) return;
+    const sequence = ++agentDetailsSequence;
+    agentDetailsLoading = true;
+    render();
+    try {
+      if (!draft?.ai) await refreshSettingsPreservingDraft(true, () => sequence === agentDetailsSequence && plugin.activeEnabled);
+      if (sequence !== agentDetailsSequence || !plugin.activeEnabled) return;
+      const [runtimeResult, backupsResult] = await Promise.all([
+        agentClient?.getRuntime ? agentClient.getRuntime({ start: false }).catch((error) => ({ runtime: { available: false, state: "error", error: error.message } })) : Promise.resolve(null),
+        agentClient?.listBackups ? agentClient.listBackups().catch((error) => ({ backups: [], error: error.message })) : Promise.resolve(null),
+      ]);
+      if (sequence !== agentDetailsSequence || !plugin.activeEnabled) return;
+      agentRuntime = runtimeResult?.runtime || null;
+      agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
+      agentBackupError = String(backupsResult?.error || "");
+      agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [provider, resolveAgentSetupStep(draft.ai?.agent?.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {})]));
+      agentDetailsLoaded = true;
+    } catch (error) {
+      if (sequence === agentDetailsSequence) setMessage(error.message || "无法读取 AI 设置", "error");
+    } finally {
+      if (sequence === agentDetailsSequence) {
+        agentDetailsLoading = false;
+        if (settingsOpen && activeSection === "ai") render();
+      }
+    }
+  }
+
+  async function refreshSettingsPreservingDraft(includeAi, isCurrent = () => true) {
+    const previous = draft;
+    const previousSnapshot = snapshot;
+    const url = includeAi ? `${apiRoutes.settingsCenter}${apiRoutes.settingsCenter.includes("?") ? "&" : "?"}includeAi=1` : apiRoutes.settingsCenter;
+    const response = await fetch(url, { cache: "no-store" });
+    const data = await readJsonResponse(response, "系统设置");
+    if (!response.ok || !data.ok) throw new Error(data.error || "无法读取系统设置");
+    if (!isCurrent()) return;
+    data.sections.appearance = normalizeThemeSettings(data.sections.appearance);
+    snapshot = clone(data);
+    draft = clone(data.sections);
+    Object.keys(previous || {}).forEach((key) => {
+      if (key === "ai" && !includeAi) return;
+      if (stableStringify(previous[key]) !== stableStringify(previousSnapshot?.sections?.[key])) draft[key] = previous[key];
+    });
+    if (includeAi && draft.ai) {
+      agentConnectionDrafts = Object.fromEntries(["codex", "claude"].map((provider) => [provider, {
+        baseUrl: String(draft.ai.agent?.providers?.[provider]?.baseUrl || ""), apiKey: "",
+      }]));
+    }
+  }
 
   function getGithubSyncClient() {
     return isDesktop && desktopShell?.githubSync ? desktopShell.githubSync : null;
@@ -301,7 +466,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function renderNavigation() {
-    return SECTION_DEFS.map((section) => `
+    return availableSections().map((section) => `
       <button
         class="settings-center-nav-item${activeSection === section.key ? " is-active" : ""}"
         type="button"
@@ -326,17 +491,23 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function selectSection(section) {
+    stopPluginPolling();
     if (section === "permissions" || section === "diagnostics") {
-      activeSection = "ai";
+      activeSection = plugin.activeEnabled ? "ai" : "plugins";
       aiSection = section;
     } else if (section === "general") {
       activeSection = "updates";
-    } else if (SECTION_DEFS.some((item) => item.key === section)) {
+    } else if (section === "ai" && !plugin.activeEnabled) {
+      activeSection = "plugins";
+    } else if (availableSections().some((item) => item.key === section)) {
       activeSection = section;
     }
+    if (settingsOpen && activeSection === "ai") void loadAgentDetails();
+    if (settingsOpen && activeSection === "plugins") void refreshPluginStatus();
   }
 
   function renderAi() {
+    if (!draft?.ai) return `<section class="settings-center-group"><h3>AI 模型</h3><p>${agentDetailsLoading ? "正在读取 AI 助手设置…" : "AI 设置读取失败，请重新载入。"}</p>${!agentDetailsLoading ? '<button type="button" data-settings-action="agent-load-details">重新读取</button>' : ""}</section>`;
     return `<div class="settings-center-provider-tabs" role="tablist" aria-label="AI 模型设置">
       ${[["setup", "模型连接"], ["permissions", "权限与目录"], ["diagnostics", "诊断与备份"]].map(([key, label]) => `<button type="button" role="tab" data-ai-section="${key}" aria-selected="${aiSection === key}" class="${aiSection === key ? "is-active" : ""}">${label}</button>`).join("")}
     </div>${aiSection === "permissions" ? renderPermissions() : aiSection === "diagnostics" ? renderDiagnostics() : renderAiSetup()}`;
@@ -687,6 +858,40 @@ export function mountSettingsCenter(host, options = {}) {
       </section>`;
   }
 
+  function renderPlugins() {
+    const installing = isPluginInstalling();
+    const progress = plugin.progress || {};
+    const received = Number(progress.receivedBytes ?? progress.downloadedBytes) || 0;
+    const total = Number(progress.totalBytes) || 0;
+    const ratio = total > 0 ? Math.min(100, Math.max(0, received / total * 100)) : null;
+    const speed = Number(progress.bytesPerSecond) || pluginTransferSpeed;
+    const labels = { downloading: "正在下载", verifying: "正在验证签名", extracting: "正在解压", installing: "正在安装", checking: "正在检查", "self-testing": "正在自检", testing: "正在自检", error: "需要处理", failed: "安装失败", cancelled: "下载已取消" };
+    const state = labels[plugin.phase] || (plugin.operationPending ? "正在准备" : plugin.restartRequired ? "等待重启" : plugin.activeEnabled ? "已启用" : plugin.installed ? "已停用" : "未安装");
+    const busy = Boolean(pluginAction) || installing;
+    const catalog = plugin.catalog || plugin.update || {};
+    const downloadUnavailable = plugin.downloadAvailable === false || catalog.available === false || plugin.phase === "unavailable";
+    const size = Number(catalog.sizeBytes ?? catalog.bytes ?? catalog.size) || 0;
+    const primary = !plugin.installed
+      ? `<button class="is-primary" type="button" data-settings-action="plugin-install"${busy || downloadUnavailable ? " disabled" : ""}>${pluginAction === "install" ? "正在准备" : "下载并下次启用"}${size ? ` · ${formatBytes(size)}` : ""}</button>`
+      : plugin.desiredEnabled || plugin.activeEnabled
+        ? `<button type="button" data-settings-action="plugin-disable-confirm"${busy ? " disabled" : ""}>${pluginAction === "disable" ? "正在停用" : "停用"}</button>`
+        : `<button class="is-primary" type="button" data-settings-action="plugin-enable"${busy ? " disabled" : ""}>下次启动时启用</button>`;
+    return `<section class="settings-center-group settings-center-plugin-intro"><h3>画布插件</h3><p>按需安装需要的能力。画布、文件工作台和 AI 镜像始终可独立使用。</p></section>
+      <section class="settings-center-group settings-center-plugin-card" aria-labelledby="assistant-plugin-title">
+        <div class="settings-center-plugin-heading"><span class="settings-center-plugin-icon">${renderSectionIcon("bot")}</span><div><h3 id="assistant-plugin-title">AI 助手 <span class="settings-center-plugin-official">官方</span></h3><p>模型连接、对话与任务执行</p></div><span class="settings-center-plugin-state${plugin.activeEnabled ? " is-active" : ""}">${escapeHtml(state)}</span></div>
+        <p class="settings-center-plugin-description">需要在 FreeFlow 内与 AI 对话时再安装。仅使用 AI 镜像，无需安装或配置模型。</p>
+        ${plugin.version ? `<div class="settings-center-plugin-version">已安装 ${escapeHtml(plugin.version)}${catalog.version && catalog.version !== plugin.version ? ` · 可用版本 ${escapeHtml(catalog.version)}` : ""}</div>` : ""}
+        ${plugin.restartRequired ? `<div class="settings-center-plugin-notice">${plugin.desiredEnabled ? "安装和自检完成后，AI 助手将在下次启动应用时启用。" : "本次停用已保存，下次启动保持停用。"}</div>` : ""}
+        ${installing ? `<div class="settings-center-plugin-progress" aria-live="polite"><div class="settings-center-plugin-progress-head"><strong>${escapeHtml(progress.message || labels[plugin.phase] || "正在准备插件")}</strong><span>${ratio === null ? "" : `${Math.round(ratio)}%`}</span></div><div class="settings-center-plugin-track${ratio === null ? " is-indeterminate" : ""}" role="progressbar" aria-label="AI 助手插件安装进度"${ratio === null ? "" : ` aria-valuenow="${Math.round(ratio)}" aria-valuemin="0" aria-valuemax="100"`}><span${ratio === null ? "" : ` style="width:${ratio}%"`}></span></div><div class="settings-center-plugin-transfer"><span>${received ? `${formatBytes(received)}${total ? ` / ${formatBytes(total)}` : ""}` : "正在准备"}</span><span>${speed ? `${formatBytes(speed)}/s` : ""}</span></div></div>` : ""}
+        ${pluginError || plugin.error ? `<div class="settings-center-plugin-error" role="alert">${escapeHtml(pluginError || plugin.error?.message || plugin.error)}</div>` : ""}
+        ${downloadUnavailable && !plugin.installed ? '<p class="settings-center-plugin-note">当前没有可用的在线插件包。可稍后检查，或导入官方签名插件包。</p>' : ""}
+        <div class="settings-center-inline-actions settings-center-plugin-actions">${installing ? `<button type="button" data-settings-action="plugin-cancel"${pluginAction ? " disabled" : ""}>取消安装</button>` : primary}${(plugin.updateAvailable || catalog.available && plugin.installed) && !installing ? `<button type="button" data-settings-action="plugin-install"${busy ? " disabled" : ""}>下载更新</button>` : ""}<button type="button" data-settings-action="plugin-check"${busy ? " disabled" : ""}>${pluginAction === "check" ? "正在检查" : "检查更新"}</button><button type="button" data-settings-action="plugin-import"${busy ? " disabled" : ""}>导入插件包</button>${plugin.installed ? `<button class="is-danger" type="button" data-settings-action="plugin-uninstall-confirm"${busy ? " disabled" : ""}>卸载</button>` : ""}<input type="file" accept=".ffplugin" data-assistant-plugin-package hidden /></div>
+        ${uninstallConfirmation ? '<div class="settings-center-plugin-uninstall" role="alert"><p>卸载 AI 助手插件？会话历史、配置与凭据将保留，AI 镜像不受影响。</p><div class="settings-center-inline-actions"><button class="is-danger" type="button" data-settings-action="plugin-uninstall">确认卸载</button><button type="button" data-settings-action="plugin-uninstall-cancel">取消</button></div></div>' : ""}
+        ${disableConfirmation ? '<div class="settings-center-plugin-uninstall" role="alert"><p>停用将结束正在进行的助手任务，会话历史将保留。</p><div class="settings-center-inline-actions"><button type="button" data-settings-action="plugin-disable">停止任务并停用</button><button type="button" data-settings-action="plugin-disable-cancel">取消</button></div></div>' : ""}
+        <p class="settings-center-plugin-note">安装完成后自动自检，下次启动启用。停用或卸载不会删除会话历史。</p>
+      </section>`;
+  }
+
   function renderActiveSection() {
     if (!draft) return "";
     switch (activeSection) {
@@ -695,8 +900,9 @@ export function mountSettingsCenter(host, options = {}) {
       case "workbench": return renderWorkbench();
       case "canvas": return renderCanvas();
       case "github": return renderGithubSyncPanel();
+      case "plugins": return renderPlugins();
       case "updates": return renderUpdates();
-      default: return renderAi();
+      default: return renderAppearance();
     }
   }
 
@@ -720,7 +926,7 @@ export function mountSettingsCenter(host, options = {}) {
         <div class="settings-center-save-state ${messageTone ? `is-${messageTone}` : ""}" aria-live="polite"><span>${message ? escapeHtml(message) : isDirty() ? "有未保存修改" : "设置已保存"}</span></div>
         <div class="settings-center-footer-actions">
           ${conflictPending ? `<button type="button" data-settings-action="reload"${githubSyncAction ? " disabled" : ""}>重新载入最新设置</button>` : ""}
-          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction || activeSection === "github" || (activeSection === "ai" && aiSection === "diagnostics") ? " disabled" : ""}>恢复本页</button>
+          <button type="button" data-settings-action="reset-section"${phase === "saving" || githubSyncAction || activeSection === "github" || activeSection === "plugins" || (activeSection === "ai" && aiSection === "diagnostics") ? " disabled" : ""}>恢复本页</button>
           <button type="button" data-settings-action="cancel"${!hasDiscardableChanges() || phase === "saving" || githubSyncAction || Boolean(agentAction) ? " disabled" : ""}>放弃修改</button>
           <button class="is-primary" type="button" data-settings-action="save"${!isDirty() || phase === "saving" || githubSyncAction ? " disabled" : ""}>${phase === "saving" ? "保存中" : "保存设置"}</button>
         </div>
@@ -772,7 +978,7 @@ export function mountSettingsCenter(host, options = {}) {
 
   function getNewHighRiskPermissions() {
     return [...HIGH_RISK_PERMISSIONS].filter((key) =>
-      draft.permissions.permissions?.[key] === true && snapshot.sections.permissions.permissions?.[key] !== true
+      draft.permissions?.permissions?.[key] === true && snapshot.sections.permissions?.permissions?.[key] !== true
     );
   }
 
@@ -783,17 +989,12 @@ export function mountSettingsCenter(host, options = {}) {
     setMessage("", "");
     render();
     try {
-      const [response, shortcutResult, runtimeResult, backupsResult, githubResult] = await Promise.all([
+      const [response, shortcutResult, pluginResult, githubResult] = await Promise.all([
         fetch(apiRoutes.settingsCenter, { cache: "no-store" }),
         isDesktop && desktopShell?.getShortcutSettings
           ? desktopShell.getShortcutSettings().catch(() => null)
           : Promise.resolve(null),
-        agentClient?.getRuntime
-          ? agentClient.getRuntime({ start: true }).catch((error) => ({ runtime: { available: false, state: "error", error: error.message } }))
-          : Promise.resolve({ runtime: { available: false, state: "unavailable", error: "Agent API 不可用" } }),
-        agentClient?.listBackups
-          ? agentClient.listBackups().catch((error) => ({ backups: [], error: error.message }))
-          : Promise.resolve({ backups: [], error: "Agent API 不可用" }),
+        pluginRequest("status").catch((error) => ({ statusError: error.message })),
         getGithubSyncClient()?.getStatus
           ? getGithubSyncClient().getStatus().catch((error) => ({ connected: false, error: error.message }))
           : Promise.resolve(null),
@@ -810,13 +1011,18 @@ export function mountSettingsCenter(host, options = {}) {
       }]));
       shortcutSnapshot = clone(shortcutResult?.settings || DEFAULT_SHORTCUT);
       shortcutDraft = clone(shortcutSnapshot);
-      agentRuntime = runtimeResult?.runtime || null;
+      agentRuntime = null;
+      agentDetailsLoaded = false;
+      agentDetailsLoading = false;
+      ++agentDetailsSequence;
+      if (pluginResult?.statusError) pluginError = pluginResult.statusError;
+      else { applyPluginStatus(pluginResult); pluginError = ""; }
       agentSetupSteps = Object.fromEntries(["codex", "claude"].map((provider) => [
         provider,
         resolveAgentSetupStep(data.sections.ai?.agent?.providers?.[provider] || {}, agentRuntime?.providers?.[provider] || {}),
       ]));
-      agentBackups = Array.isArray(backupsResult?.backups) ? backupsResult.backups : [];
-      agentBackupError = String(backupsResult?.error || "");
+      agentBackups = [];
+      agentBackupError = "";
       githubSyncStatus = githubResult;
       window.dispatchEvent(new CustomEvent("freeflow:github-sync-status"));
       githubClientId = String(githubResult?.auth?.clientId || "");
@@ -836,6 +1042,8 @@ export function mountSettingsCenter(host, options = {}) {
       riskConfirmationPending = false;
       conflictPending = false;
       render();
+      if (settingsOpen && activeSection === "ai") void loadAgentDetails();
+      schedulePluginPolling();
     } catch (error) {
       if (sequence !== requestSequence) return;
       phase = "load-error";
@@ -900,8 +1108,8 @@ export function mountSettingsCenter(host, options = {}) {
       conflictPending = false;
       try {
         await Promise.resolve(onApplySnapshot(clone(data), clone(shortcutDraft)));
-        if (agentClient?.getRuntime) {
-          agentRuntime = (await agentClient.getRuntime({ start: true })).runtime;
+        if (activeSection === "ai" && plugin.activeEnabled && agentClient?.getRuntime) {
+          agentRuntime = (await agentClient.getRuntime({ start: false })).runtime;
         }
         setMessage("设置已保存并应用", "success");
         onStatus("系统设置已保存并应用", "success");
@@ -931,7 +1139,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function resetActiveSection() {
-    if (!snapshot || !draft || (activeSection === "ai" && aiSection === "diagnostics") || activeSection === "github") return;
+    if (!snapshot || !draft || (activeSection === "ai" && aiSection === "diagnostics") || activeSection === "github" || activeSection === "plugins") return;
     if (activeSection === "workbench") shortcutDraft = clone(shortcutSnapshot);
     const section = activeSection === "ai" && aiSection === "permissions" ? "permissions" : activeSection;
     if (section === "updates") draft.general.updateCheckEnabled = snapshot.sections.general.updateCheckEnabled;
@@ -956,7 +1164,7 @@ export function mountSettingsCenter(host, options = {}) {
   async function refreshAgentSnapshotPreservingDraft({ resetConnectionProvider = "" } = {}) {
     const previous = clone(draft);
     const previousConnectionDrafts = clone(agentConnectionDrafts);
-    const response = await fetch(apiRoutes.settingsCenter, { cache: "no-store" });
+    const response = await fetch(`${apiRoutes.settingsCenter}${apiRoutes.settingsCenter.includes("?") ? "&" : "?"}includeAi=1`, { cache: "no-store" });
     const data = await readJsonResponse(response, "系统设置");
     if (!response.ok || !data.ok) throw new Error(data.error || "无法刷新 AI 设置");
     const freshAgent = data.sections.ai.agent;
@@ -985,7 +1193,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   async function runAgentAction(action, payload = {}) {
-    if (!agentClient || agentAction) return;
+    if (!plugin.activeEnabled || !draft?.ai || !agentClient || agentAction) return;
     agentAction = action;
     setMessage("", "");
     render();
@@ -1041,7 +1249,7 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   async function runBackupAction(nextAction, name = "") {
-    if (!agentClient || backupAction) return;
+    if (!plugin.activeEnabled || !agentClient || backupAction) return;
     backupAction = nextAction;
     agentBackupError = "";
     setMessage("", "");
@@ -1320,6 +1528,13 @@ export function mountSettingsCenter(host, options = {}) {
     const actionButton = target?.closest("[data-settings-action]");
     if (!actionButton) return;
     const action = actionButton.dataset.settingsAction;
+    if (action === "plugin-import") { host.querySelector("[data-assistant-plugin-package]")?.click(); return; }
+    if (action === "plugin-uninstall-confirm") { uninstallConfirmation = true; disableConfirmation = false; render(); return; }
+    if (action === "plugin-uninstall-cancel") { uninstallConfirmation = false; render(); return; }
+    if (action === "plugin-disable-confirm") { disableConfirmation = true; uninstallConfirmation = false; render(); return; }
+    if (action === "plugin-disable-cancel") { disableConfirmation = false; render(); return; }
+    if (["plugin-install", "plugin-cancel", "plugin-enable", "plugin-disable", "plugin-check", "plugin-uninstall"].includes(action)) { await runPluginAction(action.slice(7)); return; }
+    if (action === "agent-load-details") { await loadAgentDetails(); return; }
     if (githubSyncAction && ["reload", "save", "confirm-risk", "reset-section", "cancel"].includes(action)) return;
     if (action === "github-connect") { await runGithubAction("connect"); return; }
     if (action === "github-token-connect") { await runGithubAction("token-connect"); return; }
@@ -1372,7 +1587,7 @@ export function mountSettingsCenter(host, options = {}) {
     if (action === "cancel-risk") { riskConfirmationPending = false; setMessage("", ""); render(); }
     if (action === "reset-section") resetActiveSection();
     if (action === "cancel") { discardChanges(); onRequestClose(); return; }
-    const provider = draft.ai.agent?.activeProvider === "claude" ? "claude" : "codex";
+    const provider = draft.ai?.agent?.activeProvider === "claude" ? "claude" : "codex";
     if (action === "agent-setup-continue") { agentSetupSteps[provider] = 2; setMessage("", ""); render(); }
     if (action === "agent-edit-setup") { agentSetupSteps[provider] = 2; setMessage("", ""); render(); }
     if (action === "agent-refresh") await runAgentAction("refresh");
@@ -1448,6 +1663,15 @@ export function mountSettingsCenter(host, options = {}) {
     if (phase === "saving") return;
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    if (target.matches("[data-assistant-plugin-package]")) {
+      const file = target.files?.[0];
+      target.value = "";
+      if (!file) return;
+      if (file.size > 24 * 1024 * 1024) { pluginError = "插件包超过 24 MB 限制"; render(); return; }
+      if (!file.name.toLowerCase().endsWith(".ffplugin")) { pluginError = "请选择 .ffplugin 官方插件包"; render(); return; }
+      void runPluginAction("import", file);
+      return;
+    }
     if (target.matches("[data-github-auth-method]")) {
       githubAuthMethod = target.value === "device-flow" ? "device-flow" : "token";
       githubDeviceFlow = null;
@@ -1485,6 +1709,11 @@ export function mountSettingsCenter(host, options = {}) {
 
   function close() {
     if (phase === "saving") return false;
+    settingsOpen = false;
+    stopPluginPolling();
+    ++agentDetailsSequence;
+    agentDetailsLoading = false;
+    if (phase === "loading") { ++requestSequence; phase = "idle"; }
     void shortcutRecorder?.stop();
     if (themePreviewActive || snapshot?.sections?.appearance) restoreThemePreview();
     return true;
@@ -1515,13 +1744,21 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function open() {
+    settingsOpen = true;
     if (!draft || phase === "load-error") return load();
     if (snapshot?.sections?.appearance && stableStringify(draft.appearance) !== stableStringify(snapshot.sections.appearance)) {
       previewTheme();
     }
     render();
+    if (activeSection === "ai") void loadAgentDetails();
+    if (activeSection === "plugins") return refreshPluginStatus();
     return Promise.resolve();
   }
+
+  document.addEventListener("visibilitychange", () => {
+    stopPluginPolling();
+    if (!document.hidden && settingsOpen && activeSection === "plugins") void refreshPluginStatus();
+  });
 
   render();
   return {

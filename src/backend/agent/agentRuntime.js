@@ -4,7 +4,7 @@ const path = require("path");
 const { EventEmitter } = require("events");
 const { AgentStore } = require("./agentStore");
 const { CodexAppServerClient } = require("./codexAppServerClient");
-const { createCliRuntimeRegistry, wrapperCommand } = require("./cliRuntimeRegistry");
+const { createCliRuntimeRegistry, wrapperCommand, cliProcessEnv } = require("./cliRuntimeRegistry");
 const { createClaudeCliRunner } = require("./claudeCliRunner");
 const { providerApiRoot } = require("./agentConnectionService");
 const { isProviderValidationCurrent, normalizeAgentSettings } = require("./agentSettingsModel");
@@ -58,7 +58,7 @@ function codexClientConfig(provider, command, cwd, profileDir, appVersion) {
   const args = [...launch.args, "app-server", "--stdio"];
   for (const [key, value] of config) args.push("--config", `${key}=${typeof value === "string" ? JSON.stringify(value) : value}`);
   const env = {
-    ...process.env,
+    ...cliProcessEnv(launch),
     CODEX_HOME: profileDir,
     CODEX_API_KEY: provider.apiKey,
     OPENAI_API_KEY: provider.apiKey,

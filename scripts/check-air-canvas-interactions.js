@@ -1,4 +1,5 @@
 const { chromium } = require("playwright");
+const { mockAssistantPlugin } = require("./fixtures/assistant-plugin");
 
 const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const VIEWPORTS = [
@@ -218,12 +219,13 @@ async function checkChromeStates(page, viewport) {
     return {
       background: style.backgroundColor,
       backingBackground: backing.backgroundColor,
+      expectedBacking: `rgba(${getComputedStyle(element).getPropertyValue("--theme-floating-surface-rgb").match(/\d+/g).slice(0, 3).join(", ")}, 0.96)`,
       backingOpacity: Number(backing.opacity),
       borderRadius: style.borderRadius,
       firstItemBackground: firstItem ? getComputedStyle(firstItem).backgroundColor : "",
     };
   });
-  assert(shellMenuSurface.background === "rgba(0, 0, 0, 0)" && shellMenuSurface.backingBackground === "rgba(255, 255, 255, 0.58)" && shellMenuSurface.backingOpacity === 0.84 && shellMenuSurface.borderRadius === "12px", "global more menu does not use the shared popover surface", {
+  assert(shellMenuSurface.background === "rgba(0, 0, 0, 0)" && shellMenuSurface.backingBackground === shellMenuSurface.expectedBacking && shellMenuSurface.backingOpacity === 1 && shellMenuSurface.borderRadius === "12px", "global more menu does not use the shared popover surface", {
     viewport,
     shellMenuSurface,
   });
@@ -547,6 +549,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
       return {
         background: style.backgroundColor,
         backingBackground: backing.backgroundColor,
+        expectedBacking: `rgba(${style.getPropertyValue("--theme-floating-surface-rgb").match(/\d+/g).slice(0, 3).join(", ")}, 0.96)`,
         backingOpacity: Number(backing.opacity),
         backingFilter: backing.backdropFilter || backing.webkitBackdropFilter,
         borderRadius: style.borderRadius,
@@ -589,7 +592,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
     };
   });
   assert(
-    mappingGlass.trigger.backingBackground === "rgba(255, 255, 255, 0.8)" && mappingGlass.popover.background === "rgba(0, 0, 0, 0)" && mappingGlass.popover.backingBackground === "rgba(255, 255, 255, 0.58)" && mappingGlass.popover.backingOpacity === 0.84 && mappingGlass.popover.backingFilter.includes("blur(16px)"),
+    mappingGlass.trigger.backingBackground === "rgba(255, 255, 255, 0.8)" && mappingGlass.popover.background === "rgba(0, 0, 0, 0)" && mappingGlass.popover.backingBackground === mappingGlass.popover.expectedBacking && mappingGlass.popover.backingOpacity === 1 && mappingGlass.popover.backingFilter.includes("blur(16px)"),
     "mapping controls do not use the shared trigger and popover glass",
     { viewport, mappingGlass }
   );
@@ -1268,8 +1271,8 @@ async function checkPanelLayoutControls(page, viewport) {
   });
   assert(
     Math.abs((collapsedRestore.top + collapsedRestore.bottom) / 2 - viewport.height / 2) <= 2 && collapsedRestore.left <= 10 &&
-      collapsedRestore.right - collapsedRestore.left >= 32 &&
-      collapsedRestore.bottom - collapsedRestore.top >= 32,
+      collapsedRestore.right - collapsedRestore.left >= 24 &&
+      collapsedRestore.bottom - collapsedRestore.top >= 64,
     "collapsed canvas restore control is not accessible at the left midpoint",
     { viewport, collapsedRestore }
   );
@@ -1288,8 +1291,8 @@ async function checkPanelLayoutControls(page, viewport) {
   });
   assert(
     Math.abs((rightRestore.top + rightRestore.bottom) / 2 - viewport.height / 2) <= 2 && Math.abs(viewport.width - rightRestore.right) <= 10 &&
-      rightRestore.right - rightRestore.left >= 32 &&
-      rightRestore.bottom - rightRestore.top >= 32,
+      rightRestore.right - rightRestore.left >= 24 &&
+      rightRestore.bottom - rightRestore.top >= 64,
     "collapsed conversation restore control is not accessible at the right midpoint",
     { viewport, rightRestore }
   );
@@ -1441,6 +1444,7 @@ async function checkPanelResizeContract(page, viewport) {
 
 async function checkViewport(browser, viewport) {
   const page = await browser.newPage({ viewport });
+  await mockAssistantPlugin(page, { mockAgentRuntime: true });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error?.message || error)));
   page.on("console", (message) => {
@@ -1587,9 +1591,33 @@ async function checkViewport(browser, viewport) {
   }
 }
 
+async function checkMirrorOnlyChrome(browser) {
+  const page = await browser.newPage({ viewport: VIEWPORTS[0] });
+  const assistantRequests = [];
+  page.on("request", (request) => { if (/\/api\/(agent|plugins\/assistant\/assets)\//.test(request.url())) assistantRequests.push(request.url()); });
+  try {
+    await mockAssistantPlugin(page, { installed: false });
+    await page.addInitScript(() => { window.desktopShell = { isDesktop: true, async listAiMirrorTargets() { return { ok: true, targets: [] }; } }; });
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".canvas2d-engine-toolbar", { timeout: 15000 });
+    const surface = await page.evaluate(() => {
+      const pane = document.querySelector(".conversation-panel");
+      const menu = document.querySelector("#conversation-shell-menu");
+      const paneStyle = getComputedStyle(pane);
+      const backing = getComputedStyle(menu, "::before");
+      const expected = `rgba(${paneStyle.getPropertyValue("--theme-floating-surface-rgb").match(/\d+/g).slice(0, 3).join(", ")}, 0.96)`;
+      return { paneBackground: paneStyle.backgroundImage, paneFilter: paneStyle.backdropFilter, menuBackground: backing.backgroundColor, menuOpacity: Number(backing.opacity), expected, assistantHidden: getComputedStyle(document.querySelector("#right-panel-tab-assistant")).display === "none", composerMissing: !document.querySelector("#chat-form") };
+    });
+    assert(surface.paneBackground !== "none" && surface.paneFilter.includes("blur(30px)"), "mirror-only pane lost its shared glass surface", surface);
+    assert(surface.menuBackground === surface.expected && surface.menuOpacity === 1, "mirror-only menu lost readable shared backing", surface);
+    assert(surface.assistantHidden && surface.composerMissing && assistantRequests.length === 0, "mirror-only startup loaded assistant implementation", { surface, assistantRequests });
+  } finally { await page.close(); }
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
+    await checkMirrorOnlyChrome(browser);
     for (const viewport of VIEWPORTS) {
       console.log('[air-canvas] viewport', viewport);
       await checkViewport(browser, viewport);

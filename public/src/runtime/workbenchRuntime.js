@@ -18,10 +18,8 @@ import { mountSettingsCenter } from "../components/settings/settingsCenter.js";
 import { normalizeThemeSettings } from "../theme/themeSettings.js";
 import { applyThemeCssVariables } from "../theme/themeCssVariables.js";
 import { API_ROUTES, readJsonResponse } from "../api/http.js";
-import { createAgentClient } from "../api/agentClient.js";
 import { listAiMirrorTargets, prepareAiMirrorTarget, stopAiMirrorTarget } from "./aiMirrorClient.js";
 import { createConversationAssistantChrome } from "./conversationAssistant/chrome.js";
-import { createAgentController } from "./conversationAssistant/agentController.js";
 import { getConversationAssistantElements } from "./conversationAssistant/dom.js";
 import { dispatchTutorialUiEvent } from "../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../tutorial-core/tutorialTypes.js";
@@ -50,7 +48,39 @@ import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js
 import { createLatestAsyncCommitter } from "../utils/latestAsyncCommitter.js";
 
 const state = createInitialState();
-const agentClient = createAgentClient();
+let assistantPluginState = { installed: false, activeEnabled: false };
+let assistantPluginModule = null;
+let removeAssistantPluginUI = null;
+let assistantStylesheet = null;
+let assistantPluginError = "";
+try {
+  const response = await fetch("/api/plugins/assistant/status", { cache: "no-store", signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error("无法读取 AI 助手插件状态");
+  const result = await response.json();
+  assistantPluginState = result.plugin || assistantPluginState;
+  if (assistantPluginState.activeEnabled) {
+    assistantPluginModule = await import("/api/plugins/assistant/assets/assistant.js");
+    removeAssistantPluginUI = await assistantPluginModule.prepareAssistantUI({ document });
+    assistantStylesheet = document.createElement("link");
+    assistantStylesheet.rel = "stylesheet";
+    assistantStylesheet.href = "/api/plugins/assistant/assets/assistant.css";
+    const loaded = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("AI 助手样式读取超时")), 10000);
+      assistantStylesheet.onload = () => { clearTimeout(timer); resolve(); };
+      assistantStylesheet.onerror = () => { clearTimeout(timer); reject(new Error("AI 助手样式读取失败")); };
+    });
+    document.head.appendChild(assistantStylesheet);
+    await loaded;
+  }
+} catch (error) {
+  assistantPluginError = error.message;
+  assistantPluginState = { ...assistantPluginState, activeEnabled: false };
+  removeAssistantPluginUI?.();
+  assistantStylesheet?.remove();
+  assistantPluginModule = null;
+}
+const agentClient = assistantPluginModule?.createAgentClient() || null;
+document.body.classList.toggle("assistant-plugin-enabled", Boolean(assistantPluginState.activeEnabled));
 const APP_CLIPBOARD_TTL_MS = 120000;
 const CANVAS_MODE_LEGACY = "legacy";
 const SCREEN_SOURCE_EMBED_FIT_MODES = Object.freeze(["contain", "cover", "fill"]);
@@ -67,6 +97,23 @@ let conversationAssistantChrome = null;
 let agentController = null;
 let lastPanelLayoutViewportSize = null;
 let workspaceResizeRefreshFrame = 0;
+
+function applyAssistantPluginStatus(plugin) {
+  const wasActive = assistantPluginState.activeEnabled;
+  assistantPluginState = { ...plugin, activeEnabled: Boolean(plugin.activeEnabled && assistantPluginModule) };
+  if (wasActive && !assistantPluginState.activeEnabled) {
+    agentController?.destroy();
+    agentController = null;
+    state.activeRightPanelView = "screen";
+    localStorage.setItem(CONFIG.rightPanelViewKey, "screen");
+    removeAssistantPluginUI?.();
+    removeAssistantPluginUI = null;
+    assistantStylesheet?.remove();
+    document.body.classList.remove("assistant-plugin-enabled");
+    renderRightPanelView();
+    scheduleDesktopWindowShapeSync();
+  }
+}
 
 function normalizeScreenSourceFitMode(value) {
   const fitMode = String(value || "").trim().toLowerCase();
@@ -1817,6 +1864,7 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onRequestClose: requestSettingsDrawerClose,
   onCheckUpdate: DESKTOP_SHELL?.checkForAppUpdate ? () => runAppUpdateCheck({ manual: true }) : null,
   agentClient,
+  onPluginStatus: applyAssistantPluginStatus,
   runGitHubBoardFileOperation: async (task) => {
     const engine = getModernCanvas2DEngine();
     if (!engine?.withBoardFileOperation) throw new Error("当前画布尚未就绪，请稍后重试");
@@ -1839,14 +1887,14 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
     return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace() || boardPath.replace(/[\\/][^\\/]+$/, "") };
   },
 });
-agentController = createAgentController({
+agentController = assistantPluginModule?.createAgentController({
   client: agentClient,
   desktopShell: DESKTOP_SHELL,
   setStatus,
   setRichContent: setRichMessageContent,
   onOpenSettings: openSettingsCenterSection,
   onRuntime: syncAgentRuntimeOverview,
-});
+}) || null;
 window.addEventListener("canvas2d-engine-ready", applyCanvasPreferencesToRuntime);
 window.addEventListener("canvas-preferences-changed", handleCanvasPreferencesChanged);
 const hasLegacyCanvasShell =
@@ -2086,6 +2134,7 @@ function getCanvasTitle() {
 }
 
 function normalizeRightPanelView(value) {
+  if (!assistantPluginState.activeEnabled) return "screen";
   return String(value || "").trim() === "screen" ? "screen" : "assistant";
 }
 
@@ -2466,7 +2515,8 @@ function syncRightPanelWindowSlider() {
 }
 
 function renderRightPanelSwitchLockState() {
-  const locked = Boolean(rightPanelSwitchLocked);
+  const locked = Boolean(rightPanelSwitchLocked) && assistantPluginState.activeEnabled;
+  rightPanelSwitchLockBtn?.toggleAttribute("hidden", !assistantPluginState.activeEnabled);
   rightPanelWindowStripEl?.classList.toggle("is-locked", locked);
   rightPanelSwitchLockBtn?.classList.toggle("is-locked", locked);
   rightPanelSwitchLockBtn?.setAttribute("aria-pressed", String(locked));
@@ -3439,6 +3489,9 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
 
 function renderRightPanelView() {
   const activeView = normalizeRightPanelView(state.activeRightPanelView);
+  document.querySelector("#right-panel-tab-assistant")?.toggleAttribute("hidden", !assistantPluginState.activeEnabled);
+  rightPanelSwitchLockBtn?.toggleAttribute("hidden", !assistantPluginState.activeEnabled);
+  conversationPanel?.classList.toggle("mirror-only", !assistantPluginState.activeEnabled);
   state.activeRightPanelView = activeView;
   setActiveClipboardZone(activeView === "screen" ? "screen" : "assistant");
   conversationPanel?.classList.toggle("assistant-view-active", activeView === "assistant");
@@ -3480,6 +3533,7 @@ async function setActiveRightPanelView(view, { persist = true, ensureCapture = f
     localStorage.setItem(CONFIG.rightPanelViewKey, state.activeRightPanelView);
   }
   renderRightPanelView();
+  if (state.activeRightPanelView === "assistant") await agentController?.initialize();
 
   if (state.activeRightPanelView === "screen" && IS_DESKTOP_APP) {
     try {
@@ -5438,6 +5492,7 @@ async function refreshAvailableModels({
   successText = "",
   loadingText = "正在连接模型服务并读取模型列表",
 } = {}) {
+  if (!assistantPluginState.activeEnabled) return null;
   setStatus(loadingText);
   const response = await fetch(API_ROUTES.meta);
   const data = await readJsonResponse(response, "模型信息");
@@ -5484,7 +5539,7 @@ async function saveModelProviderSettings(nextSettings = {}) {
 }
 
 function renderCurrentSessionHeader() {
-  if (agentController?.isInitialized()) return;
+  if (!assistantPluginState.activeEnabled || agentController) return;
   const session = getCurrentSession();
   const isEditingCurrent = state.editingSessionId && session?.id === state.editingSessionId;
 
@@ -5568,6 +5623,7 @@ function renderAiRuntimeSummary() {
 async function bootstrap() {
   document.body.classList.toggle("desktop-mode", IS_DESKTOP_APP);
   state.activeRightPanelView = normalizeRightPanelView(localStorage.getItem(CONFIG.rightPanelViewKey));
+  if (!assistantPluginState.activeEnabled) localStorage.setItem(CONFIG.rightPanelViewKey, "screen");
   bindUpdateNoticeEvents();
   await loadStartupContext();
   await loadUiSettings();
@@ -5598,7 +5654,8 @@ async function bootstrap() {
   observeScreenSourcePreviewSize();
   observeScreenSourceToolbarSize();
   updatePromptPlaceholder();
-  await agentController.initialize();
+  if (assistantPluginState.activeEnabled && state.activeRightPanelView === "assistant") await agentController?.initialize();
+  if (assistantPluginError) setStatus(`AI 助手未加载：${assistantPluginError}。画布与镜像可继续使用`, "warning");
   scheduleDesktopWindowShapeSync();
   markBootMilestone("renderer-ready");
   try {
@@ -7872,13 +7929,13 @@ const removeBootstrapTimeoutListener = DESKTOP_SHELL?.onBootstrapTimeout?.((payl
 });
 window.addEventListener("beforeunload", () => removeBootstrapTimeoutListener?.(), { once: true });
 
-chatForm.addEventListener("submit", async (event) => {
+chatForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await agentController.submit();
   autoresize();
 });
 
-stopBtn.addEventListener("click", () => {
+stopBtn?.addEventListener("click", () => {
   void agentController.stop();
 });
 
@@ -7888,7 +7945,7 @@ composerThinkingBtn?.addEventListener("click", async () => {
   await setThinkingEnabledForActiveModel(!getModelProfile(activeModel).thinkingEnabled);
 });
 
-clearBtn.addEventListener("click", async () => {
+clearBtn?.addEventListener("click", async () => {
   await agentController.newSession();
 });
 
@@ -9073,15 +9130,15 @@ addRootBtn?.addEventListener("click", async () => {
   await savePermissions().catch(() => {});
 });
 
-promptInput.addEventListener("input", autoresize);
-promptInput.addEventListener("input", syncConversationEmptyStateVisibility);
-promptInput.addEventListener("focus", () => {
+promptInput?.addEventListener("input", autoresize);
+promptInput?.addEventListener("input", syncConversationEmptyStateVisibility);
+promptInput?.addEventListener("focus", () => {
   setActiveClipboardZone("assistant");
   void syncDesktopKeyboardFocusOwner("assistant", {
     sourceId: "renderer:prompt-input",
   });
 });
-promptInput.addEventListener("paste", async (event) => {
+promptInput?.addEventListener("paste", async (event) => {
   if (event.defaultPrevented) {
     return;
   }
@@ -9097,7 +9154,7 @@ promptInput.addEventListener("paste", async (event) => {
   }
 });
 
-promptInput.addEventListener("keydown", (event) => {
+promptInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     chatForm.requestSubmit();
@@ -10345,7 +10402,8 @@ function updateAssistantMessage(content, streamingOrOptions = false, legacyThink
 }
 
 function renderCurrentSession() {
-  if (agentController?.isInitialized()) return;
+  if (!assistantPluginState.activeEnabled || agentController) return;
+  if (!assistantPluginState.activeEnabled || agentController) return;
   const session = getCurrentSession();
   chatLog.innerHTML = "";
   renderCurrentSessionHeader();
@@ -10627,6 +10685,7 @@ function sanitizeLanguage(language) {
 }
 
 function setComposerState(isBusy) {
+  if (!assistantPluginState.activeEnabled || !sendBtn || !stopBtn || !clearBtn) return;
   sendBtn.disabled = isBusy;
   stopBtn.disabled = !isBusy;
   clearBtn.disabled = isBusy;
@@ -10901,6 +10960,7 @@ function guidePermissionResolution(errorMessage) {
 }
 
 function renderEmptyState() {
+  if (!assistantPluginState.activeEnabled) return;
   if (!chatLog) {
     return;
   }
@@ -11841,6 +11901,7 @@ function scrollThreadToBottom() {
 }
 
 function autoresize() {
+  if (!assistantPluginState.activeEnabled || !promptInput) return;
   const panelHeight = Math.max(1, Number(conversationPanel?.clientHeight || window.innerHeight || 1));
   const maxInputHeight = Math.max(72, Math.min(220, Math.floor(panelHeight * 0.32)));
   promptInput.style.height = "auto";

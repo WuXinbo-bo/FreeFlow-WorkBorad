@@ -97,6 +97,9 @@ async function main() {
   await page.route("**/api/settings-center", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(clone(snapshot)) });
   });
+  await page.route("**/api/plugins/assistant/status", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, plugin: { installed: false, activeEnabled: false, desiredEnabled: false, phase: "not-installed" } }) });
+  });
 
   try {
     await page.goto(`${baseUrl}/fixture.html`, { waitUntil: "domcontentloaded" });
@@ -157,9 +160,14 @@ async function main() {
       await window.__settingsController.open();
     });
 
-    for (const [section, heading] of [["general", "应用更新"], ["permissions", "权限与目录"], ["diagnostics", "AI 诊断与备份"]]) {
+    for (const [section, heading] of [["general", "应用更新"]]) {
       await page.evaluate(section => window.__settingsController.openSection(section), section);
       assert(await page.locator(`h4:has-text("${heading}")`).count() === 1, "legacy section alias failed", section);
+    }
+    for (const section of ["permissions", "diagnostics"]) {
+      await page.evaluate(section => window.__settingsController.openSection(section), section);
+      assert(await page.locator('[data-settings-section="plugins"].is-active').count() === 1, "uninstalled AI alias did not open plugins", section);
+      assert(await page.locator('[data-settings-section="ai"]').count() === 0, "uninstalled assistant exposed AI settings", section);
     }
     await page.locator('[data-settings-section="updates"]').click();
     await page.locator('[data-settings-action="check-update"]').click();
