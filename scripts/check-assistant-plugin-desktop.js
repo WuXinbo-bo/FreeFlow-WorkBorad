@@ -69,8 +69,10 @@ async function main() {
   }
   async function settings(section = "plugins") {
     await page.locator("#conversation-settings-btn").evaluate((button) => button.click());
-    await page.locator(`[data-settings-section="${section}"]`).waitFor({ state: "visible" });
-    await page.locator(`[data-settings-section="${section}"]`).click();
+    await page.locator(".settings-center-layout").waitFor({ state: "visible" });
+    const category = page.locator("[data-settings-category]");
+    if (await category.count() && await category.isVisible()) await category.selectOption(section);
+    else await page.locator(`.settings-center-nav [data-settings-section="${section}"]`).click();
   }
   try {
     await launch();
@@ -140,6 +142,7 @@ async function main() {
     await launch();
     assert.equal((await status()).activeEnabled, true);
     await settings();
+    await page.locator(".settings-center-plugin-more > summary").click();
     await page.locator('[data-settings-action="plugin-uninstall-confirm"]').click();
     const uninstalled = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/plugins/assistant/uninstall" && response.request().method() === "POST");
     await page.locator('[data-settings-action="plugin-uninstall"]').click();

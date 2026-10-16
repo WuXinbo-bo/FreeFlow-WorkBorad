@@ -89,7 +89,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
     }
     if (u.pathname === "/test") {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(`<link rel="stylesheet" href="/ui.settings-center.css"><div id="insight-drawer" class="ui-chrome-drawer"><div id="host" class="settings-center-host"></div></div><script type="module">import {mountSettingsCenter} from '/src/components/settings/settingsCenter.js';window.aiCalls=0;window.center=mountSettingsCenter(document.querySelector('#host'),{apiRoutes:{settingsCenter:'/api/settings-center'},readJsonResponse:r=>r.json(),agentClient:{getRuntime:async()=>{window.aiCalls++;return {runtime:{providers:{}}}},listBackups:async()=>{window.aiCalls++;return {backups:[]}}}});window.ready=true;<\/script>`);
+      res.end(`${["styles.css", "ui.tokens.css", "ui.shell.css", "ui.chrome-system.css", "ui.settings-center.css"].map(name => `<link rel="stylesheet" href="/${name}">`).join("")}<aside id="insight-drawer" class="ui-chrome-drawer is-open"><header class="settings-center-frame-header"><h3>系统设置</h3></header><div id="host" class="settings-center-host"></div></aside><script type="module">import {mountSettingsCenter} from '/src/components/settings/settingsCenter.js';window.aiCalls=0;window.center=mountSettingsCenter(document.querySelector('#host'),{apiRoutes:{settingsCenter:'/api/settings-center'},readJsonResponse:r=>r.json(),agentClient:{getRuntime:async()=>{window.aiCalls++;return {runtime:{providers:{}}}},listBackups:async()=>{window.aiCalls++;return {backups:[]}}}});window.ready=true;<\/script>`);
       return;
     }
     try {
@@ -162,6 +162,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
     assert.ok(!posts[0].sections.ai, "hidden AI excluded from core save");
     assert.equal(await page.evaluate(() => aiCalls), 2);
     await page.locator("[data-settings-section=plugins]").click();
+    await page.locator(".settings-center-plugin-more > summary").click();
     await page.locator("[data-settings-action=plugin-uninstall-confirm]").click();
     await page.locator("[data-settings-action=plugin-uninstall-cancel]").click();
     assert.equal(plugin.installed, true);

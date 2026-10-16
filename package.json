@@ -100,6 +100,7 @@
     "test:theme-system": "node scripts/check-theme-system.mjs",
     "test:settings-center": "node scripts/check-settings-center.js",
     "test:settings-center-browser": "node scripts/check-settings-center-browser.js",
+    "test:settings-drawer-layout": "node scripts/check-settings-drawer-layout.js",
     "test:settings-github-browser": "node scripts/check-settings-github-browser.js",
     "test:agent-runtime": "node scripts/check-agent-runtime.js",
     "test:agent-presentation": "node scripts/check-agent-activity-presentation.js",

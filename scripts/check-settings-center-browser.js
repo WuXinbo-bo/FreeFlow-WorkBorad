@@ -27,11 +27,13 @@ async function openSettings(page) {
     const rect = document.querySelector("#insight-drawer")?.getBoundingClientRect();
     return rect && rect.left >= innerWidth * 0.45 && innerWidth - rect.right <= 14;
   });
-  await page.waitForSelector("[data-settings-section=ai]");
+  await page.locator("[data-settings-section=ai]").waitFor({ state: "attached" });
 }
 
 async function openSection(page, section) {
-  await page.locator(`[data-settings-section="${section}"]`).click();
+  const category = page.locator("[data-settings-category]");
+  if (await category.count() && await category.isVisible()) await category.selectOption(section);
+  else await page.locator(`.settings-center-nav [data-settings-section="${section}"]`).click();
   await page.waitForFunction(
     (name) => document.querySelector(`[data-settings-section="${name}"]`)?.classList.contains("is-active"),
     section
