@@ -11,6 +11,9 @@ async function checkCanvasHarmony(page, { screenshotDir } = {}) {
   const search = page.getByRole("dialog", { name: "画布搜索", exact: true });
   const historyTrigger = page.getByRole("button", { name: "查看最近导出记录", exact: true });
   const searchTrigger = page.getByRole("button", { name: "打开画布搜索", exact: true });
+  const options = page.getByRole("dialog", { name: "画布选项与帮助", exact: true });
+  const optionsTrigger = page.getByRole("button", { name: "画布选项与帮助", exact: true });
+  const shapeToolbar = page.getByRole("toolbar", { name: "图形样式", exact: true });
   const snapshot = () => page.evaluate(() => {
     const s = window.__canvas2dEngine.getSnapshot();
     return { board: JSON.stringify(s.board), dirty: s.boardDirty };
@@ -30,10 +33,20 @@ async function checkCanvasHarmony(page, { screenshotDir } = {}) {
       const r = el.getBoundingClientRect();
       const boundary = document.querySelector(".canvas2d-engine-ui").getBoundingClientRect();
       const points = [[4, 4], [r.width - 4, 4], [4, r.height - 4], [r.width - 4, r.height - 4], [r.width / 2, r.height / 2]];
+      const shape = document.querySelector(".canvas2d-shape-style-popover")?.getBoundingClientRect();
+      if (shape) {
+        const left = Math.max(r.left, shape.left), right = Math.min(r.right, shape.right);
+        const top = Math.max(r.top, shape.top), bottom = Math.min(r.bottom, shape.bottom);
+        if (right > left && bottom > top) points.push([(left + right) / 2 - r.left, (top + bottom) / 2 - r.top]);
+      }
+      const hits = points.map(([x, y]) => {
+        const target = document.elementFromPoint(r.x + x, r.y + y);
+        return { x, y, inside: el.contains(target), target: target?.outerHTML.slice(0, 250) };
+      });
       return {
         width: r.width, parent: el.parentElement.id, shape: el.dataset.shapeInclude,
         inside: r.left >= boundary.left + 10 && r.right <= boundary.right - 10 && r.top >= boundary.top + 10 && r.bottom <= boundary.bottom - 10,
-        clickable: points.every(([x, y]) => el.contains(document.elementFromPoint(r.x + x, r.y + y))),
+        clickable: hits.every((hit) => hit.inside), hits,
         fitsContent: el.scrollWidth <= el.clientWidth + 1,
       };
     });
@@ -47,6 +60,22 @@ async function checkCanvasHarmony(page, { screenshotDir } = {}) {
     await page.evaluate(() => window.__canvas2dEngine.whenReady());
     const workspaceClose = page.locator(".canvas2d-workspace-panel").getByRole("button", { name: "收起画布工作区", exact: true });
     if (await workspaceClose.isVisible()) await workspaceClose.click();
+    // Keep a real selected shape behind the menus: its body portal must not cover them.
+    await page.getByRole("button", { name: "框选 (V)", exact: true }).click();
+    await page.evaluate(() => {
+      const engine = window.__canvas2dEngine;
+      const board = engine.getSnapshot().board;
+      const view = board.view;
+      const canvas = document.querySelector("#canvas-office-canvas").getBoundingClientRect();
+      const anchor = document.querySelector('[aria-label="查看最近导出记录"]').getBoundingClientRect();
+      const id = "harmony-layering-shape";
+      engine.loadStructuredBoardForExport({
+        ...board,
+        items: [...board.items.filter(item => item.id !== id), { id, type: "shape", shapeType: "rect", x: (anchor.right - 100 - canvas.left - view.offsetX) / view.scale - 60, y: (anchor.bottom + 160 - canvas.top - view.offsetY + 14) / view.scale, width: 120, height: 80 }],
+        selectedIds: [id],
+      });
+    });
+    await shapeToolbar.waitFor();
     const baseline = await snapshot();
     for (let i = 0; i < 4; i += 1) {
       await page.evaluate((collapsed) => window.__canvas2dEngine.setCanvasNavigatorCollapsed(collapsed), i % 2 === 0);
@@ -70,6 +99,14 @@ async function checkCanvasHarmony(page, { screenshotDir } = {}) {
       await search.locator("input").press("Escape");
       assert.equal(await search.count(), 0);
       assert(await searchTrigger.evaluate((el) => document.activeElement === el), "Esc did not restore search trigger focus");
+      await optionsTrigger.click();
+      await assertPanel(options);
+      await options.getByRole("button", { name: "关闭画布选项与帮助", exact: true }).click();
+      const shapeHit = await shapeToolbar.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+      });
+      assert(shapeHit, "closing the menu did not restore the selected shape toolbar hit area");
     }
     await historyTrigger.click();
     await page.getByRole("button", { name: "框选 (V)", exact: true }).click();

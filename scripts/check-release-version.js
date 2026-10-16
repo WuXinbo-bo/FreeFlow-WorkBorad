@@ -38,7 +38,9 @@ function main() {
   assertIncludes("electron/main.js", `TUTORIAL_BOARD_TEMPLATE_VERSION = "${expectedVersion}"`);
   assertIncludes("public/src/config/app.config.js", `startupTutorialIntroVersion: "${expectedVersion}"`);
   assertIncludes("public/src/tutorial-core/tutorialTypes.js", `TUTORIAL_VERSION = "${expectedVersion}"`);
-  assertIncludes("public/src/engines/canvas2d-core/ui/index.jsx", displayVersion);
+  // The options panel reads the displayed version from the same package metadata.
+  assertIncludes("public/src/engines/canvas2d-core/ui/CanvasOptionsPanel.jsx", 'import { version as appVersion } from "../../../../../package.json";');
+  assertIncludes("public/src/engines/canvas2d-core/ui/CanvasOptionsPanel.jsx", "<dd>v{appVersion}</dd>");
   assertIncludes("public/assets/canvas2d-ui/current/canvas2d-ui.js", expectedVersion);
   assertIncludes("public/assets/canvas-office/current/canvas-office-ui.js", expectedVersion);
   assertIncludes("data/FreeFlow教程画布.json", displayVersion);

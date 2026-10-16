@@ -59,7 +59,17 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
   try {
     await engineReady();
     await page.evaluate(() => window.__canvas2dEngine.whenReady());
-    await page.locator("#right-panel-tab-assistant").click();
+    const assistantEnabled = await page.evaluate(async () => {
+      const response = await fetch("/api/plugins/assistant/status");
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error("Could not read assistant plugin status");
+      return Boolean(result.plugin?.activeEnabled);
+    });
+    assert.equal(await page.locator("body").evaluate((body) => body.classList.contains("assistant-plugin-enabled")), assistantEnabled, "assistant UI did not match the active plugin state");
+    for (const id of ["#right-panel-tab-assistant", "#right-panel-switch-lock-btn"]) {
+      assert.equal(await page.locator(id).isVisible(), assistantEnabled, `${id} visibility did not match the active plugin state`);
+    }
+    await page.locator(assistantEnabled ? "#right-panel-tab-assistant" : "#right-panel-tab-screen").click();
     const baseline = await page.evaluate(() => ({
       dirty: window.__canvas2dEngine.getSnapshot().boardDirty,
       board: JSON.stringify(window.__canvas2dEngine.getSnapshot().board),
@@ -93,13 +103,14 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
     await mapToggle.click();
     await page.reload();
     await engineReady();
-    assert(await mapCollapsed(), "minimap collapsed preference was lost after reload");
+    assert(await mapCollapsed(), "minimap must start closed after reload");
     assert(await page.locator(".canvas2d-navigator-tab").isVisible(), "local directory preference was lost after reload");
     await mapToggle.click();
     await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap")?.offsetWidth >= 163);
     await page.reload();
     await engineReady();
-    assert.equal(await mapCollapsed(), false, "minimap expanded preference was lost after reload");
+    assert(await mapCollapsed(), "previous manual expansion reopened the minimap after reload");
+    await mapToggle.click();
     await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap canvas")?.__ffMinimapStats?.viewportRenderCount > 0);
 
     const toolbar = await rect(".canvas2d-engine-toolbar");
@@ -113,7 +124,7 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
 
     for (const width of [420, 360, 320, 600]) {
       await resizePanel("right", width);
-      for (const mode of ["assistant", "screen", "assistant"]) {
+      for (const mode of assistantEnabled ? ["assistant", "screen", "assistant"] : ["screen"]) {
         await page.locator(`#right-panel-tab-${mode}`).click();
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const controls = await rect('[data-stage-panel-controls="right"]');
@@ -128,7 +139,7 @@ async function checkWorkspaceChrome(page, { screenshotDir } = {}) {
         assert(!overlap(controls, tabs) && !overlap(tabs, actions), `right header overlaps at ${width}/${mode}: ${JSON.stringify({ controls, tabs, panel, actions, headerLayout })}`);
         assert(tabs.right <= panel.right && tabs.x >= panel.x, `header escaped the ${width}px panel`);
         assert(Math.abs(controls.y + controls.height / 2 - tabs.y - tabs.height / 2) <= 4, `header fell to another row at ${width}/${mode}: ${JSON.stringify({ controls, tabs, panel, actions })}`);
-        for (const id of ["#right-panel-tab-assistant", "#right-panel-tab-screen", "#right-panel-switch-lock-btn"]) {
+        for (const id of assistantEnabled ? ["#right-panel-tab-assistant", "#right-panel-tab-screen", "#right-panel-switch-lock-btn"] : ["#right-panel-tab-screen"]) {
           const hit = await page.locator(id).evaluate((button) => {
             const r = button.getBoundingClientRect();
             const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);

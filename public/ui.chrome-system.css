@@ -224,6 +224,11 @@ body.desktop-mode .stage-panel-orb .ui-control-icon svg {
   width: 14px;
   height: 14px;
   flex-basis: 14px;
+  line-height: 0;
+}
+
+body.desktop-mode .stage-panel-orb .ui-control-icon svg {
+  display: block;
 }
 
 body.desktop-mode .stage-panel-collapse-handle:hover,

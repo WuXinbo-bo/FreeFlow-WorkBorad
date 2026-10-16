@@ -14,6 +14,7 @@ import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
 import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
+import { CanvasOptionsPanel } from "./CanvasOptionsPanel.jsx";
 import {
   buildCanvasSearchIndex,
   buildCanvasSearchResults,
@@ -266,6 +267,7 @@ function flattenNavigatorEntries(entries = [], includeCollapsedChildren = false,
 
 function CanvasNavigatorPanel({
   navigator,
+  onOpenWorkspace,
   onCollapse,
   onFocusEntry,
   onPreviewEntry,
@@ -646,7 +648,7 @@ function CanvasNavigatorPanel({
     const isNavigatorSelected = selectedEntryIdSet.has(entry.id);
     const orderLabel = orderVisible ? getNavigatorEntryOrderLabel(depth, index) : isFolder ? "" : "•";
     return (
-      <div key={entry.id} className="canvas2d-navigator-tree-row">
+      <div key={entry.id} className={`canvas2d-navigator-tree-row${depth >= 4 ? " is-deep" : ""}`}>
         <div
           ref={(node) => {
             if (node) {
@@ -730,7 +732,7 @@ function CanvasNavigatorPanel({
                   }}
                 />
               ) : (
-                <strong>{entry.title || entry.targetTitle || "未命名笔记"}</strong>
+                <strong title={entry.title || entry.targetTitle || "未命名笔记"}>{entry.title || entry.targetTitle || "未命名笔记"}</strong>
               )}
               {entry.missing ? <small>目标已丢失</small> : null}
               {!entry.missing && isFolder && entry.targetId ? <small>已映射画布元素</small> : null}
@@ -776,6 +778,7 @@ function CanvasNavigatorPanel({
       <header className="canvas2d-navigator-head">
         <strong>{navigator?.title || "画布目录"}</strong>
         <div className="canvas2d-navigator-head-actions">
+          {onOpenWorkspace ? <button type="button" className="canvas2d-workspace-icon canvas2d-navigator-workspace-open" onClick={onOpenWorkspace} aria-label="打开画布工作区" title="打开画布工作区 · ⌘/Ctrl P"><AppIcon name="folder-open" size={16} /></button> : null}
           <button type="button" className="canvas2d-workspace-icon" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹"><AppIcon name="plus" size={16} /></button>
           <button type="button" className={`canvas2d-workspace-icon${searchOpen ? " is-active" : ""}`} onClick={() => { setSearchOpen((value) => !value); setQuery(""); }} aria-label="搜索目录" title="搜索目录" aria-expanded={searchOpen}><AppIcon name="search" size={16} /></button>
           <details className="canvas2d-navigator-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
@@ -916,37 +919,6 @@ function getExportHistoryActionLabel(entry = null) {
   return jumpTarget ? "打开" : "记录";
 }
 
-const ABOUT_CANVAS_ITEMS = Object.freeze([
-  { label: "画布名称", value: "FreeFlow" },
-  { label: "版本号", value: "v2.0.2" },
-  { label: "开发作者", value: "Wu Xinbo" },
-  { label: "邮箱", value: "1806598228@qq.com" },
-  {
-    label: "GitHub",
-    value: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad",
-    href: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad",
-  },
-  { label: "版权声明", value: "Copyright © 2026 WuXinbo. All rights reserved." },
-]);
-
-const ABOUT_CANVAS_INFO_ITEMS = Object.freeze(ABOUT_CANVAS_ITEMS.slice(0, 3));
-const ABOUT_CANVAS_CONTACT_ITEMS = Object.freeze(ABOUT_CANVAS_ITEMS.slice(3));
-
-const ALIGNMENT_SNAP_THRESHOLD_OPTIONS = Object.freeze([
-  { value: 6, label: "紧凑" },
-  { value: 8, label: "标准" },
-  { value: 10, label: "宽松" },
-  { value: 12, label: "更宽松" },
-]);
-
-const BOARD_BACKGROUND_OPTIONS = Object.freeze([
-  { value: "none", label: "无背景" },
-  { value: "dots", label: "点阵" },
-  { value: "grid", label: "方格" },
-  { value: "lines", label: "横线" },
-  { value: "engineering", label: "工程网格" },
-]);
-
 function resolvePdfExportProgress(statusText = "") {
   const text = String(statusText || "").trim();
   if (!text) {
@@ -994,10 +966,6 @@ function Canvas2DControls({ engine }) {
   const [insertMenuOpen, setInsertMenuOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [canvasImageManagerOpen, setCanvasImageManagerOpen] = useState(false);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [alignmentSnapMenuOpen, setAlignmentSnapMenuOpen] = useState(false);
-  const [backgroundMenuOpen, setBackgroundMenuOpen] = useState(false);
-  const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
   const [saveToast, setSaveToast] = useState("");
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [pdfExportBusy, setPdfExportBusy] = useState(false);
@@ -1029,6 +997,7 @@ function Canvas2DControls({ engine }) {
   const [workspaceWidth, setWorkspaceWidth] = useState(() => {
     try { return Math.min(360, Math.max(260, Number(localStorage.getItem("freeflow.canvas.chrome.workspaceWidth")) || 288)); } catch { return 288; }
   });
+  const [workspaceOpenRequest, setWorkspaceOpenRequest] = useState(0);
   const rootRef = useRef(null);
   const toolbarRef = useRef(null);
   const infoPanelRef = useRef(null);
@@ -1197,10 +1166,6 @@ function Canvas2DControls({ engine }) {
       setCapturePdfMenuOpen(false);
       setCapturePngMenuOpen(false);
       setMenuOpen(false);
-      setExportMenuOpen(false);
-      setAlignmentSnapMenuOpen(false);
-      setBackgroundMenuOpen(false);
-      setAboutMenuOpen(false);
       if (searchOpen) closeSearch();
       setExportHistoryOpen(false);
       trigger?.focus?.({ preventScroll: true });
@@ -1271,13 +1236,6 @@ function Canvas2DControls({ engine }) {
   const boardFilePath = String(snapshot?.boardFilePath || "").trim();
   const canvasImageSavePath = String(snapshot?.canvasImageSavePath || "").trim();
   const autosaveEnabled = snapshot?.boardAutosaveEnabled !== false;
-  const boardBackgroundPattern = String(snapshot?.board?.preferences?.backgroundPattern || "dots")
-    .trim()
-    .toLowerCase() || "dots";
-  const alignmentSnapConfig = snapshot?.alignmentSnapConfig || null;
-  const alignmentSnapEnabled = alignmentSnapConfig?.enabled !== false;
-  const alignmentSnapShowGuides = alignmentSnapConfig?.showGuides !== false;
-  const alignmentSnapThreshold = Number(alignmentSnapConfig?.thresholdPx || 8);
   const autosaveAt = snapshot?.boardAutosaveAt
     ? new Date(snapshot.boardAutosaveAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
     : "";
@@ -1509,34 +1467,6 @@ function Canvas2DControls({ engine }) {
     window.setTimeout(() => setSaveToastVisible(false), 1600);
   };
 
-  const handleManualUpdateCheck = async () => {
-    if (typeof bridge.checkForAppUpdate !== "function") {
-      showToast("当前环境不支持检查更新");
-      return;
-    }
-    try {
-      const result = await bridge.checkForAppUpdate({ manual: true });
-      if (!result) {
-        showToast("当前环境不支持检查更新");
-        return;
-      }
-      if (!result.ok) {
-        showToast(`检查更新失败：${result.errorMessage || result.errorCode || "未知错误"}`);
-        return;
-      }
-      if (result.hasUpdate && !result.dismissed) {
-        showToast(`发现新版本 v${result.latestVersion || ""}`.trim());
-        return;
-      }
-      if (result.hasUpdate && result.dismissed) {
-        showToast(`检测到新版本 v${result.latestVersion || ""}，但该版本已被忽略`.trim());
-        return;
-      }
-      showToast(`当前已是最新版本 ${result.currentVersion || ""}`.trim());
-    } catch (error) {
-      showToast(`检查更新失败：${error?.message || "未知错误"}`);
-    }
-  };
 
   useEffect(() => {
     const details = infoPanelRef.current?.querySelector("details");
@@ -1565,10 +1495,6 @@ function Canvas2DControls({ engine }) {
     setCapturePdfMenuOpen(false);
     setCapturePngMenuOpen(false);
     setMenuOpen(false);
-    setExportMenuOpen(false);
-    setAlignmentSnapMenuOpen(false);
-    setBackgroundMenuOpen(false);
-    setAboutMenuOpen(false);
     setExportHistoryOpen(false);
     setSearchFilterKey(CANVAS_SEARCH_FILTER_KEYS.ALL);
     setSearchOpen(true);
@@ -1721,10 +1647,7 @@ function Canvas2DControls({ engine }) {
 
   const closeMenu = () => {
     setMenuOpen(false);
-    setExportMenuOpen(false);
-    setAlignmentSnapMenuOpen(false);
-    setBackgroundMenuOpen(false);
-    setAboutMenuOpen(false);
+    menuRef.current?.querySelector("button")?.focus({ preventScroll: true });
   };
 
   return (
@@ -1737,10 +1660,11 @@ function Canvas2DControls({ engine }) {
       }}
     >
       <div className="canvas2d-navigation-panels"><div className="canvas2d-navigation-docks canvas-chrome-surface" style={{ "--workspace-width": `${workspaceWidth}px` }}>
-      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} width={workspaceWidth} onWidthChange={setWorkspaceWidth} />
+      <BoardWorkspacePanel bridge={bridge} snapshot={snapshot} openRequest={workspaceOpenRequest} width={workspaceWidth} onWidthChange={setWorkspaceWidth} />
       <CanvasNavigatorPanel
         key={snapshot.boardFilePath}
         navigator={navigatorView}
+        onOpenWorkspace={typeof globalThis.desktopShell?.listCanvasBoards === "function" ? () => setWorkspaceOpenRequest((value) => value + 1) : undefined}
         onCollapse={(collapsed) => bridge.setCanvasNavigatorCollapsed?.(collapsed)}
         onFocusEntry={(entryId) => bridge.focusCanvasNavigatorEntry?.(entryId)}
         onPreviewEntry={(entryId) => bridge.previewCanvasNavigatorEntry?.(entryId)}
@@ -1859,10 +1783,6 @@ function Canvas2DControls({ engine }) {
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
                   setMenuOpen(false);
-                  setExportMenuOpen(false);
-                  setAlignmentSnapMenuOpen(false);
-                  setBackgroundMenuOpen(false);
-                  setAboutMenuOpen(false);
                   setSearchOpen(false);
                   setExportHistoryOpen(false);
                   return next;
@@ -1958,10 +1878,6 @@ function Canvas2DControls({ engine }) {
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
                   setMenuOpen(false);
-                  setExportMenuOpen(false);
-                  setAlignmentSnapMenuOpen(false);
-                  setBackgroundMenuOpen(false);
-                  setAboutMenuOpen(false);
                   setSearchOpen(false);
                   setExportHistoryOpen(false);
                   return next;
@@ -2051,10 +1967,6 @@ function Canvas2DControls({ engine }) {
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
                   setMenuOpen(false);
-                  setExportMenuOpen(false);
-                  setAlignmentSnapMenuOpen(false);
-                  setBackgroundMenuOpen(false);
-                  setAboutMenuOpen(false);
                   setSearchOpen(false);
                   setExportHistoryOpen(false);
                   return next;
@@ -2114,10 +2026,6 @@ function Canvas2DControls({ engine }) {
                 setImageMenuOpen(false);
                 setInsertMenuOpen(false);
                 setMenuOpen(false);
-                setExportMenuOpen(false);
-                setAlignmentSnapMenuOpen(false);
-                setBackgroundMenuOpen(false);
-                setAboutMenuOpen(false);
                 setSearchOpen(false);
                 setExportHistoryOpen(false);
                 setCaptureMenuOpen((value) => {
@@ -2267,18 +2175,12 @@ function Canvas2DControls({ engine }) {
                   setCanvasImageManagerOpen(false);
                   setSearchOpen(false);
                   setExportHistoryOpen(false);
-                  if (!next) {
-                    setExportMenuOpen(false);
-                    setAlignmentSnapMenuOpen(false);
-                    setBackgroundMenuOpen(false);
-                    setAboutMenuOpen(false);
-                  }
                   return next;
                 })
               }
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               aria-expanded={menuOpen}
-              title="菜单"
+              title="画布选项与帮助"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
                 <AppIcon name="ellipsis" size={18} />
@@ -2290,228 +2192,28 @@ function Canvas2DControls({ engine }) {
               boundaryRef={rootRef}
               panelRef={mainMenuPanelRef}
               align="end"
-              layoutKey={`${exportMenuOpen}:${alignmentSnapMenuOpen}:${backgroundMenuOpen}:${aboutMenuOpen}`}
-              className="canvas2d-engine-menu-wide"
+              preferredWidth={368}
+              surfaceClassName="canvas-options-panel"
+              role="dialog"
+              ariaLabel="画布选项与帮助"
             >
-                <div className="canvas2d-engine-menu-section">
-                  <div className="canvas2d-engine-menu-title">画布选项与帮助</div>
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-primary${canvasImageManagerOpen ? " is-active" : ""}`}
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      setCanvasImageManagerOpen(true);
-                    }}
-                  >
-                    <span>画布图片管理</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item${autosaveEnabled ? " is-active" : ""}`}
-                    role="menuitemcheckbox"
-                    aria-checked={autosaveEnabled}
-                    onClick={() => {
-                      void bridge.toggleAutosave();
-                    }}
-                  >
-                    <span>自动保存 (30s)</span>
-                    <span className="canvas2d-engine-menu-meta">{autosaveEnabled ? "开" : "关"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas2d-engine-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      void handleManualUpdateCheck();
-                    }}
-                  >
-                    <span>检查更新</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${alignmentSnapMenuOpen ? " is-active" : ""}`}
-                    role="menuitem"
-                    aria-expanded={alignmentSnapMenuOpen}
-                    onClick={() => {
-                      setBackgroundMenuOpen(false);
-                      setAboutMenuOpen(false);
-                      setAlignmentSnapMenuOpen((value) => !value);
-                    }}
-                  >
-                    <span>自动对齐吸附</span>
-                    <ChevronIcon open={alignmentSnapMenuOpen} />
-                  </button>
-                  {alignmentSnapMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group">
-                      <button
-                        type="button"
-                        className={`canvas2d-engine-menu-item${alignmentSnapEnabled ? " is-active" : ""}`}
-                        role="menuitemcheckbox"
-                        aria-checked={alignmentSnapEnabled}
-                        onClick={() => {
-                          void bridge.setAlignmentSnapEnabled(!alignmentSnapEnabled);
-                        }}
-                      >
-                        <span>启用自动吸附</span>
-                        <span className="canvas2d-engine-menu-meta">{alignmentSnapEnabled ? "开" : "关"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`canvas2d-engine-menu-item${alignmentSnapShowGuides ? " is-active" : ""}${alignmentSnapEnabled ? "" : " is-disabled"}`}
-                        role="menuitemcheckbox"
-                        aria-checked={alignmentSnapShowGuides}
-                        disabled={!alignmentSnapEnabled}
-                        onClick={() => {
-                          if (!alignmentSnapEnabled) {
-                            return;
-                          }
-                          void bridge.setAlignmentSnapConfig({
-                            showGuides: !alignmentSnapShowGuides,
-                          });
-                        }}
-                      >
-                        <span>显示参考线</span>
-                        <span className="canvas2d-engine-menu-meta">{alignmentSnapShowGuides ? "开" : "关"}</span>
-                      </button>
-                      {ALIGNMENT_SNAP_THRESHOLD_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={`canvas2d-engine-menu-item${alignmentSnapThreshold === option.value ? " is-active" : ""}${alignmentSnapEnabled ? "" : " is-disabled"}`}
-                          role="menuitemradio"
-                          aria-checked={alignmentSnapThreshold === option.value}
-                          disabled={!alignmentSnapEnabled}
-                          onClick={() => {
-                            if (!alignmentSnapEnabled) {
-                              return;
-                            }
-                            void bridge.setAlignmentSnapConfig({
-                              thresholdPx: option.value,
-                            });
-                          }}
-                        >
-                          <span>吸附阈值 {option.label}</span>
-                          <span className="canvas2d-engine-menu-meta">{option.value}px</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${backgroundMenuOpen ? " is-active" : ""}`}
-                    role="menuitem"
-                    aria-expanded={backgroundMenuOpen}
-                    onClick={() => {
-                      setAlignmentSnapMenuOpen(false);
-                      setAboutMenuOpen(false);
-                      setBackgroundMenuOpen((value) => !value);
-                    }}
-                  >
-                    <span>画布背景</span>
-                    <ChevronIcon open={backgroundMenuOpen} />
-                  </button>
-                  {backgroundMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group">
-                      {BOARD_BACKGROUND_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={`canvas2d-engine-menu-item${boardBackgroundPattern === option.value ? " is-active" : ""}`}
-                          role="menuitemradio"
-                          aria-checked={boardBackgroundPattern === option.value}
-                          onClick={() => {
-                            void bridge.setBoardBackgroundPattern(option.value);
-                          }}
-                        >
-                          <span>{option.label}</span>
-                          <span className="canvas2d-engine-menu-meta">
-                            {boardBackgroundPattern === option.value ? "当前" : ""}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="canvas2d-engine-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      dispatchTutorialUiEvent({
-                        type: TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_INTRO,
-                      });
-                    }}
-                  >
-                    <span>使用说明</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas2d-engine-menu-item"
-                    data-tutorial-target="tutorial-entry"
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      dispatchTutorialUiEvent({
-                        type: TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_CENTER,
-                      });
-                    }}
-                  >
-                    <span>画布教程</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`canvas2d-engine-menu-item canvas2d-engine-menu-item-toggle${aboutMenuOpen ? " is-active" : ""}`}
-                    role="menuitem"
-                    aria-expanded={aboutMenuOpen}
-                    onClick={() => {
-                      setAlignmentSnapMenuOpen(false);
-                      setBackgroundMenuOpen(false);
-                      setAboutMenuOpen((value) => !value);
-                    }}
-                  >
-                    <span>关于画布</span>
-                    <ChevronIcon open={aboutMenuOpen} />
-                  </button>
-                  {aboutMenuOpen ? (
-                    <div className="canvas2d-engine-menu-group canvas2d-engine-menu-group-about">
-                      <div className="canvas2d-engine-menu-about-block">
-                        <div className="canvas2d-engine-menu-subtitle">画布信息</div>
-                        <div className="canvas2d-engine-menu-about-list">
-                          {ABOUT_CANVAS_INFO_ITEMS.map((item) => (
-                            <div key={item.label} className="canvas2d-engine-menu-about-row">
-                              <span className="canvas2d-engine-menu-about-label">{item.label}：</span>
-                              <span className="canvas2d-engine-menu-about-value">{item.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="canvas2d-engine-menu-about-block">
-                        <div className="canvas2d-engine-menu-subtitle">联系方式</div>
-                        <div className="canvas2d-engine-menu-about-list">
-                          {ABOUT_CANVAS_CONTACT_ITEMS.map((item) => (
-                            <div key={item.label} className="canvas2d-engine-menu-about-row">
-                              <span className="canvas2d-engine-menu-about-label">{item.label}：</span>
-                              {item.href ? (
-                                <a
-                                  className="canvas2d-engine-menu-about-link"
-                                  href={item.href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  {item.value}
-                                </a>
-                              ) : (
-                                <span className="canvas2d-engine-menu-about-value">{item.value}</span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+              <CanvasOptionsPanel
+                bridge={bridge}
+                snapshot={snapshot}
+                onClose={closeMenu}
+                onOpenImages={() => {
+                  closeMenu();
+                  setCanvasImageManagerOpen(true);
+                }}
+                onOpenTutorial={() => {
+                  closeMenu();
+                  dispatchTutorialUiEvent({ type: TUTORIAL_EVENT_TYPES.OPEN_GLOBAL_TUTORIAL_CENTER });
+                }}
+                onOpenUpdates={document.getElementById("settings-center-host") ? () => {
+                  closeMenu();
+                  window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "updates" } }));
+                } : undefined}
+              />
             </FloatingToolbarMenu>
           </div>
         </div>
@@ -2565,10 +2267,6 @@ function Canvas2DControls({ engine }) {
                   setCapturePdfMenuOpen(false);
                   setCapturePngMenuOpen(false);
                   setMenuOpen(false);
-                  setExportMenuOpen(false);
-                  setAlignmentSnapMenuOpen(false);
-                  setBackgroundMenuOpen(false);
-                  setAboutMenuOpen(false);
                   setSearchOpen(false);
                   return next;
                 })

@@ -48,7 +48,9 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-.canvas2d-navigation-docks > .canvas2d-workspace-panel + * { border-top: 1px solid var(--air-line, rgba(105, 116, 123, .18)) !important; }
+.canvas2d-navigation-docks > .canvas2d-workspace-panel.is-open + * { border-top: 1px solid var(--air-line, rgba(105, 116, 123, .18)) !important; }
+.canvas2d-navigation-docks:has(> .canvas2d-navigator-panel) > .canvas2d-workspace-panel.is-collapsed { display: none; }
+.canvas2d-navigation-docks:has(> .canvas2d-workspace-panel.is-open) .canvas2d-navigator-workspace-open { display: none; }
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel.is-open)) { height: auto; }
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel)) { width: 252px; }
 .canvas2d-navigation-docks:not(:has(.canvas2d-workspace-panel.is-open, .canvas2d-navigator-panel)) {
@@ -118,7 +120,10 @@
 .canvas2d-workspace-editor input { width: 100%; min-width: 0; border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; padding: 4px 6px; font: inherit; color: inherit; background: rgba(255, 255, 255, .3); }
 .canvas2d-workspace-editor > button:not(.canvas2d-workspace-icon), .canvas2d-workspace-sync-actions button, .canvas2d-workspace-repair { border: 1px solid var(--air-line, #e1e5e9); border-radius: 4px; padding: 4px 7px; white-space: nowrap; background: transparent; }
 .canvas2d-workspace-sync { border-top: 1px solid var(--air-line, #e1e5e9); padding: 6px 12px; }
-.canvas2d-workspace-sync > div:first-child { display: flex; align-items: center; gap: 6px; }
+.canvas2d-workspace-sync > div:first-child { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.canvas2d-workspace-sync-check { display: inline-flex; align-items: center; justify-content: center; flex: none; gap: 4px; height: 28px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; font-size: 11px !important; white-space: nowrap; }
+.canvas2d-workspace-sync-check:hover:not(:disabled), .canvas2d-workspace-sync-check:focus-visible { background: var(--air-active, #e9f1f6); }
+.canvas2d-workspace-sync-check.is-checking svg { opacity: .55; }
 .canvas2d-workspace-sync span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas2d-workspace-sync-actions { display: flex; gap: 5px; padding-top: 4px; }
 .canvas2d-workspace-sync.is-warning { background: rgba(255, 239, 202, .28); }
@@ -141,10 +146,18 @@
   display: flex; align-items: center; justify-content: space-between; gap: 6px; flex: none; height: 40px; min-height: 40px !important;
   margin: 0 !important; padding: 8px 12px !important; border: 0 !important; box-sizing: border-box;
 }
-.canvas2d-navigation-docks .canvas2d-navigator-head strong { font-size: 13px !important; font-weight: 700 !important; letter-spacing: 0; }
-.canvas2d-navigation-docks .canvas2d-navigator-head-actions { display: flex; gap: 0 !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px !important; font-weight: 700 !important; letter-spacing: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-head-actions { display: flex; flex: none; gap: 0 !important; }
 .canvas2d-navigation-docks .canvas2d-navigator-head-actions .canvas2d-workspace-icon { width: 28px !important; min-width: 28px !important; height: 28px !important; }
-.canvas2d-navigation-docks .canvas2d-navigator-list { flex: 1; min-height: 0; overflow: auto; align-content: start; padding: 0 6px 8px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-list { flex: 1; min-height: 0; min-width: 0; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; overflow-y: auto; align-content: start; padding: 0 6px 8px !important; }
+.canvas2d-navigation-docks .canvas2d-navigator-tree-row,
+.canvas2d-navigation-docks .canvas2d-navigator-children { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.canvas2d-navigation-docks .canvas2d-navigator-children { margin-left: 10px; padding-left: 7px; }
+.canvas2d-navigation-docks .canvas2d-navigator-tree-row.is-deep > .canvas2d-navigator-children { margin-left: 0; padding-left: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry { min-width: 0; margin-left: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry-copy { flex: 1; overflow: hidden; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry-copy strong { min-width: 0; }
+.canvas2d-navigation-docks .canvas2d-navigator-entry-copy small { flex: none; }
 .canvas2d-navigation-docks .canvas2d-navigator-search { margin: 0 12px 8px !important; }
 .canvas2d-navigation-docks .canvas2d-navigator-search input { width: 100%; min-width: 0; min-height: 28px !important; padding: 5px 7px !important; background: transparent !important; font: inherit; box-sizing: border-box; }
 .canvas2d-navigation-docks .canvas2d-navigator-tree-toggle { display: inline-flex; align-items: center; justify-content: center; }
