@@ -34,6 +34,7 @@ const CHECKS = [
   "scripts/check-mirror-overlay-manager.js",
   "scripts/check-mirror-overlay-ui.js",
   "scripts/check-mirror-overlay-host.js",
+  "scripts/check-right-panel-ui.js",
   "scripts/check-file-access-registry.js",
   "scripts/check-image-thumbnails.js",
   "scripts/check-github-sync-core.js",

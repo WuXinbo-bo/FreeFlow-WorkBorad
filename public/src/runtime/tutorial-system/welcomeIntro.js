@@ -1,17 +1,17 @@
-// Original lettering follows the same pen direction as the ribbon-shaped app mark.
+// Write both capital Fs down the stem, then left to right across their bars.
 const FREEFLOW_LETTERING = [
-  "M18 65C24 47 28 23 34 12",
-  "M12 19C29 10 48 10 59 14",
-  "M23 37C33 33 44 32 51 34",
+  "M33 13C29 29 25 48 18 65",
+  "M33 14C41 11 51 11 61 14",
+  "M27 36C35 33 44 33 51 34",
   "M49 62L57 34L53 49C63 31 73 31 74 39",
   "M74 50C98 47 99 31 87 33C72 34 65 62 81 63C89 64 97 58 103 52",
   "M103 50C127 47 128 31 116 33C101 34 94 62 110 63C119 64 127 58 133 52",
-  "M138 65C144 47 148 23 154 12",
-  "M132 19C149 10 168 10 179 14",
-  "M143 37C153 33 164 32 171 34",
-  "M171 54C193 35 197 8 187 11C178 14 163 63 178 63C184 63 190 57 194 52",
-  "M218 37C206 25 189 44 194 57C199 73 221 56 220 41C219 34 215 33 214 38C214 45 223 47 231 40",
-  "M233 35C226 49 222 64 230 63C237 63 246 47 250 36C244 50 241 64 250 63C260 62 272 39 268 33C264 29 264 47 280 40",
+  "M153 13C149 29 145 48 138 65",
+  "M153 14C161 11 171 11 181 14",
+  "M147 36C155 33 164 33 171 34",
+  "M183 54C205 35 209 8 199 11C190 14 175 63 190 63C196 63 202 57 206 52",
+  "M230 37C218 25 201 44 206 57C211 73 233 56 232 41C231 34 227 33 226 38C226 45 235 47 243 40",
+  "M245 35C238 49 234 64 242 63C249 63 258 47 262 36C256 50 253 64 262 63C272 62 284 39 280 33C276 29 276 47 292 40",
 ];
 
 export function renderWelcomeIntro(renderIcon, renderClose) {
@@ -24,15 +24,19 @@ export function renderWelcomeIntro(renderIcon, renderClose) {
           ${renderClose("data-global-tutorial-close")}
         </div>
         <div class="tutorial-intro-brand" aria-label="FreeFlow Air Canvas">
-          <img class="tutorial-intro-logo" src="./assets/brand/FreeFlow_app_icon.png" alt="" width="88" height="88" />
-          <svg class="tutorial-intro-wordmark" viewBox="0 0 292 78" aria-hidden="true" focusable="false">
-            ${FREEFLOW_LETTERING.map((path) => `<path d="${path}" pathLength="1" />`).join("")}
-          </svg>
-          <span class="tutorial-intro-product">Air Canvas</span>
-        </div>
-        <div class="tutorial-intro-copy" data-welcome-reveal>
-          <h2 id="tutorial-welcome-title"><span>欢迎使用全新</span>FreeFlow Air Canvas</h2>
-          <p>让灵感自由展开，让创造自然发生。</p>
+          <div class="tutorial-intro-identity">
+            <img class="tutorial-intro-logo" src="./assets/brand/FreeFlow_app_icon.png" alt="" width="64" height="64" />
+            <span class="tutorial-intro-product">Air Canvas</span>
+          </div>
+          <div class="tutorial-intro-copy">
+            <h2 id="tutorial-welcome-title" aria-label="欢迎使用全新的 FreeFlow">
+              <span data-welcome-caption="welcome">欢迎使用全新的</span>
+              <svg class="tutorial-intro-wordmark" viewBox="0 0 304 78" aria-hidden="true" focusable="false">
+                ${FREEFLOW_LETTERING.map((path) => `<path d="${path}" pathLength="1" />`).join("")}
+              </svg>
+            </h2>
+            <p data-welcome-caption="slogan">为知识与工作落地而生</p>
+          </div>
         </div>
         <div class="tutorial-intro-steps" data-welcome-reveal>
           <div class="tutorial-intro-step">${renderIcon("file-pen-line")}<strong>创建内容</strong><small>从一个想法开始</small></div>
@@ -133,6 +137,8 @@ export function mountWelcomeIntro(dialog, { play, onComplete }) {
       penTime += duration + 18;
     });
     animate(dialog.querySelector(".tutorial-intro-product"), [{ opacity: 0 }, { opacity: 1 }], 700, 3950);
+    animate(dialog.querySelector('[data-welcome-caption="welcome"]'), [{ opacity: 0 }, { opacity: 1 }], 700, 350);
+    animate(dialog.querySelector('[data-welcome-caption="slogan"]'), [{ opacity: 0 }, { opacity: 1 }], 700, 4400);
     content.forEach((element, index) => {
       animate(element, [{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "translateY(0)" }], 800, 5900 + index * 550);
     });

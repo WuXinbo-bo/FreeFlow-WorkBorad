@@ -578,6 +578,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
       text: {
         trigger: getComputedStyle(document.querySelector("#screen-source-header-menu > summary")).color,
         target: getComputedStyle(document.querySelector("#screen-source-select-current")).color,
+        targetTheme: `rgb(${getComputedStyle(document.querySelector("#screen-source-select-current")).getPropertyValue("--theme-panel-text-rgb").match(/\d+/g).slice(0, 3).join(", ")})`,
         action: getComputedStyle(document.querySelector("#screen-source-refresh-btn")).color,
         emptyTitle: getComputedStyle(document.querySelector("#screen-source-empty-title")).color,
         emptyText: getComputedStyle(document.querySelector("#screen-source-empty-text")).color,
@@ -597,7 +598,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, mappingGlass }
   );
   assert(
-    mappingGlass.picker.background === "rgba(255, 255, 255, 0.08)" && mappingGlass.target.background === "rgba(255, 255, 255, 0.06)" && mappingGlass.target.backingBackground === "rgba(0, 0, 0, 0)" && mappingGlass.preview.background === "rgba(255, 255, 255, 0.08)" && mappingGlass.emptyBackground === "rgba(0, 0, 0, 0)",
+    mappingGlass.picker.background === "rgba(0, 0, 0, 0)" && mappingGlass.target.background === "rgba(255, 255, 255, 0.06)" && mappingGlass.target.backingBackground === "rgba(0, 0, 0, 0)" && mappingGlass.preview.background === "rgba(255, 255, 255, 0.08)" && mappingGlass.emptyBackground === "rgba(0, 0, 0, 0)",
     "mapping content still stacks opaque backing surfaces",
     { viewport, mappingGlass }
   );
@@ -633,7 +634,7 @@ async function checkRightWorkspaceGlass(page, viewport) {
     { viewport, mappingGlass }
   );
   assert(
-    mappingGlass.text.trigger === "rgb(32, 37, 43)" && mappingGlass.text.target === "rgb(32, 37, 43)" && mappingGlass.text.action === "rgb(48, 57, 66)" && mappingGlass.text.emptyTitle === "rgb(32, 37, 43)" && mappingGlass.text.emptyText === "rgb(70, 81, 92)",
+    mappingGlass.text.trigger === "rgb(32, 37, 43)" && mappingGlass.text.target === mappingGlass.text.targetTheme && mappingGlass.text.action === "rgb(48, 57, 66)" && mappingGlass.text.emptyTitle === "rgb(32, 37, 43)" && mappingGlass.text.emptyText === "rgb(70, 81, 92)",
     "AI mirror text hierarchy is too light for the transparent workspace",
     { viewport, mappingGlass }
   );

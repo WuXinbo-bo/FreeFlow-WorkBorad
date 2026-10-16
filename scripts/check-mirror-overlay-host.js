@@ -13,7 +13,7 @@ async function main() {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/fixture.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end('<!doctype html><html><body><aside id="drawer" style="width:560px"></aside><button id="trigger">Menu</button><section id="menu"></section></body></html>');
+      res.end('<!doctype html><html><body><aside id="drawer" style="width:560px"></aside><button id="trigger">Menu</button><section id="menu" style="--mirror-menu-width:232px"></section></body></html>');
       return;
     }
     const file = path.resolve(root, "." + decodeURIComponent(url.pathname));
@@ -78,7 +78,7 @@ async function main() {
           menus: [{
             id: "shell-more", title: "更多", element: document.querySelector("#menu"), trigger: document.querySelector("#trigger"),
             isOpen: () => state.menuOpen,
-            items: () => [{ id: "action", label: "执行" }],
+            items: () => state.menuItems || [{ id: "action", label: "执行" }],
             activate: id => state.activated.push(id),
             close() { state.menuOpen = false; },
           }],
@@ -120,6 +120,22 @@ async function main() {
     await page.evaluate(() => { window.hostFixture.menuOpen = true; });
     await sync({ settingsOpen: false, mirrorActive: true, blocked: false });
     await page.waitForFunction(() => window.hostFixture.host.active?.id === "shell-more");
+    const compactBounds = await page.evaluate(() => window.hostFixture.presents.at(-1).bounds);
+    assert.equal(compactBounds.width, 232, "native menu must use the DOM menu's compact width");
+    assert.equal(compactBounds.height, 46, "one native row must not retain the old extra 50px space");
+    await page.evaluate(() => {
+      window.hostFixture.menuItems = [{ id: "action", label: "执行" }, { separator: true }, { id: "other", label: "其他" }];
+    });
+    await sync({ settingsOpen: false, mirrorActive: true, blocked: false });
+    await page.waitForFunction(() => window.hostFixture.presents.at(-1).payload.items.length === 3);
+    assert.equal(await page.evaluate(() => window.hostFixture.presents.at(-1).bounds.height), 91, "native divider height must not be counted as a full row");
+    await page.setViewportSize({ width: 200, height: 80 });
+    await sync({ settingsOpen: false, mirrorActive: true, blocked: false });
+    const smallBounds = await page.evaluate(() => window.hostFixture.presents.at(-1).bounds);
+    assert(smallBounds.width <= 184 && smallBounds.height <= 64 && smallBounds.x + smallBounds.width <= 192 && smallBounds.y + smallBounds.height <= 72, "native compact menu must stay inside short/narrow windows");
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await sync({ settingsOpen: false, mirrorActive: true, blocked: false });
+    assert.equal(await page.evaluate(() => window.hostFixture.presents.at(-1).bounds.height), 91, "native menu should recover after restoring the window size");
     await page.evaluate(() => window.hostFixture.event({ name: "action", surfaceId: "old-menu", payload: { id: "stale" } }));
     assert.deepEqual(await page.evaluate(() => window.hostFixture.activated), []);
     await page.evaluate(() => window.hostFixture.event({ name: "action", surfaceId: "shell-more", payload: { id: "action" } }));
@@ -200,7 +216,7 @@ async function main() {
       await page.waitForFunction(() => !window.hostFixture.lock);
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, checks: ["settings hide/recovery", "section/theme changes", "unchanged presentation dedupe", "failure keeps DOM ownership", "stale menu event ignored", "menu close recovery", "pending dismiss does not re-present closed settings or menu", "deferred close preserves reopened settings and menu", "renderer crash retains live file lock", "pending journal confirmation retains file lock"] }, null, 2));
+    console.log(JSON.stringify({ ok: true, checks: ["settings hide/recovery", "section/theme changes", "unchanged presentation dedupe", "failure keeps DOM ownership", "compact native menu width and divider height", "short-window bounds and recovery", "stale menu event ignored", "menu close recovery", "pending dismiss does not re-present closed settings or menu", "deferred close preserves reopened settings and menu", "renderer crash retains live file lock", "pending journal confirmation retains file lock"] }, null, 2));
   } finally {
     await browser?.close();
     server.closeAllConnections();

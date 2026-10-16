@@ -160,6 +160,7 @@ function renderMenu(payload, sameSurface) {
     button.type = "button";
     button.className = "mirror-overlay-menu-item";
     button.dataset.actionId = item.id;
+    button.title = item.label;
     button.disabled = payload.disabled === true || item.disabled === true;
     button.classList.toggle("is-active", item.active === true);
     button.setAttribute("role", item.active !== undefined ? "menuitemcheckbox" : "menuitem");
@@ -178,12 +179,16 @@ function renderMenu(payload, sameSurface) {
       button.appendChild(shortcut);
     }
     button.addEventListener("click", () => emit("action", { id: item.id }));
-    button.addEventListener("pointerenter", () => { if (!button.disabled) button.focus({ preventScroll: true }); });
+    button.addEventListener("pointermove", event => {
+      if (!button.disabled && (event.movementX || event.movementY)) button.focus({ preventScroll: true });
+    });
     menu.appendChild(button);
   }
   const buttons = menuButtons();
   const previous = buttons.find(button => button.dataset.actionId === focusedId);
-  (previous || (!sameSurface ? buttons[0] : null))?.focus({ preventScroll: true });
+  const focused = previous || (!sameSurface ? buttons[0] : null);
+  focused?.focus({ preventScroll: true });
+  focused?.scrollIntoView({ block: "nearest" });
 }
 
 function receiveHostEvent(payload) {
@@ -247,6 +252,7 @@ document.addEventListener("keydown", event => {
   else return;
   event.preventDefault();
   next?.focus({ preventScroll: true });
+  next?.scrollIntoView({ block: "nearest" });
 });
 
 for (const type of ["freeflow:github-sync-status", "freeflow:github-sync-changed", "freeflow:github-remote-update", "freeflow:workspace-files-changed", "freeflow:agent-data-restored"]) {

@@ -114,6 +114,25 @@ async function main() {
     assert(state.mirrorId, 'Mirror must still exist');
     return { id: state.mirrorId, ...await runIn(state.mirrorId, 'window.__mirrorFixture.snapshot()') };
   };
+  const assertMirrorFrame = async () => {
+    let lastFrame;
+    try {
+      await waitFor('native mirror aligns with its visible frame', async () => {
+        const state = await nativeState();
+        const view = state.children.find(child => child.id === state.mirrorId && child.visible);
+        const frame = await page.locator('.screen-source-preview-shell').boundingBox();
+        if (!view || !frame) return false;
+        const gaps = [view.bounds.x - frame.x, view.bounds.y - frame.y,
+          frame.x + frame.width - view.bounds.x - view.bounds.width,
+          frame.y + frame.height - view.bounds.y - view.bounds.height];
+        lastFrame = { bounds: view.bounds, frame, gaps };
+        // Native bounds use integer DIP, so allow one pixel of edge rounding.
+        return gaps.every(gap => gap >= -1 && gap <= 5);
+      });
+    } catch (error) {
+      throw new Error(`${error.message}: ${JSON.stringify(lastFrame)}`);
+    }
+  };
   const waitOverlay = kind => waitFor(`native ${kind} overlay`, async () => {
     const state = await nativeState();
     if (!state.overlayId || !state.children.some(child => child.id === state.overlayId && child.visible)) return false;
@@ -180,6 +199,7 @@ async function main() {
       window.center(); window.show(); nativeApp.focus({ steal: true }); window.focus();
     });
     await startMirror();
+    await assertMirrorFrame();
     const original = await mirrorSnapshot();
     await nativeClick(original.id, '#draft');
     await app.evaluate(({ webContents }, id) => webContents.fromId(id).insertText('Draft survives native overlays'), original.id);
@@ -193,6 +213,9 @@ async function main() {
     await waitFor('shell menu content', () => runIn(menu.overlayId, 'Boolean(document.querySelector("[data-action-id=conversation-shell-pin-btn]"))'));
     assert.equal(menu.children.at(-1).id, menu.overlayId, 'Native menu must be above the live mirror');
     assert(menu.children.some(child => child.id === original.id && child.visible), 'Menu must not detach the mirror');
+    const menuBounds = (await nativeState()).children.find(child => child.id === menu.overlayId).bounds;
+    assert(menuBounds.width <= 232, 'Native shell menu uses the same compact width as the DOM menu');
+    assert.equal(await runIn(menu.overlayId, 'document.querySelector(".mirror-overlay-menu-item")?.getBoundingClientRect().height'), 32);
     await captureNative('menu');
     // Open settings directly from the active menu, matching the original failure path.
     let settings = await openSettings();
@@ -262,6 +285,7 @@ async function main() {
     }
     await app.evaluate(({ BrowserWindow }, bounds) => BrowserWindow.getAllWindows()[0].setContentSize(bounds.width, bounds.height), beforeResize.contentBounds);
     await closeOverlay();
+    await assertMirrorFrame();
 
     // Complex canvas portals use keep-alive detachment, then restore the same live session.
     await page.evaluate(() => {
@@ -304,6 +328,7 @@ async function main() {
     assert.equal((await nativeState()).mirrorId, null, 'A stale native menu action must not restart a stopped mirror');
     if (await page.locator('#screen-source-header-menu').evaluate(node => node.open)) await page.locator('#screen-source-header-menu > summary').evaluate(button => button.click());
     await startMirror();
+    await assertMirrorFrame();
     const restarted = await mirrorSnapshot();
     assert.notEqual(restarted.id, original.id, 'Only explicit stop/restart may create a new mirror');
     await openSettings();
