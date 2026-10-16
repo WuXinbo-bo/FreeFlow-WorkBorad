@@ -204,6 +204,23 @@ async function main() {
     await fs.writeFile(history, "existing history must survive");
     const offline = path.join(temp, "assistant.ffplugin");
     await fs.writeFile(offline, makePackage("2.0.3"));
+    const cleanupDir = path.join(temp, "install-cleanup-failure");
+    const cleanupVersions = path.join(cleanupDir, "plugins", pluginId, "versions");
+    const cleanupManager = create({ dataDir: cleanupDir, selfCheck: async () => ({ ok: true }) });
+    const originalReaddir = fs.readdir;
+    fs.readdir = async (directory, ...args) => {
+      if (directory === cleanupVersions) throw Object.assign(new Error("simulated old-version listing failure"), { code: "EACCES" });
+      return originalReaddir(directory, ...args);
+    };
+    try { await cleanupManager.install({ filePath: offline }); }
+    finally { fs.readdir = originalReaddir; }
+    assert.equal(cleanupManager.getStatus().installed, true, "optional old-version cleanup must not undo a committed installation");
+    assert.equal(cleanupManager.getStatus().phase, "ready");
+    assert.equal(cleanupManager.getStatus().restartRequired, true);
+    const cleanupBoot = create({ dataDir: cleanupDir });
+    await cleanupBoot.initialize();
+    assert.equal(cleanupBoot.getStatus().activeEnabled, true);
+    await cleanupBoot.uninstall();
     for (let index = 0; index < 20; index += 1) {
       await restarted.setEnabled(false);
       assert.equal(restarted.getStatus().activeEnabled, false);
@@ -227,20 +244,25 @@ async function main() {
     await assert.rejects(failedShutdown.setEnabled(false), { code: "PLUGIN_DISABLE" });
     assert.equal(failedShutdown.getStatus().activeEnabled, false);
     assert.equal(failedShutdown.getStatus().desiredEnabled, false);
+    assert.equal(failedShutdown.getStatus().stopPending, true, "failed stop must not masquerade as a completed disable");
     failStop = false;
     await failedShutdown.setEnabled(false);
     assert.equal(stopAttempts, 2, "failed worker shutdown must remain retryable");
     assert.equal(failedShutdown.getStatus().error, null);
     assert.equal(failedShutdown.getStatus().phase, "ready");
+    assert.equal(failedShutdown.getStatus().stopPending, false);
     await failedShutdown.setEnabled(true);
     await fs.appendFile(path.join(restarted.getInstallation().directory, "backend.cjs"), "tamper");
     const corrupted = create();
     await corrupted.initialize();
     assert.equal(corrupted.getStatus().phase, "error");
     assert.equal(corrupted.getStatus().activeEnabled, false);
+    assert.equal(corrupted.getStatus().integrity.valid, false, "historic self-check is not proof that current files remain valid");
+    assert.equal(corrupted.getStatus().selfCheck.ok, true);
     await corrupted.install({ filePath: offline });
     assert.equal(corrupted.getStatus().phase, "ready");
     assert.equal(corrupted.getStatus().activeEnabled, false);
+    assert.equal(corrupted.getStatus().integrity.valid, true);
     await corrupted.setEnabled(false);
     assert.equal(corrupted.getStatus().restartRequired, false);
     await corrupted.uninstall();
@@ -252,13 +274,123 @@ async function main() {
     const finalBoot = create();
     await finalBoot.initialize();
     assert.equal(finalBoot.getStatus().activeEnabled, true);
+
+    const disabledDir = path.join(temp, "disabled-update");
+    const disabledUpdate = create({ dataDir: disabledDir });
+    await disabledUpdate.install({ url: `${baseUrl}/assistant-2.0.2.ffplugin` });
+    await disabledUpdate.setEnabled(false);
+    await disabledUpdate.install({ filePath: offline });
+    assert.equal(disabledUpdate.getStatus().desiredEnabled, false, "updating a disabled plugin must preserve the user's choice");
+    assert.equal(disabledUpdate.getStatus().restartRequired, false);
+    const disabledBoot = create({ dataDir: disabledDir });
+    await disabledBoot.initialize();
+    assert.equal(disabledBoot.getStatus().activeEnabled, false);
+    await disabledBoot.setEnabled(true);
+    const integrityBoot = create({ dataDir: disabledDir });
+    await integrityBoot.initialize();
+    await fs.appendFile(path.join(integrityBoot.getInstallation().directory, "assistant.js"), "tampered after startup");
+    const inspected = await integrityBoot.refreshStatus();
+    assert.equal(inspected.integrity.valid, false);
+    assert.equal(inspected.activeEnabled, false, "detecting damaged active files must block new work");
+    assert.equal(inspected.desiredEnabled, true, "repair preserves the user's enable preference");
+    await integrityBoot.install({ filePath: offline });
+    assert.equal(integrityBoot.getStatus().integrity.valid, true);
+    assert.equal(integrityBoot.getStatus().activeEnabled, false, "repair also waits until the next boot");
+    assert.equal(integrityBoot.getStatus().restartRequired, true);
+
+    const recoveryDir = path.join(temp, "uninstall-recovery");
+    let failRecoveryStop = false;
+    const recoveryOptions = { dataDir: recoveryDir, selfCheck: async () => ({ ok: true }), onDisable: async () => {
+      if (failRecoveryStop) throw new Error("simulated worker stop failure");
+    } };
+    const recoveryRegistry = path.join(recoveryDir, "plugins", pluginId, "state.json");
+    const recoveryVersions = path.join(recoveryDir, "plugins", pluginId, "versions");
+    const originalRemove = fs.rm;
+    let failRemove = false;
+    fs.rm = async (target, opts) => {
+      if (failRemove && target === recoveryVersions) throw Object.assign(new Error("simulated Windows file lock"), { code: "EBUSY" });
+      return originalRemove(target, opts);
+    };
+    try {
+      for (let index = 0; index < 20; index += 1) {
+        let recovery = create(recoveryOptions);
+        await recovery.install({ filePath: offline });
+        recovery = create(recoveryOptions);
+        await recovery.initialize();
+        assert.equal(recovery.getStatus().activeEnabled, true);
+        failRecoveryStop = true;
+        await assert.rejects(recovery.setEnabled(false), { code: "PLUGIN_DISABLE" });
+        assert.equal(recovery.getStatus().stopPending, true);
+        await assert.rejects(recovery.uninstall(), { code: "PLUGIN_UNINSTALL" });
+        assert.equal(recovery.getStatus().cleanupPending, true);
+        assert.equal(recovery.getStatus().stopPending, true);
+        failRecoveryStop = false;
+        failRemove = true;
+        await assert.rejects(recovery.uninstall(), { code: "PLUGIN_UNINSTALL" });
+        assert.equal(recovery.getStatus().installed, true, "failed removal must retain a retryable installation record");
+        assert.equal(recovery.getStatus().cleanupPending, true);
+        assert.equal(recovery.getStatus().activeEnabled, false);
+        assert.equal((JSON.parse(await fs.readFile(recoveryRegistry, "utf8"))).cleanupPending, true);
+        recovery = create(recoveryOptions);
+        await recovery.initialize();
+        assert.equal(recovery.getStatus().phase, "cleanup-pending");
+        assert.equal(recovery.getStatus().activeEnabled, false, "unfinished uninstall must never reactivate on restart");
+        await assert.rejects(recovery.setEnabled(true), { code: "PLUGIN_CLEANUP_PENDING" });
+        await assert.rejects(recovery.install({ filePath: offline }), { code: "PLUGIN_CLEANUP_PENDING" });
+        failRemove = false;
+        if (index % 2) {
+          recovery = create(recoveryOptions);
+          await recovery.initialize();
+        } else await recovery.uninstall();
+        assert.equal(recovery.getStatus().cleanupPending, false);
+        assert.equal(recovery.getStatus().installed, false);
+        assert.equal(recovery.getStatus().phase, "not-installed");
+      }
+    } finally { fs.rm = originalRemove; }
+
+    const saveDir = path.join(temp, "disable-save-failure");
+    const saved = create({ dataDir: saveDir, selfCheck: async () => ({ ok: true }) });
+    await saved.install({ filePath: offline });
+    const saveBoot = create({ dataDir: saveDir });
+    await saveBoot.initialize();
+    const originalRename = fs.rename;
+    const savedRegistry = path.join(saveDir, "plugins", pluginId, "state.json");
+    fs.rename = async (source, target) => {
+      if (target === savedRegistry) throw Object.assign(new Error("simulated state save failure"), { code: "EACCES" });
+      return originalRename(source, target);
+    };
+    try {
+      await assert.rejects(saveBoot.setEnabled(false), { code: "PLUGIN_DISABLE" });
+      assert.equal(saveBoot.getStatus().activeEnabled, false);
+      assert.equal(saveBoot.getStatus().stopPending, true, "save failure also keeps the retry affordance");
+      assert.equal(saveBoot.getStatus().phase, "disable-pending");
+    } finally { fs.rename = originalRename; }
+    await saveBoot.setEnabled(false);
+    const savedDisabled = create({ dataDir: saveDir });
+    await savedDisabled.initialize();
+    assert.equal(savedDisabled.getStatus().activeEnabled, false);
+    assert.equal(savedDisabled.getStatus().desiredEnabled, false);
+    const invalidRecordDir = path.join(temp, "invalid-install-record");
+    const invalidState = path.join(invalidRecordDir, "plugins", pluginId, "state.json");
+    await fs.mkdir(path.dirname(invalidState), { recursive: true });
+    await fs.writeFile(invalidState, JSON.stringify({ schemaVersion: 1, desiredEnabled: true, installed: {} }));
+    const invalidRecord = create({ dataDir: invalidRecordDir, selfCheck: async () => ({ ok: true }) });
+    await invalidRecord.initialize();
+    assert.equal(invalidRecord.getStatus().integrity.valid, false);
+    assert.equal(invalidRecord.getStatus().installed, true, "damaged records must still expose repair and uninstall");
+    await invalidRecord.install({ filePath: offline });
+    assert.equal(invalidRecord.getStatus().integrity.valid, true);
+    await invalidRecord.uninstall();
     const artifactIndex = process.argv.indexOf("--artifact");
     if (artifactIndex >= 0) {
       const artifact = await fs.readFile(process.argv[artifactIndex + 1]);
       const manifest = JSON.parse(zlib.gunzipSync(artifact).toString("utf8")).manifest;
       payloads.set("/real.ffplugin", artifact);
+      payloads.set("/real-catalog.json", Buffer.from(JSON.stringify({ id: manifest.id, version: manifest.version, minAppVersion: manifest.minAppVersion,
+        hostApiVersion: manifest.hostApiVersion, url: "/real.ffplugin", size: artifact.length, sha256: crypto.createHash("sha256").update(artifact).digest("hex") })));
       const actualOptions = {
         ...options, publicKey: undefined, dataDir: path.join(temp, "real-artifact"),
+        catalogUrl: `${baseUrl}/real-catalog.json`,
         selfCheck: async (directory, _manifest, { signal }) => {
           const { stdout } = await execute(process.execPath, ["-e", "require(process.argv[1]).selfCheck().then(r=>process.stdout.write(JSON.stringify(r)))", path.join(directory, "backend.cjs")], { signal, timeout: 10000 });
           const result = JSON.parse(stdout);
@@ -269,7 +401,8 @@ async function main() {
         },
       };
       const actual = createAssistantPluginManager(actualOptions);
-      await actual.install({ url: `${baseUrl}/real.ffplugin` });
+      assert.equal((await actual.checkForUpdate()).version, manifest.version);
+      await actual.install();
       assert.equal(actual.getStatus().version, manifest.version);
       assert.equal(actual.getStatus().activeEnabled, false);
       const actualRestart = createAssistantPluginManager(actualOptions);
@@ -277,9 +410,9 @@ async function main() {
       assert.equal(actualRestart.getStatus().activeEnabled, true);
       await actualRestart.setEnabled(false);
       await actualRestart.uninstall();
-      console.log("PASS actual release artifact: trusted signature, HTTP download, bundled SQLite/schema self-check, deferred activation, uninstall");
+      console.log("PASS actual release artifact: catalog discovery, trusted signature, HTTP download, bundled SQLite/schema self-check, deferred activation, uninstall");
     }
-    console.log("PASS assistant plugin manager: signed HTTP download, isolated self-check, deferred activation, failure rollback, cancellation, 20 restart cycles, offline reinstall, history preservation");
+    console.log("PASS assistant plugin manager: signed catalog download, self-check, deferred activation, disabled update/repair, current integrity, state-save failure, 20 enable cycles and 20 stop/uninstall failure+restart recovery cycles, history preservation");
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

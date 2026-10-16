@@ -55,7 +55,7 @@ function parseDataUrl(value = "") {
 }
 
 function extensionFor(name = "", mime = "") {
-  const extension = path.extname(String(name || "")).replace(/^\./, "").toLowerCase();
+  const extension = path.extname(String(name || "")).replace(/^\./, "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 32);
   if (extension) return extension;
   const fallback = String(mime || "").split("/")[1] || "bin";
   return fallback.replace(/[^a-z0-9]+/gi, "").slice(0, 8) || "bin";
@@ -150,7 +150,8 @@ async function buildSyncBundleFromPayload(inputPayload, options = {}) {
       const item = board.items[index];
       const input = attachmentInput(item);
       if (!input) continue;
-      const bytes = await readAttachmentBytes(input, options.baseDir || "", policy, access);
+      const bytes = options.resourceBytes?.get(input.sourcePath)
+        || await readAttachmentBytes(input, options.baseDir || "", policy, access);
       const sizeBytes = bytes?.bytes?.length || bytes?.sizeBytes || input.sizeBytes || 0;
       const sha256 = bytes?.bytes ? crypto.createHash("sha256").update(bytes.bytes).digest("hex") : "";
       const extension = bytes?.bytes ? extensionFor(input.name, bytes.mime || input.mime) : "";

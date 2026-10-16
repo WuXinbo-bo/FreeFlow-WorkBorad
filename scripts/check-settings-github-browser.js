@@ -177,6 +177,8 @@ async function main() {
     assert(await page.locator('[data-settings-section]').count() >= 6, "settings navigation did not expose the GitHub section");
     await nav.click();
     await page.waitForSelector("text=GitHub 画布同步");
+    assert(await page.locator('[data-github-page="workspace"].is-active').count() === 1, "workspace sync is not the default page");
+    await page.locator('[data-github-page="connection"]').first().click();
 
     const tokenMethod = await firstVisible(page, [
       '[data-github-auth-method="token"]', '[data-github-method="token"]', '[data-settings-action="github-method-token"]',
@@ -193,7 +195,7 @@ async function main() {
     await page.locator("[data-github-repository]").selectOption("freeflow-test/private-board");
     await page.locator('[data-settings-action="github-repository-save"]').click();
     await page.waitForFunction(() => document.body.textContent.includes("freeflow-test/private-board"));
-    if (!await page.locator('[data-settings-action="github-disconnect"]').isVisible()) await page.locator(".settings-center-github-advanced > summary").click();
+    await page.locator('[data-github-page="connection"]').first().click();
     await page.locator('[data-settings-action="github-disconnect"]').click();
     await page.waitForSelector('[data-settings-action="github-token-connect"]');
 
@@ -220,7 +222,7 @@ async function main() {
     await page.locator('[data-settings-action="github-poll"]').click();
     await page.waitForFunction(() => document.body.textContent.includes("已连接"));
 
-    if (!await page.locator('[data-settings-action="github-disconnect"]').isVisible()) await page.locator(".settings-center-github-advanced > summary").click();
+    await page.locator('[data-github-page="connection"]').first().click();
     await page.locator('[data-settings-action="github-disconnect"]').click();
     assert(await page.locator('[data-settings-action="github-connect"]').count() === 1, "disconnect did not restore the unconnected state");
     assert(pageErrors.length === 0, "GitHub settings caused browser errors", pageErrors);
@@ -232,7 +234,9 @@ async function main() {
   console.log("[check-settings-github-browser] Dedicated GitHub settings, PAT/Device Flow switching, retry, repository binding, and disconnect passed");
 }
 
-main().catch((error) => {
+module.exports = { createSnapshot, startStaticServer };
+
+if (require.main === module) main().catch((error) => {
   console.error(`[check-settings-github-browser] ${error.stack || error.message}`);
   process.exitCode = 1;
 });

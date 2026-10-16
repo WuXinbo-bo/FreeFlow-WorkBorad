@@ -154,10 +154,11 @@ async function previewCanvasHistory(filePath, id) {
   return { ok: true, entry, itemCount: board.items.length, samples: board.items.slice(0, 5).map((item) => String(item.text || item.title || item.name || item.type || "节点").replace(/<[^>]*>/g, "").slice(0, 160)) };
 }
 
-async function trashBoardUnlocked(filePath) {
+async function trashBoardUnlocked(filePath, { expectedContentHash = "" } = {}) {
   const resolved = boardPath(filePath);
   await regularFile(resolved);
   const bytes = await fs.readFile(resolved);
+  if (expectedContentHash && digest(bytes) !== expectedContentHash) throw new Error("删除期间画布已更新，已取消删除");
   const record = await createRecord(trashRoot(path.dirname(resolved)), resolved, bytes, "delete");
   // Remove the original only after the complete recovery copy is durable.
   if (!(await fs.readFile(resolved)).equals(bytes)) throw new Error("删除期间画布已更新，已取消删除");
@@ -165,9 +166,9 @@ async function trashBoardUnlocked(filePath) {
   return { ok: true, filePath: resolved, trashId: record.id };
 }
 
-async function trashCanvasBoard(filePath) {
+async function trashCanvasBoard(filePath, options = {}) {
   const resolved = boardPath(filePath);
-  return withFileLock(resolved, () => trashBoardUnlocked(resolved));
+  return withFileLock(resolved, () => trashBoardUnlocked(resolved, options));
 }
 
 async function listCanvasTrash(folderPath) {

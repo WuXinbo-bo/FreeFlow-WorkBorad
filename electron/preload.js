@@ -8,7 +8,7 @@ async function invokeGitHubSync(channel, payload) {
     const result = await ipcRenderer.invoke(channel, payload);
     if (result?.ok === false) {
       const wrapped = new Error(String(result.error || "GitHub 同步失败"));
-      for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs"]) {
+      for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs", "operationId", "localChanged", "filePath", "boardId", "merged"]) {
         if (result[key] !== undefined) wrapped[key] = result[key];
       }
       throw wrapped;
@@ -23,7 +23,7 @@ async function invokeGitHubSync(channel, payload) {
     let details = {};
     try { details = detailsText ? JSON.parse(detailsText) : {}; } catch { details = {}; }
     const wrapped = new Error(message || "GitHub 同步失败");
-    for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs"]) {
+    for (const key of ["status", "code", "conflicts", "artifacts", "state", "retryAfterMs", "operationId", "localChanged", "filePath", "boardId", "merged"]) {
       if (details[key] !== undefined) wrapped[key] = details[key];
       else if (error?.[key] !== undefined) wrapped[key] = error[key];
     }
@@ -137,6 +137,16 @@ contextBridge.exposeInMainWorld("desktopShell", {
   prepareDoubaoPrompt: (payload) => ipcRenderer.invoke("desktop-shell:prepare-doubao-prompt", payload),
   githubSync: {
     getStatus: () => invokeGitHubSync("desktop-shell:github-sync-status"),
+    getOperations: () => invokeGitHubSync("desktop-shell:github-sync-operations"),
+    getOperation: (payload) => invokeGitHubSync("desktop-shell:github-sync-operation", payload),
+    checkRemote: () => invokeGitHubSync("desktop-shell:github-sync-remote-check"),
+    deleteRemote: (payload) => invokeGitHubSync("desktop-shell:github-sync-delete-remote", payload),
+    applyDeletion: (payload) => invokeGitHubSync("desktop-shell:github-sync-apply-deletion", payload),
+    onOperation: (listener) => {
+      const handler = (_event, operation) => listener(operation);
+      ipcRenderer.on("desktop-shell:github-sync-operation", handler);
+      return () => ipcRenderer.removeListener("desktop-shell:github-sync-operation", handler);
+    },
     startDeviceFlow: (payload) => invokeGitHubSync("desktop-shell:github-sync-device-flow-start", payload),
     connectToken: (payload) => invokeGitHubSync("desktop-shell:github-sync-token-connect", payload),
     pollDeviceFlow: (payload) => invokeGitHubSync("desktop-shell:github-sync-device-flow-poll", payload),

@@ -44,6 +44,9 @@ function assertCoreImportBoundary() {
 function assertCorePackaging() {
   const packageInfo = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8"));
   const files = packageInfo.build.files;
+  const { validateCatalogUrl } = require("./configure-assistant-plugin-release");
+  const releaseConfig = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "src/backend/plugins/assistantPluginRelease.json"), "utf8"));
+  validateCatalogUrl(releaseConfig.catalogUrl);
   for (const exclusion of EXCLUSIONS) assert(files.includes(exclusion), `Missing assistant package exclusion: ${exclusion}`);
   assert(!files.includes("!public/src/runtime/conversationAssistant/**/*"), "Mirror chrome/dom must remain available to the core");
   for (const relativePath of ["scripts/start-desktop.js", "scripts/prepare-desktop-build.js"]) {
@@ -87,9 +90,12 @@ function assertCoreArchive(archivePath) {
     assert(file !== "public/ui.agent-assistant.css", "Assistant stylesheet leaked into core archive");
     assert(!file.endsWith(".ffplugin"), "Core archive must not carry a plugin package");
   }
-  for (const required of ["src/backend/plugins/assistantWorker.js", "src/backend/plugins/assistantPluginManager.js", "public/src/runtime/conversationAssistant/chrome.js", "public/src/runtime/conversationAssistant/dom.js"]) {
+  for (const required of ["src/backend/plugins/assistantWorker.js", "src/backend/plugins/assistantPluginManager.js", "src/backend/plugins/assistantPluginRelease.json", "public/src/runtime/conversationAssistant/chrome.js", "public/src/runtime/conversationAssistant/dom.js"]) {
     assert(files.includes(required), `Missing core plugin/mirror host file: ${required}`);
   }
+  const { validateCatalogUrl } = require("./configure-assistant-plugin-release");
+  const config = JSON.parse(asar.extractFile(archivePath, "src/backend/plugins/assistantPluginRelease.json").toString("utf8"));
+  validateCatalogUrl(config.catalogUrl);
   return { files: files.length, size: fs.statSync(archivePath).size };
 }
 
