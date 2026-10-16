@@ -39,6 +39,7 @@
     "test:github-sync-multidevice": "node scripts/check-github-sync-multidevice.js",
     "test:desktop-atomic-save": "node scripts/check-desktop-atomic-save.js",
     "test:electron-ipc-security": "node scripts/check-electron-ipc-security.js",
+    "test:mirror-overlay": "node scripts/run-mirror-overlay-tests.js",
     "test:canvas-lod-scale": "node scripts/check-canvas-lod-scale.js",
     "test:overlay-budget": "node scripts/check-overlay-budget.js",
     "test:interaction-coordination": "node scripts/check-interaction-coordination.js",

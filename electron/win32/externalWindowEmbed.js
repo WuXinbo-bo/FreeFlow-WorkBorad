@@ -146,6 +146,11 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
   let embeddedWindow = null;
   let hostWindow = null;
 
+  function matchesIdentity({ targetId = "", syncSessionId = "" } = {}) {
+    return (!targetId || String(targetId).trim() === embeddedWindow?.targetId) &&
+      (!syncSessionId || String(syncSessionId).trim() === embeddedWindow?.syncSessionId);
+  }
+
   function getMainWindow() {
     const window = typeof mainWindowGetter === "function" ? mainWindowGetter() : null;
     if (!window || window.isDestroyed()) {
@@ -269,6 +274,8 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         active: false,
         sourceId: "",
         hwnd: "",
+        targetId: "",
+        syncSessionId: "",
       };
     }
 
@@ -276,6 +283,8 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       active: true,
       sourceId: embeddedWindow.sourceId,
       hwnd: embeddedWindow.hwnd.toString(),
+      targetId: embeddedWindow.targetId,
+      syncSessionId: embeddedWindow.syncSessionId,
       minimized: Boolean(embeddedWindow.minimized),
       visible: !Boolean(embeddedWindow.hidden),
       fitMode: embeddedWindow.fitMode || "contain",
@@ -584,7 +593,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     });
   }
 
-  function setEmbeddedWindowVisibility(visible) {
+  function setEmbeddedWindowVisibility(visible, identity = {}) {
     if (!embeddedWindow) {
       return {
         ok: true,
@@ -592,6 +601,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         visible: Boolean(visible),
       };
     }
+    if (!matchesIdentity(identity)) return { ok: true, ...getEmbeddedState(), stale: true };
 
     ensureValidHandle(embeddedWindow.hwnd);
     const nextVisible = Boolean(visible);
@@ -672,7 +682,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
     };
   }
 
-  function clearEmbeddedWindow({ reason = "", restoreVisible = true } = {}) {
+  function clearEmbeddedWindow({ reason = "", restoreVisible = true, targetId = "", syncSessionId = "" } = {}) {
     if (!embeddedWindow) {
       return {
         ok: true,
@@ -680,6 +690,7 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
         reason,
       };
     }
+    if (!matchesIdentity({ targetId, syncSessionId })) return { ok: true, ...getEmbeddedState(), stale: true };
 
     const current = embeddedWindow;
     embeddedWindow = null;
@@ -757,6 +768,10 @@ function createExternalWindowEmbedManager(mainWindowGetter) {
       };
     }
 
+    const requestedSessionId = String(syncSessionId || "").trim();
+    if (requestedSessionId !== embeddedWindow.syncSessionId) embeddedWindow.lastSyncRevision = 0;
+    embeddedWindow.syncSessionId = requestedSessionId;
+    embeddedWindow.targetId = String(targetId || embeddedWindow.targetId || "").trim();
     embeddedWindow.lastBounds = rect;
     embeddedWindow.fitMode = normalizeFitMode(layout?.fitMode || embeddedWindow.fitMode);
     attachEmbeddedWindowToHost(embeddedWindow, host);

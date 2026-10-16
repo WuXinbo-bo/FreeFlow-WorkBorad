@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FreeFlow 设置</title>
+    <link rel="stylesheet" href="./ui.tokens.css" />
+    <link rel="stylesheet" href="./ui.settings-center.css" />
+    <link rel="stylesheet" href="./ui.icons.css" />
+    <link rel="stylesheet" href="./src/runtime/mirrorOverlay/overlay.css" />
+  </head>
+  <body>
+    <aside id="insight-drawer" class="ui-chrome-drawer is-open" role="dialog" aria-modal="false" aria-label="系统设置" hidden>
+      <header class="settings-center-frame-header">
+        <h3>系统设置</h3>
+        <button id="overlay-close" type="button" aria-label="关闭系统设置" title="关闭系统设置">
+          <svg class="app-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </header>
+      <div id="settings-center-host" class="settings-center-host"></div>
+    </aside>
+    <section id="overlay-menu" class="mirror-overlay-menu" role="menu" aria-label="更多操作" hidden></section>
+    <p id="overlay-error" role="alert" hidden></p>
+    <script type="module" src="./src/runtime/mirrorOverlay/overlayEntry.js"></script>
+  </body>
+</html>

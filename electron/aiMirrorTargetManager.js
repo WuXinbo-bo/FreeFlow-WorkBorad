@@ -97,6 +97,18 @@ const AI_MIRROR_TARGETS = Object.freeze([
 function createAiMirrorTargetManager() {
   const managedWindows = new Map();
   let activeSession = null;
+  let currentOwner = null;
+  let generation = 0;
+
+  function isCurrent(owner) {
+    return currentOwner === owner && owner.generation === generation &&
+      managedWindows.get(owner.targetId) === owner.window && !owner.window.isDestroyed();
+  }
+
+  function matchesOwner(owner, { targetId = "", syncSessionId = "" } = {}) {
+    return (!targetId || String(targetId).trim() === owner.targetId) &&
+      (!syncSessionId || String(syncSessionId).trim() === owner.syncSessionId);
+  }
 
   function getTargetMeta(targetId = "") {
     return AI_MIRROR_TARGETS.find((item) => item.id === String(targetId || "").trim()) || null;
@@ -134,26 +146,26 @@ function createAiMirrorTargetManager() {
       if (managedWindows.get(meta.id) === window) {
         managedWindows.delete(meta.id);
       }
+      if (currentOwner?.window === window) {
+        const previous = currentOwner;
+        currentOwner = null;
+        activeSession = null;
+        generation += 1;
+        previous.cancel();
+      }
     });
 
     return window;
   }
 
-  async function ensureManagedTargetWindow(meta) {
-    let targetWindow = managedWindows.get(meta.id);
-    if (!targetWindow || targetWindow.isDestroyed()) {
-      targetWindow = createManagedTargetWindow(meta);
-      managedWindows.set(meta.id, targetWindow);
-    }
-
+  async function ensureManagedTargetWindow(meta, owner) {
+    const targetWindow = owner.window;
     const currentUrl = targetWindow.webContents.getURL();
     if (!currentUrl || !currentUrl.startsWith(meta.webUrl)) {
-      await targetWindow.loadURL(meta.webUrl);
+      await Promise.race([targetWindow.loadURL(meta.webUrl), owner.cancelled]);
     }
 
-    if (targetWindow.isDestroyed()) {
-      throw new Error("镜像网页窗口已关闭");
-    }
+    if (!isCurrent(owner)) throw new Error("镜像网页准备已取消");
 
     targetWindow.setTitle(meta.windowTitle);
     targetWindow.setBounds(OFFSCREEN_BOUNDS, false);
@@ -197,64 +209,86 @@ function createAiMirrorTargetManager() {
     }
   }
 
-  async function prepareTarget({ targetId = "" } = {}) {
+  function prepareTarget({ targetId = "", syncSessionId = "" } = {}) {
     const meta = getTargetMeta(targetId);
     if (!meta) {
-      return {
+      return Promise.resolve({
         ok: false,
         error: "不支持的 AI 镜像目标",
-      };
+      });
     }
 
-    const targetWindow = await ensureManagedTargetWindow(meta);
-    const hwnd = bufferToUintPtr(targetWindow.getNativeWindowHandle()).toString();
+    const sessionId = String(syncSessionId || "").trim();
+    if (currentOwner && isCurrent(currentOwner) && currentOwner.targetId === meta.id && currentOwner.syncSessionId === sessionId) return currentOwner.promise;
+    const previous = currentOwner;
+    const reuse = previous && !previous.loading && previous.targetId === meta.id && !previous.window.isDestroyed();
+    currentOwner = null;
+    activeSession = null;
+    generation += 1;
+    if (previous) {
+      previous.cancel();
+      if (!reuse) {
+        if (managedWindows.get(previous.targetId) === previous.window) managedWindows.delete(previous.targetId);
+        teardownManagedTargetWindow(previous.window);
+      }
+    }
 
-    activeSession = {
-      targetId: meta.id,
-      mode: "managed-web",
-      browserWindowId: targetWindow.id,
-      sourceId: `hwnd:${hwnd}`,
-      sourceName: meta.windowTitle,
-      label: meta.label,
-    };
-
-    return {
-      ok: true,
-      target: {
-        id: meta.id,
-        label: meta.label,
-        note: meta.note,
-      },
-      projection: {
+    const targetWindow = reuse ? previous.window : createManagedTargetWindow(meta);
+    const owner = { targetId: meta.id, syncSessionId: sessionId, generation, window: targetWindow, loading: true };
+    owner.cancelled = new Promise(resolve => { owner.cancel = resolve; });
+    managedWindows.set(meta.id, targetWindow);
+    currentOwner = owner;
+    owner.promise = ensureManagedTargetWindow(meta, owner).then(() => {
+      if (!isCurrent(owner)) return { ok: true, active: false, stale: true };
+      const hwnd = bufferToUintPtr(targetWindow.getNativeWindowHandle()).toString();
+      owner.loading = false;
+      activeSession = {
+        targetId: meta.id,
+        syncSessionId: sessionId,
+        mode: "managed-web",
+        browserWindowId: targetWindow.id,
         sourceId: `hwnd:${hwnd}`,
-        label: `窗口 · ${meta.label}`,
-        kind: "window",
-      },
-      mode: "managed-web",
-    };
+        sourceName: meta.windowTitle,
+        label: meta.label,
+      };
+      return {
+        ok: true,
+        syncSessionId: sessionId,
+        target: { id: meta.id, label: meta.label, note: meta.note },
+        projection: { sourceId: `hwnd:${hwnd}`, label: `窗口 · ${meta.label}`, kind: "window" },
+        mode: "managed-web",
+      };
+    }).catch(error => {
+      if (!isCurrent(owner)) return { ok: true, active: false, stale: true };
+      currentOwner = null;
+      activeSession = null;
+      managedWindows.delete(meta.id);
+      teardownManagedTargetWindow(targetWindow);
+      throw error;
+    });
+    return owner.promise;
   }
 
-  async function stopTarget({ targetId = "" } = {}) {
-    const nextTargetId = String(targetId || activeSession?.targetId || "").trim();
-    const session = activeSession && activeSession.targetId === nextTargetId ? activeSession : activeSession;
-
-    if (!session) {
+  async function stopTarget({ targetId = "", syncSessionId = "" } = {}) {
+    const owner = currentOwner;
+    if (!owner) {
       return {
         ok: true,
         active: false,
       };
     }
-
+    if (!matchesOwner(owner, { targetId, syncSessionId })) return { ok: true, active: true, stale: true };
+    currentOwner = null;
     activeSession = null;
-
-    const targetWindow = managedWindows.get(session.targetId);
-    teardownManagedTargetWindow(targetWindow);
-    managedWindows.delete(session.targetId);
+    generation += 1;
+    owner.cancel();
+    if (managedWindows.get(owner.targetId) === owner.window) managedWindows.delete(owner.targetId);
+    teardownManagedTargetWindow(owner.window);
 
     return {
       ok: true,
       active: false,
-      closed: session.targetId,
+      closed: owner.targetId,
     };
   }
 
@@ -272,11 +306,16 @@ function createAiMirrorTargetManager() {
   }
 
   async function dispose() {
-    await stopTarget().catch(() => {});
-    for (const window of managedWindows.values()) {
+    const owner = currentOwner;
+    currentOwner = null;
+    activeSession = null;
+    generation += 1;
+    owner?.cancel();
+    const windows = [...managedWindows.values()];
+    managedWindows.clear();
+    for (const window of windows) {
       teardownManagedTargetWindow(window);
     }
-    managedWindows.clear();
   }
 
   function getState() {
@@ -286,6 +325,7 @@ function createAiMirrorTargetManager() {
             ...activeSession,
           }
         : null,
+      pendingSession: currentOwner?.loading ? { targetId: currentOwner.targetId, syncSessionId: currentOwner.syncSessionId, browserWindowId: currentOwner.window.id } : null,
     };
   }
 

@@ -32,6 +32,7 @@ const { checkForAppUpdate, normalizeVersion, DEFAULT_UPDATE_CONFIG } = require("
 const { AI_MIRROR_TARGETS, createAiMirrorTargetManager } = require("./aiMirrorTargetManager");
 const { createExternalWindowEmbedManager } = require("./win32/externalWindowEmbed");
 const { createWebContentsViewEmbedManager } = require("./web/webContentsViewEmbed");
+const { createMirrorOverlayManager } = require("./web/mirrorOverlay");
 const { createAtomicBoardFileWriter, isFreeFlowBoardPath } = require("./atomicBoardFileWriter");
 const recoveryService = require("../src/backend/services/boardRecoveryService");
 const { createBoardWorkspaceWatcher } = require("./boardWorkspaceWatcher");
@@ -123,10 +124,43 @@ let desktopKeyboardFocusSourceId = "";
 let desktopKeyboardFocusTargetId = "";
 const externalWindowEmbedManager = createExternalWindowEmbedManager(() => mainWindow);
 const aiMirrorTargetManager = createAiMirrorTargetManager();
+let overlayRequestSequence = 0;
+const overlayRequests = new Map();
+function rejectOverlayRequests() {
+  for (const request of overlayRequests.values()) {
+    clearTimeout(request.timer);
+    request.reject(new Error("应用浮层已关闭，请重新打开后重试"));
+  }
+  overlayRequests.clear();
+}
+const mirrorOverlayManager = createMirrorOverlayManager({
+  getWindow: () => mainWindow,
+  getAppUrl: () => APP_URL,
+  onRequest(method, args) {
+    return new Promise((resolve, reject) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return reject(new Error("主窗口不可用"));
+      const id = ++overlayRequestSequence;
+      const timer = setTimeout(() => {
+        overlayRequests.delete(id);
+        reject(new Error("应用操作超时，请检查当前任务状态后重试"));
+      }, 10 * 60 * 1000);
+      overlayRequests.set(id, { resolve, reject, timer });
+      mainWindow.webContents.send("desktop-shell:mirror-overlay-request", { id, method, args });
+    });
+  },
+  onEvent(name, payload, meta) {
+    if (name === "unavailable") rejectOverlayRequests();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop-shell:mirror-overlay-event", { name, payload, surfaceId: meta?.surfaceId, kind: meta?.kind });
+    }
+  },
+  onFocusChanged: (payload) => setDesktopKeyboardFocusOwner(payload.owner, { sourceId: `overlay:${payload.surfaceId}` }),
+});
 const webContentsViewEmbedManager = createWebContentsViewEmbedManager(() => mainWindow, AI_MIRROR_TARGETS, {
   onFocusChanged: (payload = {}) => {
     setDesktopKeyboardFocusOwner(payload?.owner, payload);
   },
+  onAttached: () => mirrorOverlayManager.reorder(),
 });
 let everythingCliPath = null;
 let desktopEmbedCleanupPromise = Promise.resolve();
@@ -189,6 +223,26 @@ const ipcMain = createSecuredIpcMain({
   authorize: (channel, args) => assertFileIpcAccess(fileAccess, channel, args),
   onRejected: (error) => console.warn(error.message),
 });
+
+ipcMain.handle("desktop-shell:present-mirror-overlay", (_event, payload) => {
+  if (clickThroughEnabled) return { ok: false, error: "完全穿透时不可打开应用浮层" };
+  return mirrorOverlayManager.present(payload);
+});
+ipcMain.handle("desktop-shell:dismiss-mirror-overlay", (_event, payload) => mirrorOverlayManager.dismiss(payload));
+ipcMain.handle("desktop-shell:sync-mirror-overlay-bounds", (_event, payload) => mirrorOverlayManager.syncBounds(payload));
+ipcMain.handle("desktop-shell:notify-mirror-overlay", (_event, payload) => mirrorOverlayManager.notify(payload));
+ipcMain.on("desktop-shell:mirror-overlay-response", (_event, payload) => {
+  const request = overlayRequests.get(payload?.id);
+  if (!request) return;
+  overlayRequests.delete(payload.id);
+  clearTimeout(request.timer);
+  if (payload.error) request.reject(Object.assign(new Error(payload.error.message || "应用操作失败"), payload.error));
+  else request.resolve(payload.result);
+});
+// This isolated renderer gets only its own broker, never the desktop preload or file IPC.
+electronIpcMain.handle("mirror-overlay:request", (event, method, args) => mirrorOverlayManager.handleRequest(event, method, args));
+electronIpcMain.on("mirror-overlay:event", (event, name, payload) => mirrorOverlayManager.handleEvent(event, name, payload));
+electronIpcMain.on("mirror-overlay:ready", (event) => mirrorOverlayManager.ready(event));
 
 function getConfiguredUpdateWebsiteUrl() {
   const configured = String(startupContextCache?.uiSettings?.updateDownloadPageUrl || "").trim();
@@ -1414,6 +1468,12 @@ function beginMainWindowNavigation(window, reason = "navigation") {
   }
 
   mainWindowNavigationGeneration += 1;
+  mirrorOverlayManager.clear();
+  rejectOverlayRequests();
+  webContentsViewEmbedManager.clearTarget();
+  try { externalWindowEmbedManager.clearEmbeddedWindow({ reason, restoreVisible: false }); } catch {}
+  void aiMirrorTargetManager.stopTarget().catch(() => {});
+  setDesktopKeyboardFocusOwner("");
   const generation = mainWindowNavigationGeneration;
   mainWindowBootShapeLocked = true;
   mainWindowInteractionShapeLockId = "";
@@ -1535,7 +1595,7 @@ function normalizeWindowBounds(bounds) {
 
 function normalizeDesktopKeyboardFocusOwner(owner = "") {
   const value = String(owner || "").trim().toLowerCase();
-  return ["", "canvas", "assistant", "screen", "ai-mirror"].includes(value) ? value : "";
+  return ["", "canvas", "assistant", "screen", "ai-mirror", "overlay"].includes(value) ? value : "";
 }
 
 function setDesktopKeyboardFocusOwner(owner = "", meta = {}) {
@@ -1636,6 +1696,8 @@ function cleanupDesktopEmbeddedSurfaces(reason = "unknown") {
   desktopEmbedCleanupPromise = desktopEmbedCleanupPromise
     .catch(() => {})
     .then(async () => {
+      mirrorOverlayManager.clear();
+      rejectOverlayRequests();
       try {
         externalWindowEmbedManager.setEmbeddedWindowVisibility(false);
       } catch {
@@ -1673,13 +1735,14 @@ function cleanupDesktopEmbeddedSurfaces(reason = "unknown") {
 function applyClickThrough(enabled) {
   const nextEnabled = Boolean(enabled);
   clickThroughEnabled = nextEnabled;
+  if (nextEnabled) mirrorOverlayManager.dismiss();
 
   try {
     if (nextEnabled) {
-      externalWindowEmbedManager.setEmbeddedWindowMinimized(true);
+      externalWindowEmbedManager.setEmbeddedWindowVisibility(false);
     }
   } catch (error) {
-    console.warn(`Failed to sync embedded window minimized state: ${error.message}`);
+    console.warn(`Failed to sync embedded window visibility state: ${error.message}`);
   }
 
   try {
@@ -2949,9 +3012,9 @@ ipcMain.handle("desktop-shell:sync-external-window-bounds", (_event, payload) =>
   }
 });
 
-ipcMain.handle("desktop-shell:set-external-window-visibility", (_event, visible) => {
+ipcMain.handle("desktop-shell:set-external-window-visibility", (_event, visible, identity) => {
   try {
-    return externalWindowEmbedManager.setEmbeddedWindowVisibility(visible);
+    return externalWindowEmbedManager.setEmbeddedWindowVisibility(visible, identity);
   } catch (error) {
     return {
       ok: false,
@@ -2970,11 +3033,13 @@ ipcMain.handle("desktop-shell:clear-external-window", (_event, payload) => {
 
 ipcMain.handle("desktop-shell:focus-embedded-window", (_event, payload) => {
   try {
+    const response = externalWindowEmbedManager.focusEmbeddedWindow();
+    if (!response?.ok || !response.active) return response;
     setDesktopKeyboardFocusOwner("ai-mirror", {
       sourceId: String(payload?.sourceId || "native-embed:ai-mirror").trim(),
       targetId: String(payload?.activeTargetId || payload?.targetId || "").trim(),
     });
-    return externalWindowEmbedManager.focusEmbeddedWindow(payload || {});
+    return response;
   } catch (error) {
     return {
       ok: false,
@@ -3020,9 +3085,9 @@ ipcMain.handle("desktop-shell:sync-ai-mirror-webcontents-view-bounds", (_event, 
   }
 });
 
-ipcMain.handle("desktop-shell:set-ai-mirror-webcontents-view-visibility", (_event, visible) => {
+ipcMain.handle("desktop-shell:set-ai-mirror-webcontents-view-visibility", (_event, visible, identity) => {
   try {
-    return webContentsViewEmbedManager.setVisibility(visible);
+    return webContentsViewEmbedManager.setVisibility(visible, identity);
   } catch (error) {
     return {
       ok: false,
@@ -3032,9 +3097,10 @@ ipcMain.handle("desktop-shell:set-ai-mirror-webcontents-view-visibility", (_even
   }
 });
 
-ipcMain.handle("desktop-shell:clear-ai-mirror-webcontents-view", () => {
+ipcMain.handle("desktop-shell:clear-ai-mirror-webcontents-view", (_event, identity) => {
   try {
-    const response = webContentsViewEmbedManager.clearTarget();
+    const response = webContentsViewEmbedManager.clearTarget(identity);
+    if (response.stale) return response;
     setDesktopKeyboardFocusOwner("", {
       sourceId: desktopKeyboardFocusSourceId,
       targetId: desktopKeyboardFocusTargetId,
