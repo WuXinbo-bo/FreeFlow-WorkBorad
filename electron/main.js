@@ -1818,10 +1818,11 @@ function focusRendererSurface(payload = {}) {
 }
 
 function getDesktopShellState() {
+  // macOS can briefly report zoomed again while controlled bounds are restoring.
+  const restoringMacBounds = process.platform === "darwin" && desktopShellBoundsTransitionLock;
   const fullscreen = Boolean(
     desktopShellFullscreenEnabled ||
-    mainWindow?.isFullScreen?.() ||
-    mainWindow?.isMaximized?.()
+    (!restoringMacBounds && (mainWindow?.isFullScreen?.() || mainWindow?.isMaximized?.()))
   );
   return {
     isDesktop: true,
@@ -2003,6 +2004,9 @@ function reinforcePinnedState() {
 function syncDesktopShellExpandedStateFromWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     desktopShellFullscreenEnabled = false;
+    return;
+  }
+  if (process.platform === "darwin" && desktopShellBoundsTransitionLock) {
     return;
   }
 

@@ -50,6 +50,7 @@ const CHECKS = [
   "scripts/check-server-port.js",
   "scripts/check-update-service.js",
   "scripts/check-window-bounds-lifecycle.js",
+  "scripts/check-macos-fullscreen-transition.js",
   "scripts/check-canvas-lod-scale.js",
   "scripts/check-overlay-budget.js",
   "scripts/check-interaction-coordination.js",

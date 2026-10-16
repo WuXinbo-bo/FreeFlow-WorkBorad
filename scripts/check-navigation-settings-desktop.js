@@ -44,6 +44,27 @@ async function main() {
       return root && root.classList.contains('left-collapsed') === !canvas && root.classList.contains('right-collapsed') === !chat;
     }, { canvas, chat });
     await page.waitForFunction(async fullscreen => (await window.desktopShell.getState()).fullscreen === fullscreen, fullscreen);
+    // A transient native zoom reading must not count as a completed restore.
+    await app.evaluate(async ({ BrowserWindow, screen }, fullscreen) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const deadline = Date.now() + 5000;
+      let stableSince = 0;
+      while (Date.now() < deadline) {
+        const bounds = window.getBounds();
+        const workArea = screen.getDisplayMatching(bounds).workArea;
+        const settled = fullscreen
+          ? ["x", "y", "width", "height"].every(key => Math.abs(bounds[key] - workArea[key]) <= 1)
+          : !window.isFullScreen() && !window.isMaximized();
+        if (settled) {
+          if (!stableSince) stableSince = Date.now();
+          if (Date.now() - stableSince >= 150) return;
+        } else {
+          stableSince = 0;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error(`Native fullscreen layout did not settle: ${JSON.stringify(window.getBounds())}`);
+    }, fullscreen);
     assert.equal((await page.evaluate(() => window.desktopShell.getState())).fullscreen, fullscreen);
   };
   try {

@@ -13,6 +13,7 @@
     "test:macos-window-interaction": "node scripts/check-macos-window-interaction.js",
     "test:macos-paths": "node scripts/check-macos-paths.js",
     "test:macos-desktop-runtime": "node scripts/check-macos-desktop-runtime.js",
+    "test:macos-fullscreen-transition": "node scripts/check-macos-fullscreen-transition.js",
     "test:macos-icons": "node scripts/check-macos-icons.js",
     "test:macos-backend": "node scripts/check-macos-backend-runtime.js",
     "test:macos-frontend": "node scripts/check-macos-frontend.js",
