@@ -43,6 +43,7 @@ async function main() {
       const root = document.querySelector('.workspace');
       return root && root.classList.contains('left-collapsed') === !canvas && root.classList.contains('right-collapsed') === !chat;
     }, { canvas, chat });
+    await page.waitForFunction(async fullscreen => (await window.desktopShell.getState()).fullscreen === fullscreen, fullscreen);
     assert.equal((await page.evaluate(() => window.desktopShell.getState())).fullscreen, fullscreen);
   };
   try {
@@ -87,6 +88,7 @@ async function main() {
       if (exit === 'escape') await page.keyboard.press('Escape');
       if (exit === 'blur') await page.evaluate(() => window.dispatchEvent(new Event('blur')));
       await page.mouse.up();
+      if (exit === 'commit') await page.waitForFunction(height => Math.abs(parseFloat(document.querySelector('.canvas2d-file-preview-react').style.height) - height) < 2, startHeight + 100);
       if (exit === 'commit') { assert(Math.abs(await h() - startHeight - 100) < 2, JSON.stringify({ exit, height: await h(), startHeight, box, debug: await preview.evaluate(n => ({ratio:n.dataset.resizeHeightRatio, state:n.dataset.renderState, capture:document.activeElement?.outerHTML?.slice(0,150)})) })); await page.evaluate(() => window.__canvas2dEngine.undo()); }
       assert.equal(await h(), startHeight, exit);
     }

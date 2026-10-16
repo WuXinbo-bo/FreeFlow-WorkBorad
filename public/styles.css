@@ -2656,6 +2656,12 @@ body.is-pane-resizing .pane-resize-viewport * {
   pointer-events: auto;
 }
 
+/* The original surface still supplies layout/shape; its live UI is in a native sibling. */
+[data-native-overlay="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .drawer-backdrop.is-open {
   opacity: 1;
   pointer-events: auto;

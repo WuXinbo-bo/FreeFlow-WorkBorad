@@ -23,13 +23,14 @@ export async function listAiMirrorTargets() {
   return (Array.isArray(response.targets) ? response.targets : []).map(normalizeTargetEntry).filter((item) => item.id);
 }
 
-export async function prepareAiMirrorTarget(targetId = "") {
+export async function prepareAiMirrorTarget(targetId = "", { syncSessionId = "" } = {}) {
   if (!IS_DESKTOP_APP || typeof DESKTOP_SHELL?.prepareAiMirrorTarget !== "function") {
     throw new Error("当前环境不支持 AI 镜像");
   }
 
   const response = await DESKTOP_SHELL.prepareAiMirrorTarget({
     targetId: String(targetId || "").trim(),
+    syncSessionId,
   });
   if (!response?.ok) {
     throw new Error(response?.error || "无法准备 AI 镜像目标");
@@ -38,13 +39,14 @@ export async function prepareAiMirrorTarget(targetId = "") {
   return response;
 }
 
-export async function stopAiMirrorTarget(targetId = "") {
+export async function stopAiMirrorTarget(targetId = "", { syncSessionId = "" } = {}) {
   if (!IS_DESKTOP_APP || typeof DESKTOP_SHELL?.stopAiMirrorTarget !== "function") {
     return { ok: true, active: false };
   }
 
   const response = await DESKTOP_SHELL.stopAiMirrorTarget({
     targetId: String(targetId || "").trim(),
+    syncSessionId,
   });
   if (!response?.ok) {
     throw new Error(response?.error || "无法停止 AI 镜像目标");
