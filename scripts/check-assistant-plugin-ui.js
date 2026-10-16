@@ -89,13 +89,13 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
     }
     if (u.pathname === "/test") {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(`${["styles.css", "ui.tokens.css", "ui.shell.css", "ui.chrome-system.css", "ui.settings-center.css"].map(name => `<link rel="stylesheet" href="/${name}">`).join("")}<aside id="insight-drawer" class="ui-chrome-drawer is-open"><header class="settings-center-frame-header"><h3>系统设置</h3></header><div id="host" class="settings-center-host"></div></aside><script type="module">import {mountSettingsCenter} from '/src/components/settings/settingsCenter.js';window.aiCalls=0;window.center=mountSettingsCenter(document.querySelector('#host'),{apiRoutes:{settingsCenter:'/api/settings-center'},readJsonResponse:r=>r.json(),agentClient:{getRuntime:async()=>{window.aiCalls++;return {runtime:{providers:{}}}},listBackups:async()=>{window.aiCalls++;return {backups:[]}}}});window.ready=true;<\/script>`);
+      res.end(`${["styles.css", "ui.tokens.css", "ui.shell.css", "ui.chrome-system.css", "ui.settings-center.css", "ui.icons.css"].map(name => `<link rel="stylesheet" href="/${name}">`).join("")}<aside id="insight-drawer" class="ui-chrome-drawer is-open"><header class="settings-center-frame-header"><h3>系统设置</h3></header><div id="host" class="settings-center-host"></div></aside><script type="module">import {mountSettingsCenter} from '/src/components/settings/settingsCenter.js';window.aiCalls=0;window.center=mountSettingsCenter(document.querySelector('#host'),{apiRoutes:{settingsCenter:'/api/settings-center'},readJsonResponse:r=>r.json(),agentClient:{getRuntime:async()=>{window.aiCalls++;return {runtime:{providers:{}}}},listBackups:async()=>{window.aiCalls++;return {backups:[]}}}});window.ready=true;<\/script>`);
       return;
     }
     try {
       const file = path.join(root, "public", decodeURIComponent(u.pathname));
       const data = await fs.readFile(file);
-      res.writeHead(200, { "Content-Type": u.pathname.endsWith(".js") ? "text/javascript" : u.pathname.endsWith(".css") ? "text/css" : "text/html" });
+      res.writeHead(200, { "Content-Type": /\.m?js$/.test(u.pathname) ? "text/javascript" : u.pathname.endsWith(".css") ? "text/css" : "text/html" });
       res.end(data);
     } catch {
       res.writeHead(404);

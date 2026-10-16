@@ -29,6 +29,8 @@
     "test:assistant-plugin-desktop": "node scripts/check-assistant-plugin-desktop.js",
     "test:assistant-plugin": "node scripts/run-assistant-plugin-tests.js",
     "build:icons": "node scripts/generate-app-icons.js",
+    "build:ui-icons": "node scripts/sync-app-icons.js",
+    "test:ui-icons": "node scripts/check-app-icons.js",
     "prepare:desktop-build": "node scripts/prepare-desktop-build.js",
     "check:desktop-packaging": "node scripts/check-desktop-packaging.js",
     "check:desktop-upgrade": "node scripts/check-desktop-upgrade.js",

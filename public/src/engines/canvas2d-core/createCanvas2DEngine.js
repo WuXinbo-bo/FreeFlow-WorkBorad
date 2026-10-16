@@ -1,3 +1,5 @@
+import { renderAppIcon } from "../../ui/icons/appIcons.mjs";
+import { renderContextSubmenuLabelHtml } from "./contextMenu/renderContextMenuSchema.js";
 import { isComposingInput } from "./textEditing/inputComposition.js";
 import { getFileCapabilities } from "./documentPreview/fileCapabilities.js";
 import { readFileReadingPreference } from "./documentPreview/fileReadingPreferences.js";
@@ -470,7 +472,7 @@ function buildRichQuoteMenuHtml() {
         aria-label="引用菜单"
         aria-expanded="false"
         title="引用"
-      >❝</button>
+      >${renderAppIcon("quote", { size: 16 })}</button>
       <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="引用菜单">
         <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote" title="引用">引用</button>
         <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-item" data-action="blockquote-indent" title="引用层级加一">层级 +</button>
@@ -503,10 +505,10 @@ function buildRichMathMenuHtml() {
         aria-label="公式菜单"
         aria-expanded="false"
         title="公式"
-      >fx</button>
+      >${renderAppIcon("square-function", { size: 16 })}</button>
       <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="公式菜单" style="min-width:148px;display:flex;flex-direction:column;gap:6px;">
-        ${buildRichSubmenuActionButton("insert-math-inline", "行内公式", "fx", "行内公式")}
-        ${buildRichSubmenuActionButton("insert-math-block", "独立公式", "∑", "独立公式")}
+        ${buildRichSubmenuActionButton("insert-math-inline", "行内公式", renderAppIcon("variable", { size: 16 }), "行内公式")}
+        ${buildRichSubmenuActionButton("insert-math-block", "独立公式", renderAppIcon("sigma", { size: 16 }), "独立公式")}
       </div>
     </div>
   `;
@@ -522,11 +524,11 @@ function buildRichLinkMenuHtml() {
         aria-label="链接菜单"
         aria-expanded="false"
         title="链接"
-      >🔗</button>
+      >${renderAppIcon("link", { size: 16 })}</button>
       <div class="canvas2d-rich-submenu-panel is-hidden" role="menu" aria-label="链接菜单" style="min-width:148px;display:flex;flex-direction:column;gap:6px;">
-        ${buildRichSubmenuActionButton("link", "外部链接", "↗", "外部链接")}
-        ${buildRichSubmenuActionButton("link-canvas", "画布链接", "◎", "画布链接")}
-        ${buildRichSubmenuActionButton("link-remove", "删除链接", "✕", "删除链接")}
+        ${buildRichSubmenuActionButton("link", "外部链接", renderAppIcon("external-link", { size: 16 }), "外部链接")}
+        ${buildRichSubmenuActionButton("link-canvas", "画布链接", renderAppIcon("focus", { size: 16 }), "画布链接")}
+        ${buildRichSubmenuActionButton("link-remove", "删除链接", renderAppIcon("unlink", { size: 16 }), "删除链接")}
       </div>
     </div>
   `;
@@ -549,7 +551,7 @@ function buildRichColorControlsHtml() {
         aria-label="自定义颜色"
         aria-expanded="false"
         title="自定义颜色"
-      >+</button>
+      >${renderAppIcon("plus", { size: 16 })}</button>
       <div class="canvas2d-rich-color-panel is-hidden" data-role="rich-color-panel" aria-label="颜色面板">
         <div class="canvas2d-rich-color-panel-head" data-role="rich-color-panel-head">
           <label class="canvas2d-rich-color-picker-wrap" data-role="rich-color-picker-wrap">
@@ -561,7 +563,7 @@ function buildRichColorControlsHtml() {
           <div class="canvas2d-rich-color-presets-grid" data-role="rich-color-presets-grid"></div>
         </div>
         <div class="canvas2d-rich-color-panel-foot" data-role="rich-color-panel-foot">
-          <button type="button" class="canvas2d-rich-btn canvas2d-rich-color-add" data-action="color-add-preset" title="保存到常用预设">+</button>
+          <button type="button" class="canvas2d-rich-btn canvas2d-rich-color-add" data-action="color-add-preset" aria-label="保存到常用预设" title="保存到常用预设">${renderAppIcon("plus", { size: 16 })}</button>
         </div>
       </div>
     </div>
@@ -578,32 +580,26 @@ function buildPersistentRichToolbarHtml() {
   return `
     <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-single">
       ${buildRichBlockTypeSelectHtml("block-type", "Markdown 语义块")}
-      <button type="button" class="canvas2d-rich-btn" data-action="bold">B</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="italic"><em>I</em></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="bold" aria-label="加粗" title="加粗">${renderAppIcon("bold", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="italic" aria-label="斜体" title="斜体">${renderAppIcon("italic", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线" aria-label="下划线">${renderAppIcon("underline", { size: 16 })}</button>
       ${buildRichMathMenuHtml()}
       ${buildRichQuoteMenuHtml()}
       ${buildRichLinkMenuHtml()}
       <div class="canvas2d-rich-submenu" data-submenu="more">
-        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-toggle" data-action="toggle-more-menu" aria-label="更多格式" aria-expanded="false" title="更多格式">···</button>
+        <button type="button" class="canvas2d-rich-btn canvas2d-rich-submenu-toggle" data-action="toggle-more-menu" aria-label="更多格式" aria-expanded="false" title="更多格式">${renderAppIcon("ellipsis", { size: 16 })}</button>
         <div class="canvas2d-rich-submenu-panel canvas2d-rich-more-panel is-hidden" role="group" aria-label="更多格式">
-          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
-          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
-          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
-          <button type="button" class="canvas2d-rich-btn" data-action="strike"><s>S</s></button>
-          <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-          <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
-          <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
-          <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-          <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-          <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线">—</button>
-          <button type="button" class="canvas2d-rich-btn canvas2d-rich-btn-icon" data-action="text-split" title="拆分文本" aria-label="拆分文本">
-            <svg viewBox="0 0 24 24" aria-hidden="true" class="canvas2d-rich-btn-svg">
-              <path d="M3.5 8.25h6.75M3.5 15.75h6.75M13.75 8.25h6.75M13.75 15.75h6.75" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              <path d="M10.75 8.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              <path d="M10.75 13.75l2.5 2.5m0-2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-          </button>
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐">${renderAppIcon("align-left", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐">${renderAppIcon("align-center", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐">${renderAppIcon("align-right", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="strike" aria-label="删除线" title="删除线">${renderAppIcon("strikethrough", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮" aria-label="高亮">${renderAppIcon("highlighter", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码" aria-label="行内代码">${renderAppIcon("code", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表" aria-label="无序列表">${renderAppIcon("list", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表" aria-label="有序列表">${renderAppIcon("list-ordered", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表" aria-label="任务列表">${renderAppIcon("list-todo", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn" data-action="horizontal-rule" title="分割线" aria-label="分割线">${renderAppIcon("minus", { size: 16 })}</button>
+          <button type="button" class="canvas2d-rich-btn canvas2d-rich-btn-icon" data-action="text-split" title="拆分文本" aria-label="拆分文本">${renderAppIcon("split", { size: 16 })}</button>
           ${buildRichColorControlsHtml()}
         </div>
       </div>
@@ -616,15 +612,15 @@ function buildSelectionRichToolbarHtml(variant = "rich-text") {
   if (normalizedVariant === "mind-node") {
     return `
       <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top" data-row-variant="mind-node">
-        <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
-        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
-        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
-        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
-        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗" aria-label="加粗">${renderAppIcon("bold", { size: 16 })}</button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐">${renderAppIcon("align-left", { size: 16 })}</button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐">${renderAppIcon("align-center", { size: 16 })}</button>
+        <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐">${renderAppIcon("align-right", { size: 16 })}</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表" aria-label="无序列表">${renderAppIcon("list", { size: 16 })}</button>
       </div>
       <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom" data-row-variant="mind-node">
-        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表" aria-label="有序列表">${renderAppIcon("list-ordered", { size: 16 })}</button>
+        <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表" aria-label="任务列表">${renderAppIcon("list-todo", { size: 16 })}</button>
         ${buildRichColorControlsHtml()}
       </div>
     `;
@@ -632,22 +628,22 @@ function buildSelectionRichToolbarHtml(variant = "rich-text") {
   return `
     <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-top" data-row-variant="rich-text">
       ${buildRichBlockTypeSelectHtml("block-type", "块级语义")}
-      <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗">B</button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐"></button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐"></button>
-      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐"></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体"><em>I</em></button>
-      <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线"><s>S</s></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="bold" title="加粗" aria-label="加粗">${renderAppIcon("bold", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-left" data-action="align-left" title="左对齐" aria-label="左对齐">${renderAppIcon("align-left", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-center" data-action="align-center" title="居中对齐" aria-label="居中对齐">${renderAppIcon("align-center", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn is-align-icon is-align-right" data-action="align-right" title="右对齐" aria-label="右对齐">${renderAppIcon("align-right", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="italic" title="斜体" aria-label="斜体">${renderAppIcon("italic", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="strike" title="删除线" aria-label="删除线">${renderAppIcon("strikethrough", { size: 16 })}</button>
     </div>
     <div class="canvas2d-rich-toolbar-row canvas2d-rich-toolbar-row-bottom" data-row-variant="rich-text">
-      <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表">•</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表">1.</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表">☐</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮">HL</button>
-      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线"><u>U</u></button>
+      <button type="button" class="canvas2d-rich-btn" data-action="unordered-list" title="无序列表" aria-label="无序列表">${renderAppIcon("list", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="ordered-list" title="有序列表" aria-label="有序列表">${renderAppIcon("list-ordered", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="task-list" title="任务列表" aria-label="任务列表">${renderAppIcon("list-todo", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="highlight" title="高亮" aria-label="高亮">${renderAppIcon("highlighter", { size: 16 })}</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="underline" title="下划线" aria-label="下划线">${renderAppIcon("underline", { size: 16 })}</button>
       ${buildRichMathMenuHtml()}
       ${buildRichQuoteMenuHtml()}
-      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码">&lt;/&gt;</button>
+      <button type="button" class="canvas2d-rich-btn" data-action="inline-code" title="行内代码" aria-label="行内代码">${renderAppIcon("code", { size: 16 })}</button>
       ${buildRichColorControlsHtml()}
     </div>
   `;
@@ -9948,9 +9944,9 @@ let tablePointerSelectionState = {
       refs.tableToolbar.className = "canvas-table-toolbar is-hidden";
       refs.tableToolbar.innerHTML = `
         <div class="canvas-table-toolbar-group">
-          <button type="button" class="canvas-table-tool is-toggle-header" data-action="table-toggle-header" aria-label="切换表头" title="切换表头"></button>
-          <button type="button" class="canvas-table-tool is-more" data-action="table-more" aria-label="更多表格操作" title="更多表格操作"></button>
-          <button type="button" class="canvas-table-tool is-done" data-action="table-done" aria-label="完成表格编辑" title="完成表格编辑"></button>
+          <button type="button" class="canvas-table-tool is-toggle-header" data-action="table-toggle-header" aria-label="切换表头" title="切换表头">${renderAppIcon("table-2", { size: 16 })}</button>
+          <button type="button" class="canvas-table-tool is-more" data-action="table-more" aria-label="更多表格操作" title="更多表格操作">${renderAppIcon("ellipsis", { size: 16 })}</button>
+          <button type="button" class="canvas-table-tool is-done" data-action="table-done" aria-label="完成表格编辑" title="完成表格编辑">${renderAppIcon("check", { size: 16 })}</button>
         </div>
       `;
       refs.fixedOverlayHost.appendChild(refs.tableToolbar);
@@ -10000,7 +9996,7 @@ let tablePointerSelectionState = {
       refs.contextMenu.innerHTML = `
           <button type="button" class="canvas2d-context-menu-item" data-action="add-text">添加文本</button>
           <div class="canvas2d-context-submenu">
-            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
+            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("添加图形")}</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>
@@ -10097,7 +10093,7 @@ let tablePointerSelectionState = {
       refs.dragIndicator.className = "canvas2d-navigator-drag-indicator is-hidden";
       refs.dragIndicator.setAttribute("aria-hidden", "true");
       refs.dragIndicator.innerHTML = `
-        <span class="canvas2d-navigator-drag-icon"></span>
+        <span class="canvas2d-navigator-drag-icon">${renderAppIcon("arrow-right", { size: 18 })}</span>
         <span class="canvas2d-navigator-drag-text">拖入画布目录</span>
       `;
       refs.surface.appendChild(refs.dragIndicator);
@@ -10395,11 +10391,11 @@ let tablePointerSelectionState = {
                 aria-label="链接"
                 title="${escapeHtml(entry.title)}"
                 ${missing ? "disabled" : ""}
-              ></button>
+              >${renderAppIcon("link", { size: 16 })}</button>
             `;
           })
           .join("")}
-        <button type="button" class="canvas2d-mind-node-link-glyph is-add" data-action="mind-link-add" aria-label="添加链接" title="添加链接"></button>
+        <button type="button" class="canvas2d-mind-node-link-glyph is-add" data-action="mind-link-add" aria-label="添加链接" title="添加链接">${renderAppIcon("plus", { size: 16 })}</button>
       `;
       if (strip.innerHTML !== nextMarkup) {
         strip.innerHTML = nextMarkup;
@@ -10422,8 +10418,8 @@ let tablePointerSelectionState = {
       } else {
         hoverMenu.classList.remove("is-hidden");
         hoverMenu.innerHTML = `
-          <button type="button" class="canvas2d-mind-node-link-glyph is-jump" data-action="mind-link-focus" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="跳转" title="跳转"></button>
-          <button type="button" class="canvas2d-mind-node-link-glyph is-delete" data-action="mind-link-remove" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="删除链接" title="删除链接"></button>
+          <button type="button" class="canvas2d-mind-node-link-glyph is-jump" data-action="mind-link-focus" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="跳转" title="跳转">${renderAppIcon("external-link", { size: 16 })}</button>
+          <button type="button" class="canvas2d-mind-node-link-glyph is-delete" data-action="mind-link-remove" data-target-id="${escapeHtml(activeEntry.targetId)}" aria-label="删除链接" title="删除链接">${renderAppIcon("unlink", { size: 16 })}</button>
         `;
       }
     }
@@ -14202,7 +14198,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         data-action="table-add-row"
         aria-label="在当前行后插入一行"
         title="在当前行后插入一行"
-      ></button>
+      >${renderAppIcon("plus", { size: 16 })}</button>
       <button
         type="button"
         class="canvas-table-edge-btn is-column"
@@ -14210,7 +14206,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         data-action="table-add-column"
         aria-label="在当前列后插入一列"
         title="在当前列后插入一列"
-      ></button>
+      >${renderAppIcon("plus", { size: 16 })}</button>
     `;
   }
 
@@ -14222,23 +14218,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       refs.mindNodeChrome.className = "canvas-mind-node-chrome is-hidden";
       refs.mindNodeChrome.innerHTML = `
         <div class="canvas-mind-node-side-control is-left">
-          <button type="button" class="canvas-mind-node-side-btn is-detach" data-action="mind-detach-branch" aria-label="拆分为独立分支" title="拆分为独立分支"></button>
+          <button type="button" class="canvas-mind-node-side-btn is-detach" data-action="mind-detach-branch" aria-label="拆分为独立分支" title="拆分为独立分支">${renderAppIcon("unplug", { size: 16 })}</button>
         </div>
         <div class="canvas-mind-node-chrome-group">
-          <button type="button" class="canvas-mind-node-tool is-add-child" data-action="mind-add-child" aria-label="添加子节点" title="添加子节点"></button>
-          <button type="button" class="canvas-mind-node-tool is-add-sibling" data-action="mind-add-sibling" aria-label="添加同级节点" title="添加同级节点"></button>
-          <button type="button" class="canvas-mind-node-tool is-insert-bridge" data-action="mind-insert-intermediate" aria-label="插入中间节点" title="插入中间节点"></button>
-          <button type="button" class="canvas-mind-node-tool is-summary" data-action="mind-add-summary" aria-label="添加摘要节点" title="添加摘要节点"></button>
-          <button type="button" class="canvas-mind-node-tool is-demote" data-action="mind-demote" aria-label="降级层级" title="降级层级"></button>
-          <button type="button" class="canvas-mind-node-tool is-promote" data-action="mind-promote" aria-label="提升层级" title="提升层级"></button>
-          <button type="button" class="canvas-mind-node-tool is-toggle-collapse" data-action="mind-toggle-collapse" aria-label="折叠或展开分支" title="折叠或展开分支"></button>
-          <button type="button" class="canvas-mind-node-tool is-relayout" data-action="mind-relayout" aria-label="整理布局" title="整理布局"></button>
+          <button type="button" class="canvas-mind-node-tool is-add-child" data-action="mind-add-child" aria-label="添加子节点" title="添加子节点">${renderAppIcon("git-branch-plus", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-add-sibling" data-action="mind-add-sibling" aria-label="添加同级节点" title="添加同级节点">${renderAppIcon("list-plus", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-insert-bridge" data-action="mind-insert-intermediate" aria-label="插入中间节点" title="插入中间节点">${renderAppIcon("between-horizontal-start", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-summary" data-action="mind-add-summary" aria-label="添加摘要节点" title="添加摘要节点">${renderAppIcon("braces", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-demote" data-action="mind-demote" aria-label="降级层级" title="降级层级">${renderAppIcon("indent-increase", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-promote" data-action="mind-promote" aria-label="提升层级" title="提升层级">${renderAppIcon("indent-decrease", { size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-toggle-collapse" data-action="mind-toggle-collapse" aria-label="折叠或展开分支" title="折叠或展开分支">${renderAppIcon("chevron-left", { className: "canvas-mind-collapse-expanded", size: 16 })}${renderAppIcon("chevron-right", { className: "canvas-mind-collapse-collapsed", size: 16 })}</button>
+          <button type="button" class="canvas-mind-node-tool is-relayout" data-action="mind-relayout" aria-label="整理布局" title="整理布局">${renderAppIcon("network", { size: 16 })}</button>
         </div>
         <div class="canvas-mind-node-side-control is-right">
-          <button type="button" class="canvas-mind-node-side-btn is-add-child" data-action="mind-quick-add-child" aria-label="快速添加子节点" title="快速添加子节点"></button>
+          <button type="button" class="canvas-mind-node-side-btn is-add-child" data-action="mind-quick-add-child" aria-label="快速添加子节点" title="快速添加子节点">${renderAppIcon("plus", { size: 16 })}</button>
         </div>
         <div class="canvas-mind-node-corner-control">
-          <button type="button" class="canvas-mind-node-link-anchor" data-action="mind-manage-links" aria-label="节点链接" title="节点链接"></button>
+          <button type="button" class="canvas-mind-node-link-anchor" data-action="mind-manage-links" aria-label="节点链接" title="节点链接">${renderAppIcon("link", { size: 16 })}</button>
         </div>
       `;
       refs.fixedOverlayHost?.appendChild?.(refs.mindNodeChrome);
@@ -23240,7 +23236,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
       const trigger = document.createElement("button");
       trigger.type = "button";
       trigger.className = "canvas2d-context-menu-item canvas2d-context-submenu-trigger";
-      trigger.textContent = "导出";
+      trigger.innerHTML = renderContextSubmenuLabelHtml("导出");
       trigger.setAttribute("aria-expanded", "false");
       panel = document.createElement("div");
       panel.className = "canvas2d-context-submenu-panel";
@@ -23292,22 +23288,23 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             aria-haspopup="menu"
             aria-expanded="false"
           >
-            <span class="canvas2d-webgl-context-icon" aria-hidden="true">◫</span>
+            <span class="canvas2d-webgl-context-icon" aria-hidden="true">${renderAppIcon("panels-top-left", { size: 18 })}</span>
             <span class="canvas2d-webgl-context-copy">
               <span class="canvas2d-webgl-context-label">本地菜单</span>
               <span class="canvas2d-webgl-context-note">展开复制内容与导入画布</span>
             </span>
+            <span class="canvas2d-context-submenu-indicator" aria-hidden="true">${renderAppIcon("chevron-right", { size: 14 })}</span>
           </button>
           <div class="canvas2d-context-submenu-panel canvas2d-webgl-context-panel" role="menu" aria-label="WebGL 本地菜单">
             <button type="button" class="canvas2d-context-menu-item canvas2d-webgl-context-item" data-action="webgl-copy">
-              <span class="canvas2d-webgl-context-icon" aria-hidden="true">⧉</span>
+              <span class="canvas2d-webgl-context-icon" aria-hidden="true">${renderAppIcon("copy", { size: 18 })}</span>
               <span class="canvas2d-webgl-context-copy">
                 <span class="canvas2d-webgl-context-label">复制内容</span>
                 <span class="canvas2d-webgl-context-note">复制当前画布显示内容</span>
               </span>
             </button>
             <button type="button" class="canvas2d-context-menu-item canvas2d-webgl-context-item" data-action="webgl-import">
-              <span class="canvas2d-webgl-context-icon" aria-hidden="true">⇪</span>
+              <span class="canvas2d-webgl-context-icon" aria-hidden="true">${renderAppIcon("upload", { size: 18 })}</span>
               <span class="canvas2d-webgl-context-copy">
                 <span class="canvas2d-webgl-context-label">导入画布</span>
                 <span class="canvas2d-webgl-context-note">从本地导入新的画布内容</span>
@@ -23377,7 +23374,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         <button type="button" class="canvas2d-context-menu-item" data-action="duplicate">创建副本</button>
         <button type="button" class="canvas2d-context-menu-item" data-action="focus-selected">聚焦所选</button>
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">复制内容</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("复制内容")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="复制内容">
             <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-html">富文本（Word 直通）</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="copy-selected-markdown">Markdown</button>
@@ -23386,7 +23383,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
         </div>
         <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">导出</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("导出")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="导出">
             <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-word">导出为 Word</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="export-selection-image">导出为图片</button>
@@ -23398,7 +23395,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           canMergeTexts
             ? `
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">文本结构</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("文本结构")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="文本结构">
             <button type="button" class="canvas2d-context-menu-item" data-action="merge-selected-text">合并文本</button>
           </div>
@@ -23407,7 +23404,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             : ""
         }
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">对齐</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("对齐")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="对齐">
             ${selectedItems.some(item => item.type === "fileCard" && !item.locked) ? '<button type="button" class="canvas2d-context-menu-item" data-action="file-reset-size">统一文件卡片尺寸</button>' : ""}
             <button type="button" class="canvas2d-context-menu-item" data-action="align-left">左对齐</button>
@@ -23419,14 +23416,14 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           </div>
         </div>
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">均匀分布</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("均匀分布")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="均匀分布">
             <button type="button" class="canvas2d-context-menu-item" data-action="distribute-horizontal">水平等距</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="distribute-vertical">垂直等距</button>
           </div>
         </div>
         <div class="canvas2d-context-submenu">
-          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+          <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
           <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
             <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23462,21 +23459,21 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="copy">复制元素</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("线条样式")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="线条样式">
                 <button type="button" class="canvas2d-context-menu-item" data-action="edge-solid">实线</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="edge-dashed">虚线</button>
               </div>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">箭头方向</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("箭头方向")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="箭头方向">
                 <button type="button" class="canvas2d-context-menu-item" data-action="edge-arrow-forward">正向箭头</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="edge-arrow-backward">反向箭头</button>
               </div>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23500,7 +23497,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#2563eb" title="蓝色"></button>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23524,7 +23521,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#2563eb" title="蓝色"></button>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23548,7 +23545,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#2563eb" title="蓝色"></button>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23566,7 +23563,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="paste">粘贴</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">线条样式</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("线条样式")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="线条样式">
                 <button type="button" class="canvas2d-context-menu-item" data-action="line-dash-toggle">切换虚线</button>
               </div>
@@ -23577,7 +23574,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               <button type="button" class="canvas2d-context-menu-item canvas2d-context-swatch" data-action="shape-color" data-color="#2563eb" title="蓝色"></button>
             </div>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23600,7 +23597,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-promote">提升层级</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="mind-demote">降级层级</button>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">分支方向</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("分支方向")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="分支方向">
                 <button type="button" class="canvas2d-context-menu-item" data-action="mind-branch-left">靠左</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="mind-branch-right">靠右</button>
@@ -23613,7 +23610,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
               selectedItem?.collapsed ? "展开分支" : "折叠分支"
             }</button>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23663,7 +23660,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           ${isMindRelationshipSourceEligible(selectedItem) ? '<button type="button" class="canvas2d-context-menu-item" data-action="connect-node">连接节点</button>' : ""}
           <button type="button" class="canvas2d-context-menu-item" data-action="navigator-add">加入画布目录</button>
           <div class="canvas2d-context-submenu">
-            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">图层</button>
+            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("图层")}</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="图层">
               <button type="button" class="canvas2d-context-menu-item" data-action="layer-front">置于顶层</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="layer-back">置于底层</button>
@@ -23683,7 +23680,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
             <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
             <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
             <div class="canvas2d-context-submenu">
-              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
+              <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("添加图形")}</button>
               <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
                 <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>
@@ -23706,7 +23703,7 @@ function ensureRichSelectionToolbarVariant(editingItem = null) {
           <button type="button" class="canvas2d-context-menu-item" data-action="add-file">添加文件</button>
           <button type="button" class="canvas2d-context-menu-item" data-action="add-table">添加表格</button>
           <div class="canvas2d-context-submenu">
-            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">添加图形</button>
+            <button type="button" class="canvas2d-context-menu-item canvas2d-context-submenu-trigger">${renderContextSubmenuLabelHtml("添加图形")}</button>
             <div class="canvas2d-context-submenu-panel" role="menu" aria-label="添加图形">
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-rect">矩形</button>
               <button type="button" class="canvas2d-context-menu-item" data-action="add-shape-round-rect">圆角矩形</button>

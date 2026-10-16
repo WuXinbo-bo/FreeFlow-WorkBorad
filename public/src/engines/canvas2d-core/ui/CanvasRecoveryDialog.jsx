@@ -1,3 +1,4 @@
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 import React, { useEffect, useRef, useState } from "react";
 
 const reasonLabels = { save: "保存前", pull: "拉取前", "before-restore": "恢复前", "remote-history": "远程历史恢复前" };
@@ -62,7 +63,7 @@ export function CanvasRecoveryDialog({ recovery, busy, error, onClose, onRestore
   }}>
     <strong>{history ? "历史版本" : "回收站"}</strong>
     <p>{history ? "选择一个版本，预览后恢复。" : "恢复已删除的画布，原同名文件不会被覆盖。"}</p>
-    <details className="canvas2d-recovery-rules"><summary>保留与恢复说明</summary><p>{history ? "保存、远程拉取和恢复前自动保留版本。每个画布最多 30 个、200 MB；附件继续引用原文件。" : "记录保存在当前工作区。恢复遇到同名文件时自动改名；永久删除需要再次确认。远程副本不会自动删除。"}</p></details>
+    <details className="canvas2d-recovery-rules"><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" />保留与恢复说明</summary><p>{history ? "保存、远程拉取和恢复前自动保留版本。每个画布最多 30 个、200 MB；附件继续引用原文件。" : "记录保存在当前工作区。恢复遇到同名文件时自动改名；永久删除需要再次确认。远程副本不会自动删除。"}</p></details>
     {!selected ? <div className="canvas2d-workspace-recovery-list">{recovery.entries.length ? recovery.entries.map((entry) => <div key={entry.id} className="canvas2d-workspace-recovery-row">
       <div><strong>{history ? new Date(entry.createdAt).toLocaleString() : entry.name}</strong><small>{history ? reasonLabels[entry.reason] || "历史版本" : new Date(entry.createdAt).toLocaleString()} · {Math.ceil(entry.size / 1024)} KB</small></div>
       <button type="button" disabled={blocked} onClick={() => select(entry, "restore")}>{history ? "预览与恢复" : "恢复"}</button>

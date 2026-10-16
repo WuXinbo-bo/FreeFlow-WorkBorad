@@ -1,3 +1,4 @@
+import { renderAppIcon } from "../ui/icons/appIcons.mjs";
 import {
   CONFIG,
   DESKTOP_SHELL,
@@ -2935,7 +2936,7 @@ function renderScreenSourceState() {
                     <span class="screen-source-select-option-title">${escapeHtml(source.label || source.name || source.id)}</span>
                     <span class="canvas2d-engine-menu-meta">${escapeHtml(source.note || "AI 镜像目标")}</span>
                   </span>
-                  <span class="screen-source-select-option-check" aria-hidden="true">${isActive ? "✓" : ""}</span>
+                  <span class="screen-source-select-option-check" aria-hidden="true">${isActive ? renderAppIcon("check", { size: 16 }) : ""}</span>
                 </button>
               `;
             })
@@ -4207,7 +4208,7 @@ function renderComposerAttachments() {
           item.id
         )}" data-remove-composer-attachment="${escapeHtml(item.id)}">
           <span class="composer-attachment-chip-label">${escapeHtml(item.title)}</span>
-          <span class="composer-attachment-chip-remove" aria-hidden="true">×</span>
+          <span class="composer-attachment-chip-remove" aria-hidden="true">${renderAppIcon("x", { size: 12 })}</span>
         </button>
       `
     )
@@ -7318,13 +7319,13 @@ function syncDesktopShellState(nextState = {}) {
   syncScreenSourceActivationOverlay();
 
   if (desktopPinBtn) {
-    desktopPinBtn.textContent = state.desktopShellState.pinned ? "取消固定" : "固定";
+    (desktopPinBtn.querySelector(".desktop-menu-label") || desktopPinBtn).textContent = state.desktopShellState.pinned ? "取消固定" : "固定";
   }
   if (desktopFullscreenBtn) {
     desktopFullscreenBtn.textContent = state.desktopShellState.fullscreen ? "关闭全屏" : "开启全屏";
   }
   if (desktopClickThroughBtn) {
-    desktopClickThroughBtn.textContent = state.desktopShellState.fullClickThrough ? "退出完全穿透" : "完全穿透";
+    (desktopClickThroughBtn.querySelector(".desktop-menu-label") || desktopClickThroughBtn).textContent = state.desktopShellState.fullClickThrough ? "退出完全穿透" : "完全穿透";
   }
 
   desktopStatusBannerEl?.classList.toggle("is-hidden", !state.desktopShellState.pinned);
@@ -7466,13 +7467,13 @@ async function refreshDesktopShellState() {
     publishDesktopKeyboardFocusOwner("", {});
     applyFullClickThroughUiState(false);
     if (desktopPinBtn) {
-      desktopPinBtn.textContent = "固定";
+      (desktopPinBtn.querySelector(".desktop-menu-label") || desktopPinBtn).textContent = "固定";
     }
     if (desktopFullscreenBtn) {
       desktopFullscreenBtn.textContent = "开启全屏";
     }
     if (desktopClickThroughBtn) {
-      desktopClickThroughBtn.textContent = "完全穿透";
+      (desktopClickThroughBtn.querySelector(".desktop-menu-label") || desktopClickThroughBtn).textContent = "完全穿透";
     }
     desktopStatusBannerEl?.classList.add("is-hidden");
     desktopPassThroughHintEl?.classList.add("is-hidden");
@@ -10819,7 +10820,7 @@ function renderUpdateNotice() {
           <strong>发现新版本 v${escapeHtml(updateNoticeState.latestVersion || "")}</strong>
           <div class="freeflow-update-notice-sub">当前版本 ${escapeHtml(updateNoticeState.currentVersion || "")}${publishedAt ? ` · 发布时间 ${escapeHtml(publishedAt)}` : ""}</div>
         </div>
-        <button type="button" class="freeflow-update-notice-close" data-action="close" aria-label="关闭">×</button>
+        <button type="button" class="freeflow-update-notice-close" data-action="close" aria-label="关闭">${renderAppIcon("x", { size: 16 })}</button>
       </div>
       <div class="freeflow-update-notice-body">
         <ul class="freeflow-update-notice-notes">${updateHighlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>

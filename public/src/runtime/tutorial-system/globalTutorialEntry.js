@@ -1,7 +1,7 @@
 const TUTORIAL_PRESENTATION = Object.freeze({
-  "main-shell": { icon: "layout", category: "工作台" },
-  canvas: { icon: "canvas", category: "创作" },
-  "ai-mirror": { icon: "screen", category: "协作" },
+  "main-shell": { icon: "panels-top-left", category: "工作台" },
+  canvas: { icon: "file-pen-line", category: "创作" },
+  "ai-mirror": { icon: "monitor", category: "协作" },
 });
 
 export function createGlobalTutorialEntryItems(snapshotOrConfig = null) {

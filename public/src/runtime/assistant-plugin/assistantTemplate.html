@@ -3,7 +3,7 @@
               <div class="conversation-title-stack">
                 <div class="agent-session-title-row">
                   <button id="agent-history-toggle-btn" class="agent-icon-button" type="button" title="会话历史" aria-label="会话历史" aria-expanded="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+                    <svg class="app-icon" data-ui-icon="history" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
                   </button>
                   <div>
                     <h2 id="conversation-title">新会话</h2>
@@ -24,14 +24,14 @@
             </div>
             <div class="conversation-actions">
               <button id="agent-rename-session-btn" class="agent-icon-button" type="button" title="重命名会话" aria-label="重命名会话">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
+                <svg class="app-icon" data-ui-icon="pencil" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
               </button>
               <button id="agent-fork-session-btn" class="agent-icon-button" type="button" title="创建会话分支" aria-label="创建会话分支">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="19" r="2" /><path d="M6 7v3c0 2 2 3 6 3s6-1 6-3V7M12 13v4" /></svg>
+                <svg class="app-icon" data-ui-icon="git-fork" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>
               </button>
               <details id="agent-session-more" class="agent-session-more">
                 <summary class="agent-icon-button" title="会话操作" aria-label="会话操作">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg>
+                  <svg class="app-icon" data-ui-icon="ellipsis" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
                 </summary>
                 <div class="agent-session-menu ui-chrome-popover">
                   <button type="button" data-agent-session-action="rename">重命名</button>
@@ -39,7 +39,7 @@
                 </div>
               </details>
               <button id="clear-btn" class="agent-icon-button is-primary" type="button" title="新建会话" aria-label="新建会话">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                <svg class="app-icon" data-ui-icon="plus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               </button>
             </div>
 
@@ -50,7 +50,7 @@
             <div class="agent-history-head">
               <strong>会话</strong>
               <button id="agent-history-close-btn" class="agent-icon-button" type="button" title="关闭会话历史" aria-label="关闭会话历史">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
+                <svg class="app-icon" data-ui-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </button>
             </div>
             <label class="agent-history-search">
@@ -82,7 +82,7 @@
               <div class="composer-bar">
                 <div class="agent-composer-tools">
                   <button id="agent-attach-btn" class="agent-icon-button" type="button" title="添加附件" aria-label="添加附件">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7L9.5 18a2 2 0 0 1-2.8-2.8L16 6" /></svg>
+                    <svg class="app-icon" data-ui-icon="paperclip" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
                   </button>
                   <input id="agent-file-input" type="file" multiple hidden />
                   <select id="agent-submit-mode" class="agent-submit-mode is-hidden" aria-label="运行中消息处理方式">
@@ -101,18 +101,14 @@
                     title="切换 Thinking"
                   >
                     <span class="composer-thinking-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24">
-                        <path d="M9 18h6" />
-                        <path d="M10 21h4" />
-                        <path d="M8.5 14.5c-1.55-1.17-2.5-3.02-2.5-5.1A6 6 0 0 1 12 3.4a6 6 0 0 1 6 6c0 2.08-.95 3.93-2.5 5.1-.56.42-.86 1.02-.86 1.66V17h-5.28v-.84c0-.64-.3-1.24-.86-1.66Z" />
-                      </svg>
+                      <svg class="app-icon" data-ui-icon="lightbulb" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
                     </span>
                   </button>
                   <button id="stop-btn" class="agent-icon-button is-stop" type="button" disabled title="停止" aria-label="停止">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1" /></svg>
+                    <svg class="app-icon" data-ui-icon="square" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
                   </button>
                   <button id="send-btn" class="agent-icon-button is-primary" type="submit" title="发送" aria-label="发送">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 17 8-17 8 4-8Z" /><path d="M8 12h13" /></svg>
+                    <svg class="app-icon" data-ui-icon="send" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>
                   </button>
                 </div>
               </div>
@@ -121,7 +117,7 @@
 
 <template data-assistant-slot="thread-controls">
             <button id="agent-scroll-bottom" class="agent-scroll-bottom is-hidden" type="button" title="回到底部" aria-label="回到底部">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              <svg class="app-icon" data-ui-icon="chevron-down" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
               <span>回到底部</span>
             </button>
 </template>

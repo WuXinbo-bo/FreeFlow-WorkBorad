@@ -1,3 +1,4 @@
+import { renderAppIcon } from "../../../ui/icons/appIcons.mjs";
 import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
 import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
@@ -345,7 +346,7 @@ export function createTransientMinimap({
     toggleButton.setAttribute("title", occluded && !collapsed ? "空间不足，扩大工作区后恢复；点击收起地图" : collapsed ? "展开当前位置地图" : "收起当前位置地图");
     const expanded = collapsed || occluded ? "false" : "true";
     if (toggleButton.getAttribute("aria-expanded") !== expanded) {
-      toggleButton.innerHTML = expanded === "false" ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Z M9 3v16 M15 5v16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>' : "–";
+      toggleButton.innerHTML = renderAppIcon(expanded === "false" ? "map" : "minus", { size: 16 });
       toggleButton.setAttribute("aria-expanded", expanded);
     }
   }

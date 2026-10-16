@@ -1,4 +1,5 @@
 import { syncFloatingToolbarLayout } from "./floatingToolbarLayout.js";
+import { renderAppIcon } from "../../../ui/icons/appIcons.mjs";
 
 export function createLightImageEditor(options = {}) {
   const {
@@ -30,8 +31,8 @@ export function createLightImageEditor(options = {}) {
       toolbar.className = "canvas2d-image-toolbar is-hidden";
       toolbar.innerHTML = `
         <button type="button" class="canvas2d-image-btn" data-action="image-crop">裁剪</button>
-        <button type="button" class="canvas2d-image-btn" data-action="image-rotate-ccw">⟲</button>
-        <button type="button" class="canvas2d-image-btn" data-action="image-rotate-cw">⟳</button>
+        <button type="button" class="canvas2d-image-btn" data-action="image-rotate-ccw" aria-label="向左旋转" title="向左旋转">${renderAppIcon("rotate-ccw", { size: 16 })}</button>
+        <button type="button" class="canvas2d-image-btn" data-action="image-rotate-cw" aria-label="向右旋转" title="向右旋转">${renderAppIcon("rotate-cw", { size: 16 })}</button>
         <button type="button" class="canvas2d-image-btn" data-action="image-flip-x">水平翻转</button>
         <button type="button" class="canvas2d-image-btn" data-action="image-flip-y">垂直翻转</button>
         <button type="button" class="canvas2d-image-btn" data-action="image-export">导出</button>

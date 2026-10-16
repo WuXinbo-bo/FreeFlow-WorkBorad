@@ -1,4 +1,5 @@
 import { CONFIG, IS_DESKTOP_APP, DESKTOP_SHELL } from "../../config/index.js";
+import { renderAppIcon } from "../../ui/icons/appIcons.mjs";
 import { clampCanvasScale } from "./canvasUtils.js";
 import { createCanvasItem, isCanvasTextItem } from "./items/index.js";
 
@@ -187,7 +188,7 @@ export class Canvas {
     const lightbox = document.createElement("div");
     lightbox.className = "canvas-image-lightbox is-hidden";
     lightbox.innerHTML = `
-      <button class="canvas-image-lightbox-close" type="button" aria-label="关闭图片预览">×</button>
+      <button class="canvas-image-lightbox-close" type="button" aria-label="关闭图片预览">${renderAppIcon("x", { size: 18 })}</button>
       <img class="canvas-image-lightbox-image" alt="" />
     `;
     document.body.appendChild(lightbox);

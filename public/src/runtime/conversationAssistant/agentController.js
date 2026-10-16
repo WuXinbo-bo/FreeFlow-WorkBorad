@@ -1,4 +1,5 @@
 import { activityGroupLabel, buildConversationTurns } from "./activityPresentation.js";
+import { renderAppIcon } from "../../ui/icons/appIcons.mjs";
 
 const ACTIVE_STATUSES = new Set(["starting", "running", "waitingApproval", "interrupting"]);
 const CURRENT_SESSION_KEY = "freeflow_agent_current_session_v1";
@@ -154,7 +155,7 @@ export function createAgentController(options = {}) {
       <button class="agent-history-item${item.id === session?.id ? " is-active" : ""}" type="button" data-agent-session="${escapeHtml(item.id)}">
         <span class="agent-history-item-head">
           <strong>${escapeHtml(item.title || "新会话")}</strong>
-          <span class="agent-history-delete" role="button" tabindex="0" data-agent-delete-session="${escapeHtml(item.id)}" aria-label="删除会话" title="删除会话">×</span>
+          <span class="agent-history-delete" role="button" tabindex="0" data-agent-delete-session="${escapeHtml(item.id)}" aria-label="删除会话" title="删除会话">${renderAppIcon("x", { size: 14 })}</span>
         </span>
         <p>${escapeHtml(truncate(item.preview || "空会话"))}</p>
         <time>${escapeHtml(formatRelativeTime(item.updatedAt))}</time>
@@ -203,7 +204,7 @@ export function createAgentController(options = {}) {
     refs.attachments.innerHTML = attachments.map((item) => `
       <span class="composer-attachment-chip" data-agent-attachment="${escapeHtml(item.id)}">
         <span class="composer-attachment-chip-label">${escapeHtml(item.name)}</span>
-        <button class="composer-attachment-chip-remove" type="button" data-agent-remove-attachment="${escapeHtml(item.id)}" title="移除附件" aria-label="移除附件">×</button>
+        <button class="composer-attachment-chip-remove" type="button" data-agent-remove-attachment="${escapeHtml(item.id)}" title="移除附件" aria-label="移除附件">${renderAppIcon("x", { size: 12 })}</button>
       </span>
     `).join("") + (action === "attachment" ? `<span class="composer-attachment-chip is-uploading"><span class="composer-attachment-chip-label">正在添加附件</span></span>` : "");
   }
@@ -233,7 +234,7 @@ export function createAgentController(options = {}) {
     const phase = activity.phase === "running" ? "进行中" : error ? "未完成" : "完成";
     return `<div class="agent-activity${error ? " is-error" : ""}" data-agent-activity="${escapeHtml(activity.id)}" data-agent-activity-type="${escapeHtml(activity.semanticType)}">
       <div class="agent-activity-head"><strong>${escapeHtml(activity.title)}</strong><span>${escapeHtml(activity.summary)}</span><em>${phase}</em></div>
-      ${details ? `<details class="agent-activity-detail" data-agent-disclosure="activity:${escapeHtml(activity.id)}"><summary>查看详情</summary><pre>${escapeHtml(details)}</pre></details>` : ""}
+      ${details ? `<details class="agent-activity-detail" data-agent-disclosure="activity:${escapeHtml(activity.id)}"><summary class="app-icon-disclosure">${renderAppIcon("chevron-right", { size: 14, className: "app-disclosure-chevron" })}查看详情</summary><pre>${escapeHtml(details)}</pre></details>` : ""}
     </div>`;
   }
 
@@ -252,7 +253,7 @@ export function createAgentController(options = {}) {
       <div class="agent-turn-error-mark" aria-hidden="true">!</div>
       <div class="agent-turn-error-copy">
         <div class="agent-turn-error-head"><div><span>任务未完成</span><strong>${escapeHtml(summary)}</strong></div><button type="button" data-agent-retry-turn="${escapeHtml(turn.id)}"${action ? " disabled" : ""}>${action === `retry:${turn.id}` ? "重试中" : "重试"}</button></div>
-        ${technical ? `<details data-agent-disclosure="error:${escapeHtml(turn.id)}"><summary>技术详情</summary><pre>${escapeHtml(technical)}</pre></details>` : ""}
+        ${technical ? `<details data-agent-disclosure="error:${escapeHtml(turn.id)}"><summary class="app-icon-disclosure">${renderAppIcon("chevron-right", { size: 14, className: "app-disclosure-chevron" })}技术详情</summary><pre>${escapeHtml(technical)}</pre></details>` : ""}
       </div>
     </section>`;
   }
@@ -291,10 +292,10 @@ export function createAgentController(options = {}) {
       ? ""
       : item.activities.length
         ? `<details class="agent-turn-process${item.active ? " is-active" : ""}" data-agent-disclosure="turn:${escapeHtml(item.id)}">
-          <summary><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong><span class="agent-process-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg></span></summary>
+          <summary><span class="agent-process-indicator" aria-hidden="true">${renderAppIcon("check", { size: 10 })}</span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong><span class="agent-process-chevron" aria-hidden="true">${renderAppIcon("chevron-right", { size: 10 })}</span></summary>
           <div class="agent-process-body">${item.activityGroups.map(renderActivityGroup).join("")}</div>
         </details>`
-        : `<div class="agent-turn-process is-static${item.active ? " is-active" : ""}"><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong></div>`;
+        : `<div class="agent-turn-process is-static${item.active ? " is-active" : ""}"><span class="agent-process-indicator" aria-hidden="true">${renderAppIcon("check", { size: 10 })}</span><strong${item.active ? ' role="status" aria-live="polite"' : ""}>${escapeHtml(item.processLabel)}</strong></div>`;
     if (userMessage) messageRows.push(userMessage);
     if (assistantMessage && hasAssistantContent) messageRows.push(assistantMessage);
     return `<section class="agent-turn${item.active ? " is-active" : ""}" data-agent-turn="${escapeHtml(item.id)}">
@@ -320,7 +321,7 @@ export function createAgentController(options = {}) {
         const failed = pending.status === "failed";
         return `<section class="agent-queue${failed ? " is-failed" : ""}" data-agent-queue="${escapeHtml(pending.id)}" data-agent-queue-revision="${Number(pending.revision || 0)}">
           <div class="agent-queue-head"><strong>${failed ? "派发失败" : pending.mode === "steer" ? "即时引导" : "排队"}</strong><span>${failed ? escapeHtml(pending.error?.message || "可重试") : escapeHtml(truncate(pending.input, 120))}</span></div>
-          <div class="agent-queue-actions">${failed ? `<button type="button" data-agent-queue-action="retry">重试</button>` : `<button type="button" data-agent-queue-action="promote" title="提升为即时引导">立即</button><button type="button" data-agent-queue-action="up" title="上移" aria-label="上移">↑</button><button type="button" data-agent-queue-action="down" title="下移" aria-label="下移">↓</button>`}<button type="button" data-agent-queue-action="edit">编辑</button><button type="button" data-agent-queue-action="remove">移除</button></div>
+          <div class="agent-queue-actions">${failed ? `<button type="button" data-agent-queue-action="retry">重试</button>` : `<button type="button" data-agent-queue-action="promote" title="提升为即时引导">立即</button><button type="button" data-agent-queue-action="up" title="上移" aria-label="上移">${renderAppIcon("arrow-up", { size: 14 })}</button><button type="button" data-agent-queue-action="down" title="下移" aria-label="下移">${renderAppIcon("arrow-down", { size: 14 })}</button>`}<button type="button" data-agent-queue-action="edit">编辑</button><button type="button" data-agent-queue-action="remove">移除</button></div>
         </section>`;
       }).join("")}</div>` : "";
   }
@@ -343,7 +344,7 @@ export function createAgentController(options = {}) {
     const messageRows = [];
     const rows = runtimeNotice ? [runtimeNotice] : turns.map((turn) => renderTurn(turn, messageRows));
     if (!runtimeNotice && sessionActivities.length) {
-      rows.push(`<details class="agent-turn-process is-session" data-agent-disclosure="session:activities"><summary><span class="agent-process-indicator" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg></span><strong>会话活动</strong><span class="agent-process-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg></span></summary><div class="agent-process-body">${sessionActivities.map(renderActivity).join("")}</div></details>`);
+      rows.push(`<details class="agent-turn-process is-session" data-agent-disclosure="session:activities"><summary><span class="agent-process-indicator" aria-hidden="true">${renderAppIcon("check", { size: 10 })}</span><strong>会话活动</strong><span class="agent-process-chevron" aria-hidden="true">${renderAppIcon("chevron-right", { size: 10 })}</span></summary><div class="agent-process-body">${sessionActivities.map(renderActivity).join("")}</div></details>`);
     }
     if (!runtimeNotice && sessionApprovals.length) rows.push(...sessionApprovals.map(renderApproval));
     const isEmpty = rows.length === 0;

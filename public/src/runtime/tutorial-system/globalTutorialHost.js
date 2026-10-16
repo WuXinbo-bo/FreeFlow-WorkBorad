@@ -3,6 +3,7 @@ import { TUTORIAL_EVENT_TYPES, TUTORIAL_IDS } from "../../tutorial-core/tutorial
 import { createGlobalTutorialEntryItems } from "./globalTutorialEntry.js";
 import { createGlobalTutorialRuntime } from "./globalTutorialRuntime.js";
 import { mountWelcomeIntro, renderWelcomeIntro } from "./welcomeIntro.js";
+import { renderAppIcon } from "../../ui/icons/appIcons.mjs";
 
 const TUTORIAL_FLOATING_OBSTACLE_SELECTORS = Object.freeze([
   "#insight-drawer.is-open",
@@ -219,18 +220,6 @@ function resolvePanelStyle(layerRect, targetRect, placement = "bottom", panelSiz
   return best?.style || buildPanelCandidate(anchorRect, panelWidth, panelHeight, preferred, layerRect);
 }
 
-const TUTORIAL_ICON_PATHS = Object.freeze({
-  layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M9 9h12"/>',
-  canvas: '<path d="M4 19.5V7.8L8.2 3h8.9L20 5.9v13.6H4Z"/><path d="M8 3v5h5M8 14h8M8 17h5"/>',
-  screen: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M8 9h8M8 12h5"/>',
-  keyboard: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 9h.01M9 9h.01M12 9h.01M15 9h.01M18 9h.01M7 13h10"/>',
-  play: '<path d="m9 7 8 5-8 5V7Z"/>',
-  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/>',
-  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
-  close: '<path d="m6 6 12 12M18 6 6 18"/>',
-  back: '<path d="m15 18-6-6 6-6"/>',
-});
-
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -241,11 +230,11 @@ function escapeHtml(value) {
 }
 
 function renderTutorialIcon(name, className = "") {
-  return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${TUTORIAL_ICON_PATHS[name] || TUTORIAL_ICON_PATHS.book}</svg>`;
+  return renderAppIcon(name, { className });
 }
 
 function renderCloseButton(attribute) {
-  return `<button type="button" class="canvas2d-tutorial-center-close is-icon" ${attribute} aria-label="关闭" title="关闭">${renderTutorialIcon("close")}</button>`;
+  return `<button type="button" class="canvas2d-tutorial-center-close is-icon" ${attribute} aria-label="关闭" title="关闭">${renderTutorialIcon("x")}</button>`;
 }
 
 function renderTutorialCard(item) {
@@ -256,7 +245,7 @@ function renderTutorialCard(item) {
       <span class="tutorial-center-card-head">
         <span class="tutorial-center-card-icon">${renderTutorialIcon(item.icon)}</span>
         <span class="tutorial-center-card-meta">${escapeHtml(item.category || "教程")} · ${stepCount} 步</span>
-        ${renderTutorialIcon("arrow", "tutorial-center-card-arrow")}
+        ${renderTutorialIcon("arrow-right", "tutorial-center-card-arrow")}
       </span>
       <strong>${escapeHtml(item.label)}</strong>
       <small>${escapeHtml(item.description)}</small>
@@ -273,7 +262,7 @@ function createCenterMarkup(snapshot) {
       <div class="canvas2d-tutorial-layer global-tutorial-layer" data-shape-include="true" data-shape-padding="0">
         <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
         <div class="canvas2d-tutorial-center global-tutorial-center is-intro-later" role="dialog" aria-modal="true" aria-label="教程入口提示" data-shape-include="true" data-shape-padding="8">
-          <span class="tutorial-later-icon">${renderTutorialIcon("book")}</span>
+          <span class="tutorial-later-icon">${renderTutorialIcon("book-open")}</span>
           <div class="tutorial-later-copy">
             <span class="tutorial-eyebrow">使用说明</span>
             <h2>以后也能随时回来</h2>
@@ -299,7 +288,7 @@ function createCenterMarkup(snapshot) {
           <div class="tutorial-shortcut-grid">
             ${SHORTCUT_GUIDE_ITEMS.map((item) => `<div class="canvas2d-shortcut-row"><kbd>${escapeHtml(item.key)}</kbd><span>${escapeHtml(item.value)}</span></div>`).join("")}
           </div>
-          <button type="button" class="tutorial-text-action" data-global-tutorial-back-root>${renderTutorialIcon("back")}<span>返回教程中心</span></button>
+          <button type="button" class="tutorial-text-action" data-global-tutorial-back-root>${renderTutorialIcon("chevron-left")}<span>返回教程中心</span></button>
         </div>
       </div>
     `;
@@ -313,10 +302,10 @@ function createCenterMarkup(snapshot) {
           <div><span class="tutorial-eyebrow">学习中心</span><div class="canvas2d-tutorial-center-title">选择一条学习路径</div><div class="canvas2d-tutorial-center-subtitle">每个教程都可以随时退出，进度会自动保留。</div></div>
           <div class="canvas2d-tutorial-center-header-actions">${renderCloseButton("data-global-tutorial-close")}</div>
         </div>
-        ${hasProgress ? `<button type="button" class="tutorial-resume-bar" data-global-tutorial-action="resume">${renderTutorialIcon("play")}<span><strong>继续上次进度</strong><small>${escapeHtml(snapshot?.currentStep?.title || "继续教程")}</small></span>${renderTutorialIcon("arrow")}</button>` : ""}
+        ${hasProgress ? `<button type="button" class="tutorial-resume-bar" data-global-tutorial-action="resume">${renderTutorialIcon("play")}<span><strong>继续上次进度</strong><small>${escapeHtml(snapshot?.currentStep?.title || "继续教程")}</small></span>${renderTutorialIcon("arrow-right")}</button>` : ""}
         <div class="tutorial-center-grid">${items.map(renderTutorialCard).join("")}</div>
         <div class="tutorial-center-tools">
-          <button type="button" data-global-tutorial-open-board>${renderTutorialIcon("canvas")}<span><strong>打开示例画布</strong><small>在独立示例中自由练习</small></span></button>
+          <button type="button" data-global-tutorial-open-board>${renderTutorialIcon("file-pen-line")}<span><strong>打开示例画布</strong><small>在独立示例中自由练习</small></span></button>
           <button type="button" data-global-tutorial-action="shortcut-guide">${renderTutorialIcon("keyboard")}<span><strong>快捷键说明</strong><small>快速查看常用操作</small></span></button>
         </div>
       </div>

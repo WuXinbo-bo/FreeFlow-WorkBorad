@@ -20,7 +20,7 @@ export function renderWelcomeIntro(renderIcon, renderClose) {
       <div class="canvas2d-tutorial-backdrop global-tutorial-backdrop" aria-hidden="true"></div>
       <div class="canvas2d-tutorial-center global-tutorial-center is-intro" role="dialog" aria-modal="true" aria-label="欢迎使用 FreeFlow" aria-describedby="tutorial-welcome-title" data-shape-include="true" data-shape-padding="8">
         <div class="tutorial-intro-controls">
-          <button type="button" class="tutorial-text-action" data-welcome-skip hidden>${renderIcon("arrow")}<span>跳过动画</span></button>
+          <button type="button" class="tutorial-text-action" data-welcome-skip hidden>${renderIcon("arrow-right")}<span>跳过动画</span></button>
           ${renderClose("data-global-tutorial-close")}
         </div>
         <div class="tutorial-intro-brand" aria-label="FreeFlow Air Canvas">
@@ -35,12 +35,12 @@ export function renderWelcomeIntro(renderIcon, renderClose) {
           <p>让灵感自由展开，让创造自然发生。</p>
         </div>
         <div class="tutorial-intro-steps" data-welcome-reveal>
-          <div class="tutorial-intro-step">${renderIcon("canvas")}<strong>创建内容</strong><small>从一个想法开始</small></div>
-          <div class="tutorial-intro-step">${renderIcon("layout")}<strong>组织画布</strong><small>让思路清晰相连</small></div>
-          <div class="tutorial-intro-step">${renderIcon("screen")}<strong>与 AI 协作</strong><small>一起探索更多可能</small></div>
+          <div class="tutorial-intro-step">${renderIcon("file-pen-line")}<strong>创建内容</strong><small>从一个想法开始</small></div>
+          <div class="tutorial-intro-step">${renderIcon("panels-top-left")}<strong>组织画布</strong><small>让思路清晰相连</small></div>
+          <div class="tutorial-intro-step">${renderIcon("monitor")}<strong>与 AI 协作</strong><small>一起探索更多可能</small></div>
         </div>
         <div class="tutorial-intro-actions" data-welcome-reveal>
-          <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-open-center><span>开始快速了解</span>${renderIcon("arrow")}</button>
+          <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-open-center><span>开始快速了解</span>${renderIcon("arrow-right")}</button>
           <button type="button" class="canvas2d-tutorial-overlay-btn is-secondary" data-global-tutorial-dismiss-intro>稍后再看</button>
         </div>
       </div>
