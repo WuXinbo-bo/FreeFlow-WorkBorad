@@ -1860,6 +1860,12 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
   onCheckUpdate: DESKTOP_SHELL?.checkForAppUpdate ? () => runAppUpdateCheck({ manual: true }) : null,
   agentClient,
   onPluginStatus: applyAssistantPluginStatus,
+  getGitHubSyncWorkspaceContext: async () => {
+    const engine = getModernCanvas2DEngine();
+    if (!engine?.getSnapshot) return null;
+    const boardPath = engine.getSnapshot().boardFilePath || "";
+    return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace?.() || boardPath.replace(/[\\/][^\\/]+$/, "") };
+  },
   runGitHubBoardFileOperation: async (task) => {
     const engine = getModernCanvas2DEngine();
     if (!engine?.withBoardFileOperation) throw new Error("当前画布尚未就绪，请稍后重试");

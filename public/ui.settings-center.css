@@ -3,8 +3,8 @@
 }
 
 #insight-drawer.ui-chrome-drawer {
-  --settings-surface: rgb(var(--theme-floating-surface-rgb) / 0.78);
-  --settings-panel: rgb(var(--theme-panel-surface-rgb) / 0.72);
+  --settings-surface: rgb(var(--theme-floating-surface-rgb) / 0.96);
+  --settings-panel: rgb(var(--theme-panel-surface-rgb) / 0.96);
   --settings-control: rgb(var(--theme-control-surface-rgb) / 0.7);
   --settings-control-strong: rgb(var(--theme-control-surface-strong-rgb) / 0.66);
   --settings-active: rgb(var(--theme-control-active-rgb) / 0.82);
@@ -17,16 +17,23 @@
   --settings-accent: rgb(var(--app-button-rgb) / 1);
   --settings-accent-strong: rgb(var(--app-button-strong-rgb) / 1);
   --settings-accent-text: rgb(var(--app-button-text-rgb) / 1);
+  --settings-brand: #168078;
+  --settings-brand-soft: rgb(22 128 120 / 0.1);
   color-scheme: var(--app-color-scheme, light);
-  top: max(12px, env(safe-area-inset-top)) !important;
-  right: max(12px, env(safe-area-inset-right)) !important;
-  bottom: max(12px, env(safe-area-inset-bottom)) !important;
-  width: min(880px, calc(100vw - 24px)) !important;
+  top: max(8px, env(safe-area-inset-top)) !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
+  bottom: max(8px, env(safe-area-inset-bottom)) !important;
+  left: auto !important;
+  width: min(560px, 52vw) !important;
+  min-width: min(420px, calc(100vw - 16px)) !important;
+  max-width: calc(100vw - 16px) !important;
+  display: flex;
+  flex-direction: column;
   padding: 0 !important;
   overflow: hidden !important;
   border: 1px solid rgba(25, 35, 45, 0.14) !important;
-  border-radius: 8px !important;
-  color: #1d2730 !important;
+  border-radius: 14px !important;
+  color: var(--settings-text) !important;
   background:
     linear-gradient(rgb(var(--app-button-rgb) / 0.065), rgb(var(--app-button-rgb) / 0.065)),
     var(--settings-surface) !important;
@@ -42,6 +49,7 @@
 
 .settings-center-frame-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   min-height: 68px;
@@ -98,15 +106,21 @@
 }
 
 .settings-center-host {
-  height: calc(100% - 68px);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  container: settings-shell / inline-size;
 }
 
 .settings-center-layout {
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
-  height: calc(100% - 66px);
+  grid-template-columns: 120px minmax(0, 1fr);
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .settings-center-nav {
@@ -161,14 +175,18 @@
 
 .settings-center-content {
   min-width: 0;
-  overflow: auto;
-  padding: 28px clamp(22px, 4vw, 44px) 48px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 20px 28px;
+  container: settings-content / inline-size;
   outline: none;
   background: #fbfcfc;
 }
 
 .settings-center-section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
@@ -243,8 +261,8 @@
 
 .settings-center-form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
 }
 
 .settings-center-field {
@@ -578,6 +596,11 @@
 
 .settings-center-secret-field button,
 .settings-center-inline-actions button,
+.settings-center-github-list-toolbar button,
+.settings-center-github-conflict-details button,
+.settings-center-plugin-primary button,
+.settings-center-plugin-more-actions button,
+.settings-center-plugin-import,
 .settings-center-group-heading-inline > button,
 .settings-center-path-row > div button,
 .settings-center-root-add button,
@@ -591,11 +614,18 @@
   background: #fff;
   font-size: 0.73rem;
   font-weight: 680;
+  line-height: 1.4;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .settings-center-secret-field button:disabled,
 .settings-center-inline-actions button:disabled,
+.settings-center-github-list-toolbar button:disabled,
+.settings-center-github-conflict-details button:disabled,
+.settings-center-plugin-primary button:disabled,
+.settings-center-plugin-more-actions button:disabled,
+.settings-center-plugin-import:disabled,
 .settings-center-group-heading-inline > button:disabled,
 .settings-center-path-row > div button:disabled,
 .settings-center-root-add button:disabled {
@@ -680,16 +710,23 @@
 
 .settings-center-path-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 0;
+}
+
+.settings-center-path-row + .settings-center-path-row {
+  padding-top: 14px;
+  border-top: 1px solid var(--settings-border);
 }
 
 .settings-center-path-row > div,
 .settings-center-inline-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .settings-center-inline-actions {
@@ -811,7 +848,7 @@
 
 .settings-center-diagnostic-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 138px), 1fr));
   gap: 8px;
 }
 
@@ -836,76 +873,6 @@
   font-size: 0.8rem;
 }
 
-.settings-center-github-remote {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid #e3e8ea;
-}
-
-.settings-center-github-board {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 12px;
-  border: 1px solid #dce3e6;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.settings-center-github-board-copy {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.settings-center-github-board-copy strong {
-  overflow: hidden;
-  color: #33414a;
-  font-size: 0.78rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-center-github-board-copy small {
-  overflow: hidden;
-  color: #7d8991;
-  font-size: 0.66rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-center-github-board-copy code {
-  color: inherit;
-  font-size: 0.64rem;
-}
-
-.settings-center-github-board-path {
-  direction: rtl;
-  text-align: left;
-}
-
-.settings-center-github-board-state {
-  padding: 4px 7px;
-  border-radius: 999px;
-  color: #64727a;
-  background: #eef2f3;
-  font-size: 0.66rem;
-  white-space: nowrap;
-}
-
-.settings-center-github-board-state.is-ready {
-  color: #226246;
-  background: #e6f4eb;
-}
-
-.settings-center-github-board-state.is-warning {
-  color: #8b561b;
-  background: #fff0d8;
-}
-
 .settings-center-revision {
   display: flex;
   align-items: center;
@@ -923,6 +890,7 @@
 
 .settings-center-footer {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -934,6 +902,9 @@
 
 .settings-center-save-state {
   min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
   color: #69767e;
   font-size: 0.74rem;
 }
@@ -946,7 +917,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .settings-center-footer-actions button {
@@ -1042,95 +1015,12 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 760px) {
-  #insight-drawer.ui-chrome-drawer {
-    top: 6px !important;
-    right: 6px !important;
-    bottom: 6px !important;
-    width: calc(100vw - 12px) !important;
-  }
 
-  .settings-center-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .settings-center-nav {
-    flex-direction: row;
-    gap: 4px;
-    padding: 8px;
-    overflow-x: auto;
-    border-right: 0;
-    border-bottom: 1px solid #dce2e6;
-  }
-
-  .settings-center-nav-item {
-    width: auto;
-    min-width: 82px;
-    min-height: 38px;
-    text-align: center;
-  }
-
-  .settings-center-nav-item small {
-    display: none;
-  }
-
-  .settings-center-content {
-    padding: 20px 16px 36px;
-  }
-
-  .settings-center-section-heading > span {
-    display: none;
-  }
-
-  .settings-center-form-grid,
-  .settings-center-range-grid,
-  .settings-center-color-grid,
-  .settings-center-permission-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-center-theme-presets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .settings-center-diagnostic-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .settings-center-profile-row,
-  .settings-center-path-row {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-center-footer {
-    align-items: flex-end;
-  }
-
-  .settings-center-save-state {
-    max-width: 34%;
-  }
-
-  .settings-center-footer-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .settings-center-loading span {
     animation: none;
   }
-}
-
-/* Settings consume the same live theme contract as the canvas and workspaces. */
-#insight-drawer.ui-chrome-drawer {
-  border-color: var(--settings-border) !important;
-  color: var(--settings-text) !important;
-  background:
-    linear-gradient(rgb(var(--app-button-rgb) / 0.065), rgb(var(--app-button-rgb) / 0.065)),
-    var(--settings-surface) !important;
-  box-shadow: 0 28px 80px rgb(var(--theme-pass-through-shadow-rgb) / 0.24) !important;
 }
 
 .settings-center-frame-header,
@@ -1231,21 +1121,31 @@
 .settings-center-profile-row input,
 .settings-center-profile-row select,
 .settings-center-root-add input,
-.settings-center-color-grid input,
+.settings-center-color-grid input {
+  border-color: var(--settings-border) !important;
+  color: var(--settings-text) !important;
+  background: var(--settings-input) !important;
+}
+
 .settings-center-theme-presets button,
 .settings-center-root-list > div:not(.settings-center-empty-inline),
 .settings-center-diagnostic-grid > div,
 .settings-center-footer-actions button,
 .settings-center-secret-field button,
 .settings-center-inline-actions button,
+.settings-center-github-list-toolbar button,
+.settings-center-github-conflict-details button,
+.settings-center-plugin-primary button,
+.settings-center-plugin-more-actions button,
+.settings-center-plugin-import,
 .settings-center-group-heading-inline > button,
 .settings-center-path-row > div button,
 .settings-center-root-add button,
 .settings-center-load-error button,
 .settings-center-risk-confirm button {
-  border-color: var(--settings-border) !important;
-  color: var(--settings-text) !important;
-  background: var(--settings-input) !important;
+  border-color: var(--settings-border);
+  color: var(--settings-text);
+  background: var(--settings-input);
 }
 
 .settings-center-field input:focus,
@@ -1471,7 +1371,9 @@
 }
 
 .settings-center-setup-actions button,
-.settings-center-inline-actions button.is-primary {
+.settings-center-inline-actions button.is-primary,
+.settings-center-github-list-toolbar button.is-primary,
+.settings-center-plugin-primary button.is-primary {
   border-color: var(--settings-accent);
   color: var(--settings-accent-text);
   background: var(--settings-accent);
@@ -1644,41 +1546,9 @@
   border-top-color: var(--settings-accent);
 }
 
-@media (max-width: 760px) {
-  .settings-center-readiness {
-    grid-template-columns: repeat(5, minmax(76px, 1fr));
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
 
-  .settings-center-setup-stage,
-  .settings-center-agent-summary {
-    min-height: 0;
-    padding: 18px;
-  }
 
-  .settings-center-agent-summary dl {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* Full-frame settings shell shared with the workbench surface system. */
 #insight-drawer.ui-chrome-drawer {
-  --settings-brand: #168078;
-  --settings-brand-soft: rgb(22 128 120 / 0.1);
-  top: max(12px, env(safe-area-inset-top)) !important;
-  right: max(12px, env(safe-area-inset-right)) !important;
-  bottom: max(12px, env(safe-area-inset-bottom)) !important;
-  left: max(12px, env(safe-area-inset-left)) !important;
-  width: auto !important;
-  height: auto;
-  border-color: rgb(var(--app-pattern-rgb) / 0.28) !important;
-  background: rgb(var(--theme-floating-surface-rgb) / 0.84) !important;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.46),
-    0 24px 70px rgb(var(--theme-pass-through-shadow-rgb) / 0.22) !important;
-  backdrop-filter: blur(34px) saturate(126%) !important;
-  -webkit-backdrop-filter: blur(34px) saturate(126%) !important;
   transform: translateX(calc(100% + 24px)) !important;
 }
 
@@ -1714,29 +1584,20 @@
   stroke-linecap: round;
 }
 
-.settings-center-host {
-  height: calc(100% - 54px);
-}
-
-.settings-center-layout {
-  grid-template-columns: 154px minmax(0, 1fr);
-  height: calc(100% - 58px);
-}
-
 .settings-center-nav {
   gap: 2px;
-  padding: 10px 8px;
+  padding: 10px 6px;
   border-color: var(--settings-border);
   background: rgb(var(--theme-control-surface-strong-rgb) / 0.54);
 }
 
 .settings-center-nav-item {
   position: relative;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 38px;
-  padding: 7px 9px;
+  padding: 7px 6px;
   border-radius: 5px;
   color: var(--settings-muted);
 }
@@ -1759,8 +1620,8 @@
 .settings-center-nav-icon {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .settings-center-nav-icon svg {
@@ -1775,7 +1636,7 @@
 
 .settings-center-nav-label {
   overflow: hidden;
-  font-size: 0.78rem !important;
+  font-size: 0.73rem !important;
   font-weight: 640 !important;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1798,7 +1659,7 @@
 }
 
 .settings-center-content {
-  padding: 22px 28px 34px;
+  padding: 20px 20px 28px;
   background: rgb(var(--theme-panel-surface-rgb) / 0.62);
   scrollbar-gutter: stable;
 }
@@ -1900,7 +1761,7 @@
 .settings-center-footer {
   min-height: 58px;
   padding: 8px 12px 8px 16px;
-  background: rgb(var(--theme-panel-surface-rgb) / 0.74);
+  background: var(--settings-panel);
 }
 
 .settings-center-footer-actions button {
@@ -2001,7 +1862,7 @@
 }
 
 .settings-center-theme-presets {
-  grid-template-columns: repeat(5, minmax(136px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 138px), 1fr));
   gap: 10px;
 }
 
@@ -2160,7 +2021,7 @@
 }
 
 .settings-center-color-grid {
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 148px), 1fr));
   gap: 9px 12px;
 }
 
@@ -2238,120 +2099,17 @@
   font-size: 0.65rem;
 }
 
-@media (max-width: 760px) {
-  #insight-drawer.ui-chrome-drawer {
-    top: 8px !important;
-    right: 8px !important;
-    bottom: 8px !important;
-    left: 8px !important;
-    width: auto !important;
-    height: auto;
-    transform: translateX(calc(100% + 16px)) !important;
-  }
 
-  #insight-drawer.ui-chrome-drawer.is-open {
-    transform: translateX(0) !important;
-  }
 
-  .settings-center-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: 50px minmax(0, 1fr);
-  }
 
-  .settings-center-nav {
-    display: flex;
-    padding: 6px 8px;
-    border-bottom-color: var(--settings-border);
-  }
-
-  .settings-center-nav-item {
-    grid-template-columns: 18px auto;
-    flex: 0 0 auto;
-    min-width: max-content;
-    min-height: 36px;
-    padding: 6px 8px;
-    text-align: left;
-  }
-
-  .settings-center-nav-item::before {
-    top: auto;
-    right: 9px;
-    bottom: 1px;
-    left: 9px;
-    width: auto;
-    height: 2px;
-  }
-
-  .settings-center-nav-label {
-    font-size: 0.72rem !important;
-  }
-
-  .settings-center-content {
-    padding: 18px 16px 28px;
-  }
-
-  .settings-center-footer {
-    gap: 8px;
-  }
-
-  .settings-center-save-state {
-    max-width: 28%;
-    font-size: 0.65rem;
-  }
-
-  .settings-center-theme-presets,
-  .settings-center-color-grid {
-    grid-template-columns: repeat(2, minmax(138px, 1fr));
-  }
-}
-
-@media (max-width: 500px) {
-  .settings-center-frame-header {
-    min-height: 50px;
-    padding-left: 14px;
-  }
-
-  .settings-center-host {
-    height: calc(100% - 50px);
-  }
-
-  .settings-center-layout {
-    height: calc(100% - 96px);
-  }
-
-  .settings-center-footer {
-    display: grid;
-    min-height: 96px;
-    padding: 8px 10px;
-  }
-
-  .settings-center-save-state {
-    max-width: 100%;
-  }
-
-  .settings-center-footer-actions {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .settings-center-footer-actions button {
-    min-width: 0;
-    padding-inline: 6px;
-  }
-
-  .settings-center-theme-presets,
-  .settings-center-color-grid {
-    grid-template-columns: 1fr;
-  }
-}
 
 /* GitHub uses two explicit, mutually exclusive authentication paths. Keep
    the choice cards visually distinct from the credential panel so it is clear
    which values are required for the selected method. */
 .settings-center-auth-methods {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
 .settings-center-auth-method {
@@ -2360,25 +2118,22 @@
   grid-template-columns: minmax(0, 1fr) 18px;
   align-items: start;
   gap: 10px;
-  min-height: 84px;
-  padding: 13px 14px;
-  border: 1px solid var(--settings-border);
-  border-radius: 7px;
+  min-height: 0;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--settings-border);
   color: var(--settings-text);
-  background: var(--settings-control);
+  background: transparent;
   cursor: pointer;
   transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .settings-center-auth-method:hover {
-  border-color: var(--settings-border-strong);
-  background: var(--settings-active);
+  color: var(--settings-accent-strong);
 }
 
 .settings-center-auth-method.is-active {
-  border-color: var(--settings-accent);
-  background: var(--settings-active);
-  box-shadow: 0 0 0 2px rgb(var(--app-button-rgb) / 0.12);
+  color: var(--settings-accent-strong);
 }
 
 .settings-center-auth-method:has(input:focus-visible) {
@@ -2430,90 +2185,627 @@
 .settings-center-auth-panel {
   display: grid;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--settings-border);
-  border-radius: 7px;
+  padding: 0;
+}
+
+
+
+/* Shared surfaces stay readable inside the contextual settings drawer. */
+#insight-drawer.ui-chrome-drawer::before {
+  background: var(--settings-surface) !important;
+  opacity: 1;
+}
+
+.settings-center-compact-nav {
+  display: none;
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--settings-border);
   background: var(--settings-control-strong);
 }
 
+.settings-center-compact-nav > span {
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+}
+
+.settings-center-compact-nav select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.settings-center-section-heading > div,
+.settings-center-path-actions,
+.settings-center-github-repository,
+.settings-center-github-board-copy {
+  min-width: 0;
+}
+
+.settings-center-field small,
+.settings-center-group-heading p,
+.settings-center-runtime-error {
+  overflow-wrap: anywhere;
+}
+
+.settings-center-section-heading > div {
+  flex: 1;
+}
+
+.settings-center-footer.is-status-only .settings-center-save-state {
+  max-width: none;
+}
+
+.settings-center-section-description {
+  margin: 0 0 16px;
+  color: var(--settings-muted);
+  font-size: 0.73rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-section-heading .settings-center-section-description {
+  display: block;
+  margin: 6px 0 0;
+}
+
+.settings-center-github-advanced {
+  padding: 16px 0;
+  border-top: 1px solid var(--settings-border);
+}
+
+.settings-center-github-repository-details > summary,
+.settings-center-github-advanced > summary,
+[data-settings-details="github-attachments"] > summary,
+[data-settings-details="github-workspace-failures"] > summary {
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-center-path-actions {
+  justify-content: flex-end;
+}
+
+.settings-center-github-summary {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.settings-center-github-summary > div {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.settings-center-github-summary > div + div {
+  border-top: 1px solid var(--settings-border);
+}
+
+.settings-center-github-summary dt {
+  color: var(--settings-muted);
+  font-size: 0.71rem;
+}
+
+.settings-center-github-summary dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--settings-text);
+  font-size: 0.76rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-github-summary dd > small {
+  display: block;
+  margin-top: 3px;
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+
+.settings-center-github-repository,
 .settings-center-github-remote {
-  border-top-color: var(--settings-border);
+  display: grid;
+  gap: 12px;
+}
+
+.settings-center-github-remote {
+  margin-top: 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--settings-border);
+}
+
+.settings-center-github-actions {
+  flex-wrap: wrap;
+}
+
+.settings-center-github-destination {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.settings-center-github-destination > small,
+.settings-center-github-readiness,
+.settings-center-github-local,
+.settings-center-github-remote .settings-center-group-heading-inline > span {
+  color: var(--settings-muted);
+  font-size: 0.71rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-github-destination > code {
+  min-width: 0;
+  color: var(--settings-text);
+  font-size: 0.75rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-github-readiness {
+  margin: 0;
+}
+
+.settings-center-github-list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-center-github-local {
+  display: block;
+  margin: 3px 0 0;
+}
+
+.settings-center-github-local code {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .settings-center-github-board {
-  border-color: var(--settings-border);
-  background: rgb(var(--theme-input-surface-rgb) / 0.68);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 12px;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--settings-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-center-github-board-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .settings-center-github-board-copy strong {
+  overflow: visible;
   color: var(--settings-text);
+  font-size: 0.79rem;
+  font-weight: 650;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.settings-center-github-board-copy small {
+.settings-center-github-board small,
+.settings-center-github-board-copy small,
+.settings-center-github-board-path,
+.settings-center-sync-hint {
+  overflow: visible;
   color: var(--settings-muted);
+  font-size: 0.7rem;
+  line-height: 1.6;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-sync-hint {
+  margin: 0;
 }
 
 .settings-center-github-board-state {
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 5px;
   color: var(--settings-muted);
-  background: rgb(var(--theme-control-surface-strong-rgb) / 0.72);
+  background: var(--settings-control-strong);
+  font-size: 0.67rem;
+  line-height: 1.5;
+  white-space: normal;
 }
 
 .settings-center-github-board-state.is-ready {
-  color: var(--settings-brand);
-  background: rgb(var(--app-button-rgb) / 0.12);
+  color: #258862;
+  background: rgb(37 136 98 / 0.09);
 }
 
 .settings-center-github-board-state.is-warning {
-  color: var(--settings-warning, #8b561b);
-  background: rgb(201 132 40 / 0.14);
+  color: #a06c2d;
+  background: rgb(160 108 45 / 0.09);
 }
 
-@media (max-width: 620px) {
-  .settings-center-auth-methods {
-    grid-template-columns: 1fr;
+.settings-center-github-board > .settings-center-inline-actions,
+.settings-center-github-board > details {
+  grid-column: 1 / -1;
+}
+
+.settings-center-github-file-details,
+.settings-center-github-conflict-details {
+  min-width: 0;
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.settings-center-github-file-details summary,
+.settings-center-github-conflict-details summary {
+  width: fit-content;
+  color: var(--settings-text);
+  cursor: pointer;
+}
+
+.settings-center-github-file-details[open] summary,
+.settings-center-github-conflict-details[open] summary {
+  margin-bottom: 7px;
+}
+
+.settings-center-github-file-details code,
+.settings-center-github-conflict-details code {
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-github-file-details small,
+.settings-center-github-conflict-details > div {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-center-github-conflict-details button {
+  justify-self: start;
+}
+
+.settings-center-github-conflict-details ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.settings-center-plugin-list {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-center-plugin-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--settings-border);
+  border-radius: 13px;
+  background: linear-gradient(rgb(var(--theme-input-surface-rgb) / 0.3), rgb(var(--theme-input-surface-rgb) / 0.12)), rgb(var(--theme-panel-surface-rgb) / 0.5);
+  box-shadow: inset 0 1px 0 rgb(var(--theme-input-surface-rgb) / 0.45);
+}
+
+.settings-center-plugin-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-center-plugin-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-center-plugin-heading h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--settings-text);
+  font-size: 0.94rem;
+  font-weight: 650;
+}
+
+.settings-center-plugin-heading p,
+.settings-center-plugin-description,
+.settings-center-plugin-note,
+.settings-center-plugin-version {
+  color: var(--settings-muted);
+  font-size: 0.73rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-plugin-heading p {
+  margin: 4px 0 0;
+}
+
+.settings-center-plugin-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--settings-border);
+  border-radius: 11px;
+  color: var(--settings-accent-strong);
+  background: var(--settings-brand-soft);
+}
+
+.settings-center-plugin-icon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.settings-center-plugin-official,
+.settings-center-plugin-state {
+  font-size: 0.67rem;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.settings-center-plugin-official {
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--settings-muted);
+  background: var(--settings-control-strong);
+}
+
+.settings-center-plugin-state {
+  flex: 0 1 auto;
+  color: var(--settings-muted);
+  text-align: right;
+}
+
+.settings-center-plugin-state.is-active {
+  color: #258862;
+}
+
+.settings-center-plugin-description {
+  margin: 14px 0 10px;
+}
+
+.settings-center-plugin-version {
+  margin: 0;
+  font-size: 0.69rem;
+}
+
+.settings-center-plugin-note {
+  margin: 12px 0 0;
+  font-size: 0.69rem;
+}
+
+.settings-center-plugin-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--settings-text);
+  background: rgb(var(--app-button-rgb) / 0.075);
+  font-size: 0.73rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-plugin-progress {
+  margin: 16px 0;
+}
+
+.settings-center-plugin-progress-head,
+.settings-center-plugin-transfer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 12px;
+  font-size: 0.71rem;
+}
+
+.settings-center-plugin-progress-head {
+  margin-bottom: 8px;
+}
+
+.settings-center-plugin-progress-head strong {
+  font-weight: 500;
+}
+
+.settings-center-plugin-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--settings-border);
+}
+
+.settings-center-plugin-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--settings-accent);
+  transition: width 0.2s ease;
+}
+
+.settings-center-plugin-track.is-indeterminate > span {
+  width: 30%;
+  animation: settings-plugin-progress 1.4s ease-in-out infinite;
+}
+
+.settings-center-plugin-transfer {
+  margin-top: 7px;
+  color: var(--settings-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-center-plugin-footer,
+.settings-center-plugin-primary,
+.settings-center-plugin-more-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-center-plugin-footer {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.settings-center-plugin-actions {
+  margin-top: 0;
+}
+
+.settings-center-plugin-more {
+  max-width: 100%;
+  margin-left: auto;
+  color: var(--settings-text);
+  font-size: 0.73rem;
+}
+
+.settings-center-plugin-more > summary {
+  width: fit-content;
+  margin-left: auto;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-center-plugin-more > summary:hover {
+  background: var(--settings-control-strong);
+}
+
+.settings-center-plugin-more[open] {
+  flex-basis: 100%;
+}
+
+.settings-center-plugin-more-actions {
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--settings-border);
+}
+
+.settings-center-plugin-error {
+  margin-top: 12px;
+  color: #c45050;
+  font-size: 0.73rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-plugin-uninstall {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgb(189 107 67 / 0.25);
+  border-radius: 9px;
+  background: rgb(189 107 67 / 0.045);
+}
+
+.settings-center-plugin-uninstall p {
+  margin: 0 0 10px;
+  color: var(--settings-text);
+  font-size: 0.73rem;
+  line-height: 1.7;
+}
+
+.settings-center-plugin-card .is-danger {
+  color: #bd5151;
+}
+
+@container settings-shell (max-width: 519px) {
+  .settings-center-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .settings-center-github-board {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .settings-center-nav {
+    display: none;
   }
 
-  .settings-center-github-board .settings-center-inline-actions {
+  .settings-center-compact-nav {
+    display: grid;
+  }
+}
+
+@container settings-shell (max-width: 360px) {
+  .settings-center-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .settings-center-footer-actions {
+    justify-content: flex-start;
+  }
+}
+
+@container settings-content (max-width: 340px) {
+  .settings-center-permission-grid,
+  .settings-center-range-grid,
+  .settings-center-runtime-controls,
+  .settings-center-runtime-controls .ai-control-context-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-center-profile-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-center-group-heading-inline {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .settings-center-section-heading > span {
+    flex-basis: 100%;
+  }
+
+  .settings-center-root-add {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-center-root-add input {
     grid-column: 1 / -1;
   }
+
+  .settings-center-plugin-card {
+    padding: 14px;
+  }
+
+  .settings-center-plugin-heading {
+    flex-wrap: wrap;
+  }
+
+  .settings-center-plugin-copy {
+    flex-basis: calc(100% - 48px);
+  }
+
+  .settings-center-plugin-state {
+    margin-left: 48px;
+    text-align: left;
+  }
 }
 
-/* Settings stay contextual: the canvas remains visible beside this right-side surface. */
-#insight-drawer.ui-chrome-drawer {
-  top: max(8px, env(safe-area-inset-top)) !important;
-  right: max(8px, env(safe-area-inset-right)) !important;
-  bottom: max(8px, env(safe-area-inset-bottom)) !important;
-  left: auto !important;
-  width: min(560px, 52vw) !important;
-  min-width: min(420px, calc(100vw - 16px)) !important;
-  max-width: calc(100vw - 16px) !important;
-  border-radius: 14px !important;
-  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
-  backdrop-filter: blur(24px) saturate(128%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(128%) !important;
-  box-shadow: 0 18px 52px rgb(var(--theme-pass-through-shadow-rgb) / 0.24) !important;
-}
-
-#insight-drawer.ui-chrome-drawer::before {
-  background: rgb(var(--theme-floating-surface-rgb) / 0.96) !important;
-  opacity: 1 !important;
-}
-
-#insight-drawer.ui-chrome-drawer .settings-center-frame-header,
-#insight-drawer.ui-chrome-drawer .settings-center-footer {
-  background: rgb(var(--theme-panel-surface-rgb) / 0.96) !important;
-}
-
-#insight-drawer.ui-chrome-drawer .settings-center-field small,
-#insight-drawer.ui-chrome-drawer .settings-center-section-heading p,
-#insight-drawer.ui-chrome-drawer .settings-center-group-heading p {
-  color: var(--settings-muted) !important;
-}
-
+/* Only the outer placement depends on the screen; descendants use containers. */
 @media (max-width: 760px) {
   #insight-drawer.ui-chrome-drawer {
     top: 6px !important;
@@ -2522,61 +2814,23 @@
     left: 6px !important;
     width: auto !important;
     min-width: 0 !important;
+    max-width: none !important;
   }
 }
-.settings-center-plugin-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+
+@keyframes settings-plugin-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(435%); }
 }
 
-.settings-center-plugin-heading > div { flex: 1; min-width: 0; }
-.settings-center-plugin-heading h3 { margin: 0; display: flex; align-items: center; gap: 8px; }
-.settings-center-plugin-card h3,
-.settings-center-plugin-intro h3 { font-size: 15px; font-weight: 650; }
-.settings-center-plugin-intro h3 { margin: 0 0 8px; }
-.settings-center-plugin-intro p,
-.settings-center-plugin-heading p,
-.settings-center-plugin-description { color: var(--settings-muted, #737c8c); font-size: 12px; }
-.settings-center-plugin-heading p { margin: 5px 0 0; }
-.settings-center-plugin-icon {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border: 1px solid var(--settings-border, rgba(125, 136, 150, .2));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--settings-accent, #567ae8) 9%, transparent);
-}
-.settings-center-plugin-icon svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.settings-center-plugin-official,
-.settings-center-plugin-state { font-size: 11px; font-weight: 500; white-space: nowrap; }
-.settings-center-plugin-official { padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, currentColor 7%, transparent); opacity: .65; }
-.settings-center-plugin-state { color: var(--settings-muted, #737c8c); }
-.settings-center-plugin-state.is-active { color: #258862; }
-.settings-center-plugin-description { margin: 16px 0 12px; line-height: 1.7; }
-.settings-center-plugin-version,
-.settings-center-plugin-note,
-.settings-center-plugin-transfer { font-size: 12px; color: var(--settings-muted, #737c8c); line-height: 1.6; }
-.settings-center-plugin-notice { padding: 10px 12px; margin-top: 12px; border-radius: 9px; background: color-mix(in srgb, var(--settings-accent, #567ae8) 8%, transparent); font-size: 12px; line-height: 1.7; }
-.settings-center-plugin-progress { margin: 18px 0; }
-.settings-center-plugin-progress-head,
-.settings-center-plugin-transfer { display: flex; justify-content: space-between; gap: 12px; }
-.settings-center-plugin-progress-head { margin-bottom: 9px; font-size: 12px; }
-.settings-center-plugin-progress-head strong { font-weight: 500; }
-.settings-center-plugin-track { height: 5px; overflow: hidden; border-radius: 5px; background: color-mix(in srgb, currentColor 9%, transparent); }
-.settings-center-plugin-track > span { height: 100%; display: block; border-radius: inherit; background: var(--settings-accent, #567ae8); transition: width .2s ease; }
-.settings-center-plugin-track.is-indeterminate > span { width: 30%; animation: settings-plugin-progress 1.4s ease-in-out infinite; }
-.settings-center-plugin-transfer { margin-top: 7px; font-variant-numeric: tabular-nums; }
-.settings-center-plugin-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.settings-center-plugin-error { margin-top: 12px; color: #c45050; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-.settings-center-plugin-uninstall { margin-top: 14px; padding: 12px; border: 1px solid color-mix(in srgb, #bd6b43 25%, transparent); border-radius: 9px; }
-.settings-center-plugin-uninstall p { margin: 0 0 10px; font-size: 12px; line-height: 1.7; }
-.settings-center-plugin-uninstall > div { display: flex; gap: 8px; }
-.settings-center-plugin-card .is-danger { color: #bd5151; }
-@keyframes settings-plugin-progress { from { transform: translateX(-100%); } to { transform: translateX(435%); } }
 @media (prefers-reduced-motion: reduce) {
-  .settings-center-plugin-track > span { transition: none; }
-  .settings-center-plugin-track.is-indeterminate > span { animation: none; width: 100%; opacity: .45; }
+  .settings-center-plugin-track > span {
+    transition: none;
+  }
+
+  .settings-center-plugin-track.is-indeterminate > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
 }
