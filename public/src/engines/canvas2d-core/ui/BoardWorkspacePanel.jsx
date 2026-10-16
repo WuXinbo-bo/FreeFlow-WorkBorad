@@ -5,6 +5,7 @@ import { readChromePreference, writeChromePreference } from "./chromePreferences
 import { CanvasRecoveryDialog } from "./CanvasRecoveryDialog.jsx";
 import { boardSyncLabel, summarizeSyncPlan } from "../workspace/syncPresentation.js";
 import { getQuickSwitchBoards } from "../workspace/quickSwitch.js";
+import { runGithubSyncOperation, githubSyncResultWarning } from "../../../runtime/githubSyncRecovery.js";
 
 const displayName = (value) => String(value || "未命名画布").replace(/\.(freeflow|json)$/i, "");
 const folderName = (value) => String(value || "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "未选择工作区";
@@ -43,6 +44,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   const [syncError, setSyncError] = useState("");
   const [statusError, setStatusError] = useState("");
   const [syncExpanded, setSyncExpanded] = useState(false);
+  const [syncPending, setSyncPending] = useState(null);
   const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef(null);
   const folderRef = useRef("");
@@ -120,12 +122,19 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     void refreshStatus();
     const changed = () => { setPlanStale(true); void refresh(); void refreshStatus(); };
     const onFocus = () => { if (!document.hidden) changed(); };
+    const remoteChanged = (event) => {
+      if (repositoryKey.current !== `true:${event.detail?.repositoryKey}`) return;
+      setPlanStale(true);
+      setNotice("远端有更新，检查差异后可拉取");
+    };
     window.addEventListener("freeflow:workspace-files-changed", changed);
     window.addEventListener("freeflow:github-sync-status", refreshStatus);
     window.addEventListener("focus", onFocus);
+    window.addEventListener("freeflow:github-remote-update", remoteChanged);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       sequence.current += 1;
+      window.removeEventListener("freeflow:github-remote-update", remoteChanged);
       statusSequence.current += 1;
       window.removeEventListener("freeflow:workspace-files-changed", changed);
       window.removeEventListener("freeflow:github-sync-status", refreshStatus);
@@ -354,20 +363,29 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
       if (!folder) throw new Error("请先打开工作区");
       const key = repositoryKey.current;
       const isCurrent = () => mounted.current && key === repositoryKey.current && folder === folderRef.current;
+      const perform = task => bridge.withBoardFileOperation(() => runGithubSyncOperation(task, {
+        client: syncClient,
+        onPending(operation) {
+          if (!isCurrent()) return;
+          setSyncPending(operation);
+          if (operation?.phase !== "interrupted") setNotice(operation ? "正在确认同步结果，请勿重复操作" : "");
+        },
+        onQueryError(cause) { if (isCurrent()) setStatusError(`尚未确认同步结果：${cause.message}。正在继续查询原任务。`); },
+      }));
       try {
         const path = currentRef.current?.boardFilePath || "";
         const payload = { rootPath: folder, boardPath: path };
         if (action === "check") {
-          const result = await bridge.withBoardFileOperation(() => syncClient.planWorkspace(payload));
+          const result = await perform(() => syncClient.planWorkspace(payload));
           if (!isCurrent()) return;
           if (result?.ok === false) throw new Error(result.error || "检查失败");
-          await refreshStatus();
-          if (!isCurrent()) return;
+          setSyncPending(null);
           setPlan({ ...result, checkedAt: result.checkedAt || Date.now() }); setPlanStale(false);
           setNotice(`已检查 ${result.total || result.items?.length || 0} 个画布`);
+          await refreshStatus();
           return;
         }
-        const result = await bridge.withBoardFileOperation(() => action === "pull" ? syncClient.pullWorkspace(payload) : syncClient.syncWorkspace(payload));
+        const result = await perform(() => action === "pull" ? syncClient.pullWorkspace(payload) : syncClient.syncWorkspace(payload));
         if (!isCurrent()) return;
         if (result?.ok === false) throw new Error(result.error || "同步失败");
         window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: result }));
@@ -378,9 +396,17 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
           const conflicts = Number(result.counts?.["both-changed"] || 0) + Number(result.counts?.["path-collision"] || 0) + Number(result.counts?.conflict || 0);
           setNotice(conflicts ? `${conflicts} 个画布需要在 GitHub 设置中处理冲突` : action === "pull" ? "拉取完成，画布列表已更新" : "上传完成");
         }
+        const warning = githubSyncResultWarning(result);
+        if (warning) setSyncError(warning);
         await refresh();
         await refreshStatus();
-      } catch (cause) { if (isCurrent()) throw cause; }
+      } catch (cause) {
+        if (cause?.localChanged) window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: cause }));
+        if (isCurrent()) {
+          if (["SYNC_OPERATION_INTERRUPTED", "COMMIT_CONFIRMED_RECHECK", "COMMIT_NOT_PUBLISHED_RECHECK"].includes(cause.code)) cause.message += " 请检查更新，或到 GitHub 设置检查当前文件夹。";
+          throw cause;
+        }
+      }
     }).then((ok) => { if (!ok) setPlanStale(true); });
   }
 
@@ -447,7 +473,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
         {connected ? <div className={`canvas2d-workspace-sync${syncError || statusError || syncCounts.conflict ? " is-warning" : ""}`}>
           <div><AppIcon name="cloud" size={16} /><button type="button" className="canvas2d-workspace-sync-toggle" aria-expanded={showSyncDetails} title={syncStatus?.repository?.owner ? `${syncStatus.repository.owner}/${syncStatus.repository.repo}` : "GitHub 同步"} onClick={() => setSyncExpanded((value) => !value)}>{busy === "check" ? "正在检查…" : busy === "pull" ? "正在拉取…" : busy === "upload" ? "正在上传…" : connected ? syncCounts.conflict ? `有 ${syncCounts.conflict} 个冲突` : stateStale ? "修改后待检查" : plan ? syncCounts.upload || syncCounts.pull ? `待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}` : "检查完成 · 无待同步内容" : "已连接 · 尚未检查" : syncStatus?.connected ? "未绑定仓库" : "未连接 GitHub"}</button><IconButton label="GitHub 同步设置" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}><AppIcon name="settings" size={16} /></IconButton></div>
           {connected ? <>
-            <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}>检查更新</button>{showSyncDetails ? <><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></> : null}</div>
+            <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}>检查更新</button>{showSyncDetails ? <><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></> : null}</div>
             {showSyncDetails ? <div className="canvas2d-workspace-sync-details">
               <div className="canvas2d-workspace-sync-summary" role="status">{plan ? `${stateStale ? "上次检查：" : ""}待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}${syncCounts.conflict ? ` · 冲突 ${syncCounts.conflict}` : ""}${syncCounts.deleted ? ` · 远程已删除 ${syncCounts.deleted}` : ""}` : "检查更新后可查看本地与远端差异"}</div>
               {plan?.checkedAt ? <small className="canvas2d-workspace-sync-time">检查于 {new Date(plan.checkedAt).toLocaleString()}{stateStale ? " · 结果可能已变化" : ""}</small> : null}

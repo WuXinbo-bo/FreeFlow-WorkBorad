@@ -7,15 +7,17 @@ const auth = require("./githubAuthService");
 const {
   SYNC_SCHEMA_VERSION,
   buildSyncBundleFromFile,
+  buildSyncBundleFromPayload,
   writeDownloadedBoard,
   ensureBoardIdInFile,
   hashJson,
   stableValue,
 } = require("./freeflowSyncModel");
-const { parseBoardFileText } = require("../models/canvasBoardFileFormat");
+const { parseBoardFileText, checkFileSizeSafe } = require("../models/canvasBoardFileFormat");
 const { readLedger, updateLedger } = require("./syncLedgerService");
 const { atomicWriteFile } = require("../utils/atomicWrite");
-const { snapshotBoardHistory } = require("./boardRecoveryService");
+const { snapshotBoardHistory, trashCanvasBoard, moveCanvasHistory } = require("./boardRecoveryService");
+const { normalizeRelativeBoardPath, pathKey, isWithinRoot, assertSafeWorkspaceTarget } = require("./syncPathSafety");
 const { withFileLock } = require("../utils/fileLock");
 
 const WORKSPACE_PATH = ".freeflow/workspace.json";
@@ -43,15 +45,12 @@ function normalizeWorkspaceRoot(rootPath = "", boardPath = "") {
   return path.dirname(path.resolve(CANVAS_BOARD_FILE));
 }
 
-function normalizeRelativeBoardPath(value = "") {
-  const relative = String(value || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!relative || relative === "." || relative.split("/").some((part) => !part || part === "." || part === "..")) return "";
-  return relative;
-}
-
 function boardRelativePath(rootPath, boardPath) {
   const relative = normalizeRelativeBoardPath(path.relative(rootPath, boardPath));
-  return relative || path.basename(boardPath);
+  if (!relative || !isWithinRoot(rootPath, boardPath)) {
+    throw new GitHubApiError("画布名称或路径无法跨设备安全同步", { status: 400, code: "UNSAFE_LOCAL_PATH" });
+  }
+  return relative;
 }
 
 function isSafeBoardId(value = "") {
@@ -136,9 +135,8 @@ function mergeItems(ancestorItems, localItems, remoteItems, conflicts) {
   const ancestor = indexItems(ancestorItems, conflicts, "ancestor");
   const local = indexItems(localItems, conflicts, "local");
   const remote = indexItems(remoteItems, conflicts, "remote");
-  const order = [];
-  for (const id of [...ancestor.keys(), ...local.keys(), ...remote.keys()]) if (!order.includes(id)) order.push(id);
-  const merged = [];
+  const order = [...new Set([...ancestor.keys(), ...local.keys(), ...remote.keys()])];
+  const mergedById = new Map();
   for (const id of order) {
     const baseItem = ancestor.get(id);
     const localItem = local.get(id);
@@ -168,9 +166,76 @@ function mergeItems(ancestorItems, localItems, remoteItems, conflicts) {
     } else {
       result = mergeThreeWayValue(baseItem, localItem, remoteItem, `items[${id}]`, conflicts);
     }
-    if (result !== undefined) merged.push(result);
+    if (result !== undefined) mergedById.set(id, result);
   }
-  return merged;
+  const byId = mergedById;
+  const surviving = (keys) => [...keys].filter((id) => byId.has(id));
+  const baseOrder = surviving(ancestor.keys());
+  const localBase = surviving(local.keys()).filter((id) => ancestor.has(id));
+  const remoteBase = surviving(remote.keys()).filter((id) => ancestor.has(id));
+  const localReordered = !valuesEqual(localBase, baseOrder);
+  const remoteReordered = !valuesEqual(remoteBase, baseOrder);
+  const chosen = localReordered ? localBase : remoteReordered ? remoteBase : baseOrder;
+  if (localReordered && remoteReordered && !valuesEqual(localBase, remoteBase)) {
+    conflicts.push({ path: "items.order", reason: "concurrent-reorder", ancestor: baseOrder, local: localBase, remote: remoteBase });
+  }
+  const edges = new Map([...byId.keys()].map((id) => [id, new Set()]));
+  const connect = (list, additionsOnly = false) => {
+    for (let i = 1; i < list.length; i += 1) {
+      if (!additionsOnly || !ancestor.has(list[i - 1]) || !ancestor.has(list[i])) edges.get(list[i - 1]).add(list[i]);
+    }
+  };
+  connect(chosen);
+  connect(surviving(local.keys()), true);
+  connect(surviving(remote.keys()), true);
+  const remaining = new Set([...chosen, ...surviving(local.keys()), ...surviving(remote.keys())]);
+  const candidates = [...remaining];
+  const rank = new Map(candidates.map((id, index) => [id, index]));
+  const indegree = new Map(candidates.map((id) => [id, 0]));
+  for (const targets of edges.values()) for (const id of targets) indegree.set(id, indegree.get(id) + 1);
+  // A rank heap keeps the previous stable tie order without repeatedly scanning
+  // every remaining element and edge for each selected element.
+  const ready = [];
+  const enqueue = (value) => {
+    let index = ready.length;
+    ready.push(value);
+    while (index > 0) {
+      const parent = (index - 1) >>> 1;
+      if (ready[parent] <= value) break;
+      ready[index] = ready[parent]; index = parent;
+    }
+    ready[index] = value;
+  };
+  const dequeue = () => {
+    const first = ready[0];
+    const tail = ready.pop();
+    if (ready.length) {
+      let index = 0;
+      while (index * 2 + 1 < ready.length) {
+        let child = index * 2 + 1;
+        if (child + 1 < ready.length && ready[child + 1] < ready[child]) child += 1;
+        if (tail <= ready[child]) break;
+        ready[index] = ready[child]; index = child;
+      }
+      ready[index] = tail;
+    }
+    return first;
+  };
+  for (const id of candidates) if (indegree.get(id) === 0) enqueue(rank.get(id));
+  const sorted = [];
+  while (ready.length) {
+    const next = candidates[dequeue()];
+    sorted.push(next); remaining.delete(next);
+    for (const id of edges.get(next)) {
+      indegree.set(id, indegree.get(id) - 1);
+      if (indegree.get(id) === 0) enqueue(rank.get(id));
+    }
+  }
+  if (remaining.size) {
+    conflicts.push({ path: "items.order", reason: "incompatible-insertion-order" });
+    sorted.push(...remaining);
+  }
+  return sorted.map((id) => byId.get(id));
 }
 
 function mergeBoardPayloads(ancestorPayload = {}, localPayload = {}, remotePayload = {}) {
@@ -196,6 +261,16 @@ function mergeBoardPayloads(ancestorPayload = {}, localPayload = {}, remotePaylo
   return { payload: result, conflicts };
 }
 
+function remoteRelativeBoardPath(board, id) {
+  const raw = String(board.relativePath || board.localRelativePath || "");
+  if (!raw) return `${id}.freeflow`;
+  const relative = normalizeRelativeBoardPath(raw);
+  if (!relative || !/\.(freeflow|json)$/i.test(relative)) {
+    throw new GitHubApiError("远端画布保存路径无效，已阻止下载", { status: 422, code: "UNSAFE_REMOTE_PATH", boardId: id });
+  }
+  return relative;
+}
+
 function normalizeWorkspace(value = {}, config = {}, workspaceId = "") {
   const source = value && typeof value === "object" ? value : {};
   const boards = {};
@@ -210,7 +285,7 @@ function normalizeWorkspace(value = {}, config = {}, workspaceId = "") {
         name: String(board.name || id),
         path: String(board.path || `.freeflow/boards/${id}/board.freeflow`),
         manifestPath: String(board.manifestPath || `.freeflow/boards/${id}/manifest.json`),
-        relativePath: normalizeRelativeBoardPath(board.relativePath || board.localRelativePath || "") || `${String(board.name || id).trim() || id}.freeflow`,
+        relativePath: remoteRelativeBoardPath(board, id),
         boardHash: String(board.boardHash || ""),
         updatedAt: String(board.updatedAt || ""),
         deletedAt: board.deletedAt || null,
@@ -354,7 +429,9 @@ async function readLocalBoardPayload(filePath) {
 }
 
 async function writeMergeConflictArtifacts(filePath, boardId, { ancestor, local, remote, merged }) {
-  const conflictRoot = path.join(path.dirname(filePath), ".freeflow-conflicts", boardId, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`);
+  const root = path.dirname(filePath);
+  const conflictRoot = path.join(root, ".freeflow-conflicts", boardId, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`);
+  await assertSafeWorkspaceTarget(root, conflictRoot);
   await fs.mkdir(conflictRoot, { recursive: true });
   const files = {
     ancestor: ancestor?.raw || JSON.stringify(ancestor?.payload || {}, null, 2),
@@ -363,7 +440,9 @@ async function writeMergeConflictArtifacts(filePath, boardId, { ancestor, local,
     merged: JSON.stringify(merged?.payload || {}, null, 2),
   };
   for (const [name, content] of Object.entries(files)) {
-    const result = await atomicWriteFile(path.join(conflictRoot, `${name}.freeflow`), content, { fsync: true });
+    const target = path.join(conflictRoot, `${name}.freeflow`);
+    await assertSafeWorkspaceTarget(root, target);
+    const result = await atomicWriteFile(target, content, { fsync: true });
     if (!result.ok) throw new Error(result.error || `无法保存冲突副本: ${name}`);
   }
   return {
@@ -376,11 +455,19 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
   const config = await getConfig();
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
   const localPath = path.resolve(boardPath);
+  const localWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot, localPath);
+  await assertSafeWorkspaceTarget(localWorkspaceRoot, localPath);
   const ledger = await readLedger(SYNC_LEDGER_FILE);
-  const previous = Object.values(ledger.boards).find((entry) => entry.localPath === localPath);
+  let previous = Object.values(ledger.boards).find((entry) => entry.localPath === localPath);
   await ensureBoardIdInFile(boardPath, previous?.boardId);
   const beforeStat = await fs.stat(boardPath);
   const bundle = await buildSyncBundleFromFile(boardPath, { policy });
+  assertBoardId(bundle.boardId);
+  previous = ledger.boards[bundle.boardId];
+  const scanned = await scanLocalWorkspace({ rootPath: localWorkspaceRoot, metadataOnly: true });
+  if (scanned.boards.filter((board) => board.boardId === bundle.boardId).length > 1) {
+    throw new GitHubApiError("多个本地画布具有相同 ID，请先使用另存为副本生成独立 ID", { status: 409, code: "DUPLICATE_BOARD_ID", boardId: bundle.boardId });
+  }
   const afterBundleStat = await fs.stat(boardPath);
   if (beforeStat.mtimeMs !== afterBundleStat.mtimeMs || beforeStat.size !== afterBundleStat.size) {
     throw new GitHubApiError("同步期间本地画布发生变化，请保存后重试", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC" });
@@ -399,7 +486,15 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
   }
   const remoteWorkspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
   const workspace = normalizeWorkspace(remoteWorkspace, config, ledger.workspaceId);
-  const remoteBoard = workspace.boards[bundle.boardId];
+  let remoteBoard = workspace.boards[bundle.boardId];
+  if ((remoteBoard && !remoteBoard.deletedAt) || snapshot.entries.some((entry) => entry.path === boardPaths(bundle.boardId).board)) {
+    const remoteContent = await readRemoteBoardAtSnapshot(client, config, snapshot, bundle.boardId);
+    remoteBoard = { ...remoteBoard, boardHash: remoteContent.boardHash };
+  }
+  const relativePath = boardRelativePath(localWorkspaceRoot, localPath);
+  if (Object.values(workspace.boards).some((board) => board.boardId !== bundle.boardId && !board.deletedAt && pathKey(board.relativePath) === pathKey(relativePath))) {
+    throw new GitHubApiError("远端已存在同名画布，请先重命名本地画布", { status: 409, code: "PATH_COLLISION", boardId: bundle.boardId });
+  }
   if (remoteBoard?.deletedAt && !allowRemoteRebase) {
     throw new GitHubApiError("远端画布已删除，已阻止本地画布自动复活；如需恢复请明确选择保留本地版本", {
       status: 409,
@@ -408,13 +503,8 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
       currentBaseSha: snapshot.commitSha,
     });
   }
-  const remoteBoardChanged = Boolean(
-    remoteBoard?.boardHash && previous?.baseBoardHash && remoteBoard.boardHash !== previous.baseBoardHash,
-  );
-  const remoteBoardDeleted = Boolean(remoteBoard?.deletedAt);
-  const staleBranch = Boolean(previous?.baseRemoteCommit && previous.baseRemoteCommit !== snapshot.commitSha);
-  const unknownRemoteBoard = Boolean(!previous && remoteBoard?.boardHash && remoteBoard.boardHash !== bundle.boardHash);
-  if ((remoteBoardChanged || remoteBoardDeleted || unknownRemoteBoard || (staleBranch && !remoteBoard)) && !allowRemoteRebase) {
+  const comparison = workspacePlanState({ localHash: bundle.boardHash }, remoteBoard, previous);
+  if (["remote-changed", "both-changed"].includes(comparison) && !allowRemoteRebase) {
     const error = new GitHubApiError("远端画布已变化，请先拉取并处理冲突", {
       status: 409,
       code: "REMOTE_CHANGED",
@@ -430,7 +520,6 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
     throw error;
   }
   workspace.updatedAt = new Date().toISOString();
-  const localWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot || config.boardPath, localPath);
   workspace.boards[bundle.boardId] = {
     boardId: bundle.boardId,
     name: path.basename(localPath).replace(/\.[^.]+$/, "") || bundle.boardId,
@@ -453,7 +542,8 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
     files,
     expectedBaseSha: expectedRemote || snapshot.commitSha,
   });
-  await updateLedger((current) => ({
+  let ledgerWarning = "";
+  try { await updateLedger((current) => ({
     ...current,
     repository: config,
     workspaceId: workspace.workspaceId,
@@ -464,6 +554,9 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
         ...(current.boards[bundle.boardId] || {}),
         boardId: bundle.boardId,
         localPath,
+        workspaceRoot: localWorkspaceRoot,
+        relativePath,
+        localRelativePath: relativePath,
         localHash: bundle.boardHash,
         baseBoardHash: bundle.boardHash,
         remoteHash: bundle.boardHash,
@@ -476,60 +569,77 @@ async function syncBoard({ boardPath = CANVAS_BOARD_FILE, workspaceRoot = "", po
         updatedAt: workspace.updatedAt,
       },
     },
-  }), SYNC_LEDGER_FILE);
+  }), SYNC_LEDGER_FILE); } catch (error) { ledgerWarning = error.message || "同步账本保存失败，请重新检查状态"; }
   return {
     ...result,
+    operationCompleted: true,
+    ...(ledgerWarning ? { ledgerWarning } : {}),
     workspace,
     bundle: { ...bundle, files: files.map(({ content, ...file }) => file) },
   };
 }
 
-async function scanLocalWorkspace({ rootPath = "", policy } = {}) {
+async function scanLocalWorkspace({ rootPath = "", policy, metadataOnly = false } = {}) {
   const root = normalizeWorkspaceRoot(rootPath);
-  let entries = [];
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return { rootPath: root, boards: [] };
-    throw error;
-  }
   const boards = [];
-  for (const entry of entries) {
-    if (!entry?.isFile?.()) continue;
-    const name = String(entry.name || "");
-    if (name.startsWith(".")) continue;
-    if (!/\.(freeflow|json)$/i.test(name)) continue;
-    const localPath = path.join(root, name);
-    try {
-      const boardId = await ensureBoardIdInFile(localPath);
-      const bundle = await buildSyncBundleFromFile(localPath, { policy });
-      boards.push({
-        boardId: bundle.boardId || boardId,
-        name: name.replace(/\.[^.]+$/, "") || name,
-        relativePath: boardRelativePath(root, localPath),
-        localPath,
-        localHash: bundle.boardHash,
-        bundle,
-      });
-    } catch {
-      // Ignore unrelated JSON files and leave invalid canvas files visible to
-      // the existing local repair flow instead of uploading them blindly.
+  const warnings = [];
+  let visited = 0;
+  async function scan(directory, depth = 0) {
+    if (depth > 32 || visited > 50000) throw new GitHubApiError("工作区目录过大，请选择更具体的画布文件夹", { status: 413, code: "WORKSPACE_SCAN_LIMIT" });
+    let entries;
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    catch (error) { if (error.code === "ENOENT" && directory === root) return; throw error; }
+    for (const entry of entries) {
+      visited += 1;
+      if (visited > 50000) throw new GitHubApiError("工作区目录过大，请选择更具体的画布文件夹", { status: 413, code: "WORKSPACE_SCAN_LIMIT" });
+      const name = String(entry.name || "");
+      if (name.startsWith(".") || entry.isSymbolicLink() || ["node_modules", "assets"].includes(name)) continue;
+      const localPath = path.join(directory, name);
+      if (entry.isDirectory()) {
+        await assertSafeWorkspaceTarget(root, localPath);
+        await scan(localPath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !/\.(freeflow|json)$/i.test(name)) continue;
+      try {
+        await assertSafeWorkspaceTarget(root, localPath);
+        const relativePath = boardRelativePath(root, localPath);
+        checkFileSizeSafe((await fs.stat(localPath)).size);
+        const parsed = parseBoardFileText(await fs.readFile(localPath, "utf8"));
+        const board = boardFromPayload(parsed.payload);
+        if (!Array.isArray(board.items)) continue; // Unrelated JSON must not gain a canvas ID.
+        const boardId = String(board.boardId || parsed.payload?.boardId || "").trim()
+          || (metadataOnly ? "" : await ensureBoardIdInFile(localPath));
+        if (!boardId) continue;
+        assertBoardId(boardId);
+        const bundle = metadataOnly ? null : await buildSyncBundleFromFile(localPath, { policy });
+        boards.push({ boardId, name: name.replace(/\.[^.]+$/, "") || name, relativePath, localPath, localHash: bundle?.boardHash || "", ...(bundle ? { bundle } : {}) });
+      } catch (error) {
+        if (/\.freeflow$/i.test(name)) warnings.push({ localPath, code: error.code || "LOCAL_INVALID", error: error.message });
+      }
     }
   }
-  return { rootPath: root, boards };
+  await scan(root);
+  return { rootPath: root, boards, warnings };
 }
 
 function workspacePlanState(local, remote, ledgerEntry) {
   if (!local && remote) return "remote-only";
-  if (local && !remote) return "local-only";
+  if (local && !remote) return ledgerEntry?.baseRemoteCommit ? "both-changed" : "local-only";
   if (!local || !remote) return "error";
   if (local.localHash === remote.boardHash) return "up-to-date";
   const baseHash = String(ledgerEntry?.baseBoardHash || ledgerEntry?.localHash || "");
-  const remoteChanged = Boolean(baseHash && remote.boardHash && remote.boardHash !== baseHash);
-  const localChanged = Boolean(!baseHash || local.localHash !== baseHash);
+  // Different copies without a common ancestor require an explicit decision.
+  if (!baseHash) return "both-changed";
+  const remoteChanged = Boolean(remote.boardHash && remote.boardHash !== baseHash);
+  const localChanged = local.localHash !== baseHash;
   if (remoteChanged && localChanged) return "both-changed";
   if (remoteChanged) return "remote-changed";
   return "local-changed";
+}
+
+function planCounts(items) {
+  return items.reduce((result, item) => { result[item.state] = (result[item.state] || 0) + 1; return result; }, {});
 }
 
 async function getWorkspacePlan({ rootPath = "", boardPath = "", policy } = {}) {
@@ -539,75 +649,90 @@ async function getWorkspacePlan({ rootPath = "", boardPath = "", policy } = {}) 
   const client = await getClient();
   const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
   const remoteResult = await listBoards({ includeDeleted: true, context: { client, config, snapshot } });
+  // The board/manifest blobs are authoritative even when another writer did
+  // not update workspace.json (legacy clients and interrupted migrations).
+  for (const board of remoteResult.boards) {
+    if (board.deletedAt) continue;
+    const content = await readRemoteBoardAtSnapshot(client, config, snapshot, board.boardId);
+    board.boardHash = content.boardHash;
+  }
   const localResult = await scanLocalWorkspace({ rootPath: root, policy });
   const ledger = await readLedger(SYNC_LEDGER_FILE);
-  const localById = new Map(localResult.boards.map((board) => [board.boardId, board]));
-  const localByPath = new Map(localResult.boards.map((board) => [board.relativePath, board]));
+  const localGroups = new Map();
+  for (const board of localResult.boards) localGroups.set(board.boardId, [...(localGroups.get(board.boardId) || []), board]);
+  const localByPath = new Map(localResult.boards.map((board) => [pathKey(board.relativePath), board]));
   const remoteById = new Map(remoteResult.boards.map((board) => [board.boardId, board]));
-  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
+  const remotePaths = new Map();
+  for (const board of remoteResult.boards.filter((board) => !board.deletedAt)) remotePaths.set(pathKey(board.relativePath), [...(remotePaths.get(pathKey(board.relativePath)) || []), board.boardId]);
+  const ids = new Set([...localGroups.keys(), ...remoteById.keys()]);
   const items = [];
   for (const boardId of ids) {
-    const local = localById.get(boardId);
+    const locals = localGroups.get(boardId) || [];
+    const local = locals[0];
     const remote = remoteById.get(boardId);
-    const relativePath = normalizeRelativeBoardPath(remote?.relativePath || local?.relativePath || "") || `${String(remote?.name || local?.name || boardId)}.freeflow`;
-    const pathMatch = localByPath.get(relativePath);
-    const pathCollision = Boolean(!local && pathMatch && pathMatch.boardId !== boardId);
-    const pathLocal = local || (pathCollision ? null : pathMatch);
-    const state = remote?.deletedAt
-      ? (pathLocal ? "deleted-remote" : "deleted")
-      : pathCollision
-        ? "path-collision"
-        : workspacePlanState(pathLocal, remote, ledger.boards[boardId]);
-    const targetRelativePath = pathCollision
-      ? `${relativePath.replace(/\.[^.]+$/, "")}-${boardId.slice(0, 8)}.freeflow`
-      : relativePath;
-    items.push({
-      boardId,
-      name: remote?.name || pathLocal?.name || boardId,
-      relativePath: targetRelativePath,
-      localPath: pathLocal?.localPath || path.join(root, targetRelativePath),
-      localHash: pathLocal?.localHash || "",
-      remoteHash: remote?.boardHash || "",
-      updatedAt: remote?.updatedAt || "",
-      state,
-      remote,
+    const entry = ledger.boards[boardId];
+    const remoteRelative = remote?.relativePath || local?.relativePath;
+    const pathMatch = localByPath.get(pathKey(remoteRelative));
+    const pathCollision = Boolean((pathMatch && pathMatch.boardId !== boardId) || (remotePaths.get(pathKey(remoteRelative)) || []).length > 1);
+    let state = workspacePlanState(local, remote, entry);
+    const localRenamed = Boolean(local && entry?.localPath && path.resolve(entry.localPath) !== local.localPath);
+    const remoteRenamed = Boolean(remote && entry?.relativePath && pathKey(remote.relativePath) !== pathKey(entry.relativePath));
+    if (state === "up-to-date" || state === "local-changed" || state === "remote-changed") {
+      if (localRenamed && remoteRenamed && pathKey(local.relativePath) !== pathKey(remote.relativePath)) state = "path-collision";
+      else if ((remoteRenamed && state === "local-changed") || (localRenamed && state === "remote-changed")) state = "both-changed";
+      else if (localRenamed) state = "local-renamed";
+      else if (remoteRenamed) state = "remote-renamed";
+    }
+    if (!local && remote && entry?.localPath && isWithinRoot(root, entry.localPath)) state = "local-missing";
+    if (remote?.deletedAt) state = local ? "deleted-remote" : "deleted";
+    if (localResult.warnings.some((warning) => pathKey(warning.localPath) === pathKey(path.join(root, remoteRelative)))) state = "local-invalid";
+    if (pathCollision) state = "path-collision";
+    if (locals.length > 1) state = "duplicate-id";
+    const relativePath = state === "local-renamed" || !remote ? local.relativePath : remote.relativePath;
+    const targetPath = path.join(root, relativePath);
+    if (Object.values(remoteResult.workspace.boards).some((board) => board.boardId !== boardId && !board.deletedAt && pathKey(board.relativePath) === pathKey(relativePath))) state = "path-collision";
+    if (localResult.boards.filter((board) => pathKey(board.relativePath) === pathKey(relativePath)).length > 1) state = "path-collision";
+    try { await assertSafeWorkspaceTarget(root, targetPath); }
+    catch (error) { state = "path-collision"; }
+    items.push({ boardId, name: local?.name || remote?.name || boardId, relativePath,
+      localPath: local?.localPath || targetPath, targetPath,
+      localHash: local?.localHash || "", remoteHash: remote?.boardHash || "", updatedAt: remote?.updatedAt || "",
+      state, remote, ...(locals.length > 1 ? { localPaths: locals.map((board) => board.localPath) } : {}),
+      ...(state === "local-missing" ? { deletionRequiresConfirmation: true } : {}),
     });
   }
   items.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  const counts = items.reduce((result, item) => {
-    result[item.state] = (result[item.state] || 0) + 1;
-    return result;
-  }, {});
-  return {
-    rootPath: root,
-    remoteHeadSha: snapshot.commitSha,
-    workspace: remoteResult.workspace,
-    items,
-    counts,
-    total: items.length,
-    checkedAt: Date.now(),
-  };
+  return { rootPath: root, remoteHeadSha: snapshot.commitSha, workspace: remoteResult.workspace, items, counts: planCounts(items), total: items.length, checkedAt: Date.now(), warnings: localResult.warnings };
+}
+
+function completedWorkspacePlan(plan, results, commit) {
+  const completed = new Map(results.filter((item) => !item.error && ["synced", "up-to-date"].includes(item.state || item.syncState)).map((item) => [item.boardId, item]));
+  const items = plan.items.map((item) => completed.has(item.boardId) ? { ...item, state: "up-to-date", localPath: completed.get(item.boardId).filePath || item.localPath, localHash: completed.get(item.boardId).boardHash || item.remoteHash || item.localHash, remoteHash: completed.get(item.boardId).boardHash || item.remoteHash || item.localHash } : item);
+  return { ...plan, items, counts: planCounts(items), checkedAt: Date.now(), remoteHeadSha: commit?.commitSha || plan.remoteHeadSha, snapshotBased: true };
 }
 
 async function syncWorkspace({ rootPath = "", boardPath = "", policy, selectedBoardIds = [], message = "Sync FreeFlow workspace" } = {}) {
   const plan = await getWorkspacePlan({ rootPath, boardPath, policy });
   const config = await getConfig();
   const selected = new Set((Array.isArray(selectedBoardIds) ? selectedBoardIds : []).map((id) => String(id || "").trim()).filter(Boolean));
-  const candidates = plan.items.filter((item) => ["local-only", "local-changed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
+  const candidates = plan.items.filter((item) => ["local-only", "local-changed", "local-renamed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
   const results = [];
   const filesByPath = new Map();
   const bundles = [];
   let commit = null;
+  let ledgerWarning = "";
   const workspace = normalizeWorkspace(plan.workspace, config, plan.workspace?.workspaceId || "");
   const updatedAt = new Date().toISOString();
   for (const item of candidates) {
     try {
+      await assertSafeWorkspaceTarget(plan.rootPath, item.localPath);
       const beforeStat = await fs.stat(item.localPath);
       const bundle = await buildSyncBundleFromFile(item.localPath, { policy });
       const afterStat = await fs.stat(item.localPath);
       if (beforeStat.mtimeMs !== afterStat.mtimeMs || beforeStat.size !== afterStat.size) {
         throw new GitHubApiError("同步期间本地画布发生变化，请保存后重试", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", boardId: item.boardId });
       }
+      if (bundle.boardHash !== item.localHash) throw new GitHubApiError("画布在检查后发生变化，请保存后重新检查", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", boardId: item.boardId });
       if (bundle.boardId !== item.boardId) {
         throw new GitHubApiError("本地画布 ID 在同步期间发生变化，请重新生成同步计划", { status: 409, code: "LOCAL_BOARD_ID_CHANGED", boardId: item.boardId });
       }
@@ -640,13 +765,16 @@ async function syncWorkspace({ rootPath = "", boardPath = "", policy, selectedBo
         files: [...filesByPath.values()],
         expectedBaseSha: plan.remoteHeadSha,
       });
-      await updateLedger((current) => {
+      commit = result;
+      try { await updateLedger((current) => {
         const nextBoards = { ...current.boards };
         for (const { item, bundle } of bundles) {
           nextBoards[bundle.boardId] = {
             ...(nextBoards[bundle.boardId] || {}),
             boardId: bundle.boardId,
             localPath: path.resolve(item.localPath),
+            workspaceRoot: plan.rootPath,
+            localRelativePath: boardRelativePath(plan.rootPath, item.localPath),
             localHash: bundle.boardHash,
             baseBoardHash: bundle.boardHash,
             remoteHash: bundle.boardHash,
@@ -659,33 +787,58 @@ async function syncWorkspace({ rootPath = "", boardPath = "", policy, selectedBo
             relativePath: boardRelativePath(plan.rootPath, item.localPath),
             updatedAt,
           };
-          results.push({ boardId: bundle.boardId, state: "synced", commitSha: result.commitSha, bundle: { ...bundle, files: bundle.files.map(({ content, ...file }) => file) } });
         }
         return { ...current, repository: config, workspaceId: workspace.workspaceId, remoteWorkspace: workspace, boards: nextBoards };
-      }, SYNC_LEDGER_FILE);
-      commit = result;
+      }, SYNC_LEDGER_FILE); } catch (error) { ledgerWarning = error.message || "同步账本保存失败，请重新检查状态"; }
+      for (const { bundle } of bundles) results.push({ boardId: bundle.boardId, boardHash: bundle.boardHash, state: "synced", commitSha: result.commitSha, bundle: { ...bundle, files: bundle.files.map(({ content, ...file }) => file) } });
     } catch (error) {
+      if (error.code === "COMMIT_RESULT_UNKNOWN") throw error;
       for (const { item } of bundles) results.push({ boardId: item.boardId, state: "error", error: error.message, code: error.code || "" });
     }
   }
-  const refreshed = await getWorkspacePlan({ rootPath: plan.rootPath, policy });
-  return { ok: true, mode: "workspace", rootPath: plan.rootPath, plan, results, commit, refreshed, counts: refreshed.counts };
+  const refreshed = completedWorkspacePlan(plan, results, commit);
+  return { ok: true, operationCompleted: true, mode: "workspace", rootPath: plan.rootPath, plan, results, commit, refreshed, counts: refreshed.counts, ...(ledgerWarning ? { ledgerWarning } : {}) };
 }
 
 async function pullWorkspace({ rootPath = "", boardPath = "", policy, selectedBoardIds = [] } = {}) {
   const plan = await getWorkspacePlan({ rootPath, boardPath, policy });
   const selected = new Set((Array.isArray(selectedBoardIds) ? selectedBoardIds : []).map((id) => String(id || "").trim()).filter(Boolean));
-  const candidates = plan.items.filter((item) => ["remote-only", "remote-changed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
+  const candidates = plan.items.filter((item) => ["remote-only", "remote-changed", "local-missing", "remote-renamed"].includes(item.state) && (!selected.size || selected.has(item.boardId)));
   const results = [];
   for (const item of candidates) {
     try {
-      results.push({ boardId: item.boardId, ...(await downloadBoard({ boardId: item.boardId, boardPath: item.localPath, remoteCommit: plan.remoteHeadSha, force: false })) });
+      results.push({ boardId: item.boardId, ...(await pullPlannedBoard(item, plan)) });
     } catch (error) {
       results.push({ boardId: item.boardId, state: "error", error: error.message, code: error.code || "" });
     }
   }
-  const refreshed = await getWorkspacePlan({ rootPath: plan.rootPath, policy });
-  return { ok: true, mode: "workspace", rootPath: plan.rootPath, plan, results, refreshed, counts: refreshed.counts };
+  const refreshed = completedWorkspacePlan(plan, results);
+  return { ok: true, operationCompleted: true, mode: "workspace", rootPath: plan.rootPath, plan, results, refreshed, counts: refreshed.counts };
+}
+
+async function pullPlannedBoard(item, plan) {
+  const targetPath = item.state === "remote-renamed" ? item.targetPath : item.localPath;
+  await assertSafeWorkspaceTarget(plan.rootPath, targetPath);
+  if (item.state === "remote-renamed" && targetPath !== item.localPath) {
+    const old = await readLocalSyncHash(item.localPath);
+    if (old.hash !== item.localHash) throw new GitHubApiError("重命名期间本地画布发生变化，请重新检查", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC" });
+    const target = await readLocalSyncHash(targetPath);
+    if (target.exists) throw new GitHubApiError("重命名目标已存在，已保留两个文件", { status: 409, code: "PATH_COLLISION" });
+  }
+  const result = await downloadBoard({ boardId: item.boardId, boardPath: targetPath, rootPath: plan.rootPath, remoteCommit: plan.remoteHeadSha });
+  if (item.state === "remote-renamed" && targetPath !== item.localPath) {
+    try {
+      const raw = await fs.readFile(item.localPath);
+      const latest = await buildSyncBundleFromPayload(parseBoardFileText(raw.toString("utf8")).payload, { baseDir: path.dirname(item.localPath) });
+      if (latest.boardHash !== item.localHash) throw new GitHubApiError("原文件在操作期间被修改", { code: "LOCAL_CHANGED_DURING_SYNC" });
+      await moveCanvasHistory(item.localPath, targetPath);
+      await trashCanvasBoard(item.localPath, { expectedContentHash: crypto.createHash("sha256").update(raw).digest("hex") });
+      return { ...result, renamedFrom: item.localPath };
+    } catch (error) {
+      return { ...result, state: "error", error: `新位置已拉取，原文件未移除：${error.message}。请检查两个文件`, code: error.code || "RENAME_CLEANUP_REQUIRED", renamedFrom: item.localPath };
+    }
+  }
+  return result;
 }
 
 function resourcePathIsSafe(resourcePath = "") {
@@ -739,33 +892,34 @@ function validateRemoteResources(resources = []) {
   return { totalBytes };
 }
 
-async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCommit = "", force = false } = {}) {
+async function downloadBoard({ boardId, boardPath = "", rootPath = "", remoteCommit = "", force = false } = {}) {
   const config = await getConfig();
   const id = assertBoardId(boardId);
   if (!config.owner || !config.repo) throw new Error("下载画布所需参数不完整");
-  const targetPath = path.resolve(boardPath);
-  const localLedger = await readLedger(SYNC_LEDGER_FILE);
-  const existingEntry = localLedger.boards[id];
-  const local = await readLocalSyncHash(targetPath);
-  if (!force && local.exists && !local.hash && local.errorCode !== "LOCAL_MISSING") {
-    throw new GitHubApiError("本地画布无法解析或读取，已阻止远端覆盖", {
-      status: 409,
-      code: "SYNC_CONFLICT",
-      reason: local.errorCode || "LOCAL_INVALID",
-      boardId: id,
-    });
-  }
-  if (!force && existingEntry?.localPath === targetPath && existingEntry.localHash && local.hash !== existingEntry.localHash) {
-    throw new GitHubApiError("本地画布有未同步修改，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", boardId: id });
-  }
-  if (!force && local.exists && !existingEntry && !remoteCommit && local.hash && targetPath === path.resolve(CANVAS_BOARD_FILE)) {
-    throw new GitHubApiError("本地画布没有同步基线，已阻止远端覆盖；请明确选择使用远端版本", {
-      status: 409, code: "SYNC_BASE_UNKNOWN", boardId: id,
-    });
+  let initialLocal = null;
+  if (boardPath) {
+    const initialTarget = path.resolve(boardPath);
+    await assertSafeWorkspaceTarget(rootPath || path.dirname(initialTarget), initialTarget);
+    initialLocal = await readLocalSyncHash(initialTarget);
   }
   const client = await getClient();
   const snapshot = await getSnapshotAtRef(client, config, remoteCommit);
   const remote = await readRemoteBoardAtSnapshot(client, config, snapshot, id);
+  const remoteWorkspace = await readWorkspaceAtSnapshot(client, config, snapshot);
+  const remoteEntry = remoteWorkspace.boards[id];
+  if (remoteEntry?.deletedAt) throw new GitHubApiError("远端画布已删除，请明确选择恢复本地版本或确认本机删除", { status: 409, code: "REMOTE_BOARD_DELETED", boardId: id });
+  const root = rootPath ? normalizeWorkspaceRoot(rootPath) : path.dirname(path.resolve(boardPath || CANVAS_BOARD_FILE));
+  const targetPath = path.resolve(boardPath || (rootPath ? path.join(root, remoteEntry?.relativePath || `${id}.freeflow`) : CANVAS_BOARD_FILE));
+  await assertSafeWorkspaceTarget(root, targetPath);
+  const localLedger = await readLedger(SYNC_LEDGER_FILE);
+  const existingEntry = localLedger.boards[id];
+  const local = initialLocal || await readLocalSyncHash(targetPath);
+  if (local.exists && local.boardId && local.boardId !== id) {
+    throw new GitHubApiError("目标路径属于另一张画布，已阻止覆盖", { status: 409, code: "PATH_COLLISION", boardId: id });
+  }
+  if (!force && local.exists && (!local.hash || ["local-changed", "both-changed"].includes(workspacePlanState({ localHash: local.hash }, { boardHash: remote.boardHash }, existingEntry)))) {
+    throw new GitHubApiError("本地画布有未同步修改或没有共同基线，已阻止远端覆盖", { status: 409, code: "SYNC_CONFLICT", reason: local.errorCode || "LOCAL_CHANGED", boardId: id });
+  }
   const manifest = remote.manifest;
   if (manifest?.resources != null && !Array.isArray(manifest.resources)) {
     throw new GitHubApiError("远端附件清单格式无效", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
@@ -776,6 +930,7 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
   const files = await client.getFilesAtSnapshot(config.owner, config.repo, snapshot, resourcePaths);
   const targetRoot = path.dirname(targetPath);
   await fs.mkdir(targetRoot, { recursive: true });
+  await assertSafeWorkspaceTarget(root, targetPath);
   const stagingRoot = await fs.mkdtemp(path.join(targetRoot, `.freeflow-download-${id}-`));
   try {
   const localAssetRoot = path.join(stagingRoot, "assets");
@@ -832,7 +987,9 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     await fs.rm(stagingRoot, { recursive: true, force: true });
     throw new GitHubApiError("下载后的画布校验和不一致，已阻止覆盖本地文件", { status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: id });
   }
+  await assertSafeWorkspaceTarget(root, targetPath);
   return await withFileLock(targetPath, async () => {
+    await assertSafeWorkspaceTarget(root, targetPath);
     const latest = await readLocalSyncHash(targetPath);
     if (latest.exists !== local.exists || latest.hash !== local.hash || latest.errorCode !== local.errorCode) {
       throw new GitHubApiError("下载期间本地画布已变化，已停止覆盖，请重新检查同步状态", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", boardId: id });
@@ -841,15 +998,19 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
     const stagedAssets = path.join(stagingRoot, "assets");
     const finalAssets = path.join(targetRoot, "assets");
     // Publish verified content-addressed assets first. Existing boards and history retain their assets.
+    await assertSafeWorkspaceTarget(root, path.join(finalAssets, "resource"));
     await fs.mkdir(finalAssets, { recursive: true });
     for (const name of await fs.readdir(stagedAssets)) {
+      await assertSafeWorkspaceTarget(root, path.join(finalAssets, name));
       const written = await atomicWriteFile(path.join(finalAssets, name), await fs.readFile(path.join(stagedAssets, name)), { fsync: true });
       if (!written.ok) throw new Error(written.error || "附件保存失败，当前画布已保留");
     }
     const published = await atomicWriteFile(targetPath, await fs.readFile(stagedBoardPath), { fsync: true });
     if (!published.ok) throw new Error(published.error || "画布保存失败，当前画布已保留");
   const syncState = "synced";
-  const ledger = await updateLedger((current) => ({
+  let ledger = null;
+  let ledgerWarning = "";
+  try { ledger = await updateLedger((current) => ({
     ...current,
     repository: config,
     boards: {
@@ -858,6 +1019,9 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
         ...(current.boards[id] || {}),
         boardId: id,
         localPath: targetPath,
+        workspaceRoot: root,
+        relativePath: remoteEntry?.relativePath || boardRelativePath(root, targetPath),
+        localRelativePath: boardRelativePath(root, targetPath),
         localHash: remote.boardHash,
         baseBoardHash: remote.boardHash,
         remoteHash: remote.boardHash,
@@ -870,8 +1034,8 @@ async function downloadBoard({ boardId, boardPath = CANVAS_BOARD_FILE, remoteCom
         assetBytes: Number(manifest?.assetBytes) || 0,
       },
     },
-  }), SYNC_LEDGER_FILE);
-  return { ...result, filePath: targetPath, boardId: id, manifest, remoteCommit: snapshot.commitSha, missingResources, syncState, ledger };
+  }), SYNC_LEDGER_FILE); } catch (error) { ledgerWarning = error.message || "同步账本保存失败，请重新检查状态"; }
+  return { ...result, operationCompleted: true, filePath: targetPath, boardId: id, boardHash: remote.boardHash, manifest, remoteCommit: snapshot.commitSha, missingResources, syncState, ledger, ...(ledgerWarning ? { ledgerWarning } : {}) };
   });
   } finally { await fs.rm(stagingRoot, { recursive: true, force: true }); }
 }
@@ -918,20 +1082,18 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
   if (!config.owner || !config.repo) throw new Error("请先选择 GitHub 私有仓库");
   const client = await getClient();
   const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
-  const remote = await readRemoteBoardAtSnapshot(client, config, snapshot, id);
   const ledger = await readLedger(SYNC_LEDGER_FILE);
+  const workspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
+  const metadata = workspace.boards[id];
+  const remote = metadata?.deletedAt ? { boardHash: metadata.boardHash, manifest: null }
+    : await readRemoteBoardAtSnapshot(client, config, snapshot, id);
   const entry = ledger.boards[id] || {};
   const localPath = path.resolve(boardPath || entry.localPath || config.boardPath || CANVAS_BOARD_FILE);
   const local = await readLocalSyncHash(localPath);
   const localExists = Boolean(local.exists);
   const remoteHash = remote.boardHash || String(remote.manifest?.boardHash || "");
-  let state = "remote-changed";
-  if (!localExists) state = "remote-only";
-  else if (local.errorCode) state = "local-invalid";
-  else if (local.hash === remoteHash) state = "up-to-date";
-  else if (entry.baseRemoteCommit && entry.baseRemoteCommit === snapshot.commitSha) state = "local-changed";
-  else if (entry.localHash && local.hash === entry.localHash) state = "remote-changed";
-  else state = "both-changed";
+  const state = metadata?.deletedAt ? "deleted-remote" : localExists && local.errorCode ? "local-invalid"
+    : workspacePlanState(localExists ? { localHash: local.hash } : null, { boardHash: remoteHash }, entry);
   return {
     boardId: id,
     state,
@@ -939,6 +1101,7 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
     localHash: local.hash,
     localError: local.errorCode || "",
     remoteHash,
+    deletedAt: metadata?.deletedAt || "",
     remoteCommit: snapshot.commitSha,
     baseRemoteCommit: entry.baseRemoteCommit || "",
     manifest: remote.manifest,
@@ -946,6 +1109,15 @@ async function getBoardState({ boardId, boardPath = "" } = {}) {
 }
 
 async function pullBoard(options = {}) {
+  if (options.rootPath && !options.boardPath) {
+    const plan = await getWorkspacePlan({ rootPath: options.rootPath });
+    const item = plan.items.find((board) => board.boardId === options.boardId);
+    if (!item) throw new GitHubApiError("远端画布不存在", { status: 404, code: "REMOTE_BOARD_NOT_FOUND" });
+    if (item.state === "up-to-date") return { ok: true, operationCompleted: true, pulled: false, state: item };
+    if (item.state === "local-changed" || item.state === "local-renamed") return { ok: true, operationCompleted: true, pulled: false, state: item, requiresPush: true };
+    if (!["remote-only", "remote-changed", "local-missing", "remote-renamed"].includes(item.state)) throw new GitHubApiError("此画布需要先处理冲突或删除，请检查同步计划", { status: 409, code: "SYNC_CONFLICT", state: item });
+    return { ...(await pullPlannedBoard(item, plan)), pulled: true };
+  }
   const state = await getBoardState(options);
   if (state.state === "up-to-date") return { ok: true, pulled: false, state };
   if (state.state === "local-invalid") {
@@ -987,7 +1159,8 @@ async function reconcileBoard({ boardId, boardPath = "", resolution = "", strate
     readRemoteBoardAtSnapshot(client, config, remoteSnapshot, state.boardId),
   ]);
   const local = await readLocalBoardPayload(state.localPath);
-  const merged = mergeBoardPayloads(ancestor.payload, local.parsed.payload, remote.payload);
+  const localBundle = await buildSyncBundleFromFile(state.localPath);
+  const merged = mergeBoardPayloads(ancestor.payload, JSON.parse(localBundle.boardText), remote.payload);
   if (merged.conflicts.length) {
     const artifacts = await writeMergeConflictArtifacts(state.localPath, state.boardId, {
       ancestor,
@@ -1008,17 +1181,124 @@ async function reconcileBoard({ boardId, boardPath = "", resolution = "", strate
       state,
     });
   }
-  const beforeMerge = await readLocalSyncHash(state.localPath);
-  if (beforeMerge.hash !== state.localHash) {
-    throw new GitHubApiError("合并期间本地画布发生变化，已保留当前编辑", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", state });
+  const resourceBytes = new Map(localBundle.files.filter((file) => file.path.startsWith(".freeflow/assets/")).map((file) => [file.path, { bytes: file.content }]));
+  const referenced = new Set((boardFromPayload(merged.payload).items || []).map((item) => String(item.resourcePath || item.sourcePath || "")).filter((value) => value.startsWith(".freeflow/assets/")));
+  for (const version of [remote, ancestor]) {
+    const resources = (version.manifest?.resources || []).filter((resource) => referenced.has(resource.path) && !resourceBytes.has(resource.path));
+    validateRemoteResources(resources);
+    const files = await client.getFilesAtSnapshot(config.owner, config.repo, version.snapshot, resources.map((resource) => resource.path));
+    for (const resource of resources) {
+      const bytes = files[resource.path]?.blob ? decodeBlob(files[resource.path].blob) : null;
+      if (!bytes || bytes.length !== resource.sizeBytes || crypto.createHash("sha256").update(bytes).digest("hex") !== resource.sha256) {
+        throw new GitHubApiError("合并所需远端附件缺失或校验失败，已保留本地内容", { status: 422, code: "REMOTE_INTEGRITY_ERROR", boardId: state.boardId });
+      }
+      resourceBytes.set(resource.path, { bytes, mime: resource.mime });
+    }
   }
-  const mergedBundle = await require("./freeflowSyncModel").buildSyncBundleFromPayload(merged.payload, {
-    baseDir: path.dirname(state.localPath),
+  if ([...referenced].some((value) => !resourceBytes.has(value))) throw new GitHubApiError("合并所需附件没有有效来源，已停止合并", { status: 422, code: "REMOTE_INTEGRITY_ERROR" });
+  const mergedBundle = await buildSyncBundleFromPayload(merged.payload, { baseDir: path.dirname(state.localPath), resourceBytes });
+  const materializedPayload = JSON.parse(mergedBundle.boardText);
+  const materializedBoard = boardFromPayload(materializedPayload);
+  materializedBoard.items = (materializedBoard.items || []).map((item) => {
+    const resourcePath = String(item.resourcePath || item.sourcePath || "");
+    return resourcePath.startsWith(".freeflow/assets/") ? { ...item, sourcePath: `assets/${path.basename(resourcePath)}`, resourcePath: `assets/${path.basename(resourcePath)}`, _relative: true } : item;
   });
-  const mergedText = mergedBundle.boardText;
-  await writeDownloadedBoard(state.localPath, mergedText);
-  const synced = await syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, expectedRemoteCommit: state.remoteCommit, message: "Resolve FreeFlow sync conflict (merge)" });
-  return { ...synced, merged: true, conflicts: [], ancestorSha };
+  const root = path.dirname(state.localPath);
+  await assertSafeWorkspaceTarget(root, state.localPath);
+  return withFileLock(state.localPath, async () => {
+    const beforeMerge = await readLocalSyncHash(state.localPath);
+    if (beforeMerge.hash !== state.localHash) throw new GitHubApiError("合并期间本地画布发生变化，已保留当前编辑", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC", state });
+    for (const file of mergedBundle.files.filter((file) => file.path.startsWith(".freeflow/assets/"))) {
+      const target = path.join(root, "assets", path.basename(file.path));
+      await assertSafeWorkspaceTarget(root, target);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      const written = await atomicWriteFile(target, file.content, { fsync: true });
+      if (!written.ok) throw new Error(written.error || "合并附件保存失败");
+    }
+    await snapshotBoardHistory(state.localPath, { reason: "merge" });
+    await writeDownloadedBoard(state.localPath, JSON.stringify(materializedPayload, null, 2));
+    try {
+      const synced = await syncBoard({ boardPath: state.localPath, allowRemoteRebase: true, expectedRemoteCommit: state.remoteCommit, message: "Resolve FreeFlow sync conflict (merge)" });
+      return { ...synced, merged: true, conflicts: [], ancestorSha };
+    } catch (error) {
+      Object.assign(error, { localChanged: true, filePath: state.localPath, boardId: state.boardId, merged: true });
+      throw error;
+    }
+  });
+}
+
+async function confirmCommitResult({ commitSha = "", baseCommitSha = "", owner = "", repo = "", branch = "" } = {}) {
+  const config = await getConfig();
+  if (!commitSha || ["owner", "repo", "branch"].some((key) => String(({ owner, repo, branch })[key] || "") !== config[key])) {
+    throw new GitHubApiError("待确认提交不属于当前同步仓库，请恢复原仓库连接后检查", { status: 409, code: "COMMIT_REPOSITORY_MISMATCH" });
+  }
+  const client = await getClient();
+  let remoteHeadSha = "";
+  try {
+    remoteHeadSha = String((await client.getBranchHead(owner, repo, branch))?.object?.sha || "");
+    if (!remoteHeadSha) return { status: "unknown", commitSha, remoteHeadSha };
+    if (remoteHeadSha === commitSha) return { status: "published", commitSha, remoteHeadSha };
+    if (remoteHeadSha === baseCommitSha) return { status: "not-published", commitSha, remoteHeadSha, requiresCheck: true };
+    const comparison = await client.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commitSha)}...${encodeURIComponent(remoteHeadSha)}`);
+    if (["ahead", "identical"].includes(comparison?.status)) return { status: "published", commitSha, remoteHeadSha };
+    if (["behind", "diverged"].includes(comparison?.status)) return { status: "not-published", commitSha, remoteHeadSha, requiresCheck: true };
+    return { status: "unknown", commitSha, remoteHeadSha };
+  } catch (error) { return { status: "unknown", commitSha, remoteHeadSha, error: error.message, retryAfterMs: error.retryAfterMs || 0 }; }
+}
+
+function requireDeletionConfirmation(confirmed, expectedRemoteCommit) {
+  if (confirmed !== true || !String(expectedRemoteCommit || "").trim()) {
+    throw new GitHubApiError("删除需要明确确认并提供最近检查的远端版本", { status: 409, code: "DELETE_CONFIRMATION_REQUIRED" });
+  }
+}
+
+async function deletionSnapshot(boardId, expectedRemoteCommit) {
+  const id = assertBoardId(boardId);
+  const config = await getConfig();
+  const client = await getClient();
+  const snapshot = await client.getBranchSnapshot(config.owner, config.repo, config.branch);
+  if (snapshot.commitSha !== expectedRemoteCommit) throw new GitHubApiError("远端在确认后发生变化，请重新检查后确认删除", { status: 409, code: "REMOTE_CHANGED" });
+  const ledger = await readLedger(SYNC_LEDGER_FILE);
+  const workspace = await readWorkspaceAtSnapshot(client, config, snapshot, ledger.workspaceId);
+  if (!workspace.boards[id]) throw new GitHubApiError("远端画布不存在", { status: 404, code: "REMOTE_BOARD_NOT_FOUND" });
+  return { id, config, client, snapshot, workspace };
+}
+
+// An ordinary upload or pull never propagates a deletion. Only this explicit
+// confirmation writes a tombstone; the board and attachment blobs are retained.
+async function deleteRemoteBoard({ boardId, confirmed = false, expectedRemoteCommit = "" } = {}) {
+  requireDeletionConfirmation(confirmed, expectedRemoteCommit);
+  const { id, config, client, snapshot, workspace } = await deletionSnapshot(boardId, expectedRemoteCommit);
+  if (workspace.boards[id].deletedAt) return { ok: true, operationCompleted: true, deleted: true, boardId: id, remoteCommit: snapshot.commitSha };
+  const deletedAt = new Date().toISOString();
+  workspace.boards[id] = { ...workspace.boards[id], deletedAt, updatedAt: deletedAt };
+  workspace.updatedAt = deletedAt;
+  const commit = await client.createCommit({ owner: config.owner, repo: config.repo, branch: config.branch, expectedBaseSha: snapshot.commitSha,
+    message: "Confirm FreeFlow remote board deletion", files: [{ path: WORKSPACE_PATH, content: JSON.stringify(workspace, null, 2) }] });
+  let ledgerWarning = "";
+  try { await updateLedger((current) => ({ ...current, remoteWorkspace: workspace, boards: { ...current.boards, [id]: { ...current.boards[id], boardId: id, syncState: "deleted-remote", deletedAt, remoteHeadSha: commit.commitSha } } }), SYNC_LEDGER_FILE); }
+  catch (error) { ledgerWarning = error.message; }
+  return { ok: true, operationCompleted: true, deleted: true, boardId: id, deletedAt, commit, remoteCommit: commit.commitSha, ...(ledgerWarning ? { ledgerWarning } : {}) };
+}
+
+async function applyRemoteDeletion({ boardId, rootPath = "", boardPath = "", confirmed = false, expectedRemoteCommit = "", expectedLocalHash = "" } = {}) {
+  requireDeletionConfirmation(confirmed, expectedRemoteCommit);
+  const { id, snapshot, workspace } = await deletionSnapshot(boardId, expectedRemoteCommit);
+  const remote = workspace.boards[id];
+  if (!remote.deletedAt) throw new GitHubApiError("远端画布尚未删除，已停止本机删除", { status: 409, code: "REMOTE_CHANGED" });
+  const root = rootPath ? path.resolve(rootPath) : path.dirname(path.resolve(boardPath || CANVAS_BOARD_FILE));
+  const target = path.resolve(boardPath || path.join(root, remote.relativePath));
+  await assertSafeWorkspaceTarget(root, target);
+  const local = await readLocalSyncHash(target);
+  if (!local.exists) return { ok: true, operationCompleted: true, deleted: true, boardId: id, filePath: target, remoteCommit: snapshot.commitSha };
+  const raw = await fs.readFile(target);
+  const bundle = await buildSyncBundleFromPayload(parseBoardFileText(raw.toString("utf8")).payload, { baseDir: path.dirname(target) });
+  if (!expectedLocalHash || bundle.boardId !== id || bundle.boardHash !== expectedLocalHash) throw new GitHubApiError("本地内容在确认后发生变化，请重新检查再删除", { status: 409, code: "LOCAL_CHANGED_DURING_SYNC" });
+  const result = await trashCanvasBoard(target, { expectedContentHash: crypto.createHash("sha256").update(raw).digest("hex") });
+  let ledgerWarning = "";
+  try { await updateLedger((current) => ({ ...current, boards: { ...current.boards, [id]: { ...current.boards[id], syncState: "deleted", deletedAt: remote.deletedAt, localPath: target, trashId: result.trashId } } }), SYNC_LEDGER_FILE); }
+  catch (error) { ledgerWarning = error.message; }
+  return { ...result, operationCompleted: true, deleted: true, boardId: id, remoteCommit: snapshot.commitSha, ...(ledgerWarning ? { ledgerWarning } : {}) };
 }
 
 module.exports = {
@@ -1040,6 +1320,9 @@ module.exports = {
   syncWorkspace,
   pullWorkspace,
   mergeBoardPayloads,
+  deleteRemoteBoard,
+  confirmCommitResult,
+  applyRemoteDeletion,
   readLocalSyncHash,
   validateRemoteResources,
 };
@@ -1047,7 +1330,7 @@ module.exports = {
 // Serialize public operations with credential and repository mutations. Internal
 // calls use the functions above directly, so nested pull/merge operations do not
 // re-enter the queue. A failed operation does not poison subsequent retries.
-for (const name of ["getConfig", "setConfig", "getStatus", "syncBoard", "downloadBoard", "listBoards", "getWorkspace", "getBoardState", "pullBoard", "reconcileBoard", "getWorkspacePlan", "syncWorkspace", "pullWorkspace"]) {
+for (const name of ["getConfig", "setConfig", "getStatus", "syncBoard", "downloadBoard", "listBoards", "getWorkspace", "getBoardState", "pullBoard", "reconcileBoard", "getWorkspacePlan", "syncWorkspace", "pullWorkspace", "deleteRemoteBoard", "applyRemoteDeletion", "confirmCommitResult"]) {
   const operation = module.exports[name];
   module.exports[name] = (...args) => auth.withConnectionOperation(() => operation(...args));
 }

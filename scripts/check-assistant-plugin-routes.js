@@ -11,6 +11,14 @@ async function main() {
   const manager = {
     getStatus: () => ({ ...status }),
     install: async () => { installs += 1; return { ...status }; },
+    setEnabled: async () => {
+      Object.assign(status, { desiredEnabled: false, activeEnabled: false, stopPending: true, phase: "disable-pending" });
+      throw Object.assign(new Error("worker stop failed"), { code: "PLUGIN_DISABLE" });
+    },
+    uninstall: async () => {
+      Object.assign(status, { installed: true, desiredEnabled: false, activeEnabled: false, cleanupPending: true, phase: "cleanup-pending" });
+      throw Object.assign(new Error("files are locked"), { code: "PLUGIN_UNINSTALL" });
+    },
   };
   const app = express();
   app.use(express.json());
@@ -51,6 +59,17 @@ async function main() {
     const readableStatus = await fetch(`${baseUrl}/status`);
     assert.equal(readableStatus.status, 200);
     assert.equal((await readableStatus.json()).plugin.phase, "ready");
+    const failedDisable = await fetch(`${baseUrl}/enabled`, { method: "POST", headers: { "x-freeflow-plugin": "1", "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
+    assert.equal(failedDisable.status, 400);
+    const disabled = await failedDisable.json();
+    assert.equal(disabled.code, "PLUGIN_DISABLE");
+    assert.equal(disabled.plugin.desiredEnabled, false, "failed mutations must return their real committed state");
+    assert.equal(disabled.plugin.stopPending, true);
+    const failedUninstall = await fetch(`${baseUrl}/uninstall`, { method: "POST", headers: { "x-freeflow-plugin": "1" } });
+    assert.equal(failedUninstall.status, 400);
+    const uninstall = await failedUninstall.json();
+    assert.equal(uninstall.plugin.installed, true);
+    assert.equal(uninstall.plugin.cleanupPending, true, "failed uninstall retains the cleanup action for UI reconciliation");
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(unhandled.length, 0, "cleanup failure must not become an unhandled rejection");
     console.log("PASS assistant plugin routes: origin/header protection and injected Windows cleanup failure preserve server, installation state, and subsequent installs");

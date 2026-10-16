@@ -86,11 +86,12 @@ function createAssistantPluginManager(options = {}) {
   const pluginDir = path.join(path.resolve(dataDir), "plugins", ASSISTANT_PLUGIN_ID);
   const versionsDir = path.join(pluginDir, "versions");
   const registryPath = path.join(pluginDir, "state.json");
-  let registry = { schemaVersion: 1, desiredEnabled: false, installed: null };
+  let registry = { schemaVersion: 1, desiredEnabled: false, installed: null, cleanupPending: false };
   let initializePromise;
   let activeDirectory = null;
   let activeManifest = null;
   let disablePending = false;
+  let integrity = null;
   let phase = "not-installed";
   let error = null;
   let update = null;
@@ -103,17 +104,21 @@ function createAssistantPluginManager(options = {}) {
       id: ASSISTANT_PLUGIN_ID,
       phase,
       installed: !!registry.installed,
-      version: registry.installed?.manifest.version || null,
+      version: registry.installed?.manifest?.version || null,
       desiredEnabled: registry.desiredEnabled,
       activeEnabled: !!activeDirectory,
       activeVersion: activeManifest?.version || null,
+      stopPending: disablePending,
+      cleanupPending: registry.cleanupPending,
+      integrity: integrity ? { ...integrity } : null,
       downloadAvailable: Boolean(catalogUrl),
-      restartRequired: !!registry.installed && registry.desiredEnabled
+      restartRequired: !!registry.installed && integrity?.valid === true && registry.desiredEnabled
+        && !registry.cleanupPending && !disablePending
         && activeDirectory !== path.join(versionsDir, registry.installed.directoryName),
       progress: progress ? { ...progress } : null,
       error: error ? { ...error } : null,
       update: update ? { ...update } : null,
-      updateAvailable: !!registry.installed && !!update
+      updateAvailable: !!registry.installed && integrity?.valid === true && !!update
         && compareVersion(update.version, registry.installed.manifest.version) > 0,
       selfCheck: registry.installed?.selfCheck ? { ...registry.installed.selfCheck } : null,
     };
@@ -130,7 +135,7 @@ function createAssistantPluginManager(options = {}) {
   }
 
   async function persist(next) {
-    const result = await atomicWriteFile(registryPath, JSON.stringify(next, null, 2), { mode: 0o600 });
+    const result = await atomicWriteFile(registryPath, JSON.stringify(next, null, 2), { mode: 0o600, fsync: true });
     if (!result.ok) throw pluginError("PLUGIN_STORAGE", "无法保存组件状态");
     registry = next;
   }
@@ -188,6 +193,16 @@ function createAssistantPluginManager(options = {}) {
     }
   }
 
+  async function checkInstalled() {
+    try {
+      await verifyInstalled(registry.installed);
+      integrity = { valid: true, checkedAt: new Date().toISOString() };
+    } catch (cause) {
+      integrity = { valid: false, checkedAt: new Date().toISOString(), errorCode: cause.code || "PLUGIN_INTEGRITY", message: "组件文件缺失或损坏，请修复安装" };
+      throw cause;
+    }
+  }
+
   async function initialize() {
     if (initializePromise) return initializePromise;
     initializePromise = (async () => {
@@ -196,9 +211,10 @@ function createAssistantPluginManager(options = {}) {
         if (raw.length > 65536) throw pluginError("PLUGIN_STORAGE", "组件状态文件过大");
         const saved = JSON.parse(raw);
         if (saved.schemaVersion !== 1 || typeof saved.desiredEnabled !== "boolean") throw pluginError("PLUGIN_STORAGE", "组件状态记录无效");
-        registry = { schemaVersion: 1, desiredEnabled: saved.desiredEnabled, installed: saved.installed || null };
+        registry = { schemaVersion: 1, desiredEnabled: saved.desiredEnabled, installed: saved.installed || null, cleanupPending: saved.cleanupPending === true };
+        if (registry.cleanupPending) return await finishUninstall();
         if (registry.installed) {
-          await verifyInstalled(registry.installed);
+          await checkInstalled();
           phase = "ready";
           if (registry.desiredEnabled) {
             activeDirectory = getInstallation().directory;
@@ -206,7 +222,10 @@ function createAssistantPluginManager(options = {}) {
           }
         }
       } catch (cause) {
-        if (cause.code !== "ENOENT") {
+        if (registry.cleanupPending) {
+          phase = "cleanup-pending";
+          error = { code: "PLUGIN_UNINSTALL", message: "组件卸载尚未完成，请重试卸载" };
+        } else if (cause.code !== "ENOENT") {
           phase = "error";
           error = { code: cause.code || "PLUGIN_STORAGE", message: "助手组件无法加载，请重新安装或卸载后重试" };
         } else if (registry.installed) {
@@ -217,6 +236,27 @@ function createAssistantPluginManager(options = {}) {
       return getStatus();
     })();
     return initializePromise;
+  }
+
+  async function refreshStatus() {
+    // Progress polling must remain responsive while an installation owns the queue.
+    if (currentOperation) return getStatus();
+    return serialize(async () => {
+      if (!registry.installed || registry.cleanupPending) return getStatus();
+      try { await checkInstalled(); }
+      catch (cause) {
+        disablePending = disablePending || !!activeDirectory;
+        activeDirectory = null;
+        activeManifest = null;
+        if (disablePending) {
+          try { await onDisable?.(); disablePending = false; }
+          catch { /* Keep the retryable stop state; never expose damaged code. */ }
+        }
+        phase = "error";
+        error = { code: integrity.errorCode, message: integrity.message };
+      }
+      return getStatus();
+    });
   }
 
   function serialize(action) {
@@ -282,6 +322,7 @@ function createAssistantPluginManager(options = {}) {
   }
 
   async function readCatalog(operation) {
+    if (!catalogUrl) throw pluginError("PLUGIN_CATALOG_UNAVAILABLE", "在线组件尚未发布，请导入官方签名组件包");
     const bytes = await fetchBytes(catalogUrl, operation, 64 * 1024, false);
     let catalog;
     try { catalog = JSON.parse(bytes.toString("utf8")); } catch { throw pluginError("PLUGIN_CATALOG", "组件目录信息无效"); }
@@ -300,13 +341,14 @@ function createAssistantPluginManager(options = {}) {
   async function checkForUpdate() {
     return serialize(async () => {
       assertNotBusy();
+      if (registry.cleanupPending) throw pluginError("PLUGIN_CLEANUP_PENDING", "请先重试完成组件卸载，再安装");
       const operation = { controller: new AbortController() };
       currentOperation = operation;
       const timer = operationTimeout(operation);
       try {
         update = await readCatalog(operation);
         error = null;
-        return { ...update, available: !registry.installed || compareVersion(update.version, registry.installed.manifest.version) > 0 };
+        return { ...update, available: !registry.installed || integrity?.valid !== true || compareVersion(update.version, registry.installed.manifest.version) > 0 };
       } catch (cause) {
         error = { code: operation.timedOut ? "PLUGIN_TIMEOUT" : cause.code || "PLUGIN_DOWNLOAD", message: cause.message || "无法获取组件目录" };
         throw cause;
@@ -326,6 +368,8 @@ function createAssistantPluginManager(options = {}) {
   async function install(input = {}) {
     return serialize(async () => {
       assertNotBusy();
+      if (registry.cleanupPending) throw pluginError("PLUGIN_CLEANUP_PENDING", "请先重试完成组件卸载，再安装");
+      if (disablePending) await deactivate();
       if (input.url && input.filePath) throw pluginError("PLUGIN_SOURCE", "请选择一种组件安装来源");
       const operation = { controller: new AbortController(), timedOut: false };
       currentOperation = operation;
@@ -400,12 +444,13 @@ function createAssistantPluginManager(options = {}) {
         stagingDirectory = null;
         throwIfCancelled(operation);
         const installed = { manifest, signature, directoryName, installedAt: new Date().toISOString(), selfCheck: { ok: true, checkedAt: new Date().toISOString() } };
-        await persist({ schemaVersion: 1, desiredEnabled: true, installed });
+        await persist({ schemaVersion: 1, desiredEnabled: registry.installed ? registry.desiredEnabled : true, installed, cleanupPending: false });
+        integrity = { valid: true, checkedAt: new Date().toISOString() };
         published = true;
         phase = "ready";
         // Existing processes keep their old immutable version until this application exits.
         const keep = new Set([finalDirectory, activeDirectory].filter(Boolean));
-        for (const entry of await fs.readdir(versionsDir, { withFileTypes: true })) {
+        for (const entry of await fs.readdir(versionsDir, { withFileTypes: true }).catch(() => [])) {
           if (entry.isDirectory() && !keep.has(path.join(versionsDir, entry.name))) await fs.rm(path.join(versionsDir, entry.name), { recursive: true, force: true }).catch(() => {});
         }
         return getStatus();
@@ -438,8 +483,16 @@ function createAssistantPluginManager(options = {}) {
     if (typeof enabled !== "boolean") throw pluginError("PLUGIN_ENABLED", "组件启用状态无效");
     return serialize(async () => {
       assertNotBusy();
+      if (registry.cleanupPending) throw pluginError("PLUGIN_CLEANUP_PENDING", "组件卸载尚未完成，请先重试卸载");
       if (enabled && !registry.installed) throw pluginError("PLUGIN_NOT_INSTALLED", "请先安装 AI 助手组件");
-      if (enabled) await verifyInstalled(registry.installed);
+      if (enabled) {
+        try { await checkInstalled(); }
+        catch (cause) {
+          phase = "error";
+          error = { code: integrity.errorCode, message: integrity.message };
+          throw cause;
+        }
+      }
       if (!enabled || disablePending) await deactivate();
       if (enabled) await persist({ ...registry, desiredEnabled: true });
       error = null;
@@ -461,27 +514,41 @@ function createAssistantPluginManager(options = {}) {
       catch (cause) { failure = failure || cause; }
     }
     if (failure) {
-      phase = "error";
+      disablePending = true;
+      phase = registry.cleanupPending ? "cleanup-pending" : "disable-pending";
       error = { code: "PLUGIN_DISABLE", message: "助手已禁止接入，但停止或保存状态失败，请重试停用" };
       throw pluginError(error.code, error.message);
     }
-    if (error?.code === "PLUGIN_DISABLE") phase = registry.installed ? "ready" : "not-installed";
+    if (error?.code === "PLUGIN_DISABLE") phase = registry.installed ? integrity?.valid === false ? "error" : "ready" : "not-installed";
+  }
+
+  async function finishUninstall() {
+    try {
+      await deactivate();
+      await fs.rm(versionsDir, { recursive: true, force: true });
+      // Keep the installation and durable intent until removal has actually succeeded.
+      await persist({ schemaVersion: 1, desiredEnabled: false, installed: null, cleanupPending: false });
+      integrity = null;
+      phase = "not-installed";
+      error = null;
+      update = null;
+      return getStatus();
+    } catch (cause) {
+      phase = "cleanup-pending";
+      error = { code: "PLUGIN_UNINSTALL", message: "组件卸载尚未完成，请重试卸载" };
+      throw pluginError(error.code, error.message);
+    }
   }
 
   async function uninstall() {
     return serialize(async () => {
       assertNotBusy();
-      await deactivate();
-      await persist({ schemaVersion: 1, desiredEnabled: false, installed: null });
-      await fs.rm(versionsDir, { recursive: true, force: true });
-      phase = "not-installed";
-      error = null;
-      update = null;
-      return getStatus();
+      await persist({ ...registry, desiredEnabled: false, cleanupPending: true });
+      return finishUninstall();
     });
   }
 
-  return { initialize, getStatus, getInstallation, checkForUpdate, install, cancel, setEnabled, uninstall };
+  return { initialize, getStatus, refreshStatus, getInstallation, checkForUpdate, install, cancel, setEnabled, uninstall };
 }
 
 module.exports = { createAssistantPluginManager, compareVersion, FILE_NAMES };

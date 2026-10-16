@@ -169,7 +169,7 @@ async function main() {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const source = fs.readFileSync(path.join(__dirname, "../electron/main.js"), "utf8");
     const start = source.indexOf("async function githubSyncRequest(");
-    const end = source.indexOf('\nipcMain.handle("desktop-shell:github-sync-status"', start);
+    const end = source.indexOf('\nconst githubSyncOperations =', start);
     assert(start >= 0 && end > start);
     const request = vm.runInNewContext(`${source.slice(start, end)}\ngithubSyncRequest`, { APP_URL: `${origin}/?desktop=1`, URL, AbortSignal, fetch: realFetch });
     assert.equal((await request("/status")).connected, true);

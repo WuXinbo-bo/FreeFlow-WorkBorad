@@ -37,6 +37,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
   const full = await service.readSettingsSnapshot({ includeAi: true });
   let plugin = { installed: false, desiredEnabled: false, activeEnabled: false, phase: "idle", downloadAvailable: true };
   let pendingStatuses = [];
+  let failDisable = false, failUninstall = false, holdStatus = false, releaseStatus = null;
   let calls = [], posts = [], polls = 0, ai = 0;
   const json = (res, data, status = 200) => {
     res.writeHead(status, { "Content-Type": "application/json" });
@@ -59,6 +60,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
       if (req.method === "POST") assert.equal(req.headers["x-freeflow-plugin"], "1");
       if (action === "status") {
         polls++;
+        if (holdStatus) { holdStatus = false; const saved = structuredClone(plugin); releaseStatus = () => json(res, { ok: true, plugin: saved }); return; }
         if (pendingStatuses.length) plugin = pendingStatuses.shift();
       }
       if (action === "install") {
@@ -73,7 +75,15 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
         let body = "";
         for await (const c of req) body += c;
         const enabled = JSON.parse(body).enabled;
-        plugin = { ...plugin, desiredEnabled: enabled, activeEnabled: enabled ? plugin.activeEnabled : false, restartRequired: enabled };
+        if (failDisable && !enabled) {
+          plugin = { ...plugin, desiredEnabled: false, activeEnabled: false, stopPending: true, phase: "disable-pending" };
+          return json(res, { ok: false, error: "worker stop failed", plugin }, 400);
+        }
+        plugin = { ...plugin, desiredEnabled: enabled, activeEnabled: enabled ? plugin.activeEnabled : false, restartRequired: enabled, stopPending: false, phase: "ready", error: null };
+      }
+      if (action === "uninstall" && failUninstall) {
+        plugin = { ...plugin, activeEnabled: false, desiredEnabled: false, cleanupPending: true, phase: "cleanup-pending" };
+        return json(res, { ok: false, error: "plugin folder locked", plugin }, 400);
       }
       if (action === "uninstall") plugin = { installed: false, activeEnabled: false, desiredEnabled: false, phase: "idle" };
       if (action === "import") {
@@ -116,7 +126,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
     await page.locator("[data-settings-section=plugins]").click();
     await page.locator("[data-settings-action=plugin-install]").click();
     await page.waitForSelector(".settings-center-plugin-track.is-indeterminate", { timeout: 2500 });
-    assert.equal(await page.locator(".settings-center-plugin-state").textContent(), "正在准备", "accepted install is busy before manager starts");
+    assert.match(await page.locator(".settings-center-plugin-state").textContent(), /正在准备|正在下载/, "accepted install remains busy across immediate status reconciliation");
     assert.equal(await page.locator("[role=progressbar]").getAttribute("aria-valuenow"), null);
     await page.waitForTimeout(800);
     assert.ok(polls >= 2);
@@ -174,6 +184,46 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
       await page.evaluate(() => center.close());
       await page.evaluate(() => center.open());
     }
+    plugin = { installed: true, activeEnabled: true, desiredEnabled: true, version: "1.0.0", phase: "ready", downloadAvailable: true };
+    await page.evaluate(() => center.reload());
+    failDisable = true;
+    await page.locator('[data-settings-action="plugin-disable-confirm"]').click();
+    await page.locator('[data-settings-action="plugin-disable"]').click();
+    await page.waitForFunction(() => document.querySelector('.settings-center-plugin-state')?.textContent === "停用未完成");
+    assert.equal(await page.locator('[data-settings-section="ai"]').count(), 0, "failed stop still removes disabled AI controls");
+    assert.match(await page.locator('.settings-center-plugin-error').textContent(), /worker stop failed/);
+    failDisable = false;
+    await page.locator('[data-settings-action="plugin-disable"]').click();
+    await page.waitForSelector('[data-settings-action="plugin-enable"]');
+    failUninstall = true;
+    await page.locator('.settings-center-plugin-more > summary').click();
+    await page.locator('[data-settings-action="plugin-uninstall-confirm"]').click();
+    await page.locator('[data-settings-action="plugin-uninstall"]').click();
+    await page.waitForFunction(() => document.querySelector('.settings-center-plugin-state')?.textContent === "卸载未完成");
+    assert.match(await page.locator('[data-settings-action="plugin-uninstall"]').textContent(), /重试卸载/);
+    failUninstall = false;
+    await page.locator('[data-settings-action="plugin-uninstall"]').click();
+    await page.waitForSelector('[data-settings-action="plugin-install"]');
+    plugin = { installed: true, activeEnabled: false, desiredEnabled: true, version: "1.0.0", phase: "error", integrity: { valid: false }, selfCheck: { ok: true }, downloadAvailable: true };
+    await page.evaluate(() => center.reload());
+    assert.equal(await page.locator('[data-settings-action="plugin-install"]').textContent(), "修复安装");
+    assert(!await page.locator('.settings-center-plugin-version').textContent().then(text => text.includes("自检通过")), "historical self-check never disguises current corruption");
+    plugin = { installed: false, activeEnabled: false, desiredEnabled: false, phase: "not-installed", downloadAvailable: false };
+    await page.evaluate(() => center.reload());
+    assert.equal(await page.locator('[data-settings-action="plugin-install"]').isDisabled(), true);
+    assert.match(await page.locator('.settings-center-plugin-card').textContent(), /暂不支持在线安装/);
+    plugin = { installed: true, activeEnabled: true, desiredEnabled: true, version: "1.0.0", phase: "ready", downloadAvailable: true };
+    await page.evaluate(() => center.reload());
+    holdStatus = true;
+    await page.evaluate(() => { void center.open(); });
+    while (!releaseStatus) await page.waitForTimeout(10);
+    await page.locator('[data-settings-action="plugin-disable-confirm"]').click();
+    await page.locator('[data-settings-action="plugin-disable"]').click();
+    await page.waitForSelector('[data-settings-action="plugin-enable"]');
+    releaseStatus();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.locator('[data-settings-section="ai"]').count(), 0, "stale GET cannot restore AI after successful disable");
+    assert.equal(await page.locator('[data-settings-action="plugin-configure"]').count(), 0);
     const lifecycleResult = await page.evaluate(async () => {
       center.close();
       document.body.innerHTML = '<section class="conversation-panel"><header id="assistant-plugin-header"></header><div id="assistant-plugin-history"></div><div id="thread-viewport"><div id="chat-log"></div><div id="assistant-plugin-thread-controls"></div></div><div id="assistant-plugin-composer"></div></section>';
@@ -227,7 +277,7 @@ const { getDefaultAgentSettings } = require(root + "/src/backend/agent/agentSett
       return { runtimeCalls, openCalls, renders, activationCycles: 20 };
     });
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, checks: ["no AI startup", "accepted install polling", "unknown-size download", "visible-only polling", "cancel recovery", "local import checking to ready", "local import and next-start activation", "manual disable enable uninstall", "lazy AI and dirty core preservation", "hidden AI omitted from saves", "10 rapid open close cycles"], polls, lifecycle: lifecycleResult }));
+    console.log(JSON.stringify({ ok: true, checks: ["no AI startup", "accepted install polling", "unknown-size download", "visible-only polling", "cancel recovery", "local import checking to ready", "local import and next-start activation", "manual disable enable uninstall", "lazy AI and dirty core preservation", "hidden AI omitted from saves", "10 rapid open close cycles", "failed stop and uninstall recovery", "corruption repair and unavailable catalog", "stale GET mutation ordering"], polls, lifecycle: lifecycleResult }));
   } finally {
     await browser.close();
     await new Promise((r) => server.close(r));

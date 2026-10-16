@@ -24,7 +24,7 @@ FreeFlow 主程序内置画布、工作区、文件预览与转换、导出、Gi
 | 下次启动且文件验证通过 | true | true | true | 后台仍未启动，直至实际使用 |
 | 手动停用 | true | false | false | 先阻止新请求，再停止后台和任务；保留数据 |
 | 再次开启 | true | true | false | 先验证组件文件；下次启动启用 |
-| 更新安装成功 | true | true | 原值 | 已运行的旧版本继续到本次应用退出；下次使用新版本 |
+| 更新安装成功 | true | 保留原值 | 原值 | 已运行的旧版本继续到本次应用退出；原本停用的组件保持停用 |
 | 卸载 | false | false | false | 停止后台，移除组件程序；保留会话与配置 |
 | 文件缺失、损坏、签名错误 | 保留诊断状态 | 保留原意愿 | false | 不加载损坏代码；允许重新安装或卸载 |
 
@@ -33,6 +33,8 @@ FreeFlow 主程序内置画布、工作区、文件预览与转换、导出、Gi
 取消下载、超时、签名或内容校验失败、自检失败都不切换注册版本。临时目录会清理，之前可用版本继续保留。快速重复启停、同时请求启动及停用时的迟到回包均需回归测试。
 
 停用后前端已经加载的 JavaScript 可能仍在模块缓存中，不能承诺全部内存立即归零。后台进程、订阅、重连与交互入口应退出；再次启动应恢复无助手后台的基线。
+
+`integrity` 表示当前文件验证结果，`selfCheck` 是安装时的历史自检记录，界面不能用后者代替当前完整性。`stopPending` 表示停止或落盘仍需重试；`cleanupPending` 是已持久保存的卸载意愿。卸载失败时保留安装记录，阻止组件再次接入，允许重试；下次启动先完成待清理操作，成功后才回到未安装界面。会话与配置保留。
 
 ## 代码与数据
 
@@ -122,6 +124,8 @@ Windows PowerShell 可先设置 `$env:FREEFLOW_PLUGIN_SIGNING_KEY_FILE` 再执�
 ```text
 https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/latest/download/assistant-plugin-catalog.json
 ```
+
+构建时设置 `FREEFLOW_ASSISTANT_RELEASE_CATALOG_URL` 后，`prepare:desktop-build` 会将 HTTPS 目录写入 `assistantPluginRelease.json` 随主程序打包；不设置则恢复空目录，避免遗留开发地址。正式发布前执行 `npm run check:assistant-release -- --require-online`，验证默认目录、签名包和 catalog 一致性。此命令不代替公网下载验证，也不会上传文件。
 
 **本轮只完成本地真实下载、安装和桌面测试，没有发布 GitHub Release，也没有推送远程。线上目录和包尚未上传，不能把本地 HTTP 测试描述为公网发布已可用。** 在正式发布前，可使用经过签名的离线包完成安装。
 
