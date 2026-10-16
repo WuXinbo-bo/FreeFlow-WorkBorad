@@ -225,16 +225,24 @@ async function main() {
       });
     }, boardText("remote"));
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("freeflow:github-sync-status")));
-    await panel.getByRole("button", { name: "检查更新", exact: true }).waitFor();
+    await panel.getByRole("button", { name: "检查同步", exact: true }).waitFor();
+    const syncControls = await panel.evaluate((node) => {
+      const check = node.querySelector('.canvas2d-workspace-sync-check');
+      const settings = node.querySelector('[aria-label="GitHub 同步设置"]');
+      const a = check.getBoundingClientRect();
+      const b = settings.getBoundingClientRect();
+      return { sameRow: check.parentElement === settings.parentElement, gap: b.left - a.right, centerDelta: Math.abs(a.top + a.height / 2 - b.top - b.height / 2) };
+    });
+    assert(syncControls.sameRow && syncControls.gap >= 0 && syncControls.gap <= 6 && syncControls.centerDelta < 1, `sync check did not sit beside settings: ${JSON.stringify(syncControls)}`);
     assert(!(await panel.locator(".canvas2d-workspace-sync").getAttribute("class")).includes("is-warning"), "ordinary unchecked sync is highlighted as an error");
-    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("button", { name: "检查同步", exact: true }).click();
     await panel.locator(".canvas2d-workspace-sync-summary").filter({ hasText: "待上传 1 · 待拉取 1 · 冲突 1" }).waitFor();
     await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
     if (process.env.FREEFLOW_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.FREEFLOW_SCREENSHOT_DIR, "workspace-sync-states.png") });
     assert(await panel.locator(".canvas2d-workspace-sync-time").filter({ hasText: "检查于" }).isVisible());
     const beforeOffline = await snapshot();
     await app.evaluate(() => { globalThis.__workspacePlanFail = true; });
-    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("button", { name: "检查同步", exact: true }).click();
     await panel.getByRole("alert").filter({ hasText: "offline fixture" }).waitFor();
     assert.deepEqual(await snapshot(), beforeOffline, "failed update check replaced local canvas");
     await app.evaluate(() => { globalThis.__workspacePlanFail = false; });
@@ -257,14 +265,14 @@ async function main() {
       }
     }
     await app.evaluate(() => { globalThis.__workspacePlanWait = new Promise((resolve) => { globalThis.__releaseWorkspacePlan = resolve; }); });
-    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("button", { name: "检查同步", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "true");
     await setSyncStatus({ connected: true, repository: { owner: "fixture", repo: "test" }, ledger: { boards: {} } });
     await panel.locator(".canvas2d-workspace-sync-toggle").filter({ hasText: "正在检查" }).waitFor();
     await app.evaluate(() => { globalThis.__releaseWorkspacePlan(); globalThis.__workspacePlanWait = null; });
     await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
     assert.equal(await panel.locator(".canvas2d-workspace-sync-summary").count(), 0, "late plan from the previous repository populated the new repository");
-    await panel.getByRole("button", { name: "检查更新", exact: true }).click();
+    await panel.getByRole("button", { name: "检查同步", exact: true }).click();
     await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
     await makeDirty();
     await panel.locator(".canvas2d-workspace-current").getByText("未保存 · 待上传", { exact: true }).waitFor();
@@ -384,7 +392,9 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__canvas2dEngine.saveBoard()), true);
     const beforeFolder = await snapshot();
     await panel.getByRole("button", { name: "收起画布工作区" }).click();
-    await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    const directoryWorkspaceOpener = page.getByRole("button", { name: "打开画布工作区", exact: true });
+    if (await directoryWorkspaceOpener.isVisible()) await directoryWorkspaceOpener.click();
+    else await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await app.evaluate(({ dialog }, target) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] }); }, second);
     await panel.locator(".canvas2d-workspace-folder > button").first().click();
     await row("Second").waitFor({ state: "visible" });
@@ -453,8 +463,10 @@ async function main() {
       await navigation.hover();
       assert(Math.abs((await navigation.boundingBox()).y - compact.y) < 1, "hover moved the centered compact rail");
       await page.getByRole("button", { name: "展开画布目录", exact: true }).click();
-      assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "opening the directory also opened files");
-      await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+      assert.equal(await panel.isVisible(), false, "directory retained the redundant workspace rail");
+      await directory.getByRole("button", { name: "打开画布工作区", exact: true }).click();
+      await panel.getByRole("textbox", { name: "搜索画布", exact: true }).waitFor();
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "搜索画布");
     }
     assert.deepEqual(await snapshot(), navigationSnapshot, "independent panel toggles changed the canvas");
     await directory.getByLabel("新建文件夹", { exact: true }).click();
@@ -472,6 +484,40 @@ async function main() {
     await directory.locator(".canvas2d-navigator-title-input").fill("独立目录测试");
     await directory.locator(".canvas2d-navigator-title-input").press("Enter");
     await directory.getByText("独立目录测试", { exact: true }).waitFor();
+    const longTitle = "导入的超长标题_" + "研究资料和文件内容".repeat(60);
+    const longEntryId = await page.evaluate((title) => {
+      const engine = window.__canvas2dEngine;
+      let parentId = "";
+      for (let depth = 0; depth < 10; depth += 1) {
+        parentId = engine.addCanvasNavigatorFolder({ title: `${depth} ${title}`, parentId }).id;
+      }
+      return parentId;
+    }, longTitle);
+    const longEntry = directory.locator(`[data-navigator-entry-id="${longEntryId}"]`);
+    await longEntry.scrollIntoViewIfNeeded();
+    await longEntry.hover();
+    const readOverflow = () => directory.evaluate((node) => {
+      const list = node.querySelector('.canvas2d-navigator-list');
+      const rows = [...node.querySelectorAll('.canvas2d-navigator-entry')];
+      return { width: list.clientWidth, content: list.scrollWidth, rows: rows.map((row) => {
+        const title = row.querySelector('strong');
+        const more = row.querySelector('.canvas2d-navigator-more-btn');
+        const style = title && getComputedStyle(title);
+        return { width: row.getBoundingClientRect().width, content: row.scrollWidth, titleWidth: title?.getBoundingClientRect().width, ellipsis: style?.textOverflow, tooltip: title?.title, moreInside: !more || getComputedStyle(more.parentElement).display === 'none' || more.getBoundingClientRect().right <= list.getBoundingClientRect().right + 1 };
+      }) };
+    });
+    let overflow = await readOverflow();
+    assert(overflow.content <= overflow.width + 1, `long titles expanded the directory: ${JSON.stringify(overflow)}`);
+    assert(overflow.rows.every(row => row.content <= row.width + 1 && row.moreInside), "deep directory clipped row controls");
+    assert(overflow.rows.some(row => row.tooltip?.includes(longTitle) && row.ellipsis === "ellipsis" && row.titleWidth > 20), "full title tooltip or usable ellipsis width missing");
+    await longEntry.getByRole("button", { name: "更多操作", exact: true }).click();
+    await directory.getByRole("button", { name: "重命名", exact: true }).click();
+    await directory.locator('.canvas2d-navigator-title-input').fill(longTitle + "_编辑");
+    overflow = await readOverflow();
+    assert(overflow.content <= overflow.width + 1, "rename input expanded the directory");
+    await directory.locator('.canvas2d-navigator-title-input').press('Escape');
+    await longEntry.locator('strong').waitFor();
+    assert.equal(await longEntry.locator('strong').getAttribute('title'), `9 ${longTitle}`, "cancel rename changed the imported title");
     for (let index = 0; index < 16; index += 1) await directory.getByLabel("新建文件夹", { exact: true }).click();
     assert(await directory.locator(".canvas2d-navigator-list").evaluate((list) => list.scrollHeight > list.clientHeight), "long directories do not scroll within their own section");
     await directory.locator(".canvas2d-navigator-entry").last().scrollIntoViewIfNeeded();
@@ -495,14 +541,17 @@ async function main() {
     }
     for (let cycle = 0; cycle < 4; cycle += 1) {
       await panel.getByRole("button", { name: "收起画布工作区" }).click();
-      await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+      assert.equal(await panel.isVisible(), false, "directory retained the redundant workspace rail");
+      await directory.getByRole("button", { name: "打开画布工作区", exact: true }).click();
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "搜索画布");
     }
     await panel.getByRole("button", { name: "收起画布工作区" }).click();
     await page.reload();
     await page.waitForFunction(() => window.__canvas2dEngine && !document.body.classList.contains("app-booting"));
-    assert(await panel.getByRole("button", { name: "展开画布工作区", exact: true }).isVisible(), "sidebar collapsed preference lost on reload");
+    assert.equal(await panel.isVisible(), false, "sidebar collapsed preference lost on reload");
     assert(await directory.isVisible(), "directory open state was coupled to the collapsed workspace on reload");
-    await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    await directory.getByRole("button", { name: "打开画布工作区", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "搜索画布");
     await assertSharedLayout();
     assert(Math.abs((await panel.boundingBox()).width - widthBefore) < 1, "shared width preference lost on reload");
     const screenshotDir = process.env.FREEFLOW_SCREENSHOT_DIR;
@@ -537,9 +586,16 @@ async function main() {
     if (await map.evaluate((element) => element.classList.contains("is-collapsed"))) await map.locator("button").click();
     await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
     await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "hidden");
+    await page.waitForFunction(() => {
+      const map = document.querySelector("#canvas2d-transient-minimap");
+      return map.classList.contains("is-space-constrained") && map.getAttribute("aria-expanded") === "false";
+    });
+    assert.equal(await map.evaluate((element) => element.classList.contains("is-collapsed")), false, "temporary panel overlap changed the minimap preference");
     await panel.getByRole("button", { name: "收起画布工作区" }).click();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector("#canvas2d-transient-minimap")).visibility === "visible");
+    await page.waitForFunction(() => {
+      const map = document.querySelector("#canvas2d-transient-minimap");
+      return getComputedStyle(map).visibility === "visible" && map.getAttribute("aria-expanded") === "true" && !map.classList.contains("is-space-constrained");
+    });
     assert.equal(await map.evaluate((element) => element.classList.contains("is-collapsed")), false, "temporary panel overlap changed the minimap preference");
     await map.locator("button").click();
     await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();

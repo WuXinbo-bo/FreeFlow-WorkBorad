@@ -83,6 +83,9 @@ const CHECKS = [
   "scripts/check-builtin-element-registry.js",
   "scripts/check-file-card-geometry.js",
   "scripts/check-canvas-ui-runtime.js",
+  "scripts/check-manual-minimap.js",
+  "scripts/check-canvas-options-panel.js",
+  "scripts/check-panel-controls-centering.js",
   "scripts/check-document-preview-runtime.js",
   "scripts/check-file-workstation.js",
   "scripts/structured-import/run-parser-unit-tests.cjs",
@@ -251,6 +254,7 @@ async function main() {
     fs.rmSync(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
   await runNodeScript("scripts/check-canvas-math-links-desktop.js");
+  await runNodeScript("scripts/check-canvas-options-desktop.js");
   console.log("[test] all checks passed");
 }
 

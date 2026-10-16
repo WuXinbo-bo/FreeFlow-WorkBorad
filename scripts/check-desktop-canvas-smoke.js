@@ -75,6 +75,22 @@ async function main() {
     });
     const workspace = page.locator(".canvas2d-workspace-panel");
     await workspace.getByRole("button", { name: "收起画布工作区", exact: true }).click();
+    await page.waitForFunction(() => !document.body.classList.contains("boot-shape-lock"));
+    // Native fullscreen bounds and the pane transition must settle before fixing pinch coordinates.
+    await page.evaluate(async () => {
+      let previous = "";
+      let stableFrames = 0;
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        await new Promise(requestAnimationFrame);
+        const rect = document.querySelector("#canvas-office-canvas").getBoundingClientRect();
+        const current = JSON.stringify([rect.x, rect.y, rect.width, rect.height]);
+        stableFrames = current === previous ? stableFrames + 1 : 0;
+        previous = current;
+        if (stableFrames >= 12) return;
+      }
+      throw new Error("Canvas layout did not settle after fullscreen transitions");
+    });
     await checkCanvasTrackpad(page);
     const point = await page.locator("#canvas-office-canvas").evaluate((canvas) => {
       const rect = canvas.getBoundingClientRect();
@@ -102,7 +118,9 @@ async function main() {
     assert(Math.abs(recoveredScale / beforePinch - 1) < 0.03, "native reverse pinch did not recover the camera scale");
     await cdp.detach();
     await page.waitForFunction(() => document.querySelector("#canvas2d-transient-minimap")?.classList.contains("is-collapsed"), null, { timeout: 3000 });
-    await workspace.getByRole("button", { name: "展开画布工作区", exact: true }).click();
+    const directoryWorkspaceOpener = page.getByRole("button", { name: "打开画布工作区", exact: true });
+    if (await directoryWorkspaceOpener.isVisible()) await directoryWorkspaceOpener.click();
+    else await workspace.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await checkWorkspaceChrome(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
     await checkCanvasHarmony(page, { screenshotDir: process.env.FREEFLOW_SCREENSHOT_DIR });
     if (process.env.FREEFLOW_SCREENSHOT_DIR) {

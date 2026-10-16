@@ -94,35 +94,44 @@ async function checkCanvasCardUx(page) {
   await load();
   const map = page.locator('#canvas2d-transient-minimap');
   const collapsed = () => map.evaluate(node => node.classList.contains('is-collapsed'));
+  const mapStats = () => map.locator('canvas').evaluate(node => node.__ffMinimapStats || { snapshotRenderCount: 0, viewportRenderCount: 0 });
   if (!(await collapsed())) await map.locator('button').click();
+  const hiddenStats = await mapStats();
   await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60));
-  await page.waitForTimeout(850);
-  // Both trusted scroll pan and Control-wheel zoom reveal the navigation map.
+  // Navigation never changes the manual open/closed state or draws a hidden map.
   await page.mouse.wheel(20, 20); await page.waitForTimeout(200);
-  assert(!(await collapsed()), 'scroll pan did not open map');
-  await page.waitForTimeout(900); assert(await collapsed(), 'pan map did not auto close');
+  assert(await collapsed(), 'scroll pan opened the manually closed map');
   await page.keyboard.down('Control'); await page.mouse.wheel(0, -50); await page.keyboard.up('Control');
-  await page.waitForFunction(() => !document.querySelector('#canvas2d-transient-minimap').classList.contains('is-collapsed'));
-  const stats = await map.locator('canvas').evaluate(node => node.__ffMinimapStats);
   await page.evaluate(() => window.__canvas2dEngine.zoomIn());
   await page.waitForTimeout(150);
-  const stats2 = await map.locator('canvas').evaluate(node => node.__ffMinimapStats);
-  assert.equal(stats2.snapshotRenderCount, stats.snapshotRenderCount, 'zoom regenerated scene snapshot');
-  await page.waitForTimeout(900); assert(await collapsed(), 'map did not auto close');
-  await page.evaluate(() => window.__canvas2dEngine.zoomIn());
+  assert(await collapsed(), 'zoom opened the manually closed map');
+  assert.equal((await mapStats()).snapshotRenderCount, hiddenStats.snapshotRenderCount);
+  assert.equal((await mapStats()).viewportRenderCount, hiddenStats.viewportRenderCount);
   await map.locator('button').click();
-  for (let i = 0; i < 3; i++) await page.evaluate(() => window.__canvas2dEngine.zoomIn());
-  assert(await collapsed(), 'manual close reopened within same gesture');
-  await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60)); await page.waitForTimeout(850);
-  await page.evaluate(() => window.__canvas2dEngine.zoomOut()); assert(!(await collapsed()), JSON.stringify(await page.evaluate(() => ({ hidden: document.hidden, map: document.querySelector('#canvas2d-transient-minimap').outerHTML }))));
-  await map.hover(); await page.waitForTimeout(900); assert(!(await collapsed()), 'hover did not pause auto hide');
-  await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60)); await page.waitForTimeout(900); assert(await collapsed());
-  await map.locator('button').click(); await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60));
-  await page.evaluate(() => window.__canvas2dEngine.zoomIn()); await page.waitForTimeout(900); assert(!(await collapsed()), 'manual expansion was not pinned');
-  await map.locator('button').click(); await page.mouse.move(rect.x + Math.min(1100, rect.width - 50), rect.y + Math.min(600, rect.height - 60)); await page.waitForTimeout(850);
+  assert(!(await collapsed()));
+  const stats = await mapStats();
   await page.evaluate(() => window.__canvas2dEngine.zoomIn());
-  await load(); assert(await collapsed(), 'board switch retained temporary map');
-  await page.waitForTimeout(900); assert(await collapsed());
+  await page.mouse.wheel(30, 15); await page.waitForTimeout(150);
+  const stats2 = await mapStats();
+  assert.equal(stats2.snapshotRenderCount, stats.snapshotRenderCount, 'navigation regenerated scene snapshot');
+  assert(stats2.viewportRenderCount > stats.viewportRenderCount, 'open map did not follow navigation');
+  await page.waitForTimeout(900); assert(!(await collapsed()), 'manual map auto closed');
+  await map.locator('button').click();
+  const closedStats = await mapStats();
+  for (let i = 0; i < 3; i++) await page.evaluate(() => window.__canvas2dEngine.zoomIn());
+  await load();
+  assert(await collapsed(), 'navigation or board switch reopened the map');
+  assert.equal((await mapStats()).snapshotRenderCount, closedStats.snapshotRenderCount);
+  assert.equal((await mapStats()).viewportRenderCount, closedStats.viewportRenderCount);
+  await map.locator('button').click();
+  const reopenedStats = await mapStats();
+  assert(reopenedStats.snapshotRenderCount > closedStats.snapshotRenderCount, 'reopening retained a stale scene snapshot');
+  await load([card, { ...card, id: 'map-replacement', x: 1200 }]);
+  assert(!(await collapsed()), 'board switch discarded the manual open state');
+  assert((await mapStats()).snapshotRenderCount > reopenedStats.snapshotRenderCount);
+  await map.locator('button').evaluate(button => { for (let i = 0; i < 10; i++) button.click(); });
+  assert(!(await collapsed()), 'rapid toggles lost the manual open state');
+  await map.locator('button').click();
 
   // Menu and submenu stay within the viewport, including short windows.
   for (const [x, y] of [[20, 180], [Math.min(900, rect.width - 200), 80], [20, Math.min(540, rect.height - 90)], [Math.min(900, rect.width - 200), Math.min(540, rect.height - 90)]]) {

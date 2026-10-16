@@ -266,7 +266,7 @@ function createCenterMarkup(snapshot) {
           <div class="tutorial-later-copy">
             <span class="tutorial-eyebrow">使用说明</span>
             <h2>以后也能随时回来</h2>
-            <p>打开画布右上角菜单，选择“画布教程”即可继续学习。</p>
+            <p>打开画布右上角“画布选项与帮助”，在帮助中选择“使用指南”即可继续学习。</p>
           </div>
           <button type="button" class="canvas2d-tutorial-overlay-btn is-primary" data-global-tutorial-later-confirm>知道了</button>
         </div>
@@ -308,6 +308,7 @@ function createCenterMarkup(snapshot) {
           <button type="button" data-global-tutorial-open-board>${renderTutorialIcon("file-pen-line")}<span><strong>打开示例画布</strong><small>在独立示例中自由练习</small></span></button>
           <button type="button" data-global-tutorial-action="shortcut-guide">${renderTutorialIcon("keyboard")}<span><strong>快捷键说明</strong><small>快速查看常用操作</small></span></button>
         </div>
+        <button type="button" class="tutorial-text-action" data-global-tutorial-action="welcome-intro">${renderTutorialIcon("play")}<span>重看欢迎演示</span></button>
       </div>
     </div>
   `;
@@ -495,6 +496,11 @@ export function mountGlobalTutorialHost({
     }
     if (action === "shortcut-guide") {
       runtime.setCenterView("shortcut-guide");
+      return;
+    }
+    if (action === "welcome-intro") {
+      welcomePlayed = false;
+      openIntro();
       return;
     }
     if (action === "resume") {

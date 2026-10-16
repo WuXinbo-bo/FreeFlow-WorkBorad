@@ -1496,24 +1496,25 @@ async function checkViewport(browser, viewport) {
     await assertPortalMenu(page, ".canvas2d-engine-menu-share", viewport);
     await shareButton.click();
 
-    const menuButton = page.locator('.canvas2d-engine-tool[title="菜单"]');
-    const menu = page.locator(".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide");
+    const menuButton = page.getByRole("button", { name: "画布选项与帮助", exact: true });
+    const menu = page.getByRole("dialog", { name: "画布选项与帮助", exact: true });
     await menuButton.click();
-    await menu.getByRole("menuitem", { name: "自动对齐吸附" }).click();
-    assert(await menu.getByRole("menuitemcheckbox", { name: /启用自动吸附/ }).isVisible(), "alignment submenu did not open", viewport);
-    await menu.getByRole("menuitem", { name: "背景" }).click();
-    assert((await menu.getByRole("menuitem", { name: "自动对齐吸附" }).getAttribute("aria-expanded")) === "false", "alignment submenu did not close", viewport);
-    assert(await menu.getByRole("menuitemradio", { name: /无背景/ }).isVisible(), "background submenu did not open", viewport);
-    await menu.getByRole("menuitem", { name: "关于画布" }).click();
-    assert((await menu.getByRole("menuitem", { name: "背景" }).getAttribute("aria-expanded")) === "false", "background submenu did not close", viewport);
-    assert(await menu.locator(".canvas2d-engine-menu-group-about").isVisible(), "about submenu did not open", viewport);
-    const menuSurface = await readSurface(page, ".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide");
-    assert(menuSurface.background === "rgba(255, 255, 255, 0.96)" && menuSurface.hitInside, "main menu is not a usable white surface", {
+    assert(await menu.getByRole("switch", { name: "对齐与吸附", exact: true }).isVisible(), "canvas controls did not open", viewport);
+    assert(await menu.getByRole("button", { name: "无背景", exact: true }).count() === 1, "background options are missing", viewport);
+    const canvasTabRect = await menu.boundingBox();
+    await menu.getByRole("tab", { name: "帮助", exact: true }).click();
+    assert(await menu.getByRole("button", { name: /使用指南/ }).isVisible(), "unified guide entry is missing", viewport);
+    assert(await menu.getByRole("button", { name: "欢迎演示", exact: true }).count() === 0, "welcome replay should live inside the tutorial center", viewport);
+    assert(await menu.getByRole("heading", { name: "关于 FreeFlow", exact: true }).isVisible(), "about information is missing", viewport);
+    const helpTabRect = await menu.boundingBox();
+    assert(Math.abs(canvasTabRect.height - helpTabRect.height) <= 1 && Math.abs(canvasTabRect.y - helpTabRect.y) <= 1, "canvas options panel jumps between tabs", { viewport, canvasTabRect, helpTabRect });
+    const menuSurface = await readSurface(page, ".canvas-options-panel");
+    assert(menuSurface.background === "rgb(255, 255, 255)" && menuSurface.hitInside, "main menu is not a usable opaque surface", {
       viewport,
       menuSurface,
     });
     assert(menuSurface.rect.bottom <= viewport.height, "main menu extends below the viewport", { viewport, menuSurface });
-    await assertPortalMenu(page, ".canvas2d-engine-menu-portal.canvas2d-engine-menu-wide", viewport);
+    await assertPortalMenu(page, ".canvas-options-panel", viewport);
     await page.keyboard.press("Escape");
     assert(!(await menu.isVisible()), "Escape did not close the canvas menu", viewport);
     assert(await menuButton.evaluate((button) => document.activeElement === button), "menu trigger focus was not restored", viewport);
