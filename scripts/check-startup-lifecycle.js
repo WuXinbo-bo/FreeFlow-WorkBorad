@@ -102,6 +102,7 @@ async function assertAtomicBoot(page, label) {
     released: window.__freeflowStartupLifecycle.released,
     booting: document.body.classList.contains("app-booting"),
     shapeLocked: document.body.classList.contains("boot-shape-lock"),
+    menuIconsIntact: ["desktop-pin-btn", "desktop-clickthrough-btn"].every((id) => document.querySelector(`#${id}`)?.querySelectorAll("svg.app-icon").length === 1),
     marks: { ...window.__FREEFLOW_BOOT_METRICS?.marks },
   }));
   const marks = complete.marks;
@@ -110,6 +111,7 @@ async function assertAtomicBoot(page, label) {
       complete.released === 1 &&
       !complete.booting &&
       !complete.shapeLocked &&
+      complete.menuIconsIntact &&
       marks["navigation-start"] <= marks["splash-frame"] &&
       marks["splash-frame"] <= marks["renderer-ready"] &&
       marks["renderer-ready"] <= marks["splash-exit-start"] &&

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 import { loadVendorEsmModule } from "../vendor/loadVendorEsmModule.js";
 
 const ZOOM_MIN = 0.5;
@@ -237,7 +238,7 @@ function WordDocxPreviewPane({ request }) {
             onClick={() => setZoom((current) => clampZoom(current - ZOOM_STEP))}
             aria-label="缩小预览"
           >
-            -
+            <AppIcon name="minus" size={16} />
           </button>
           <button
             type="button"
@@ -253,7 +254,7 @@ function WordDocxPreviewPane({ request }) {
             onClick={() => setZoom((current) => clampZoom(current + ZOOM_STEP))}
             aria-label="放大预览"
           >
-            +
+            <AppIcon name="plus" size={16} />
           </button>
         </div>
       </div>
@@ -309,7 +310,7 @@ export function WordExportPreviewDialog({
             <span>可调整阅读顺序；Word 按内容重新分页</span>
           </div>
           <button type="button" className="canvas2d-word-export-head-close" onClick={onClose} aria-label="关闭 Word 导出预览">
-            ×
+            <AppIcon name="x" size={16} />
           </button>
         </div>
 
@@ -318,12 +319,12 @@ export function WordExportPreviewDialog({
           {model.skippedCount ? <span>有 {model.skippedCount} 项无法导出</span> : null}
         </div>
 
-        <details className="canvas2d-word-export-note"><summary>调整阅读顺序</summary><ol className="canvas2d-word-reading-order">{(model.orderedItemIds || []).map((id, index, ids) => {
+        <details className="canvas2d-word-export-note"><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" />调整阅读顺序</summary><ol className="canvas2d-word-reading-order">{(model.orderedItemIds || []).map((id, index, ids) => {
           const item = request.sourceItems?.find((entry) => entry.id === id);
-          return <li key={id}><span>{index + 1}. {String(item?.title || item?.plainText || item?.name || item?.type || id).slice(0, 60)}</span><button type="button" disabled={exporting || index === 0} aria-label={`上移段落 ${index + 1}`} onClick={() => onReorder?.(id, -1)}>↑</button><button type="button" disabled={exporting || index === ids.length - 1} aria-label={`下移段落 ${index + 1}`} onClick={() => onReorder?.(id, 1)}>↓</button></li>;
+          return <li key={id}><span>{index + 1}. {String(item?.title || item?.plainText || item?.name || item?.type || id).slice(0, 60)}</span><button type="button" disabled={exporting || index === 0} aria-label={`上移段落 ${index + 1}`} onClick={() => onReorder?.(id, -1)}><AppIcon name="arrow-up" size={16} /></button><button type="button" disabled={exporting || index === ids.length - 1} aria-label={`下移段落 ${index + 1}`} onClick={() => onReorder?.(id, 1)}><AppIcon name="arrow-down" size={16} /></button></li>;
         })}</ol></details>
         {request.assetWarnings?.length > 0 && <div className="canvas2d-word-export-note" role="alert">以下图片将使用占位：{request.assetWarnings.join("；")}</div>}
-        <details className="canvas2d-word-export-note"><summary>内容统计</summary><TypeSummary summary={model.typeSummary || {}} /></details>
+        <details className="canvas2d-word-export-note"><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" />内容统计</summary><TypeSummary summary={model.typeSummary || {}} /></details>
 
         <div className="canvas2d-word-export-body" aria-label="Word 预览">
           <WordDocxPreviewPane request={request} />

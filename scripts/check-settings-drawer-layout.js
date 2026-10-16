@@ -14,7 +14,7 @@ const { getDefaultAgentSettings } = require("../src/backend/agent/agentSettingsM
 
 const root = path.resolve(__dirname, "..");
 const publicRoot = path.join(root, "public");
-const styles = ["styles.css", "ui.tokens.css", "ui.shell.css", "ui.air-canvas.css", "ui.chrome-system.css", "ui.canvas-chrome.css", "ui.delivery.css", "ui.settings-center.css", "ui.right-panel.css", "ui.workspace.css", "ui.file-workstation.css"];
+const styles = ["styles.css", "ui.tokens.css", "ui.shell.css", "ui.air-canvas.css", "ui.chrome-system.css", "ui.canvas-chrome.css", "ui.delivery.css", "ui.settings-center.css", "ui.right-panel.css", "ui.workspace.css", "ui.file-workstation.css", "ui.icons.css"];
 const viewports = [{ width: 800, height: 900 }, { width: 900, height: 900 }, { width: 1024, height: 900 }, { width: 1280, height: 900 }, { width: 1440, height: 900 }, { width: 1024, height: 540 }, { width: 800, height: 480 }];
 const sections = ["canvas", "github", "plugins", "appearance", "workbench", "ai", "updates"];
 
@@ -55,7 +55,7 @@ async function main() {
     if (!file.startsWith(publicRoot + path.sep)) { res.writeHead(403); res.end(); return; }
     try {
       const data = await fs.readFile(file);
-      const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : "application/octet-stream";
+      const type = /\.m?js$/.test(file) ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : "application/octet-stream";
       res.writeHead(200, { "Content-Type": type });
       res.end(data);
     } catch { res.writeHead(404); res.end(); }

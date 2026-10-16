@@ -248,7 +248,8 @@ async function main() {
       workspacePanels: document.querySelectorAll(".tutorial-workflow-panel").length,
       width: document.querySelector('[aria-label="欢迎使用 FreeFlow"]').getBoundingClientRect().width,
       flowSteps: document.querySelectorAll(".tutorial-intro-step").length,
-      inlineVisualStyles: document.querySelectorAll('[aria-label="欢迎使用 FreeFlow"] [style]').length,
+      // Shared icons carry only their size token; tutorial layout/animation stays in CSS.
+      inlineVisualStyles: [...document.querySelectorAll('[aria-label="欢迎使用 FreeFlow"] [style]')].filter((element) => !element.matches("svg.app-icon") || [...element.style].some((property) => property !== "--app-icon-size")).length,
     }));
     assert(
       introContract.logo && introContract.workspacePanels === 0 && introContract.width === 880 && introContract.flowSteps === 3 && introContract.inlineVisualStyles === 0,

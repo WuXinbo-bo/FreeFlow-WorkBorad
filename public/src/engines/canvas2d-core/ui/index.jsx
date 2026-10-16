@@ -12,7 +12,7 @@ import {
 import { CanvasSearchOverlay } from "../search/canvasSearchOverlay.jsx";
 import { WordExportPreviewDialog } from "./WordExportPreviewDialog.jsx";
 import { BoardWorkspacePanel } from "./BoardWorkspacePanel.jsx";
-import { ChevronLeft, ChevronRight, ChevronDown, Search, Plus, MoreHorizontal, ListOrdered, Info, X, Square, RectangleHorizontal, Circle, Diamond, MoveUpRight, Minus, Highlighter } from "lucide-react";
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 import { CanvasImageManagerDialog } from "./CanvasImageManagerDialog.jsx";
 import {
   buildCanvasSearchIndex,
@@ -27,26 +27,26 @@ import { dispatchTutorialUiEvent, subscribeTutorialUiEvent } from "../../../tuto
 import { TUTORIAL_EVENT_TYPES } from "../../../tutorial-core/tutorialTypes.js";
 
 const DRAW_TOOLS = [
-  { key: "rect", Icon: Square, label: "矩形", shortcut: "R", group: "形状" },
-  { key: "roundRect", Icon: RectangleHorizontal, label: "圆角矩形", shortcut: "Q", group: "形状" },
-  { key: "ellipse", Icon: Circle, label: "椭圆", shortcut: "E", group: "形状" },
-  { key: "diamond", Icon: Diamond, label: "菱形", shortcut: "D", group: "形状" },
-  { key: "arrow", Icon: MoveUpRight, label: "箭头", shortcut: "A", group: "线条" },
-  { key: "line", Icon: Minus, label: "直线", shortcut: "L", group: "线条" },
-  { key: "highlight", Icon: Highlighter, label: "高亮", shortcut: "M", group: "标注" },
+  { key: "rect", icon: "square", label: "矩形", shortcut: "R", group: "形状" },
+  { key: "roundRect", icon: "rectangle-horizontal", label: "圆角矩形", shortcut: "Q", group: "形状" },
+  { key: "ellipse", icon: "circle", label: "椭圆", shortcut: "E", group: "形状" },
+  { key: "diamond", icon: "diamond", label: "菱形", shortcut: "D", group: "形状" },
+  { key: "arrow", icon: "arrow-up-right", label: "箭头", shortcut: "A", group: "线条" },
+  { key: "line", icon: "minus", label: "直线", shortcut: "L", group: "线条" },
+  { key: "highlight", icon: "highlighter", label: "高亮", shortcut: "M", group: "标注" },
 ];
 
 const INSERT_TOOLS = [
   {
     key: "table",
-    icon: "▦",
+    icon: "table",
     label: "表格",
     meta: "3 × 3，可继续编辑",
     shortcut: "Table",
   },
   {
     key: "codeBlock",
-    icon: "</>",
+    icon: "code",
     label: "代码块",
     meta: "支持语言与行号",
     shortcut: "Code",
@@ -57,160 +57,8 @@ function isWorkspacePanelResizeActive() {
   return Boolean(document.body?.classList.contains("is-pane-resizing"));
 }
 
-function MouseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path
-        d="M6 3.8L18.6 12.2l-5.2 1.2 2.5 6-2.4 1-2.6-6-3.9 3.6V3.8z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function HandPanIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path
-        d="M7.2 11.6V7.2a1.3 1.3 0 0 1 2.6 0v4.1M9.8 11.2V5.4a1.3 1.3 0 0 1 2.6 0v5.7M12.4 11.2V6.3a1.3 1.3 0 0 1 2.6 0v5.2M15 11.8V8.5a1.25 1.25 0 0 1 2.5 0v6.1c0 3.1-2.2 5.5-5.4 5.5h-1.4c-1.8 0-3.5-.9-4.6-2.3l-2.2-2.9a1.35 1.35 0 0 1 2.1-1.7l1.2 1.3"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function DrawIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <rect x="4.2" y="6" width="15.6" height="12" rx="3.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <rect x="7" y="8.8" width="10" height="6.4" rx="2.4" fill="currentColor" opacity="0.14" />
-    </svg>
-  );
-}
-
-function TextIcon() {
-  return <span className="canvas2d-engine-tool-icon-text">T</span>;
-}
-
-function FileIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path
-        d="M6 3h7l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"
-        fill="currentColor"
-        opacity="0.16"
-      />
-      <path d="M13 3v5h5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <rect x="7" y="11" width="10" height="1.6" fill="currentColor" />
-      <rect x="7" y="15" width="8" height="1.6" fill="currentColor" />
-    </svg>
-  );
-}
-
-function NodeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <circle cx="8" cy="12" r="2" fill="currentColor" />
-      <circle cx="16" cy="7.5" r="2" fill="currentColor" opacity="0.88" />
-      <circle cx="16" cy="16.5" r="2" fill="currentColor" opacity="0.88" />
-      <path d="M9.8 11.2 14 8.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M9.8 12.8 14 15.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ShareIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path
-        d="M14.8 6.4h3.8v3.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M10.1 13.9 18.6 5.4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8.2 8.2H7.4a2.8 2.8 0 0 0-2.8 2.8v5.6a2.8 2.8 0 0 0 2.8 2.8H13a2.8 2.8 0 0 0 2.8-2.8v-.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ImageIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <rect x="4" y="5" width="16" height="14" rx="2.6" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="9" cy="10" r="1.6" fill="currentColor" />
-      <path d="M6.6 17l4.2-4.4 3.2 2.6 2.2-2.4 3.2 4.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <circle cx="6" cy="12" r="1.8" fill="currentColor" />
-      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-      <circle cx="18" cy="12" r="1.8" fill="currentColor" />
-    </svg>
-  );
-}
-
-function InsertIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.45" />
-    </svg>
-  );
-}
-
-function ExportHistoryIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-tool-svg">
-      <path d="M3 10a9 9 0 1 1 2.5 8.2M3 4v6h6M12 7v5l3 2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ResetViewIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-zoom-icon">
-      <path d="M6.4 8.1H3.8V5.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4.2 8.1a8 8 0 1 1-.2 7.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function FitViewIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="canvas2d-zoom-icon">
-      <path d="M8.5 4.5h-4v4M15.5 4.5h4v4M8.5 19.5h-4v-4M15.5 19.5h4v-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  );
-}
-
 function ChevronIcon({ open = false }) {
-  return <span className={`canvas2d-engine-menu-chevron${open ? " is-open" : ""}`} aria-hidden="true">⌄</span>;
+  return <AppIcon name="chevron-down" size={16} className={`canvas2d-engine-menu-chevron${open ? " is-open" : ""}`} />;
 }
 
 function FloatingToolbarMenu({
@@ -556,12 +404,7 @@ function CanvasNavigatorPanel({
         title="展开画布目录"
       >
         <span className="canvas2d-navigator-tab-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false">
-            <path d="M6 6.5h12M6 12h12M6 17.5h7" />
-            <circle cx="4" cy="6.5" r="1" />
-            <circle cx="4" cy="12" r="1" />
-            <circle cx="4" cy="17.5" r="1" />
-          </svg>
+          <AppIcon name="list-ordered" size={18} />
         </span>
         <span className="canvas2d-navigator-tab-label">画布目录</span>
       </button>
@@ -854,7 +697,7 @@ function CanvasNavigatorPanel({
             aria-label={entry.collapsed ? "展开子目录" : "收起子目录"}
             title={isFolder ? (entry.collapsed ? "展开" : "收起") : "无子目录"}
           >
-            {isFolder ? (entry.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />) : null}
+            {isFolder ? (entry.collapsed ? <AppIcon name="chevron-right" size={16} /> : <AppIcon name="chevron-down" size={16} />) : null}
           </button>
           <button
             type="button"
@@ -902,7 +745,7 @@ function CanvasNavigatorPanel({
               aria-label="更多操作"
               title="更多操作"
             >
-              <MoreHorizontal size={16} />
+              <AppIcon name="ellipsis" size={16} />
             </button>
           </div>
         </div>
@@ -933,13 +776,13 @@ function CanvasNavigatorPanel({
       <header className="canvas2d-navigator-head">
         <strong>{navigator?.title || "画布目录"}</strong>
         <div className="canvas2d-navigator-head-actions">
-          <button type="button" className="canvas2d-workspace-icon" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹"><Plus size={17} /></button>
-          <button type="button" className={`canvas2d-workspace-icon${searchOpen ? " is-active" : ""}`} onClick={() => { setSearchOpen((value) => !value); setQuery(""); }} aria-label="搜索目录" title="搜索目录" aria-expanded={searchOpen}><Search size={17} /></button>
+          <button type="button" className="canvas2d-workspace-icon" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹"><AppIcon name="plus" size={16} /></button>
+          <button type="button" className={`canvas2d-workspace-icon${searchOpen ? " is-active" : ""}`} onClick={() => { setSearchOpen((value) => !value); setQuery(""); }} aria-label="搜索目录" title="搜索目录" aria-expanded={searchOpen}><AppIcon name="search" size={16} /></button>
           <details className="canvas2d-navigator-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
-            <summary className="canvas2d-workspace-icon" aria-label="目录显示选项" title="目录显示选项"><MoreHorizontal size={17} /></summary>
-            <div className="canvas-chrome-surface"><button type="button" aria-label={orderVisible ? "隐藏目录序号" : "显示目录序号"} aria-pressed={orderVisible} onClick={(event) => { setOrderVisible((value) => !value); const details = event.currentTarget.closest("details"); details.open = false; details.querySelector("summary")?.focus(); }}><ListOrdered size={16} />{orderVisible ? "隐藏目录序号" : "显示目录序号"}</button></div>
+            <summary className="canvas2d-workspace-icon" aria-label="目录显示选项" title="目录显示选项"><AppIcon name="ellipsis" size={16} /></summary>
+            <div className="canvas-chrome-surface"><button type="button" aria-label={orderVisible ? "隐藏目录序号" : "显示目录序号"} aria-pressed={orderVisible} onClick={(event) => { setOrderVisible((value) => !value); const details = event.currentTarget.closest("details"); details.open = false; details.querySelector("summary")?.focus(); }}><AppIcon name="list-ordered" size={16} />{orderVisible ? "隐藏目录序号" : "显示目录序号"}</button></div>
           </details>
-          <button type="button" className="canvas2d-workspace-icon" onClick={() => { setSearchOpen(false); setQuery(""); setMenuState(null); clearNavigatorDrag(); onPreviewEntry?.(""); onCollapse?.(true); }} aria-label="收起画布目录" title="收起画布目录"><ChevronLeft size={17} /></button>
+          <button type="button" className="canvas2d-workspace-icon" onClick={() => { setSearchOpen(false); setQuery(""); setMenuState(null); clearNavigatorDrag(); onPreviewEntry?.(""); onCollapse?.(true); }} aria-label="收起画布目录" title="收起画布目录"><AppIcon name="chevron-left" size={16} /></button>
         </div>
       </header>
       {searchOpen ? (
@@ -1957,7 +1800,7 @@ function Canvas2DControls({ engine }) {
             )}
             <span className={`canvas2d-info-save-state${snapshot.boardSaveError ? " is-error" : ""}`} title={snapshot.boardSaveError || (snapshot.boardDirty || snapshot.editingId ? "修改尚未保存到本机" : "已保存到本机")}>{snapshot.boardSaveError ? "保存失败" : snapshot.boardDirty || snapshot.editingId ? "未保存" : "已保存"}</span>
             <details className="canvas2d-info-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
-              <summary aria-label="画布信息详情" title="画布信息详情"><Info size={16} /></summary>
+              <summary aria-label="画布信息详情" title="画布信息详情"><AppIcon name="info" size={16} /></summary>
               <div className="canvas-chrome-surface">
                 <strong>FreeFlow</strong>
                 <span>自动保存{autosaveEnabled ? "已开启" : "已关闭"}</span>
@@ -1967,7 +1810,7 @@ function Canvas2DControls({ engine }) {
               </div>
             </details>
           </div>
-          <button type="button" className="canvas2d-info-collapse-toggle" onClick={() => infoPanelAutoCollapsed ? setInfoPanelPopoverOpen((value) => !value) : setInfoPanelCollapsed((value) => !value)} title={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-label={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-expanded={infoPanelPopoverOpen || !(infoPanelCollapsed || infoPanelAutoCollapsed)}><ChevronLeft size={14} /></button>
+          <button type="button" className="canvas2d-info-collapse-toggle" onClick={() => infoPanelAutoCollapsed ? setInfoPanelPopoverOpen((value) => !value) : setInfoPanelCollapsed((value) => !value)} title={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-label={infoPanelCollapsed || infoPanelAutoCollapsed ? "展开画布信息" : "收起画布信息"} aria-expanded={infoPanelPopoverOpen || !(infoPanelCollapsed || infoPanelAutoCollapsed)}><AppIcon name="chevron-left" size={16} /></button>
         </div>
       </div>
 
@@ -1987,7 +1830,7 @@ function Canvas2DControls({ engine }) {
             title="拖拽视图 (H，按住 Space 临时平移)"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <HandPanIcon />
+              <AppIcon name="hand" size={18} />
             </span>
             <span className="canvas2d-engine-tool-shortcut">H</span>
           </button>
@@ -1999,7 +1842,7 @@ function Canvas2DControls({ engine }) {
             title="框选 (V)"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <MouseIcon />
+              <AppIcon name="mouse-pointer-2" size={18} />
             </span>
             <span className="canvas2d-engine-tool-shortcut">V</span>
           </button>
@@ -2030,7 +1873,7 @@ function Canvas2DControls({ engine }) {
               title="画图工具"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                {drawActive ? <activeDrawTool.Icon size={18} strokeWidth={1.8} /> : <DrawIcon />}
+                {drawActive ? <AppIcon name={activeDrawTool.icon} size={18} /> : <AppIcon name="shapes" size={18} />}
               </span>
               <span className="canvas2d-engine-tool-shortcut">{activeDrawTool.shortcut}</span>
             </button>
@@ -2054,7 +1897,7 @@ function Canvas2DControls({ engine }) {
                       }}
                       role="menuitem"
                     >
-                      <span className="canvas2d-engine-menu-icon" aria-hidden="true"><tool.Icon size={16} strokeWidth={1.8} /></span>
+                      <span className="canvas2d-engine-menu-icon" aria-hidden="true"><AppIcon name={tool.icon} size={16} /></span>
                       <span>{tool.label}</span>
                       <kbd>{tool.shortcut}</kbd>
                     </button>
@@ -2071,7 +1914,7 @@ function Canvas2DControls({ engine }) {
             title="文本 (T)"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <TextIcon />
+              <AppIcon name="type" size={18} />
             </span>
             <span className="canvas2d-engine-tool-shortcut">T</span>
           </button>
@@ -2084,7 +1927,7 @@ function Canvas2DControls({ engine }) {
             aria-label="添加文件"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <FileIcon />
+              <AppIcon name="file-text" size={18} />
             </span>
             <span className="canvas2d-engine-tool-shortcut">F</span>
           </button>
@@ -2129,7 +1972,7 @@ function Canvas2DControls({ engine }) {
               title="图片工具"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <ImageIcon />
+                <AppIcon name="image" size={18} />
               </span>
               <span className="canvas2d-engine-tool-shortcut">I</span>
             </button>
@@ -2190,7 +2033,7 @@ function Canvas2DControls({ engine }) {
             title="添加思维导图"
           >
             <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-              <NodeIcon />
+              <AppIcon name="git-fork" size={18} />
             </span>
             <span className="canvas2d-engine-tool-shortcut">N</span>
           </button>
@@ -2222,7 +2065,7 @@ function Canvas2DControls({ engine }) {
               title="插入内容"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <InsertIcon />
+                <AppIcon name="plus" size={18} />
               </span>
               <span className="canvas2d-engine-tool-shortcut">+</span>
             </button>
@@ -2251,7 +2094,7 @@ function Canvas2DControls({ engine }) {
                     }}
                     role="menuitem"
                   >
-                    <span className="canvas2d-engine-menu-icon" aria-hidden="true">{tool.icon}</span>
+                    <span className="canvas2d-engine-menu-icon" aria-hidden="true"><AppIcon name={tool.icon} size={16} /></span>
                     <span className="canvas2d-engine-insert-copy">
                       <strong>{tool.label}</strong>
                       <small>{tool.meta}</small>
@@ -2291,7 +2134,7 @@ function Canvas2DControls({ engine }) {
               title="分享"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <ShareIcon />
+                <AppIcon name="share-2" size={18} />
               </span>
               <span className="canvas2d-engine-tool-shortcut">P</span>
             </button>
@@ -2438,7 +2281,7 @@ function Canvas2DControls({ engine }) {
               title="菜单"
             >
               <span className="canvas2d-engine-tool-icon" aria-hidden="true">
-                <MenuIcon />
+                <AppIcon name="ellipsis" size={18} />
               </span>
             </button>
             <FloatingToolbarMenu
@@ -2736,7 +2579,7 @@ function Canvas2DControls({ engine }) {
               aria-controls={exportHistoryOpen ? "canvas2d-export-history-panel" : undefined}
             >
               <span className="canvas2d-engine-export-history-icon" aria-hidden="true">
-                <ExportHistoryIcon />
+                <AppIcon name="history" size={18} />
               </span>
             </button>
           </div>
@@ -2745,7 +2588,7 @@ function Canvas2DControls({ engine }) {
             <div id="canvas2d-export-history-panel" className="canvas2d-engine-export-history-panel">
               <div className="canvas2d-engine-export-history-panel-head">
                 <strong>最近导出</strong>
-                <button type="button" className="canvas2d-engine-search-close" aria-label="关闭最近导出" onClick={() => { setExportHistoryOpen(false); exportHistoryRef.current?.querySelector("button")?.focus({ preventScroll: true }); }}><X size={16} /></button>
+                <button type="button" className="canvas2d-engine-search-close" aria-label="关闭最近导出" onClick={() => { setExportHistoryOpen(false); exportHistoryRef.current?.querySelector("button")?.focus({ preventScroll: true }); }}><AppIcon name="x" size={16} /></button>
               </div>
               <div className="canvas2d-engine-export-history-panel-meta">
                 <span>最近 {exportHistory.length || 0} 条 · 点击打开文件</span>
@@ -2892,17 +2735,17 @@ function Canvas2DControls({ engine }) {
             <strong>{zoomPercent}%</strong>
           </div>
           <div className="canvas2d-zoom-actions">
-            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomOut()} title="缩小">
-              -
+            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomOut()} title="缩小" aria-label="缩小">
+              <AppIcon name="minus" size={16} />
             </button>
             <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.resetView()} title="重置视图" aria-label="重置视图">
-              <ResetViewIcon />
+              <AppIcon name="rotate-ccw" size={16} />
             </button>
             <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomToFit()} title="适配全部内容" aria-label="适配全部内容">
-              <FitViewIcon />
+              <AppIcon name="scan" size={16} />
             </button>
-            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomIn()} title="放大">
-              +
+            <button type="button" className="canvas2d-zoom-btn" onClick={() => bridge.zoomIn()} title="放大" aria-label="放大">
+              <AppIcon name="plus" size={16} />
             </button>
           </div>
         </div>

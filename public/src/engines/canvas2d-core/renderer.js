@@ -1,3 +1,4 @@
+import { drawAppIcon } from "../../ui/icons/appIcons.mjs";
 import { sceneToScreen } from "./camera.js";
 import { canvasElementRegistry, getElementBounds } from "./elements/index.js";
 import { isLinearShape } from "./elements/shapes.js";
@@ -90,22 +91,8 @@ function drawMindNodeLinkAnchor(ctx, element, view, bounds = null, options = {})
   if (options.hideWhenSelected && options.selected) {
     return;
   }
-  const centerX = anchor.left + anchor.width / 2;
-  const centerY = anchor.top + anchor.height / 2;
-  const loopWidth = anchor.width * 0.34;
-  const loopHeight = anchor.height * 0.2;
-  const stroke = anchor.width * 0.12;
-
   ctx.save();
-  ctx.strokeStyle = "rgba(29, 78, 216, 0.96)";
-  ctx.lineWidth = stroke;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.ellipse(centerX - anchor.width * 0.16, centerY + anchor.height * 0.02, loopWidth, loopHeight, -0.62, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(centerX + anchor.width * 0.16, centerY - anchor.height * 0.02, loopWidth, loopHeight, -0.62, 0, Math.PI * 2);
-  ctx.stroke();
+  drawAppIcon(ctx, "link", anchor.left, anchor.top, anchor.width, { color: "rgba(29, 78, 216, 0.96)" });
 
   if (anchor.linkCount > 1) {
     const badgeSize = anchor.badgeSize;
@@ -136,10 +123,8 @@ function drawMindCollapsedBadge(ctx, element, view) {
   ctx.font = `700 ${11 * scale}px "Segoe UI", "PingFang SC", sans-serif`;
   const plusCenterX = rect.left + 10 * scale;
   const plusCenterY = rect.top + rect.height / 2;
-  const plusSize = 8 * scale;
-  const plusStroke = 1.5 * scale;
-  ctx.fillRect(plusCenterX - plusSize / 2, plusCenterY - plusStroke / 2, plusSize, plusStroke);
-  ctx.fillRect(plusCenterX - plusStroke / 2, plusCenterY - plusSize / 2, plusStroke, plusSize);
+  const plusSize = 12 * scale;
+  drawAppIcon(ctx, "plus", plusCenterX - plusSize / 2, plusCenterY - plusSize / 2, plusSize, { color: "#3f6b60" });
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(String(badge.count), rect.left + 18 * scale, plusCenterY);
@@ -232,11 +217,7 @@ function drawLockBadge(ctx, element, view) {
   drawRoundedRect(ctx, x - size * 0.5, y - size * 0.5, size, size, Math.max(4, size * 0.28));
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-  ctx.font = `600 ${Math.max(8, size * 0.7)}px "Segoe UI Emoji", "Segoe UI", "PingFang SC", sans-serif`;
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
-  ctx.fillText("🔒", x, y + size * 0.04);
+  drawAppIcon(ctx, "lock", x - 5, y - 5, 10, { color: "rgba(30, 41, 59, 0.9)" });
   ctx.restore();
 }
 
