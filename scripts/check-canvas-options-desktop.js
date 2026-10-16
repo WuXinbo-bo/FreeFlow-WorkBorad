@@ -1,0 +1,95 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
+const { _electron: electron } = require("playwright");
+const { wrapFreeFlowBoardPayload } = require("../src/backend/models/canvasBoardFileFormat");
+const ROOT = path.resolve(__dirname, "..");
+
+(async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "freeflow-options-desktop-"));
+  const data = path.join(temp, "Data");
+  const boards = path.join(temp, "Boards");
+  const screenshots = process.env.FREEFLOW_SCREENSHOT_DIR || path.join(os.tmpdir(), "freeflow-ui-detail-qa");
+  await fs.mkdir(data); await fs.mkdir(boards); await fs.mkdir(screenshots, { recursive: true });
+  const version = require("../package.json").version;
+  await fs.writeFile(path.join(data, "ui-settings.json"), JSON.stringify({ hasShownStartupTutorial: true, lastTutorialIntroVersion: version, dismissedTutorialIntroVersion: version, defaultLaunchFullscreen: false, defaultCanvasPanelVisible: true, defaultChatPanelVisible: false, canvasWorkspaceFolderPath: boards, updateCheckEnabled: false }));
+  const boardPath = path.join(boards, "项目笔记.freeflow");
+  await fs.writeFile(boardPath, JSON.stringify(wrapFreeFlowBoardPayload({ kind: "structured-host-board", version: "1.0.0", board: { items: [{ id: "note", type: "text", x: 180, y: 200, width: 440, height: 160, fontSize: 18, text: "整理思路，自由创作\n在画布选项中调整背景与吸附，在帮助中查阅使用指南。", html: "<h2>整理思路，自由创作</h2><p>在画布选项中调整背景与吸附，在帮助中查阅使用指南。</p>" }], selectedIds: [], view: { scale: 1, offsetX: 0, offsetY: 0 } } })));
+  const bootstrap = path.join(temp, "bootstrap.cjs");
+  await fs.writeFile(bootstrap, `const { app } = require("electron"); app.setPath("userData", ${JSON.stringify(path.join(temp, "Profile"))}); app.getAppPath = () => ${JSON.stringify(ROOT)}; require(${JSON.stringify(path.join(ROOT, "electron/main.js"))});`);
+  const env = { ...process.env, FREEFLOW_HOME_DIR: temp, FREEFLOW_USER_DATA_DIR: data, FREEFLOW_CANVAS_BOARD_DIR: boards, FREEFLOW_LEGACY_PROJECT_DATA_DIR: path.join(temp, "Legacy"), FREEFLOW_PORT: "0" };
+  delete env.ELECTRON_RUN_AS_NODE;
+  let application;
+  try {
+    application = await electron.launch({ executablePath: require("electron"), args: [bootstrap], cwd: ROOT, env });
+    const page = await application.firstWindow();
+    page.setDefaultTimeout(12000);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.waitForFunction(() => window.__canvas2dEngine && !document.body.classList.contains("app-booting") && !document.body.classList.contains("boot-shape-lock"));
+    await page.evaluate(() => window.__canvas2dEngine.whenReady());
+    await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1440, 900); win.show(); win.focus(); });
+    await page.evaluate(board => window.__canvas2dEngine.openBoardAtPath(board), boardPath);
+    const trigger = page.getByRole("button", { name: "画布选项与帮助", exact: true });
+    const panel = page.getByRole("dialog", { name: "画布选项与帮助", exact: true });
+    const open = async () => { await trigger.click(); await panel.waitFor(); };
+    await open();
+    const rect = await panel.boundingBox();
+    await panel.getByRole("button", { name: "方格", exact: true }).click();
+    await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().board.preferences.backgroundPattern === "grid");
+    await panel.getByRole("button", { name: "点阵", exact: true }).click();
+    await panel.getByRole("switch", { name: "对齐与吸附", exact: true }).click();
+    assert.equal(await panel.getByRole("button", { name: "标准", exact: true }).isDisabled(), true);
+    await panel.getByRole("switch", { name: "对齐与吸附", exact: true }).click();
+    await panel.getByRole("button", { name: "紧凑", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__canvas2dEngine.getSnapshot().alignmentSnapConfig.thresholdPx), 6);
+    await panel.getByRole("button", { name: "标准", exact: true }).click();
+    await page.screenshot({ path: path.join(screenshots, "canvas-options-wide.png") });
+    await panel.getByRole("tab", { name: "帮助", exact: true }).click();
+    const helpRect = await panel.boundingBox();
+    assert.deepEqual(helpRect, rect, "desktop panel must not jump when changing tabs");
+    await panel.getByText(`v${version}`, { exact: true }).waitFor();
+    await panel.getByRole("button", { name: /^使用指南/ }).click();
+    await panel.waitFor({ state: "hidden" });
+    const tutorial = page.getByRole("dialog", { name: "教程中心", exact: true });
+    await tutorial.waitFor();
+    for (let i = 0; i < 2; i++) {
+      await tutorial.getByRole("button", { name: "重看欢迎演示", exact: true }).click();
+      await page.locator(".global-tutorial-center.is-intro").waitFor();
+      await page.locator("[data-global-tutorial-open-center]").click();
+      await tutorial.waitFor();
+    }
+    await tutorial.locator("[data-global-tutorial-close]").click();
+    await tutorial.waitFor({ state: "hidden" });
+    await open();
+    await panel.getByRole("tab", { name: "帮助", exact: true }).click();
+    await panel.getByRole("button", { name: /^应用更新/ }).click();
+    await panel.waitFor({ state: "hidden" });
+    await page.waitForFunction(() => document.getElementById("insight-drawer")?.classList.contains("is-open") && document.getElementById("settings-center-host")?.dataset.settingsPage === "updates");
+    await page.getByRole("heading", { name: "应用更新", exact: true }).waitFor();
+    await page.locator('[data-settings-action="check-update"]').waitFor();
+    await page.locator("#drawer-close-btn").click();
+    await page.waitForFunction(() => !document.getElementById("insight-drawer")?.classList.contains("is-open"));
+    await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(600, 350); win.setContentSize(900, 430); });
+    await open();
+    const small = await panel.boundingBox();
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    assert.ok(small.x >= 0 && small.y >= 0 && small.x + small.width <= viewport.width && small.y + small.height <= viewport.height, JSON.stringify({ small, viewport }));
+    await panel.getByRole("button", { name: "工程网格", exact: true }).click();
+    await panel.getByRole("button", { name: "点阵", exact: true }).click();
+    await page.screenshot({ path: path.join(screenshots, "canvas-options-short.png") });
+    await page.keyboard.press("Escape");
+    assert.equal(await trigger.evaluate(button => button === document.activeElement), true);
+    await open();
+    await panel.getByRole("button", { name: "关闭画布选项与帮助", exact: true }).click();
+    await panel.waitFor({ state: "hidden" });
+    assert.deepEqual(errors, []);
+    console.log(`[check-canvas-options-desktop] real Electron controls, guide/welcome replay/exit, actual settings updates routing, fixed frame, short-window recovery passed; screenshots: ${screenshots}`);
+  } finally {
+    if (application) { await application.evaluate(({ app }) => app.exit(0)).catch(() => {}); await application.close(); }
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });

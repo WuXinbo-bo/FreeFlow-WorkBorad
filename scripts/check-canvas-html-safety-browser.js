@@ -110,8 +110,8 @@ async function main() {
     await page.evaluate(() => document.getElementById("html-safety-probe").remove());
     for (let cycle = 0; cycle < 3; cycle += 1) {
       for (const [menu, label] of [["画布图片管理", "画布图片管理"]]) {
-        await page.locator('[title="菜单"]').click();
-        await page.getByRole("menuitem", { name: menu, exact: true }).click();
+        await page.getByRole("button", { name: "画布选项与帮助", exact: true }).click();
+        await page.getByRole("dialog", { name: "画布选项与帮助", exact: true }).getByRole("button", { name: new RegExp(`^${menu}`) }).click();
         const dialog = page.getByRole("dialog", { name: label, exact: true });
         await dialog.waitFor();
         await dialog.getByRole("button", { name: /关闭/ }).first().click();

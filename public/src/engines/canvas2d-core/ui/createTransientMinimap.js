@@ -1,7 +1,6 @@
 import { renderAppIcon } from "../../../ui/icons/appIcons.mjs";
 import { getBoardBounds, getElementBounds } from "../elements/index.js";
 import { getSceneViewportBounds } from "../scene/sceneIndex.js";
-import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
 
 const DEFAULT_WIDTH = 164;
 const DEFAULT_HEIGHT = 88;
@@ -9,7 +8,6 @@ const SHELL_INSET = 14;
 const SHELL_HEADER_HEIGHT = 32;
 const COLLAPSED_SIZE = 38;
 const DEFAULT_PADDING = 12;
-const DEFAULT_HIDE_DELAY_MS = 800;
 const DEFAULT_MARGIN = 18;
 const DEFAULT_VIEWPORT_STROKE = "rgba(53, 106, 230, 0.8)";
 const DEFAULT_VIEWPORT_FILL = "rgba(53, 106, 230, 0.06)";
@@ -239,56 +237,19 @@ export function createTransientMinimap({
   let label = null;
   let toggleButton = null;
   let mounted = false;
-  let collapsed = readChromePreference("minimapCollapsed", true);
-  let pinned = !collapsed;
-  let suppressGesture = false;
-  let hovered = false;
-  let hideTimer = 0;
-  let lastNavigationAt = 0;
+  // Each mount starts closed. Only the toggle changes the user's open/closed intent;
+  // navigation, board replacement and temporary occlusion preserve that intent.
+  let collapsed = true;
   let occluded = false;
 
-  function clearHideTimer() {
-    if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = 0;
-  }
-
   function resetTransient() {
-    clearHideTimer();
-    suppressGesture = false;
-    lastNavigationAt = 0;
-    hovered = false;
-    collapsed = !pinned;
-    applyCollapsedState();
+    lastSceneRevision = -1;
+    if (!collapsed) schedulePlacement();
   }
-
-  function scheduleHide() {
-    clearHideTimer();
-    hideTimer = setTimeout(() => {
-      hideTimer = 0;
-      suppressGesture = false;
-      if (!pinned && !hovered && !shell?.querySelector(":focus-visible")) {
-        collapsed = true;
-        applyCollapsedState();
-        schedulePlacement();
-      }
-    }, DEFAULT_HIDE_DELAY_MS);
-  }
-
-  function handlePointerEnter() { hovered = true; }
-  function handlePointerLeave() { hovered = false; scheduleHide(); }
-  function handleFocusOut() { scheduleHide(); }
 
   function handleNavigation() {
-    if (!mounted || document.hidden) return;
-    const now = Date.now();
-    if (now - lastNavigationAt >= DEFAULT_HIDE_DELAY_MS) suppressGesture = false;
-    lastNavigationAt = now;
-    if (!pinned && !suppressGesture && collapsed) {
-      collapsed = false;
-      applyCollapsedState();
-      schedulePlacement();
-    }
-    scheduleHide();
+    if (!mounted || collapsed || occluded || document.hidden) return;
+    schedulePlacement();
   }
   let lastSceneRevision = -1;
   let lastLayout = null;
@@ -305,7 +266,7 @@ export function createTransientMinimap({
   let placementFrame = 0;
 
   function schedulePlacement() {
-    if (!mounted || placementFrame) return;
+    if (!mounted || document.hidden || placementFrame) return;
     placementFrame = requestAnimationFrame(() => {
       placementFrame = 0;
       if (mounted) {
@@ -319,8 +280,10 @@ export function createTransientMinimap({
   }
 
   function handleVisibilityChange() {
-    if (document.hidden) resetTransient();
-    else update();
+    if (document.hidden) {
+      if (placementFrame) cancelAnimationFrame(placementFrame);
+      placementFrame = 0;
+    } else update();
   }
 
   function syncDebugStats() {
@@ -354,13 +317,7 @@ export function createTransientMinimap({
   function handleToggleClick(event) {
     event.preventDefault();
     event.stopPropagation();
-    clearHideTimer();
     collapsed = !collapsed;
-    pinned = !collapsed;
-    suppressGesture = collapsed;
-    if (collapsed) lastNavigationAt = Date.now();
-    if (collapsed) scheduleHide();
-    writeChromePreference("minimapCollapsed", collapsed);
     applyCollapsedState();
     update();
   }
@@ -395,9 +352,6 @@ export function createTransientMinimap({
       shell.id = "canvas2d-transient-minimap";
       shell.className = "canvas2d-transient-minimap canvas-chrome-surface canvas-chrome-minimap";
       shell.setAttribute("aria-hidden", "false");
-      shell.addEventListener("pointerenter", handlePointerEnter);
-      shell.addEventListener("pointerleave", handlePointerLeave);
-      shell.addEventListener("focusout", handleFocusOut);
 
       toggleButton = document.createElement("button");
       toggleButton.type = "button";
@@ -515,10 +469,11 @@ export function createTransientMinimap({
       return;
     }
     const sceneRevision = Math.max(0, Number(getSceneRevision?.() || 0) || 0);
-    const items = Array.isArray(getItems?.()) ? getItems() : [];
     if (!force && sceneRevision === lastSceneRevision && lastLayout && lastBoardBounds) {
       return;
     }
+    const sceneItems = getItems?.();
+    const items = Array.isArray(sceneItems) ? sceneItems : [];
     lastSceneRevision = sceneRevision;
     lastBoardBounds = resolveBoardBounds(items);
     lastLayout = computeMinimapLayout(lastBoardBounds, lastCanvasWidth, lastCanvasHeight);
@@ -599,8 +554,9 @@ export function createTransientMinimap({
     resetTransient,
     handleZoom: handleNavigation,
     unmount() {
-      resetTransient();
       mounted = false;
+      collapsed = true;
+      occluded = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       placementObserver?.disconnect();
       sizeObserver?.disconnect();
@@ -614,6 +570,9 @@ export function createTransientMinimap({
       lastLayout = null;
       lastBoardBounds = null;
       lastViewportBounds = null;
+      toggleButton?.removeEventListener("click", handleToggleClick);
+      canvas?.removeEventListener("pointerdown", handleCanvasPointerDown);
+      canvas?.removeEventListener("click", handleCanvasClick);
       if (shell instanceof HTMLDivElement) {
         shell.remove();
       }
@@ -626,22 +585,19 @@ export function createTransientMinimap({
     },
     handlePanStart() {
       handleNavigation();
-      this.refreshViewport();
     },
     handlePanMove() {
       handleNavigation();
-      this.refreshViewport();
     },
     handlePanEnd() {
-      scheduleHide();
-      this.refreshViewport();
+      handleNavigation();
     },
     refreshSceneSnapshot() {
       if (!mounted) {
         return;
       }
       lastSceneRevision = -1;
-      schedulePlacement();
+      if (!collapsed) schedulePlacement();
     },
     refreshViewport() {
       if (!mounted || collapsed || occluded || document.hidden) {

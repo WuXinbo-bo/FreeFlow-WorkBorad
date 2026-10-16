@@ -32,7 +32,7 @@ async function main() {
     await page.evaluate(() => window.__canvas2dEngine.whenReady());
     await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.show(); win.focus(); });
     await page.evaluate((file) => window.__canvas2dEngine.openBoardAtPath(file), filePath);
-    const open = async () => { await page.locator('[title="菜单"]').click(); await page.getByRole("menuitem", { name: "画布图片管理", exact: true }).click(); try { await page.waitForFunction(() => document.querySelectorAll(".canvas2d-image-manager-item").length === 51); } catch (error) { throw new Error(`${error.message}\n${JSON.stringify(await page.evaluate(() => ({ count: document.querySelectorAll(".canvas2d-image-manager-item").length, image: window.__canvas2dEngine.getSnapshot().canvasImageManager, item: window.__canvas2dEngine.getSnapshot().board.items[0] })))}`); } };
+    const open = async () => { await page.getByRole("button", { name: "画布选项与帮助", exact: true }).click(); await page.getByRole("button", { name: /^画布图片管理/ }).click(); try { await page.waitForFunction(() => document.querySelectorAll(".canvas2d-image-manager-item").length === 51); } catch (error) { throw new Error(`${error.message}\n${JSON.stringify(await page.evaluate(() => ({ count: document.querySelectorAll(".canvas2d-image-manager-item").length, image: window.__canvas2dEngine.getSnapshot().canvasImageManager, item: window.__canvas2dEngine.getSnapshot().board.items[0] })))}`); } };
     const dialog = page.getByRole("dialog", { name: "画布图片管理", exact: true });
     const add = dialog.getByRole("button", { name: "添加到画布", exact: true });
     await open();

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 import { readChromePreference, writeChromePreference } from "./chromePreferences.js";
@@ -192,6 +192,10 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   useEffect(() => {
     if (openRequest) toggle(true);
   }, [openRequest]);
+
+  useLayoutEffect(() => {
+    if (open && openRequest) searchRef.current?.focus({ preventScroll: true });
+  }, [open, openRequest]);
 
   useEffect(() => {
     if (!supported) return undefined;
@@ -403,7 +407,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
       } catch (cause) {
         if (cause?.localChanged) window.dispatchEvent(new CustomEvent("freeflow:workspace-files-changed", { detail: cause }));
         if (isCurrent()) {
-          if (["SYNC_OPERATION_INTERRUPTED", "COMMIT_CONFIRMED_RECHECK", "COMMIT_NOT_PUBLISHED_RECHECK"].includes(cause.code)) cause.message += " 请检查更新，或到 GitHub 设置检查当前文件夹。";
+          if (["SYNC_OPERATION_INTERRUPTED", "COMMIT_CONFIRMED_RECHECK", "COMMIT_NOT_PUBLISHED_RECHECK"].includes(cause.code)) cause.message += " 请重新检查同步，或到 GitHub 设置检查当前文件夹。";
           throw cause;
         }
       }
@@ -471,11 +475,11 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
         {folder && currentPath && !boards.some((board) => board.filePath === currentPath) && currentPath.replace(/[\\/][^\\/]+$/, "") === folder && !loading ? <div className="canvas2d-workspace-error" role="status">当前文件已从工作区移除，内存内容已保留，请另存为。</div> : null}
         {snapshot?.boardFileReloadRequired ? <button type="button" className="canvas2d-workspace-repair" disabled={Boolean(busy)} onClick={() => requestSwitch({ kind: "open", path: currentPath, reload: true })}>重新载入当前画布</button> : null}
         {connected ? <div className={`canvas2d-workspace-sync${syncError || statusError || syncCounts.conflict ? " is-warning" : ""}`}>
-          <div><AppIcon name="cloud" size={16} /><button type="button" className="canvas2d-workspace-sync-toggle" aria-expanded={showSyncDetails} title={syncStatus?.repository?.owner ? `${syncStatus.repository.owner}/${syncStatus.repository.repo}` : "GitHub 同步"} onClick={() => setSyncExpanded((value) => !value)}>{busy === "check" ? "正在检查…" : busy === "pull" ? "正在拉取…" : busy === "upload" ? "正在上传…" : connected ? syncCounts.conflict ? `有 ${syncCounts.conflict} 个冲突` : stateStale ? "修改后待检查" : plan ? syncCounts.upload || syncCounts.pull ? `待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}` : "检查完成 · 无待同步内容" : "已连接 · 尚未检查" : syncStatus?.connected ? "未绑定仓库" : "未连接 GitHub"}</button><IconButton label="GitHub 同步设置" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}><AppIcon name="settings" size={16} /></IconButton></div>
+          <div><AppIcon name="cloud" size={16} /><button type="button" className="canvas2d-workspace-sync-toggle" aria-expanded={showSyncDetails} title={syncStatus?.repository?.owner ? `${syncStatus.repository.owner}/${syncStatus.repository.repo}` : "GitHub 同步"} onClick={() => setSyncExpanded((value) => !value)}>{busy === "check" ? "正在检查…" : busy === "pull" ? "正在拉取…" : busy === "upload" ? "正在上传…" : connected ? syncCounts.conflict ? `有 ${syncCounts.conflict} 个冲突` : stateStale ? "修改后待检查" : plan ? syncCounts.upload || syncCounts.pull ? `待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}` : "检查完成 · 无待同步内容" : "已连接 · 尚未检查" : syncStatus?.connected ? "未绑定仓库" : "未连接 GitHub"}</button>{connected ? <button type="button" className={`canvas2d-workspace-sync-check${busy === "check" ? " is-checking" : ""}`} aria-label="检查同步" title="检查本地与远端差异" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}><AppIcon name="refresh-cw" size={14} />检查</button> : null}<IconButton label="GitHub 同步设置" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}><AppIcon name="settings" size={16} /></IconButton></div>
           {connected ? <>
-            <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || !folder} onClick={() => sync("check")}>检查更新</button>{showSyncDetails ? <><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></> : null}</div>
+            {showSyncDetails && (syncCounts.pull || syncCounts.upload || syncPending || ["pull", "upload"].includes(busy)) ? <div className="canvas2d-workspace-sync-actions"><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.pull)} onClick={() => sync("pull")}>拉取</button><button type="button" disabled={Boolean(busy) || Boolean(syncPending) || !folder || (plan && !stateStale && !syncCounts.upload)} onClick={() => sync("upload")}>上传</button></div> : null}
             {showSyncDetails ? <div className="canvas2d-workspace-sync-details">
-              <div className="canvas2d-workspace-sync-summary" role="status">{plan ? `${stateStale ? "上次检查：" : ""}待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}${syncCounts.conflict ? ` · 冲突 ${syncCounts.conflict}` : ""}${syncCounts.deleted ? ` · 远程已删除 ${syncCounts.deleted}` : ""}` : "检查更新后可查看本地与远端差异"}</div>
+              <div className="canvas2d-workspace-sync-summary" role="status">{plan ? `${stateStale ? "上次检查：" : ""}待上传 ${syncCounts.upload} · 待拉取 ${syncCounts.pull}${syncCounts.conflict ? ` · 冲突 ${syncCounts.conflict}` : ""}${syncCounts.deleted ? ` · 远程已删除 ${syncCounts.deleted}` : ""}` : "检查同步后可查看本地与远端差异"}</div>
               {plan?.checkedAt ? <small className="canvas2d-workspace-sync-time">检查于 {new Date(plan.checkedAt).toLocaleString()}{stateStale ? " · 结果可能已变化" : ""}</small> : null}
               {lastSyncedAt ? <small className="canvas2d-workspace-sync-time">上次成功同步 {new Date(lastSyncedAt).toLocaleString()}</small> : null}
               {syncCounts.conflict ? <button type="button" className="canvas2d-workspace-repair" onClick={() => window.dispatchEvent(new CustomEvent("freeflow:open-settings", { detail: { section: "github" } }))}>查看并处理冲突</button> : null}

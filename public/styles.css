@@ -13707,7 +13707,8 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 
 .canvas2d-shape-style-popover {
   position: fixed;
-  z-index: 3201;
+  /* Above canvas controls (130), below the shell's global overlay (140). */
+  z-index: 135;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -15249,6 +15250,11 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   overflow-y: auto;
   pointer-events: auto;
   box-sizing: border-box;
+}
+
+/* Standalone canvas pages have no shell overlay stacking context. */
+body > .canvas2d-engine-menu-portal {
+  z-index: 150;
 }
 
 .canvas2d-engine-utility-popover > .canvas2d-engine-search-panel,

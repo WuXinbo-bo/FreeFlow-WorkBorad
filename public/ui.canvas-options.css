@@ -1,0 +1,66 @@
+.canvas-options-panel.canvas2d-engine-menu-portal {
+  --canvas-popover-bg: #fff;
+  display: flex;
+  height: 512px;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--chrome-ink, #26303b);
+  border: 1px solid var(--chrome-line, rgba(110, 120, 135, 0.2));
+  border-radius: var(--chrome-popover-radius, 14px);
+  background: var(--canvas-popover-bg, rgba(255, 255, 255, 0.96));
+  color-scheme: light;
+  box-shadow: var(--chrome-shadow-active, 0 12px 36px rgba(31, 38, 46, 0.14));
+  font: 12px/1.5 system-ui, sans-serif;
+}
+.canvas-options-content { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; }
+.canvas-options-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 8px; padding: 13px 14px 9px; }
+.canvas-options-header > strong { font-size: 13px; font-weight: 600; }
+.canvas-options-panel button { font: inherit; color: inherit; cursor: pointer; }
+.canvas-options-panel button:disabled { cursor: default; opacity: 0.4; }
+.canvas-options-panel button:focus-visible,
+.canvas-options-panel a:focus-visible { outline: 2px solid var(--chrome-accent, #3478bd); outline-offset: -2px; }
+.canvas-options-close { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; }
+.canvas-options-close:hover { background: var(--chrome-hover, #f0f3f6); }
+.canvas-options-tabs { display: flex; flex: none; gap: 2px; margin: 0 14px 9px; padding: 3px; border-radius: 8px; background: #f0f3f6; }
+.canvas-options-tabs > button { flex: 1; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--chrome-ink-muted, #657181); }
+.canvas-options-tabs > button[aria-selected="true"] { color: var(--chrome-ink, #26303b); background: #fff; box-shadow: 0 1px 3px rgba(31, 38, 46, 0.08); font-weight: 600; }
+.canvas-options-body { flex: 1; min-height: 0; padding: 0 14px 10px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.canvas-options-section { padding: 10px 0; border-top: 1px solid var(--chrome-line, rgba(110, 120, 135, 0.14)); }
+.canvas-options-section:first-child { border-top: 0; padding-top: 0; }
+.canvas-options-section h3 { margin: 0 0 9px; font: 600 11px/1.5 system-ui, sans-serif; color: var(--chrome-ink-muted, #657181); }
+.canvas-options-action,
+.canvas-options-toggle { display: flex; align-items: center; width: 100%; gap: 9px; padding: 7px 6px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
+.canvas-options-action:hover,
+.canvas-options-toggle:hover:not(:disabled) { background: var(--chrome-hover, #f0f3f6); }
+.canvas-options-action > svg { flex: none; color: var(--chrome-ink-muted, #657181); }
+.canvas-options-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+.canvas-options-copy strong { font-size: 12px; font-weight: 500; }
+.canvas-options-copy small { color: var(--chrome-ink-muted, #657181); font-size: 11px; }
+.canvas-options-switch { display: inline-flex; flex: none; align-items: center; width: 29px; height: 17px; padding: 2px; border-radius: 20px; box-sizing: border-box; background: #d2d8df; }
+.canvas-options-switch > span { width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(31, 38, 46, 0.15); }
+[aria-checked="true"] > .canvas-options-switch { background: var(--chrome-accent, #3478bd); }
+[aria-checked="true"] > .canvas-options-switch > span { margin-left: 12px; }
+.canvas-options-save-state { margin: 3px 6px 0; color: var(--chrome-ink-muted, #657181); font-size: 10px; overflow-wrap: anywhere; }
+.canvas-options-save-state.is-error,
+.canvas-options-error { color: #b13b42; }
+.canvas-options-segments { display: flex; gap: 3px; margin: 5px 6px; padding: 3px; border-radius: 7px; background: #f0f3f6; }
+.canvas-options-segments > button { flex: 1; min-width: 0; padding: 4px 1px; border: 0; border-radius: 4px; font-size: 11px; background: transparent; white-space: nowrap; }
+.canvas-options-segments > button[aria-pressed="true"] { background: #fff; color: var(--chrome-accent, #3478bd); box-shadow: 0 1px 3px rgba(31, 38, 46, 0.08); }
+.canvas-options-backgrounds { display: grid; grid-template-columns: repeat(auto-fit, minmax(46px, 1fr)); gap: 5px; }
+.canvas-options-backgrounds > button { display: flex; flex-direction: column; align-items: stretch; min-width: 0; gap: 5px; padding: 4px; border: 1px solid transparent; border-radius: 7px; background: transparent; font-size: 10px; white-space: nowrap; }
+.canvas-options-backgrounds > button:hover { background: var(--chrome-hover, #f0f3f6); }
+.canvas-options-backgrounds > button[aria-pressed="true"] { border-color: var(--chrome-accent, #3478bd); background: var(--chrome-active, #edf4fc); color: var(--chrome-accent, #3478bd); }
+.canvas-options-background-preview { display: block; height: 36px; border: 1px solid #e0e5eb; border-radius: 4px; background-color: #fafcfe; }
+.canvas-options-background-preview.is-dots { background-image: radial-gradient(#aab7c5 1px, transparent 1px); background-size: 7px 7px; background-position: 3px 3px; }
+.canvas-options-background-preview.is-grid { background-image: linear-gradient(#d6dee7 1px, transparent 1px), linear-gradient(90deg, #d6dee7 1px, transparent 1px); background-size: 8px 8px; }
+.canvas-options-background-preview.is-lines { background-image: linear-gradient(#d6dee7 1px, transparent 1px); background-size: 100% 8px; background-position: 0 3px; }
+.canvas-options-background-preview.is-engineering { background-image: linear-gradient(#c0cfdf 1px, transparent 1px), linear-gradient(90deg, #c0cfdf 1px, transparent 1px), linear-gradient(#e1e8ef 1px, transparent 1px), linear-gradient(90deg, #e1e8ef 1px, transparent 1px); background-size: 20px 20px, 20px 20px, 5px 5px, 5px 5px; }
+.canvas-options-about dl { display: grid; gap: 6px; margin: 0 0 10px; }
+.canvas-options-about dl > div { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; }
+.canvas-options-about dt { color: var(--chrome-ink-muted, #657181); }
+.canvas-options-about dd { margin: 0; overflow-wrap: anywhere; }
+.canvas-options-about a { display: inline-flex; align-items: center; gap: 3px; color: var(--chrome-accent, #3478bd); text-decoration: none; }
+.canvas-options-about a:hover { text-decoration: underline; }
+.canvas-options-about > small { display: block; margin-top: 10px; color: var(--chrome-ink-muted, #657181); font-size: 10px; }
+.canvas-options-error { margin: 7px 0; overflow-wrap: anywhere; }
