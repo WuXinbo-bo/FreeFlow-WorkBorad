@@ -1,4 +1,5 @@
 const { openExternalLink } = require("./externalLinks");
+const { createGitHubSyncOperations } = require("./githubSyncOperations");
 const path = require("path");
 const { validateShortcutAccelerator, replaceShortcutRegistration } = require("./shortcutSettings");
 let electron = require("electron");
@@ -4507,6 +4508,7 @@ ipcMain.handle("desktop-shell:prepare-doubao-prompt", async (_event, payload) =>
 async function githubSyncRequest(pathname, options = {}) {
   const detailsMarker = "\n__FREEFLOW_GITHUB_SYNC_DETAILS__";
   const response = await fetch(new URL(`/api/github-sync${pathname}`, APP_URL), {
+    signal: AbortSignal.timeout(20000),
     method: options.method || "GET",
     headers: { "Content-Type": "application/json" },
     body: options.body == null ? undefined : JSON.stringify(options.body),
@@ -4520,6 +4522,7 @@ async function githubSyncRequest(pathname, options = {}) {
       artifacts: data?.artifacts,
       state: data?.state,
       retryAfterMs: data?.retryAfterMs,
+      operationId: data?.operationId,
     };
     const error = new Error(`${data?.error || `GitHub 同步请求失败 (${response.status})`}${detailsMarker}${JSON.stringify(details)}`);
     error.status = response.status;
@@ -4528,6 +4531,7 @@ async function githubSyncRequest(pathname, options = {}) {
     error.artifacts = data?.artifacts;
     error.state = data?.state;
     error.retryAfterMs = data?.retryAfterMs;
+    error.operationId = data?.operationId;
     throw error;
   }
   if (data?.ok !== true) throw new Error("GitHub 同步接口返回了无效响应，请重启桌面应用");
@@ -4541,14 +4545,27 @@ function serializeGithubSyncError(error) {
     status: Number(error?.status) || 0,
     code: String(error?.code || ""),
     retryAfterMs: Math.max(0, Number(error?.retryAfterMs) || 0),
+    operationId: error?.operationId,
+    localChanged: error?.localChanged,
+    filePath: error?.filePath,
+    boardId: error?.boardId,
+    merged: error?.merged,
     conflicts: Array.isArray(error?.conflicts) ? error.conflicts : undefined,
     artifacts: error?.artifacts && typeof error.artifacts === "object" ? error.artifacts : undefined,
     state: error?.state && typeof error.state === "object" ? error.state : undefined,
   };
 }
 
+const githubSyncOperations = createGitHubSyncOperations({
+  request: githubSyncRequest,
+  onProgress: (operation) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop-shell:github-sync-operation", operation);
+  },
+});
+
 async function githubSyncRequestForIpc(pathname, options = {}) {
   try {
+    if (githubSyncOperations.supports(pathname)) return await githubSyncOperations.run(pathname, options.body || {});
     return await githubSyncRequest(pathname, options);
   } catch (error) {
     // Return a cloneable envelope so Electron does not discard custom Error
@@ -4558,6 +4575,11 @@ async function githubSyncRequestForIpc(pathname, options = {}) {
 }
 
 ipcMain.handle("desktop-shell:github-sync-status", () => githubSyncRequestForIpc("/status"));
+ipcMain.handle("desktop-shell:github-sync-operations", () => githubSyncRequestForIpc("/operations"));
+ipcMain.handle("desktop-shell:github-sync-operation", (_event, payload) => githubSyncRequestForIpc(`/operations/${encodeURIComponent(String(payload?.operationId || ""))}`));
+ipcMain.handle("desktop-shell:github-sync-remote-check", () => githubSyncRequestForIpc("/remote/check"));
+ipcMain.handle("desktop-shell:github-sync-delete-remote", (_event, payload) => githubSyncRequestForIpc("/delete-remote", { method: "POST", body: payload || {} }));
+ipcMain.handle("desktop-shell:github-sync-apply-deletion", (_event, payload) => githubSyncRequestForIpc("/apply-deletion", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-device-flow-start", (_event, payload) => githubSyncRequestForIpc("/device-flow/start", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-token-connect", (_event, payload) => githubSyncRequestForIpc("/token", { method: "POST", body: payload || {} }));
 ipcMain.handle("desktop-shell:github-sync-device-flow-poll", (_event, payload) => githubSyncRequestForIpc("/device-flow/poll", { method: "POST", body: payload || {} }));

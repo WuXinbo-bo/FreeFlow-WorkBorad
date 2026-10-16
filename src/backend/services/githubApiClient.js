@@ -275,11 +275,25 @@ class GitHubApiClient {
         if (error.code !== "NETWORK_ERROR" && !(error.status >= 500)) throw error;
         // PATCH may have succeeded even if its response was lost. Check before
         // retrying, and retain fast-forward protection if another device won.
-        const current = await this.getBranchHead(owner, repo, branch);
+        let current;
+        try { current = await this.getBranchHead(owner, repo, branch); }
+        catch (cause) {
+          throw new GitHubApiError("上传请求结果尚未确认，请检查远端后再继续写入", {
+            code: "COMMIT_RESULT_UNKNOWN", commitSha: commit.sha, baseCommitSha,
+            owner, repo, branch, cause,
+          });
+        }
         const currentSha = current?.object?.sha;
         if (currentSha !== commit.sha) {
           if (currentSha !== baseCommitSha) {
-            const comparison = await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commit.sha)}...${encodeURIComponent(currentSha)}`);
+            let comparison;
+            try { comparison = await this.request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(commit.sha)}...${encodeURIComponent(currentSha)}`); }
+            catch (cause) {
+              throw new GitHubApiError("上传后远端已推进，暂时无法确认提交结果，请检查远端后继续", {
+                code: "COMMIT_RESULT_UNKNOWN", commitSha: commit.sha, baseCommitSha,
+                owner, repo, branch, cause,
+              });
+            }
             if (!["ahead", "identical"].includes(comparison?.status)) {
               throw new GitHubApiError("远端分支已变化，请先拉取并处理冲突", { status: 409, code: "REMOTE_CHANGED", currentBaseSha: currentSha });
             }

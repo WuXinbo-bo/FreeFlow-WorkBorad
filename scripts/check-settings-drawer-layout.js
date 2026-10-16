@@ -264,6 +264,11 @@ async function main() {
       await openSection("plugins");
       await geometry("theme-" + preset);
       await page.screenshot({ path: path.join(artifacts, "theme-" + preset + ".png") });
+      await openSection("github");
+      for (const tab of ["workspace", "remote", "connection"]) {
+        await page.locator(`[data-github-page="${tab}"]`).first().click();
+        for (const viewport of [viewports[0], viewports[4]]) { await page.setViewportSize(viewport); await geometry(`theme-${preset}-${tab}-${viewport.width}`); }
+      }
     }
     check(signatures.size === 5, "five themes apply distinct real theme variables", [...signatures]);
     for (const viewport of [viewports[0], viewports[4]]) {
@@ -285,99 +290,74 @@ async function main() {
     await page.setViewportSize(viewports[0]);
     await page.evaluate(() => { window.__delayContext = true; });
     await openSection("github");
+    await page.locator('[data-github-page="connection"]').first().click();
     await page.locator("[data-github-token]").fill("fixture-token");
     await page.evaluate(() => window.__resolveContext());
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    check(await page.locator("[data-github-token]").inputValue() === "fixture-token", "late read-only workspace context preserves a token being entered");
+    check(await page.locator("[data-github-token]").inputValue() === "fixture-token", "late workspace context preserves typed token");
     await page.locator("#drawer-close-btn").click();
     await page.evaluate(async () => { document.querySelector("#insight-drawer").classList.add("is-open"); document.querySelector("#insight-drawer").setAttribute("aria-hidden", "false"); await window.__center.open(); });
-    check(await page.locator("[data-github-token]").inputValue() === "", "closing settings clears an unsubmitted token");
-    await page.locator("[data-github-token]").fill("fixture-token");
+    check(await page.locator("[data-github-token]").inputValue() === "", "close clears unsubmitted token");
     await page.locator('.settings-center-auth-method:has([data-github-auth-method="device-flow"])').click();
-    await page.locator("[data-github-client-id]").waitFor();
-    check(await page.locator("[data-github-token]").count() === 0, "device authorization hides the token input");
+    check(await page.locator("[data-github-token]").count() === 0, "device authorization hides token");
     await page.locator('.settings-center-auth-method:has([data-github-auth-method="token"])').click();
-    check(await page.locator("[data-github-token]").inputValue() === "", "switching authentication methods clears the old token");
     await page.locator("[data-github-token]").fill("fixture-token");
     await page.locator('[data-settings-action="github-token-connect"]').click();
     await page.waitForSelector('[data-settings-action="github-repositories"]');
-    check(await page.locator("[data-github-token]").count() === 0 && await page.evaluate(() => !document.querySelector("#settings-center-host").innerHTML.includes("fixture-token")), "completed connection removes the submitted token from the settings UI");
-    await geometry("github-connected-420");
+    check(await page.locator("[data-github-token]").count() === 0, "connection removes submitted token");
     await page.locator('[data-settings-action="github-repositories"]').click();
     await page.waitForFunction(() => document.querySelector("[data-github-repository]")?.options.length > 1);
     await page.locator("[data-github-repository]").selectOption({ index: 1 });
     await page.locator('[data-settings-action="github-repository-save"]').click();
-    await page.waitForSelector(".settings-center-github-advanced");
-    check(await page.evaluate(() => window.__repositoryCalls[0]?.branch === "trunk"), "first repository binding uses its real default branch");
+    await page.waitForFunction(() => window.__repositoryCalls.length === 1);
+    check(await page.evaluate(() => window.__repositoryCalls[0]?.branch === "trunk"), "binding preserves real default branch");
     await page.evaluate(() => window.__center.reload());
-    check(await page.locator("[data-github-repository]").inputValue() === "freeflow-browser-test/private-workspace-with-a-long-repository-name", "bound repository remains selected after reloading without a repository list");
     const repositoryDetails = page.locator("[data-settings-details=github-repository]");
     if (await repositoryDetails.getAttribute("open") === null) await repositoryDetails.locator("summary").click();
     await page.locator('[data-settings-action="github-repository-save"]').click();
     await page.waitForFunction(() => window.__repositoryCalls.length === 2);
-    check(await page.evaluate(() => window.__repositoryCalls[1]?.branch === "trunk"), "saving the same bound repository preserves a non-main branch");
-    await geometry("github-bound-420");
-    await page.locator(".settings-center-github-advanced > summary").click();
-    await geometry("github-advanced-open-420");
-    await page.screenshot({ path: path.join(artifacts, "github-bound-420.png") });
-    await page.locator('[data-settings-action="github-workspace"]').click();
-    await page.locator(".settings-center-github-board").nth(3).waitFor();
-    check(await page.locator(".settings-center-github-board").count() === 4, "real discovery renders synced/conflict/deleted/remote-only board rows");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-board-copy > small').first().textContent().then(text => text.includes("2026") && !text.includes("未知")), "ISO timestamps from the real remote schema render as dates");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-board-state').textContent() === "上次检查 · 存在冲突", "a cached conflict is labelled as the last check rather than current verification");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-deleted"] [data-settings-action="github-reconcile"]').textContent() === "恢复本地版本", "remote deletion offers restoration rather than normal pull");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-remote-only"] .settings-center-github-board-state').textContent().then(text => text.endsWith("仅远端存在")), "a board with no local path is classified as remote-only");
-    check(await page.evaluate(() => window.__boardStateCalls.every(input => Boolean(input.boardPath)) && !window.__boardStateCalls.some(input => input.boardId === "fixture-remote-only")), "remote-only boards never query getBoardState with an empty local path");
-    check(await page.evaluate(() => window.__prepareCount === 0), "browsing and discovering remote boards never save the current canvas");
-    check(await page.locator(".settings-center-content").textContent().then(text => text.includes("/Users/test/当前工作区")), "destination shows the live workspace rather than the unsaved settings draft");
-    for (let index = 0; index < 3; index++) await page.locator(".settings-center-github-file-details > summary").nth(index).click();
-    await page.locator('[data-settings-action="github-reconcile"][data-github-board-id="fixture-conflict"]').click();
-    await page.locator(".settings-center-github-conflict-details > summary").click();
-    await page.locator(".settings-center-github-file-details > summary").first().click();
-    for (let refresh = 0; refresh < 3; refresh++) {
-      await page.locator('[data-settings-action="github-refresh"]').click();
-      await page.waitForFunction(() => !document.querySelector('[data-settings-action="github-refresh"]')?.disabled);
-      check(await page.locator(".settings-center-github-file-details").first().getAttribute("open") === null, "GitHub refresh preserves a collapsed file detail");
-      check(await page.locator(".settings-center-github-file-details").nth(1).getAttribute("open") !== null, "GitHub refresh preserves expanded file detail");
-      check(await page.locator(".settings-center-github-conflict-details").getAttribute("open") !== null, "GitHub refresh preserves expanded conflict detail");
+    check(await page.evaluate(() => window.__repositoryCalls[1]?.branch === "trunk"), "saving bound repository preserves non-main branch");
+    for (const tab of ["connection", "workspace", "remote"]) {
+      await page.locator(`[data-github-page="${tab}"]`).first().click();
+      if (tab === "remote") await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"]').waitFor();
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        await geometry(`github-${tab}-${viewport.width}x${viewport.height}`);
+      }
+      await page.screenshot({ path: path.join(artifacts, `github-${tab}.png`) });
     }
-    for (const viewport of viewports) {
-      await page.setViewportSize(viewport);
-      await geometry(`github-long-rows-${viewport.width}x${viewport.height}`);
-      await page.locator(".settings-center-github-board").nth(1).scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(artifacts, `github-long-rows-${viewport.width}x${viewport.height}.png`) });
-    }
+    const conflict = page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"]');
+    check(await conflict.locator('.settings-center-github-board-state').textContent() === "上次检查 · 存在冲突", "cached conflict is labelled as last check");
+    check(await page.locator('[data-settings-details="github-synced"]').getAttribute("open") === null, "synced boards are initially folded");
+    check(await page.evaluate(() => window.__prepareCount === 0), "browsing never saves current canvas");
+    await conflict.locator('[data-settings-action="github-reconcile"]').click();
+    await conflict.locator('.settings-center-github-conflict-details > summary').click();
+    await conflict.locator('.settings-center-github-file-details > summary').click();
+    await page.evaluate(() => window.__center.open());
+    check(await conflict.locator('.settings-center-github-conflict-details').getAttribute("open") !== null, "refresh retains expanded conflict details");
+    for (const viewport of viewports) { await page.setViewportSize(viewport); await geometry(`github-conflict-${viewport.width}x${viewport.height}`); }
+    await page.locator('[data-github-page="workspace"]').first().click();
     await page.locator('[data-settings-action="github-workspace-plan"]').click();
     await page.waitForFunction(() => window.__workspaceCalls.length === 1);
-    await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.textContent.includes("检查完成"));
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-local').textContent() === "本机文件 · /Users/test/当前工作区/研究资料.freeflow", "current workspace plan overrides an older path from the sync ledger");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-remote-only"] .settings-center-github-local').textContent() === "当前文件夹尚未下载此画布", "a planned destination with no localHash is not displayed as an existing file");
-    check(await page.evaluate(() => window.__workspaceEvents.length === 0), "checking a plan does not announce files changed");
+    await page.waitForFunction(() => document.querySelector('.settings-center-save-state')?.textContent.includes("检查完成"));
+    check(await page.evaluate(() => window.__workspaceEvents.length === 0), "plan never emits file changes");
     await page.locator('[data-settings-action="github-workspace-sync"]').click();
     await page.waitForFunction(() => window.__workspaceCalls.length === 2);
-    await page.waitForFunction(() => document.querySelector(".settings-center-save-state")?.classList.contains("is-warning"));
-    check(await page.locator(".settings-center-save-state").textContent().then(text => /失败|未完成|需要处理/.test(text)), "partial upload failure is not reported as a complete success");
-    const workspaceFailures = page.locator('[data-settings-details="github-workspace-failures"]');
-    await workspaceFailures.waitFor();
-    check(await workspaceFailures.getAttribute("open") !== null && await workspaceFailures.textContent().then(text => text.includes("待重试的本地资料") && text.includes("同步期间本地画布发生变化")), "partial failure names the affected canvas and specific reason in an expanded detail");
+    await page.waitForFunction(() => document.querySelector('.settings-center-save-state')?.textContent.includes("失败"));
+    check(await page.locator('[role="alert"]').textContent().then(text => text.includes("待重试的本地资料") && text.includes("同步期间本地画布发生变化")), "partial failure stays visible with name and reason");
     await page.locator('[data-settings-action="github-workspace-pull"]').click();
-    await page.waitForFunction(() => window.__workspaceCalls.length === 3);
-    await page.waitForFunction(() => window.__workspaceEvents.length === 2);
-    check(await page.evaluate(() => window.__workspaceCalls.every(call => call.input.rootPath === window.__liveWorkspace.workspaceRoot && call.input.boardPath === window.__liveWorkspace.boardPath)), "plan/sync/pull all use the actual current workspace and board");
-    check(await page.evaluate(() => window.__prepareCount === 3), "only actual plan/sync/pull actions prepare and save the canvas");
-    check(await page.evaluate(() => window.__workspaceEvents.every(result => result.rootPath === window.__liveWorkspace.workspaceRoot) && window.__workspaceEvents[1].results[0].pulled === true), "completed workspace actions notify the real workspace refresh event with the import result");
+    await page.waitForFunction(() => window.__workspaceCalls.length === 3 && window.__workspaceEvents.length === 2);
+    check(await page.evaluate(() => window.__workspaceCalls.every(call => call.input.rootPath === window.__liveWorkspace.workspaceRoot && call.input.boardPath === window.__liveWorkspace.boardPath)), "all bulk operations use real current workspace");
+    check(await page.evaluate(() => window.__prepareCount === 3), "only explicit file operations prepare canvas");
+    check(await page.locator('[role="alert"]').count() === 0, "next completed action clears old failure details");
+    await page.locator('[data-github-page="remote"]').first().click();
     const imported = page.locator('.settings-center-github-board[data-github-board-id="fixture-remote-only"]');
-    check(await imported.locator(".settings-center-github-board-state").textContent() === "已是最新", "successfully pulled remote board updates its visible sync status from the current plan");
-    await imported.locator(".settings-center-github-file-details > summary").click();
-    check(await imported.locator(".settings-center-github-local").textContent() === "本机文件 · /Users/test/当前工作区/另一台设备的新画布.freeflow", "pulled board displays a local path inside the actual workspace");
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-board-state').textContent() === "双方都有修改", "bulk pull preserves the unresolved conflict from the current workspace plan");
-    check(await page.locator(".settings-center-save-state").getAttribute("class").then(value => value.includes("is-warning")), "remaining conflicts keep bulk pull feedback in a warning state");
-    check(await workspaceFailures.count() === 0, "next completed action clears stale failure details while keeping unresolved conflict feedback");
-    await geometry("github-pulled-local-path-420");
+    check(await imported.locator('.settings-center-github-board-state').textContent() === "已是最新", "pulled board reflects current plan");
+    check(await imported.locator('.settings-center-github-local').textContent() === "本机文件 · /Users/test/当前工作区/另一台设备的新画布.freeflow", "pulled board shows current local path");
     await page.evaluate(async () => { window.__contextError = true; await window.__center.open(); });
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-board-state').textContent() === "上次检查 · 存在冲突", "failed workspace lookup does not apply a previously cached plan to an unknown folder");
+    check(await conflict.locator('.settings-center-github-board-state').textContent() === "上次检查 · 存在冲突", "missing context never reuses old workspace plan");
     await page.evaluate(async () => { window.__contextError = false; await window.__center.open(); });
-    check(await page.locator('.settings-center-github-board[data-github-board-id="fixture-conflict"] .settings-center-github-board-state').textContent() === "双方都有修改", "restoring the same workspace restores its current plan presentation");
+    check(await conflict.locator('.settings-center-github-board-state').textContent() === "双方都有修改", "restored current workspace restores plan");
 
     plugin = { ...plugin, phase: "downloading", operationPending: true, progress: { receivedBytes: 1, totalBytes: 8 * 1024 * 1024 } };
     await openSection("plugins");

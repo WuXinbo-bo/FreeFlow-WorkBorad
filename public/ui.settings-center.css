@@ -598,6 +598,8 @@
 .settings-center-inline-actions button,
 .settings-center-github-list-toolbar button,
 .settings-center-github-conflict-details button,
+.settings-center-github-file-details button,
+.settings-center-github-readiness button,
 .settings-center-plugin-primary button,
 .settings-center-plugin-more-actions button,
 .settings-center-plugin-import,
@@ -1135,6 +1137,8 @@
 .settings-center-inline-actions button,
 .settings-center-github-list-toolbar button,
 .settings-center-github-conflict-details button,
+.settings-center-github-file-details button,
+.settings-center-github-readiness button,
 .settings-center-plugin-primary button,
 .settings-center-plugin-more-actions button,
 .settings-center-plugin-import,
@@ -2833,4 +2837,76 @@
     width: 100%;
     opacity: 0.45;
   }
+}
+
+/* GitHub uses three task pages inside the existing settings drawer. */
+.settings-center-github-overview {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0 0 15px;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.settings-center-github-overview > span {
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+}
+.settings-center-github-tabs {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--settings-border);
+}
+.settings-center-github-tabs button {
+  flex: 1;
+  min-width: 0;
+  min-height: 37px;
+  padding: 7px 3px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--settings-muted);
+  background: transparent;
+  font-size: 0.73rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.settings-center-github-tabs button.is-active {
+  border-bottom-color: var(--settings-accent, #537e8a);
+  color: var(--settings-text);
+  font-weight: 650;
+}
+.settings-center-github-tabs button:focus-visible {
+  outline: 2px solid var(--settings-accent, #537e8a);
+  outline-offset: -3px;
+}
+.settings-center-github-local-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--settings-border);
+  font-size: 0.73rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.settings-center-github-local-list span,
+.settings-center-github-local-list small {
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+}
+.settings-center-github-local-list small {
+  grid-column: 1 / -1;
+}
+.settings-center-github-board > .settings-center-github-file-details {
+  grid-column: 1 / -1;
+}
+.settings-center-github-workspace-actions {
+  justify-content: flex-start;
+}
+.settings-center-github-conflict-details,
+.settings-center-github-file-details {
+  overflow-wrap: anywhere;
 }

@@ -22,10 +22,11 @@ function createAssistantPluginRouter({ manager, processHost }) {
   const router = express.Router();
   let installTask = null;
   router.use(requirePluginOrigin);
-  const respond = (res) => res.json({ ok: true, plugin: { ...manager.getStatus(), running: processHost.isRunning(), operationPending: Boolean(installTask) } });
+  const getPluginState = () => ({ ...manager.getStatus(), running: processHost.isRunning(), operationPending: Boolean(installTask) });
+  const respond = (res) => res.json({ ok: true, plugin: getPluginState() });
   const wrap = (task) => async (req, res) => {
     try { await task(req, res); }
-    catch (error) { res.status(error.statusCode || 400).json({ ok: false, error: error.message, code: error.code || "PLUGIN_OPERATION_FAILED" }); }
+    catch (error) { res.status(error.statusCode || 400).json({ ok: false, error: error.message, code: error.code || "PLUGIN_OPERATION_FAILED", plugin: getPluginState() }); }
   };
   function startInstall(options, cleanup) {
     if (installTask) throw Object.assign(new Error("插件正在安装，请等待或取消"), { statusCode: 409 });
@@ -35,7 +36,10 @@ function createAssistantPluginRouter({ manager, processHost }) {
       finally { installTask = null; }
     });
   }
-  router.get("/status", (_req, res) => respond(res));
+  router.get("/status", wrap(async (_req, res) => {
+    await manager.refreshStatus?.();
+    respond(res);
+  }));
   router.post("/check", wrap(async (_req, res) => {
     await manager.checkForUpdate();
     respond(res);

@@ -47,6 +47,7 @@ import { mountGlobalTutorialHost } from "./tutorial-system/index.js";
 import { createUiSettingsRuntimeBridge } from "./settings/createUiSettingsRuntimeBridge.js";
 import { createCanvasStorageBridge } from "./canvas/createCanvasStorageBridge.js";
 import { createLatestAsyncCommitter } from "../utils/latestAsyncCommitter.js";
+import { createGitHubRemoteMonitor } from "./githubSyncMonitor.js";
 
 const state = createInitialState();
 let assistantPluginState = { installed: false, activeEnabled: false };
@@ -1894,6 +1895,8 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
     return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace() || boardPath.replace(/[\\/][^\\/]+$/, "") };
   },
 });
+const githubRemoteMonitor = createGitHubRemoteMonitor({ client: DESKTOP_SHELL?.githubSync });
+window.addEventListener("pagehide", () => githubRemoteMonitor.dispose(), { once: true });
 agentController = assistantPluginModule?.createAgentController({
   client: agentClient,
   desktopShell: DESKTOP_SHELL,

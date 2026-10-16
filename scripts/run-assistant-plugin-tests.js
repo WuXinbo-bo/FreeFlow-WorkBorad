@@ -33,6 +33,7 @@ async function main() {
     artifact = path.join(ROOT_DIR, "release/plugins", `freeflow-ai-assistant-${packageInfo.version}.ffplugin`);
   }
   await run("scripts/check-assistant-plugin-packaging.js", ["--package-file", artifact]);
+  await run("scripts/check-assistant-plugin-release-config.js");
   await run("scripts/check-assistant-plugin-manager.js", ["--artifact", artifact]);
   await run("scripts/check-assistant-plugin-routes.js");
   await run("scripts/check-assistant-process-host.js", [artifact]);

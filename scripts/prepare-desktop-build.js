@@ -23,6 +23,7 @@ function warnIfMissing(relativePath, message) {
   }
 }
 
+runNodeScript(path.join("scripts", "configure-assistant-plugin-release.js"));
 runNodeScript(path.join("scripts", "sync-app-icons.js"));
 runNodeScript(path.join("scripts", "build-markdown-parser.js"));
 runNodeScript(path.join("scripts", "build-canvas2d-ui.js"));
