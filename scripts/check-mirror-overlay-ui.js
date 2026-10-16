@@ -95,11 +95,14 @@ async function main() {
 
     await showSettings("canvas");
     const directory = page.locator('[data-settings-path="canvas.workspaceDirectory"]');
+    assert.equal(await directory.isVisible(), false, "directory paths start folded in the native overlay");
+    await page.locator('[data-settings-action="toggle-path-details"][data-path-target="canvas.workspaceDirectory"]').click();
     await directory.fill("/fixture/draft");
     await page.locator("#overlay-close").click();
     assert.equal(await page.locator("#insight-drawer").isVisible(), false);
     await showSettings("canvas");
     assert.equal(await directory.inputValue(), "/fixture/draft", "closing must preserve unsaved settings");
+    assert.equal(await directory.isVisible(), true, "closing must preserve expanded directory details");
     await page.locator('[data-settings-action="save"]').click();
     await page.waitForFunction(() => document.querySelector('[data-settings-action="save"]')?.disabled);
     await page.evaluate(() => window.presentOverlay({ surfaceId: "settings", kind: "settings", payload: { command: "request-close" } }));

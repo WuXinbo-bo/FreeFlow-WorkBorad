@@ -117,6 +117,16 @@ function renderField({ path, label, value, type = "text", maxlength = 400, place
   `;
 }
 
+function describeDirectoryPath(value) {
+  const fullPath = String(value ?? "").trim();
+  const segments = fullPath.split(/[\\/]+/).filter(Boolean);
+  const separator = fullPath.includes("\\") ? "\\" : "/";
+  return {
+    fullPath,
+    summary: segments.length > 2 ? `…${separator}${segments.slice(-2).join(separator)}` : fullPath || "未指定",
+  };
+}
+
 export function mountSettingsCenter(host, options = {}) {
   if (!(host instanceof HTMLElement)) {
     return { open() {}, close: () => true, reload() {}, isDirty: () => false, isSaving: () => false };
@@ -151,6 +161,7 @@ export function mountSettingsCenter(host, options = {}) {
   let message = "";
   let messageTone = "";
   let fieldErrors = {};
+  const expandedPathFields = new Set();
   let requestSequence = 0;
   let themePreviewActive = false;
   let riskConfirmationPending = false;
@@ -758,10 +769,25 @@ export function mountSettingsCenter(host, options = {}) {
   }
 
   function renderPathField(path, label, value, note) {
+    if (fieldErrors[path]) expandedPathFields.add(path);
+    const expanded = expandedPathFields.has(path);
+    const { fullPath, summary } = describeDirectoryPath(value);
+    const id = `settings-directory-${path.replaceAll(".", "-")}`;
     return `
-      <div class="settings-center-path-row">
-        ${renderField({ path, label, value, placeholder: "选择或输入目录", note })}
-        <div class="settings-center-path-actions"><button type="button" data-settings-action="pick-directory" data-path-target="${path}"${!desktopShell?.pickDirectory ? " disabled" : ""}>选择目录</button><button type="button" data-settings-action="reveal-directory" data-path-target="${path}"${!desktopShell?.revealPath || !value ? " disabled" : ""}>打开目录</button></div>
+      <div class="settings-center-path-row" data-directory-row="${path}">
+        <div class="settings-center-path-header">
+          <div class="settings-center-path-copy"><strong>${escapeHtml(label)}</strong><small data-path-summary="${path}" title="${escapeHtml(fullPath || "未指定目录")}">${escapeHtml(summary)}</small></div>
+          <div class="settings-center-path-actions">
+            <button type="button" data-settings-action="pick-directory" data-path-target="${path}" aria-label="更改${escapeHtml(label)}"${!desktopShell?.pickDirectory || phase === "saving" ? " disabled" : ""}>更改</button>
+            <button type="button" class="settings-center-path-more" data-settings-action="toggle-path-details" data-path-target="${path}" aria-label="${escapeHtml(label)}的完整路径与更多操作" aria-expanded="${expanded}" aria-controls="${id}">${expanded ? "收起" : "更多"}</button>
+          </div>
+        </div>
+        <div class="settings-center-path-details" id="${id}" data-path-details="${path}"${expanded ? "" : " hidden"}>
+          <p id="${id}-note">${escapeHtml(note)}</p>
+          <code data-path-full="${path}">${escapeHtml(fullPath || "未指定目录")}</code>
+          <label class="settings-center-field"><span>手动输入路径</span><input type="text" data-settings-path="${path}" value="${escapeHtml(value)}" maxlength="400" placeholder="选择或输入目录" aria-label="${escapeHtml(label)}：手动输入路径" aria-describedby="${id}-note ${id}-error" aria-invalid="${Boolean(fieldErrors[path])}"${phase === "saving" ? " disabled" : ""} /><em id="${id}-error" data-field-error="${path}" aria-live="polite"></em></label>
+          <div class="settings-center-path-actions"><button type="button" data-settings-action="reveal-directory" data-path-target="${path}"${!desktopShell?.revealPath || !fullPath || phase === "saving" ? " disabled" : ""}>打开目录</button></div>
+        </div>
       </div>
     `;
   }
@@ -773,10 +799,10 @@ export function mountSettingsCenter(host, options = {}) {
         <div><p>保存与编辑</p><h4>画布设置</h4></div>
       </div>
       <section class="settings-center-group">
-        <div class="settings-center-group-heading"><h5>内容目录</h5><p>设置画布、工作区和图片的保存位置。</p></div>
+        <div class="settings-center-group-heading"><h5>内容目录</h5><p>更改位置后保存设置，已有文件不会移动。</p></div>
         ${renderPathField("canvas.defaultBoardDirectory", "默认画布目录", canvas.defaultBoardDirectory, "新建和保存画布时优先使用。")}
         ${renderPathField("canvas.workspaceDirectory", "工作区目录", canvas.workspaceDirectory, "画布列表与导航的根目录。")}
-        ${renderPathField("canvas.exportImageDirectory", "图片导出目录", canvas.exportImageDirectory, "留空时使用当前画布目录下的 importImage。")}
+        ${renderPathField("canvas.exportImageDirectory", "图片保存位置", canvas.exportImageDirectory, "图片优先保存在画布旁的 importImage 文件夹，此处作为备用位置。导出文件的位置由各导出操作选择。")}
       </section>
       <section class="settings-center-group">
         <div class="settings-center-group-heading"><h5>编辑习惯</h5><p>保存后应用到当前画布。</p></div>
@@ -1806,6 +1832,19 @@ export function mountSettingsCenter(host, options = {}) {
     if (action === "agent-create-backup") await runBackupAction("create");
     if (action === "agent-cancel-restore") { restoreCandidate = ""; setMessage("", ""); render(); }
     if (action === "agent-confirm-restore" && restoreCandidate) await runBackupAction("restore", restoreCandidate);
+    if (action === "toggle-path-details") {
+      const pathTarget = actionButton.dataset.pathTarget;
+      const details = host.querySelector(`[data-path-details="${CSS.escape(pathTarget)}"]`);
+      if (!details) return;
+      const expanded = details.hidden;
+      if (expanded) expandedPathFields.add(pathTarget);
+      else expandedPathFields.delete(pathTarget);
+      details.hidden = !expanded;
+      actionButton.setAttribute("aria-expanded", String(expanded));
+      actionButton.textContent = expanded ? "收起" : "更多";
+      actionButton.focus({ preventScroll: true });
+      return;
+    }
     if (action === "pick-directory" || action === "pick-root") {
       const pathTarget = actionButton.dataset.pathTarget;
       const currentPath = pathTarget ? getPathValue(draft, pathTarget) : "";
@@ -1857,6 +1896,16 @@ export function mountSettingsCenter(host, options = {}) {
     setPathValue(draft, path, value);
     const revealButton = host.querySelector(`[data-settings-action="reveal-directory"][data-path-target="${CSS.escape(path)}"]`);
     if (revealButton) revealButton.disabled = !desktopShell?.revealPath || !String(value).trim();
+    const pathSummary = host.querySelector(`[data-path-summary="${CSS.escape(path)}"]`);
+    if (pathSummary) {
+      const { fullPath, summary } = describeDirectoryPath(value);
+      pathSummary.textContent = summary;
+      pathSummary.title = fullPath || "未指定目录";
+      host.querySelector(`[data-path-full="${CSS.escape(path)}"]`).textContent = fullPath || "未指定目录";
+      target.setAttribute("aria-invalid", "false");
+      const error = host.querySelector(`[data-field-error="${CSS.escape(path)}"]`);
+      if (error) error.textContent = "";
+    }
     markDraftChanged();
   });
 

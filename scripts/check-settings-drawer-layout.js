@@ -31,10 +31,19 @@ async function main() {
   for (const snapshot of [core, full]) Object.assign(snapshot.sections.canvas, { defaultBoardDirectory: longDirectory, workspaceDirectory: longDirectory, exportImageDirectory: longDirectory });
   let plugin = { installed: true, activeEnabled: true, desiredEnabled: true, version: "1.0.0", phase: "ready", downloadAvailable: true, selfCheck: { ok: true } };
   let statusCount = 0;
+  let rejectDirectorySave = false;
   const json = (res, value) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)); };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
-    if (url.pathname === "/api/settings-center") return json(res, url.searchParams.has("includeAi") ? full : core);
+    if (url.pathname === "/api/settings-center") {
+      if (req.method === "POST" && rejectDirectorySave) {
+        for await (const chunk of req) void chunk;
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "目录无法保存", fieldErrors: { "canvas.workspaceDirectory": "目录不可写（测试）" } }));
+        return;
+      }
+      return json(res, url.searchParams.has("includeAi") ? full : core);
+    }
     if (url.pathname.startsWith("/api/plugins/assistant/")) {
       if (url.pathname.endsWith("/status")) {
         statusCount++;
@@ -161,7 +170,11 @@ async function main() {
       let latestPlan = plan;
       window.__desktop = {
         platform: "darwin",
-        pickDirectory: async () => { window.__directoryCalls.picks++; return { canceled: false, filePath: "/tmp/selected-directory" }; },
+        pickDirectory: async () => {
+          window.__directoryCalls.picks++;
+          if (window.__cancelNextDirectoryPick) { window.__cancelNextDirectoryPick = false; return { canceled: true }; }
+          return { canceled: false, filePath: "/tmp/selected-directory" };
+        },
         revealPath: async value => { window.__directoryCalls.reveals.push(value); return { ok: true }; },
         githubSync: {
           getStatus: async () => ({ ok: true, connected, auth: connected ? { method: "token", user: { login: "freeflow-browser-test" } } : null, repository, ledger: { boards: {} } }),
@@ -225,6 +238,13 @@ async function main() {
     const draftPath = "/tmp/unsaved-layout-check";
     const workspaceInput = page.locator('[data-settings-path="canvas.workspaceDirectory"]');
     const openDirectory = page.locator('[data-settings-action="reveal-directory"][data-path-target="canvas.workspaceDirectory"]');
+    const workspaceMore = page.locator('[data-settings-action="toggle-path-details"][data-path-target="canvas.workspaceDirectory"]');
+    check(await page.locator('.settings-center-path-details:visible').count() === 0, "all three directory forms start folded");
+    check(await page.locator('[data-path-summary="canvas.workspaceDirectory"]').getAttribute("title") === longDirectory, "short directory summary retains full path on hover");
+    await workspaceMore.focus();
+    await workspaceMore.press("Enter");
+    check(await workspaceInput.isVisible() && await workspaceMore.getAttribute("aria-expanded") === "true", "keyboard opens directory details with accessible state");
+    check(await page.locator('[data-path-full="canvas.workspaceDirectory"]').textContent() === longDirectory, "expanded details show the complete path");
     await workspaceInput.fill("");
     check(await openDirectory.isDisabled(), "empty directory disables Open");
     await workspaceInput.fill(draftPath);
@@ -233,8 +253,38 @@ async function main() {
     check(await openDirectory.isDisabled(), "clearing directory immediately disables Open again");
     await page.locator('[data-settings-action="pick-directory"][data-path-target="canvas.workspaceDirectory"]').click();
     await page.waitForFunction(() => document.querySelector('[data-settings-path="canvas.workspaceDirectory"]')?.value === "/tmp/selected-directory");
+    check(await page.evaluate(() => document.activeElement?.dataset.settingsAction === "pick-directory" && document.activeElement?.dataset.pathTarget === "canvas.workspaceDirectory"), "directory selection restores focus to the same row");
     await openDirectory.click();
     check(await page.evaluate(() => window.__directoryCalls.picks === 1 && window.__directoryCalls.reveals[0] === "/tmp/selected-directory"), "directory selection and Open use the desktop filePath contract");
+    await workspaceInput.fill(draftPath);
+    check(await page.locator('[data-path-summary="canvas.workspaceDirectory"]').textContent() === draftPath, "manual path changes immediately update the compact summary");
+    await page.evaluate(() => { window.__cancelNextDirectoryPick = true; });
+    await page.locator('[data-settings-action="pick-directory"][data-path-target="canvas.workspaceDirectory"]').click();
+    check(await workspaceInput.inputValue() === draftPath, "cancelled picker preserves the directory draft");
+    for (let index = 0; index < 4; index++) {
+      await workspaceMore.click();
+      check(await workspaceInput.isVisible() === (index % 2 === 1), "repeated directory expand/collapse restores visibility", index);
+    }
+    for (const viewport of [viewports[0], viewports[4]]) {
+      await page.setViewportSize(viewport);
+      for (const button of await page.locator('[data-settings-action="toggle-path-details"]').all()) {
+        if (await button.getAttribute("aria-expanded") === "false") await button.click();
+      }
+      await geometry(`expanded-directories-${viewport.width}`);
+      await page.screenshot({ path: path.join(artifacts, `expanded-directories-${viewport.width}.png`) });
+    }
+    await page.locator(".settings-center-content").evaluate(element => { element.style.maxWidth = "260px"; });
+    await geometry("expanded-directories-260-content");
+    await page.locator(".settings-center-content").evaluate(element => { element.style.removeProperty("max-width"); });
+    await workspaceMore.click();
+    rejectDirectorySave = true;
+    await page.locator('[data-settings-action="save"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-field-error="canvas.workspaceDirectory"]')?.textContent.includes("目录不可写"));
+    rejectDirectorySave = false;
+    check(await workspaceInput.isVisible() && await workspaceInput.getAttribute("aria-invalid") === "true", "save error opens the affected directory and marks the field");
+    check(await workspaceInput.inputValue() === draftPath, "save error preserves the unsaved directory");
+    await workspaceInput.fill(draftPath + "-edited");
+    check(await page.locator('[data-field-error="canvas.workspaceDirectory"]').textContent() === "" && await workspaceInput.getAttribute("aria-invalid") === "false", "editing the directory clears its stale field error");
     await workspaceInput.fill(draftPath);
     await openSection("plugins");
     const more = page.locator(".settings-center-plugin-more");

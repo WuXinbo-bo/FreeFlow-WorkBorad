@@ -778,7 +778,7 @@ function CanvasNavigatorPanel({
       <header className="canvas2d-navigator-head">
         <strong>{navigator?.title || "画布目录"}</strong>
         <div className="canvas2d-navigator-head-actions">
-          {onOpenWorkspace ? <button type="button" className="canvas2d-workspace-icon canvas2d-navigator-workspace-open" onClick={onOpenWorkspace} aria-label="打开画布工作区" title="打开画布工作区 · ⌘/Ctrl P"><AppIcon name="folder-open" size={16} /></button> : null}
+          {onOpenWorkspace ? <button type="button" className="canvas2d-workspace-icon canvas2d-navigator-workspace-open" onClick={onOpenWorkspace} aria-label="打开画布工作区" title="打开画布工作区 · ⌘/Ctrl P"><AppIcon name="folder" size={16} /></button> : null}
           <button type="button" className="canvas2d-workspace-icon" onClick={() => onAddFolder?.()} aria-label="新建文件夹" title="新建文件夹"><AppIcon name="plus" size={16} /></button>
           <button type="button" className={`canvas2d-workspace-icon${searchOpen ? " is-active" : ""}`} onClick={() => { setSearchOpen((value) => !value); setQuery(""); }} aria-label="搜索目录" title="搜索目录" aria-expanded={searchOpen}><AppIcon name="search" size={16} /></button>
           <details className="canvas2d-navigator-options" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
@@ -1729,6 +1729,8 @@ function Canvas2DControls({ engine }) {
                 <strong>FreeFlow</strong>
                 <span>自动保存{autosaveEnabled ? "已开启" : "已关闭"}</span>
                 {autosaveEnabled && autosaveAt ? <span>上次自动保存 {autosaveAt}</span> : null}
+                <button type="button" onClick={(event) => { const details = event.currentTarget.closest("details"); details.open = false; details.querySelector("summary")?.focus(); void bridge.saveBoard({ exactPath: true }); }}>保存当前画布</button>
+                <button type="button" onClick={(event) => { const details = event.currentTarget.closest("details"); details.open = false; details.querySelector("summary")?.focus(); void bridge.saveBoardAs(); }}>另存为…</button>
                 <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; setEditingTitle(true); }}>重命名画布</button>
                 <button type="button" onClick={() => bridge.revealBoardInFolder()}>显示文件位置</button>
               </div>

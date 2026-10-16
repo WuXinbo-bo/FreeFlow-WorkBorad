@@ -15,6 +15,11 @@
   color-scheme: light;
 }
 
+/* Shell portals share one stacking context with the selected element toolbar. */
+.global-overlay-layer > .canvas2d-engine-menu-portal {
+  z-index: 150;
+}
+
 .desktop-clear-stage.ui-workspace-surface,
 body.desktop-mode .desktop-clear-stage.ui-workspace-surface,
 .desktop-clear-stage.ui-workspace-surface:hover,

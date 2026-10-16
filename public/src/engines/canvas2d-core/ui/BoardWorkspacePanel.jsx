@@ -64,6 +64,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
   const returnFocusRef = useRef(null);
   const menuRef = useRef(null);
   const menuReturnFocusRef = useRef(null);
+  const operationReturnFocusRef = useRef(null);
   const portalHost = document.getElementById("global-overlay-layer") || document.body;
 
   const toggle = (next) => {
@@ -197,6 +198,15 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     if (open && openRequest) searchRef.current?.focus({ preventScroll: true });
   }, [open, openRequest]);
 
+  function restoreOperationFocus() {
+    const trigger = operationReturnFocusRef.current;
+    if (busyRef.current || trigger?.disabled) return;
+    operationReturnFocusRef.current = null;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  useLayoutEffect(() => { if (!busy) restoreOperationFocus(); }, [busy, loading]);
+
   useEffect(() => {
     if (!supported) return undefined;
     const onKeyDown = (event) => {
@@ -225,6 +235,14 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     return () => window.removeEventListener("keydown", switchPrevious, true);
   }, [supported]);
 
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const node = menuRef.current;
+    const rect = node.getBoundingClientRect();
+    node.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - rect.height - 8))}px`;
+    node.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - rect.width - 8))}px`;
+  }, [menu]);
+
   useEffect(() => {
     if (!menu) return undefined;
     menuRef.current?.querySelector("button:not(:disabled)")?.focus();
@@ -250,6 +268,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
 
   const displayed = view === "recent" ? recent : boards;
   const sorted = useMemo(() => getQuickSwitchBoards(boards, recent, query, view, sort), [boards, recent, query, sort, view]);
+  const visibleCount = query ? sorted.length : displayed.length;
   useEffect(() => { setActiveIndex(-1); }, [query, view, sort]);
   const syncByPath = new Map((plan?.items || []).map((item) => [item.localPath, item.state]));
   const ledger = Object.values(syncStatus?.ledger?.boards || {}).filter((entry) => String(entry.localPath || "").replace(/[\\/][^\\/]+$/, "") === folder);
@@ -290,6 +309,24 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
       return false;
     }
     finally { busyRef.current = false; if (mounted.current) setBusy(""); }
+  }
+
+  async function chooseWorkspaceFolder(trigger) {
+    operationReturnFocusRef.current = trigger;
+    await run("folder", async () => {
+      const next = await bridge.pickCanvasWorkspaceFolder();
+      if (next) { setQuery(""); setPlan(null); await refresh(next); }
+    });
+    restoreOperationFocus();
+  }
+
+  async function saveCurrentBoard(trigger) {
+    operationReturnFocusRef.current = trigger;
+    await run("save", async () => {
+      if (!(await bridge.saveBoard({ exactPath: true }))) throw new Error("保存失败");
+      await refresh();
+    });
+    restoreOperationFocus();
   }
 
   async function executeSwitch(target, saveBeforeSwitch) {
@@ -340,7 +377,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     menuReturnFocusRef.current = event.currentTarget;
     const boundary = rootRef.current.getBoundingClientRect();
     const rect = event.currentTarget.getBoundingClientRect();
-    setMenu({ board, x: Math.max(boundary.left + 8, Math.min(rect.right - 170, window.innerWidth - 182)), y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 280)) });
+    setMenu({ board, x: Math.max(boundary.left + 8, Math.min(rect.right - 170, window.innerWidth - 182)), y: rect.bottom + 4 });
   }
 
   async function commitEditor(event) {
@@ -449,7 +486,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
     <aside ref={rootRef} className={`canvas2d-workspace-panel${open ? " is-open" : " is-collapsed"}`} aria-label="画布工作区" aria-busy={Boolean(busy)}>
       {!open ? <div className="canvas2d-workspace-rail">
         <strong>工作区</strong>
-        <IconButton label="展开画布工作区" onClick={() => toggle(true)}><AppIcon name="panel-left" size={18} /></IconButton>
+        <IconButton label="展开画布工作区" aria-expanded={false} onClick={() => toggle(true)}><AppIcon name="folder" size={18} /></IconButton>
       </div> : null}
       <div className="canvas2d-workspace-files">
         <header className="canvas2d-workspace-head"><strong>工作区</strong><div>
@@ -457,21 +494,21 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
           <IconButton label="新建画布" disabled={Boolean(busy) || !folder} onClick={() => { setEditor({ kind: "create", name: "" }); setMenu(null); }}><AppIcon name="file-plus-2" size={16} /></IconButton>
           <IconButton label="收起画布工作区" onClick={() => toggle(false)}><AppIcon name="chevron-left" size={16} /></IconButton>
         </div></header>
-        <div className="canvas2d-workspace-folder"><button type="button" title={folder || "打开工作区文件夹"} disabled={Boolean(busy)} onClick={() => run("folder", async () => { const next = await bridge.pickCanvasWorkspaceFolder(); if (next) { setQuery(""); setPlan(null); await refresh(next); } })}><AppIcon name="folder-open" size={16} /><span>{folderName(folder)}</span></button><IconButton label="刷新画布列表" disabled={loading || Boolean(busy)} onClick={() => run("refresh", async () => { await refresh(); await refreshStatus(); })}><AppIcon name="refresh-cw" size={16} /></IconButton></div>
-        <div className="canvas2d-workspace-current"><div>{!sorted.some((board) => board.filePath === currentPath) ? <strong title={currentPath}>{currentName}</strong> : null}<small>{snapshot?.boardSaveError ? "保存失败 · 修改仍在内存" : boardLabel(currentPath) === "仅本地" ? "已保存到本机" : boardLabel(currentPath)}{folder && currentPath && !boards.some((board) => board.filePath === currentPath) ? " · 工作区外" : ""}</small></div><IconButton label="切换到上一个画布" disabled={Boolean(busy) || !previousBoard} onClick={() => requestSwitch({ kind: "open", path: previousBoard.filePath })}><AppIcon name="arrow-left-right" size={16} /></IconButton><IconButton label="保存当前画布" disabled={Boolean(busy)} onClick={() => run("save", async () => { if (!(await bridge.saveBoard({ exactPath: true }))) throw new Error("保存失败"); await refresh(); })}><AppIcon name="save" size={16} /></IconButton><IconButton label="当前画布操作" data-workspace-more disabled={Boolean(busy)} onClick={(event) => openMenu(event, { name: snapshot?.boardFileName, filePath: currentPath })}><AppIcon name="ellipsis" size={16} /></IconButton></div>
+        <div className="canvas2d-workspace-folder"><button type="button" title={folder || "打开工作区文件夹"} disabled={Boolean(busy)} onClick={(event) => chooseWorkspaceFolder(event.currentTarget)}><AppIcon name="folder-open" size={16} /><span>{folderName(folder)}</span></button><button type="button" className="canvas2d-workspace-folder-switch" aria-label="切换工作区" title="选择其他工作区文件夹" disabled={Boolean(busy)} onClick={(event) => chooseWorkspaceFolder(event.currentTarget)}>切换</button><IconButton label="刷新画布列表" disabled={loading || Boolean(busy)} onClick={() => run("refresh", async () => { await refresh(); await refreshStatus(); })}><AppIcon name="refresh-cw" size={16} /></IconButton></div>
         {snapshot?.boardSaveError && <div className="canvas2d-workspace-error" role="alert">保存失败：{snapshot.boardSaveError}。请重试保存或另存为，修改仍保留在内存。</div>}
         <label className="canvas2d-workspace-search"><AppIcon name="search" size={16} /><input ref={searchRef} aria-label="搜索画布" aria-controls="freeflow-workspace-board-list" aria-activedescendant={activeIndex >= 0 && sorted[activeIndex] ? `freeflow-workspace-board-${activeIndex}` : undefined} placeholder="搜索画布 · ⌘/Ctrl P" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; moveSearchSelection(event); if (event.key === "Escape") { setQuery(""); setActiveIndex(-1); event.currentTarget.blur(); } const selected = sorted[Math.max(0, activeIndex)]; if (event.key === "Enter" && selected) { event.preventDefault(); requestSwitch({ kind: "open", path: selected.filePath }); } }} /></label>
-        <div className="canvas2d-workspace-views" role="tablist" aria-label="画布列表视图"><button role="tab" aria-selected={view === "workspace"} onClick={() => { setView("workspace"); setQuery(""); }}>工作区</button><button role="tab" aria-selected={view === "recent"} onClick={() => { setView("recent"); setQuery(""); }}>最近打开</button></div>
-        <div className="canvas2d-workspace-list-head"><span>{loading ? "正在读取…" : `${query ? sorted.length : displayed.length} 个画布`}</span>{view === "workspace" ? <select aria-label="画布排序" value={sort} onChange={(event) => setSort(event.target.value)}><option value="modified">最近修改</option><option value="name">名称</option></select> : null}</div>
+        <div className="canvas2d-workspace-list-head"><div className="canvas2d-workspace-views" role="tablist" aria-label="画布列表视图"><button role="tab" aria-selected={view === "workspace"} onClick={() => { setView("workspace"); setQuery(""); }}>工作区</button><button role="tab" aria-selected={view === "recent"} onClick={() => { setView("recent"); setQuery(""); }}>最近打开</button></div><span title={`${visibleCount} 个画布`}>{loading ? "读取中…" : `${visibleCount}${width < 300 && visibleCount >= 1000 ? "" : " 个画布"}`}</span>{view === "workspace" ? <select aria-label="画布排序" value={sort} onChange={(event) => setSort(event.target.value)}><option value="modified">最近修改</option><option value="name">名称</option></select> : null}</div>
         {editor ? <form className="canvas2d-workspace-editor" onSubmit={commitEditor}><input aria-label={editor.kind === "create" ? "新画布名称" : "重命名画布"} autoFocus placeholder="画布名称" value={editor.name} disabled={Boolean(busy)} onChange={(event) => setEditor({ ...editor, name: event.target.value })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setEditor(null); }} /><button type="submit" disabled={Boolean(busy)}>{editor.kind === "create" ? "新建" : "确认"}</button><IconButton label="取消编辑" onClick={() => setEditor(null)}><AppIcon name="x" size={16} /></IconButton></form> : null}
         <div id="freeflow-workspace-board-list" className="canvas2d-workspace-list" aria-label="工作区画布列表">
           {sorted.map((board, index) => <div id={`freeflow-workspace-board-${index}`} key={board.filePath} className={`canvas2d-workspace-row${board.filePath === currentPath ? " is-current" : ""}${index === activeIndex ? " is-keyboard-selected" : ""}`} onContextMenu={(event) => openMenu(event, board)}>
-            <button type="button" className="canvas2d-workspace-open" aria-current={board.filePath === currentPath ? "page" : undefined} title={board.filePath} disabled={Boolean(busy) || Boolean(pending)} onClick={() => requestSwitch({ kind: "open", path: board.filePath })}><span>{displayName(board.name)}</span><small>{board.filePath === currentPath && snapshot?.boardSaveError ? "保存失败" : boardLabel(board.filePath) === "仅本地" ? "" : boardLabel(board.filePath)}</small></button>
+            <button type="button" className="canvas2d-workspace-open" aria-current={board.filePath === currentPath ? "page" : undefined} title={board.filePath} disabled={Boolean(busy) || Boolean(pending)} onClick={() => requestSwitch({ kind: "open", path: board.filePath })}><span className="canvas2d-workspace-board-copy"><span>{displayName(board.name)}</span>{board.filePath === currentPath && snapshot?.boardSaveError ? <small>保存失败</small> : !["仅本地", "尚未检查"].includes(boardLabel(board.filePath)) ? <small>{boardLabel(board.filePath)}</small> : null}</span></button>
+            {board.filePath === currentPath ? <IconButton label="保存当前画布" disabled={Boolean(busy)} onClick={(event) => saveCurrentBoard(event.currentTarget)}><AppIcon name="save" size={14} /></IconButton> : null}
             <IconButton label={`画布操作：${displayName(board.name)}`} data-workspace-more disabled={Boolean(busy)} onClick={(event) => openMenu(event, board)}><AppIcon name="ellipsis" size={16} /></IconButton>
           </div>)}
           {!sorted.length && !loading ? <div className="canvas2d-workspace-empty">{query ? "没有匹配的画布" : folder ? "工作区暂无画布" : "未选择工作区"}</div> : null}
         </div>
         {failedPath ? <button type="button" className="canvas2d-workspace-repair" disabled={Boolean(busy)} onClick={() => run("repair", async () => { const result = await bridge.repairBoardAtPath(failedPath); if (!result?.ok) throw new Error(result?.error || "修复失败"); setNotice("已生成修复副本"); setFailedPath(""); await refresh(); })}>生成修复副本</button> : null}
+        {folder && currentPath && currentPath.replace(/[\\/][^\\/]+$/, "") !== folder ? <div className="canvas2d-workspace-notice" role="status" title={currentPath}>当前画布「{currentName}」位于工作区外，保存仍使用原位置。</div> : null}
         {folder && currentPath && !boards.some((board) => board.filePath === currentPath) && currentPath.replace(/[\\/][^\\/]+$/, "") === folder && !loading ? <div className="canvas2d-workspace-error" role="status">当前文件已从工作区移除，内存内容已保留，请另存为。</div> : null}
         {snapshot?.boardFileReloadRequired ? <button type="button" className="canvas2d-workspace-repair" disabled={Boolean(busy)} onClick={() => requestSwitch({ kind: "open", path: currentPath, reload: true })}>重新载入当前画布</button> : null}
         {connected ? <div className={`canvas2d-workspace-sync${syncError || statusError || syncCounts.conflict ? " is-warning" : ""}`}>
@@ -492,6 +529,7 @@ export function BoardWorkspacePanel({ bridge, snapshot, openRequest = 0, width =
       </div>
       {open ? <div className="canvas2d-workspace-resizer" role="separator" aria-label="调整工作区宽度" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={360} aria-valuenow={width} tabIndex={0} onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = Math.min(360, Math.max(260, width + (event.key === "ArrowLeft" ? -10 : 10))); onWidthChange(next); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", next); } catch {} } }} onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const left = rootRef.current.getBoundingClientRect().left; onWidthChange(Math.min(360, Math.max(260, event.clientX - left))); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); try { localStorage.setItem("freeflow.canvas.chrome.workspaceWidth", width); } catch {} }} /> : null}
       {menu ? createPortal(<div ref={menuRef} className="canvas2d-workspace-menu canvas-chrome-surface" role="menu" data-shape-include="true" style={{ left: menu.x, top: menu.y }}>
+        {menu.board.filePath === currentPath ? <><button role="menuitem" onClick={() => saveCurrentBoard(menuReturnFocusRef.current)}>保存当前画布</button><button role="menuitem" disabled={!previousBoard} onClick={() => { setMenu(null); requestSwitch({ kind: "open", path: previousBoard.filePath }); }}>切换到上一个画布</button></> : null}
         <button role="menuitem" onClick={() => run("duplicate", async () => { const result = await bridge.duplicateBoardAtPath(menu.board.filePath); if (!result?.ok) throw new Error(result?.error || "复制失败"); setNotice("已创建独立画布副本"); setView("workspace"); await refresh(); })}>复制画布</button>
         <button role="menuitem" onClick={() => { setEditor({ kind: "rename", path: menu.board.filePath, name: displayName(menu.board.name) }); setMenu(null); }}>重命名</button>
         <button role="menuitem" onClick={() => { bridge.revealBoardPathInFolder(menu.board.filePath); setMenu(null); }}>显示文件位置</button>

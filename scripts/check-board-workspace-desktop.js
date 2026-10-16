@@ -51,6 +51,22 @@ async function main() {
     assert.equal(await panel.locator(".canvas2d-workspace-sync").count(), 0, "unconfigured GitHub sync must not occupy the workspace");
     assert.equal(await page.locator('.canvas2d-engine-toolbar [aria-label="画布工作区"]').count(), 0, "duplicate workspace toolbar entry remains");
     const row = (name) => panel.locator(".canvas2d-workspace-open").filter({ has: page.locator("span", { hasText: new RegExp(`^${name}$`) }) });
+    const openCurrentMenu = async () => {
+      await panel.getByRole("textbox", { name: "搜索画布", exact: true }).fill("");
+      await page.waitForFunction(() => {
+        const button = document.querySelector(".canvas2d-workspace-row.is-current .canvas2d-workspace-open");
+        return button?.title === window.__canvas2dEngine.getSnapshot().boardFilePath;
+      });
+      await panel.locator(".canvas2d-workspace-row.is-current [data-workspace-more]").click();
+      await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menuitem" && document.activeElement.textContent === "保存当前画布");
+    };
+    const switchPrevious = async () => {
+      await openCurrentMenu();
+      await page.getByRole("menuitem", { name: "切换到上一个画布", exact: true }).click();
+    };
+    assert.equal(await panel.locator(".canvas2d-workspace-current").count(), 0, "standalone current-board row remains");
+    assert.equal(await panel.getByRole("button", { name: "切换到上一个画布", exact: true }).count(), 0, "previous-board action is permanently occupying the panel");
+    await panel.getByRole("button", { name: "切换工作区", exact: true }).waitFor();
     const snapshot = () => page.evaluate(() => { const s = window.__canvas2dEngine.getSnapshot(); return { path: s.boardFilePath, dirty: s.boardDirty, ids: s.board.items.map((item) => item.id) }; });
     const makeDirty = async () => {
       await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
@@ -108,12 +124,12 @@ async function main() {
     const renamed = path.join(boards, "Renamed.freeflow");
     await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, renamed);
     await fs.access(renamed);
-    await panel.getByRole("button", { name: "当前画布操作", exact: true }).click();
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("ArrowDown");
+    await openCurrentMenu();
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), "保存当前画布");
+    for (let step = 0; step < 4; step += 1) await page.keyboard.press("ArrowDown");
     assert.equal(await page.evaluate(() => document.activeElement.textContent), "显示文件位置");
     await page.keyboard.press("Home");
-    await page.keyboard.press("ArrowDown");
+    for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await panel.getByRole("textbox", { name: "重命名画布" }).fill("Alpha");
     await panel.getByRole("button", { name: "确认", exact: true }).click();
@@ -156,7 +172,7 @@ async function main() {
     const latestX = await page.evaluate(() => window.__canvas2dEngine.getSnapshot().board.items[0].x);
     const historyDialog = page.getByRole("dialog", { name: "历史版本", exact: true });
     async function showHistory() {
-      await panel.getByRole("button", { name: "当前画布操作", exact: true }).click();
+      await openCurrentMenu();
       await page.getByRole("menuitem", { name: "历史版本", exact: true }).click();
       await historyDialog.waitFor();
     }
@@ -188,7 +204,7 @@ async function main() {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, alpha);
-    await panel.getByRole("button", { name: "切换到上一个画布", exact: true }).click();
+    await switchPrevious();
     await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, renamed);
     await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+o" : "Control+Shift+o");
@@ -197,7 +213,7 @@ async function main() {
     await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+o" : "Control+Shift+o");
     await page.waitForFunction((target) => window.__canvas2dEngine.getSnapshot().boardFilePath === target, renamed);
     await makeDirty();
-    await panel.getByRole("button", { name: "切换到上一个画布", exact: true }).click();
+    await switchPrevious();
     await dialog.waitFor();
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
     assert.equal((await snapshot()).path, renamed);
@@ -275,7 +291,7 @@ async function main() {
     await panel.getByRole("button", { name: "检查同步", exact: true }).click();
     await panel.getByRole("button", { name: "查看并处理冲突", exact: true }).waitFor();
     await makeDirty();
-    await panel.locator(".canvas2d-workspace-current").getByText("未保存 · 待上传", { exact: true }).waitFor();
+    await panel.locator(".canvas2d-workspace-row.is-current").getByText("未保存 · 待上传", { exact: true }).waitFor();
     await panel.getByRole("button", { name: "拉取", exact: true }).click();
     await page.waitForFunction(() => window.__canvas2dEngine.getSnapshot().board.items[0]?.id === "remote");
     await page.waitForFunction(() => document.querySelector(".canvas2d-workspace-panel")?.getAttribute("aria-busy") === "false");
@@ -396,7 +412,7 @@ async function main() {
     if (await directoryWorkspaceOpener.isVisible()) await directoryWorkspaceOpener.click();
     else await panel.getByRole("button", { name: "展开画布工作区", exact: true }).click();
     await app.evaluate(({ dialog }, target) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] }); }, second);
-    await panel.locator(".canvas2d-workspace-folder > button").first().click();
+    await panel.getByRole("button", { name: "切换工作区", exact: true }).click();
     await row("Second").waitFor({ state: "visible" });
     assert.deepEqual(await snapshot(), beforeFolder, "browsing a workspace relocated the current board");
     assert.equal((await fs.readdir(second)).length, 1, "browsing copied the current board");
