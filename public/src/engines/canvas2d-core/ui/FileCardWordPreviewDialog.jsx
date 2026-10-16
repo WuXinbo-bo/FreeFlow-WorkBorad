@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 
 const ZOOM_MIN = 0.55;
 const ZOOM_MAX = 2;
@@ -209,7 +210,7 @@ function FileCardWordPreviewFrame({ request }) {
             onClick={() => setZoom((current) => clampZoom(current - ZOOM_STEP))}
             aria-label="缩小预览"
           >
-            -
+            <AppIcon name="minus" size={16} />
           </button>
           <button
             type="button"
@@ -225,7 +226,7 @@ function FileCardWordPreviewFrame({ request }) {
             onClick={() => setZoom((current) => clampZoom(current + ZOOM_STEP))}
             aria-label="放大预览"
           >
-            +
+            <AppIcon name="plus" size={16} />
           </button>
         </div>
       </div>
@@ -276,7 +277,7 @@ export function FileCardWordPreviewDialog({ request = null, onClose, onToggleExp
               {expanded ? "收起" : "全部展开"}
             </button>
             <button type="button" className="canvas2d-file-card-preview-head-btn is-close" onClick={onClose} aria-label="关闭预览">
-              ×
+              <AppIcon name="x" size={16} />
             </button>
           </div>
         </div>

@@ -44,7 +44,7 @@ function startStaticServer() {
     const pathname = decodeURIComponent(new URL(request.url, "http://127.0.0.1").pathname);
     if (pathname === "/fixture.html" || pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end("<!doctype html><html><body><div id=host></div></body></html>");
+      res.end('<!doctype html><html><head><link rel="stylesheet" href="/public/ui.icons.css"></head><body><div id=host></div></body></html>');
       return;
     }
     if (!pathname.startsWith("/public/")) {
@@ -64,7 +64,7 @@ function startStaticServer() {
         res.end();
         return;
       }
-      const type = file.endsWith(".js") ? "text/javascript" : "text/plain";
+      const type = /\.m?js$/.test(file) ? "text/javascript" : file.endsWith(".css") ? "text/css" : "text/plain";
       res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
       res.end(data);
     });

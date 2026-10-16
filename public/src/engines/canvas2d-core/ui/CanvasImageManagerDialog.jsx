@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Image as ImageIcon, Plus, RefreshCw, X } from "lucide-react";
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 
 function formatPathLabel(pathValue = "", emptyText = "未设置") {
   const value = String(pathValue || "").trim();
@@ -86,7 +86,7 @@ function ManagedImageThumbnail({ item }) {
     }).catch(() => {});
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [visible, item.filePath, item.modifiedAt, item.missing]);
-  return <span ref={rootRef} className="canvas2d-image-thumbnail" aria-hidden="true">{url ? <img src={url} alt="" /> : <ImageIcon size={24} />}</span>;
+  return <span ref={rootRef} className="canvas2d-image-thumbnail" aria-hidden="true">{url ? <img src={url} alt="" /> : <AppIcon name="image" size={20} />}</span>;
 }
 
 export function CanvasImageManagerDialog({ open, bridge, snapshot, onClose }) {
@@ -173,13 +173,13 @@ export function CanvasImageManagerDialog({ open, bridge, snapshot, onClose }) {
   if (!open) return null;
   return createPortal(<div className="canvas2d-board-workspace-overlay canvas2d-image-manager-overlay" data-shape-include="true" onPointerDown={(event) => event.stopPropagation()}>
     <section ref={rootRef} className="canvas2d-board-workspace-dialog canvas2d-image-manager-dialog" role="dialog" aria-modal="true" aria-label="画布图片管理" onKeyDown={(event) => event.stopPropagation()}>
-      <header className="canvas2d-image-header"><div><strong>画布图片</strong><span>{items.length} 张 · 当前画布已使用 {referencedCount} 张</span></div><button type="button" onClick={onClose} aria-label="关闭图片管理"><X size={18} /></button></header>
-      <div className="canvas2d-image-folder"><span title={folderPath}>{formatPathLabel(folderPath, "请选择图片目录")}</span><details><summary>目录设置</summary><div><button disabled={Boolean(busyAction)} onClick={handleChooseFolder}>更改图片目录</button><button disabled={!folderPath || Boolean(busyAction)} onClick={() => runBusy("reveal", () => bridge.revealCanvasImageSavePath())}>打开图片目录</button></div></details></div>
+      <header className="canvas2d-image-header"><div><strong>画布图片</strong><span>{items.length} 张 · 当前画布已使用 {referencedCount} 张</span></div><button type="button" onClick={onClose} aria-label="关闭图片管理"><AppIcon name="x" size={18} /></button></header>
+      <div className="canvas2d-image-folder"><span title={folderPath}>{formatPathLabel(folderPath, "请选择图片目录")}</span><details><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" />目录设置</summary><div><button disabled={Boolean(busyAction)} onClick={handleChooseFolder}>更改图片目录</button><button disabled={!folderPath || Boolean(busyAction)} onClick={() => runBusy("reveal", () => bridge.revealCanvasImageSavePath())}>打开图片目录</button></div></details></div>
       <div className="canvas2d-image-manager-tools">
         <input aria-label="搜索图片" placeholder="搜索图片名称" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="图片排序" value={sortKey} onChange={(event) => setSortKey(event.target.value)}>{SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-        <button aria-label="刷新图片列表" disabled={loading || Boolean(busyAction)} onClick={() => runBusy("refresh", () => bridge.refreshCanvasImageManager())}><RefreshCw size={16} /></button>
-        <details ref={sourceMenuRef} className="canvas2d-image-add"><summary><Plus size={15} />添加图片</summary><div><span>直接添加到当前画布</span><button disabled={Boolean(busyAction)} onClick={handleLocalImport}>从本地文件添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("clipboard", async () => (await bridge.importCanvasImagesFromClipboard()) ? "剪贴板图片已添加到画布" : "剪贴板中没有可用图片")}>从剪贴板添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("screenshot", async () => (await bridge.captureCanvasImageToManager()) ? "截图已添加到画布" : "已取消截图")}>从系统截图添加</button></div></details>
+        <button aria-label="刷新图片列表" disabled={loading || Boolean(busyAction)} onClick={() => runBusy("refresh", () => bridge.refreshCanvasImageManager())}><AppIcon name="refresh-cw" size={16} /></button>
+        <details ref={sourceMenuRef} className="canvas2d-image-add"><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" /><AppIcon name="plus" size={16} />添加图片</summary><div><span>直接添加到当前画布</span><button disabled={Boolean(busyAction)} onClick={handleLocalImport}>从本地文件添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("clipboard", async () => (await bridge.importCanvasImagesFromClipboard()) ? "剪贴板图片已添加到画布" : "剪贴板中没有可用图片")}>从剪贴板添加</button><button disabled={Boolean(busyAction)} onClick={() => runBusy("screenshot", async () => (await bridge.captureCanvasImageToManager()) ? "截图已添加到画布" : "已取消截图")}>从系统截图添加</button></div></details>
       </div>
       <nav className="canvas2d-image-filters" aria-label="图片筛选">{[["all", "全部"], ["used", "画布已使用"], ["missing", `缺失${missingCount ? ` ${missingCount}` : ""}`]].map(([value, label]) => <button key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); setSelectedPath(""); }}>{label}</button>)}</nav>
       {(error || actionError || feedback) ? <div role={error || actionError ? "alert" : "status"} className={`canvas2d-image-manager-banner${error || actionError ? " is-error" : ""}`}>{error || actionError || feedback}</div> : null}
@@ -188,7 +188,7 @@ export function CanvasImageManagerDialog({ open, bridge, snapshot, onClose }) {
           <ManagedImageThumbnail item={item} /><strong>{item.name || "未命名图片"}</strong><small>{item.missing ? "文件缺失" : item.referenced ? `已使用 ${item.referenceCount || 1} 次` : formatFileSize(item.size)}</small>
         </button>) : <div className="canvas2d-image-empty"><strong>{query || filter !== "all" ? "没有匹配的图片" : "图片目录暂无图片"}</strong><span>{query || filter !== "all" ? "尝试其他名称或筛选条件" : "添加图片后，可以在这里查看和再次使用。"}</span></div>}
       </div>
-      <footer className="canvas2d-image-footer"><div>{selectedItem ? <><span>{selectedItem.name}</span><details><summary>文件详情</summary><div><span>{selectedItem.filePath}</span><span>{formatFileSize(selectedItem.size)} · {formatTime(selectedItem.modifiedAt)}</span>{selectedItem.missing ? <p>原文件已缺失，请重新添加原图后替换画布中的引用。</p> : null}</div></details></> : <span>选中图片后可添加到画布</span>}</div><button className="is-primary" onClick={handleInsertSelected} disabled={!selectedItem || Boolean(selectedItem.missing) || Boolean(busyAction)}>添加到画布</button></footer>
+      <footer className="canvas2d-image-footer"><div>{selectedItem ? <><span>{selectedItem.name}</span><details><summary className="app-icon-disclosure"><AppIcon name="chevron-right" size={14} className="app-disclosure-chevron" />文件详情</summary><div><span>{selectedItem.filePath}</span><span>{formatFileSize(selectedItem.size)} · {formatTime(selectedItem.modifiedAt)}</span>{selectedItem.missing ? <p>原文件已缺失，请重新添加原图后替换画布中的引用。</p> : null}</div></details></> : <span>选中图片后可添加到画布</span>}</div><button className="is-primary" onClick={handleInsertSelected} disabled={!selectedItem || Boolean(selectedItem.missing) || Boolean(busyAction)}>添加到画布</button></footer>
     </section>
   </div>, document.getElementById("global-overlay-layer") || document.body);
 }

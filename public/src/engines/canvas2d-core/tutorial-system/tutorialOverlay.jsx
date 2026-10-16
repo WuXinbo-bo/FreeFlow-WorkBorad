@@ -1,18 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createTutorialEntryItems } from "./tutorialEntry.js";
 import { TUTORIAL_ENTRY_ACTIONS } from "./tutorialConfig.js";
+import { AppIcon } from "../../../ui/icons/AppIcon.jsx";
 
 function TutorialIcon({ type = "book" }) {
-  const paths = {
-    layout: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M9 9h12" /></>,
-    canvas: <><path d="M4 19.5V7.8L8.2 3h8.9L20 5.9v13.6H4Z" /><path d="M8 3v5h5M8 14h8M8 17h5" /></>,
-    screen: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4M8 9h8M8 12h5" /></>,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-    back: <path d="m15 18-6-6 6-6" />,
-    arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
-    book: <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z" />,
-  };
-  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[type] || paths.book}</svg>;
+  const name = {
+    layout: "panel-left",
+    canvas: "file-text",
+    screen: "monitor",
+    close: "x",
+    back: "chevron-left",
+    arrow: "arrow-right",
+    book: "book-open",
+  }[type] || "book-open";
+  return <AppIcon name={name} size={["close", "back", "arrow"].includes(type) ? 16 : 20} />;
 }
 
 function TutorialCenter({ snapshot, onAction, onClose, entryItemsFactory = createTutorialEntryItems }) {

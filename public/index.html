@@ -181,6 +181,7 @@
     <link rel="stylesheet" href="./ui.right-panel.css" />
     <link rel="stylesheet" href="./ui.workspace.css" />
     <link rel="stylesheet" href="./ui.file-workstation.css" />
+    <link rel="stylesheet" href="./ui.icons.css" />
   </head>
   <body class="app-booting boot-shape-lock">
     <div class="boot-splash" role="status" aria-live="polite" aria-hidden="false">
@@ -222,18 +223,18 @@
           <div id="desktop-menu-panel" class="desktop-menu-panel ui-chrome-popover is-hidden">
             <div class="desktop-menu-group">
               <div class="desktop-menu-group-title">Window</div>
-              <button id="desktop-pin-btn" class="desktop-menu-item" data-icon="PIN" type="button" title="切换固定">固定</button>
-              <button id="desktop-minimize-btn" class="desktop-menu-item" data-icon="MIN" type="button" title="最小化">最小化</button>
+              <button id="desktop-pin-btn" class="desktop-menu-item" type="button" title="切换固定"><svg class="app-icon" data-ui-icon="pin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg><span class="desktop-menu-label">固定</span></button>
+              <button id="desktop-minimize-btn" class="desktop-menu-item" type="button" title="最小化"><svg class="app-icon" data-ui-icon="minus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg><span class="desktop-menu-label">最小化</span></button>
             </div>
             <div class="desktop-menu-separator"></div>
             <div class="desktop-menu-group">
               <div class="desktop-menu-group-title">Mode</div>
-              <button id="desktop-clickthrough-btn" class="desktop-menu-item" data-icon="FULL" type="button" title="切换完全穿透模式">完全穿透</button>
+              <button id="desktop-clickthrough-btn" class="desktop-menu-item" type="button" title="切换完全穿透模式"><svg class="app-icon" data-ui-icon="mouse-pointer-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg><span class="desktop-menu-label">完全穿透</span></button>
             </div>
             <div class="desktop-menu-separator"></div>
             <div class="desktop-menu-group">
               <div class="desktop-menu-group-title">App</div>
-              <button id="desktop-close-btn" class="desktop-menu-item desktop-menu-item-danger" data-icon="EXIT" type="button" title="关闭">关闭</button>
+              <button id="desktop-close-btn" class="desktop-menu-item desktop-menu-item-danger" type="button" title="关闭"><svg class="app-icon" data-ui-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg><span class="desktop-menu-label">关闭</span></button>
             </div>
           </div>
         </div>
@@ -241,77 +242,55 @@
       <div class="app-global-shell-actions canvas-chrome-surface canvas-chrome-status-dock" aria-label="全局界面操作">
         <button id="conversation-settings-btn" class="conversation-more-btn" type="button" title="设置" aria-label="设置">
           <span class="conversation-shell-trigger-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M10.2 2.6h3.6l.55 2.22c.36.11.71.26 1.04.43l2.1-1.18 2.55 2.54-1.2 2.1c.18.34.33.69.44 1.06l2.22.54v3.62l-2.22.55c-.11.36-.26.71-.44 1.04l1.2 2.1-2.55 2.56-2.1-1.2c-.33.18-.68.33-1.04.44l-.55 2.22h-3.6l-.55-2.22a7.77 7.77 0 0 1-1.05-.44l-2.1 1.2-2.55-2.56 1.2-2.1a7.4 7.4 0 0 1-.44-1.04L2.6 13.8v-3.62l2.22-.54c.11-.37.26-.72.44-1.06l-1.2-2.1 2.55-2.54 2.1 1.18c.34-.17.69-.32 1.05-.43l.54-2.22ZM12 8.4A3.6 3.6 0 1 0 12 15.6 3.6 3.6 0 0 0 12 8.4Z" />
-            </svg>
+            <svg class="app-icon" data-ui-icon="settings" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
           </span>
         </button>
         <div class="conversation-shell-menu-wrap app-global-shell-menu-wrap">
           <button id="conversation-shell-more" class="conversation-more-btn" type="button" title="更多" aria-label="更多">
             <span class="conversation-shell-trigger-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" focusable="false">
-                <circle cx="5" cy="12" r="1.9" />
-                <circle cx="12" cy="12" r="1.9" />
-                <circle cx="19" cy="12" r="1.9" />
-              </svg>
+              <svg class="app-icon" data-ui-icon="ellipsis" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
             </span>
           </button>
           <div id="conversation-shell-menu" class="conversation-shell-menu ui-chrome-popover is-hidden">
             <button id="conversation-shell-pin-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M8.5 3.5h7l-.9 4.2 2.7 3.1v1.2h-4.1v5.4l-1.2 3.1-1.2-3.1V12H6.8v-1.2l2.7-3.1-.9-4.2Z" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="pin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
               </span>
               <span class="conversation-shell-menu-label">固定界面</span>
             </button>
             <button id="conversation-shell-fullscreen-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M4 4h7v2H6v5H4V4Zm10 0h6v7h-2V6h-4V4ZM4 13h2v5h5v2H4v-7Zm14 0h2v7h-7v-2h5v-5Z" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="maximize" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
               </span>
               <span class="conversation-shell-menu-label">开启全屏</span>
             </button>
             <button id="conversation-shell-swap-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M7 7h11l-2.5-2.5M17 17H6l2.5 2.5M18 7l-3 3m-9 7 3-3" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="arrow-left-right" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
               </span>
               <span class="conversation-shell-menu-label">左右换位</span>
             </button>
             <button id="stage-restore-btn" class="conversation-shell-menu-item" type="button" disabled>
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M4 4v6h6" />
-                  <path d="M5.6 15a8 8 0 1 0 .9-7.9L4 10" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="rotate-ccw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
               </span>
               <span class="conversation-shell-menu-label">恢复默认布局</span>
             </button>
             <button id="conversation-shell-clickthrough-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M10.5 4.5a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.96 14.28l4.13 4.14 1.41-1.42-4.13-4.13A8 8 0 0 0 10.5 2.5Z" />
-                  <path d="M10.5 7v7m-3.5-3.5h7" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="mouse-pointer-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>
               </span>
               <span class="conversation-shell-menu-label">穿透</span>
             </button>
             <button id="conversation-shell-refresh-btn" class="conversation-shell-menu-item" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M19.5 6.5V11H15M18.6 11A6.6 6.6 0 1 1 12 5.4c2.08 0 3.93.96 5.14 2.47" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="rotate-cw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
               </span>
               <span class="conversation-shell-menu-label">刷新</span>
             </button>
             <button id="conversation-shell-close-btn" class="conversation-shell-menu-item conversation-shell-menu-item-danger" type="button">
               <span class="conversation-shell-menu-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M6 6l12 12M18 6 6 18" />
-                </svg>
+                <svg class="app-icon" data-ui-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </span>
               <span class="conversation-shell-menu-label">关闭</span>
             </button>
@@ -484,23 +463,23 @@
           <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="left" aria-label="左侧面板控制">
             <button class="stage-panel-orb stage-panel-close stage-panel-collapse-handle" type="button" data-stage-panel-action="close" data-stage-panel-side="left" title="收起画布工作区" aria-label="收起画布工作区">
               <span class="ui-control-icon stage-panel-collapse-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><path d="M15 18l-6-6 6-6" /><path d="M5 5v14" /></svg>
+                <svg class="app-icon" data-ui-icon="panel-left-close" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
               </span>
             </button>
             <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="left" title="拖拽画布工作区" aria-label="拖拽画布工作区">
               <span class="ui-control-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></svg>
+                <svg class="app-icon" data-ui-icon="grip-vertical" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
               </span>
             </button>
             <button class="stage-panel-orb stage-panel-mode" type="button" data-stage-panel-action="presentation" data-stage-panel-side="left" title="画布工作区切换为半屏" aria-label="画布工作区切换为半屏">
               <span class="ui-control-icon stage-panel-mode-icon is-normal" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></svg>
+                <svg class="app-icon" data-ui-icon="columns-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg>
               </span>
               <span class="ui-control-icon stage-panel-mode-icon is-half" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /></svg>
+                <svg class="app-icon" data-ui-icon="layout-panel-left" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/></svg>
               </span>
               <span class="ui-control-icon stage-panel-mode-icon is-maximized" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><path d="M9 3H3v6" /><path d="M15 21h6v-6" /><path d="M3 9l6-6" /><path d="M21 15l-6 6" /></svg>
+                <svg class="app-icon" data-ui-icon="minimize-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>
               </span>
             </button>
           </div>
@@ -527,23 +506,23 @@
           <div class="stage-panel-controls canvas-chrome-surface canvas-chrome-panel-controls" data-stage-panel-controls="right" aria-label="右侧面板控制">
             <button class="stage-panel-orb stage-panel-close stage-panel-collapse-handle" type="button" data-stage-panel-action="close" data-stage-panel-side="right" title="收起对话工作区" aria-label="收起对话工作区">
               <span class="ui-control-icon stage-panel-collapse-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><path d="M15 18l-6-6 6-6" /><path d="M5 5v14" /></svg>
+                <svg class="app-icon" data-ui-icon="panel-right-close" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg>
               </span>
             </button>
             <button class="stage-panel-orb stage-panel-drag" type="button" data-stage-panel-drag="right" title="拖拽对话工作区" aria-label="拖拽对话工作区">
               <span class="ui-control-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></svg>
+                <svg class="app-icon" data-ui-icon="grip-vertical" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
               </span>
             </button>
             <button class="stage-panel-orb stage-panel-mode" type="button" data-stage-panel-action="presentation" data-stage-panel-side="right" title="对话工作区切换为半屏" aria-label="对话工作区切换为半屏">
               <span class="ui-control-icon stage-panel-mode-icon is-normal" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></svg>
+                <svg class="app-icon" data-ui-icon="columns-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg>
               </span>
               <span class="ui-control-icon stage-panel-mode-icon is-half" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4v16" /></svg>
+                <svg class="app-icon" data-ui-icon="layout-panel-right" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="7" height="18" x="14" y="3" rx="1"/><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
               </span>
               <span class="ui-control-icon stage-panel-mode-icon is-maximized" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false"><path d="M9 3H3v6" /><path d="M15 21h6v-6" /><path d="M3 9l6-6" /><path d="M21 15l-6 6" /></svg>
+                <svg class="app-icon" data-ui-icon="minimize-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>
               </span>
             </button>
           </div>
@@ -589,16 +568,10 @@
                   title="锁定助手与镜像切换"
                 >
                   <span class="right-panel-switch-lock-icon right-panel-switch-lock-icon-closed" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M7 10V8a5 5 0 0 1 10 0v2" />
-                      <rect x="5" y="10" width="14" height="10" rx="3" ry="3" />
-                    </svg>
+                    <svg class="app-icon" data-ui-icon="lock" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                   </span>
                   <span class="right-panel-switch-lock-icon right-panel-switch-lock-icon-open" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M16 10V8a4 4 0 0 0-7.2-2.4" />
-                      <rect x="5" y="10" width="14" height="10" rx="3" ry="3" />
-                    </svg>
+                    <svg class="app-icon" data-ui-icon="lock-open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
                   </span>
                 </button>
                 <div id="screen-source-header-slot" class="screen-source-header-slot is-hidden">
@@ -611,7 +584,7 @@
                       aria-controls="screen-source-header-panel"
                     >
                       <span class="ui-control-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="14" height="12" rx="2" /><path d="M7 20h12a2 2 0 0 0 2-2V9" /><path d="M8 8h4" /><path d="M8 12h4" /></svg>
+                        <svg class="app-icon" data-ui-icon="panels-top-left" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                       </span>
                     </summary>
                     <div id="screen-source-header-panel" class="screen-source-header-panel ui-chrome-popover">
@@ -632,7 +605,7 @@
                                 aria-haspopup="listbox"
                               >
                                 <span id="screen-source-select-current" class="screen-source-select-current">暂无可用 AI 镜像目标</span>
-                                <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true">⌄</span>
+                                <span class="canvas2d-engine-menu-chevron screen-source-select-chevron" aria-hidden="true"><svg class="app-icon" data-ui-icon="chevron-down" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span>
                               </summary>
                               <div
                                 id="screen-source-select-panel"
@@ -650,7 +623,7 @@
                               aria-label="刷新 AI 镜像目标"
                             >
                               <span class="ui-control-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" focusable="false"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9" /><path d="M17.9 15a7 7 0 0 1-11.4 2.4L4 15" /></svg>
+                                <svg class="app-icon" data-ui-icon="refresh-cw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                               </span>
                             </button>
                           </div>
@@ -667,7 +640,7 @@
                             hidden
                           >
                             <span class="ui-control-icon" aria-hidden="true">
-                              <svg viewBox="0 0 24 24" focusable="false"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.4L20 9" /><path d="M17.9 15a7 7 0 0 1-11.4 2.4L4 15" /></svg>
+                              <svg class="app-icon" data-ui-icon="refresh-cw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                             </span>
                           </button>
                           <button
@@ -683,10 +656,10 @@
                       <details id="screen-source-display-settings" class="screen-source-display-settings">
                         <summary class="screen-source-display-settings-trigger">
                           <span class="ui-control-icon" aria-hidden="true">
-                            <svg viewBox="0 0 24 24" focusable="false"><path d="M4 7h10" /><path d="M18 7h2" /><circle cx="16" cy="7" r="2" /><path d="M4 17h2" /><path d="M10 17h10" /><circle cx="8" cy="17" r="2" /></svg>
+                            <svg class="app-icon" data-ui-icon="sliders-horizontal" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
                           </span>
                           <span>显示设置</span>
-                          <span class="canvas2d-engine-menu-chevron screen-source-display-settings-chevron" aria-hidden="true">⌄</span>
+                          <span class="canvas2d-engine-menu-chevron screen-source-display-settings-chevron" aria-hidden="true"><svg class="app-icon" data-ui-icon="chevron-down" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span>
                         </summary>
                         <div class="screen-source-header-meta">
                           <label class="compact-select screen-source-render-mode ui-chrome-inline-field">
@@ -769,7 +742,7 @@
         <header class="settings-center-frame-header">
           <h3>系统设置</h3>
           <button id="drawer-close-btn" type="button" aria-label="关闭系统设置" title="关闭系统设置">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
+            <svg class="app-icon" data-ui-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </header>
         <div id="settings-center-host" class="settings-center-host"></div>
@@ -1107,12 +1080,12 @@
 
       <button id="restore-left-pane-btn" class="pane-restore-btn canvas-chrome-surface ui-recovery-control ui-icon-only is-hidden" type="button" title="恢复画布工作区" aria-label="恢复画布工作区">
         <span class="ui-control-icon pane-restore-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="M13 9l3 3-3 3" /></svg>
+          <svg class="app-icon" data-ui-icon="panel-left-open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
         </span>
       </button>
       <button id="restore-right-pane-btn" class="pane-restore-btn pane-restore-btn-right canvas-chrome-surface ui-recovery-control ui-icon-only is-hidden" type="button" title="恢复对话工作区" aria-label="恢复对话工作区">
         <span class="ui-control-icon pane-restore-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /><path d="M11 9l-3 3 3 3" /></svg>
+          <svg class="app-icon" data-ui-icon="panel-right-open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" style="--app-icon-size:18px" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg>
         </span>
       </button>
     </div>

@@ -1,3 +1,5 @@
+import { renderAppIcon } from "../../../ui/icons/appIcons.mjs";
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -5,6 +7,10 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+export function renderContextSubmenuLabelHtml(label = "") {
+  return `<span>${escapeHtml(label)}</span><span class="canvas2d-context-submenu-indicator" aria-hidden="true">${renderAppIcon("chevron-right", { size: 14 })}</span>`;
 }
 
 function renderAttributes(attributes = {}) {
@@ -41,7 +47,7 @@ function renderMenuItem(item) {
     const children = Array.isArray(item.items) ? item.items.map(renderMenuItem).join("") : "";
     return `
       <div class="canvas2d-context-submenu">
-        <button${triggerAttributes}>${escapeHtml(item.label || "")}</button>
+        <button${triggerAttributes}>${renderContextSubmenuLabelHtml(item.label || "")}</button>
         <div${panelAttributes}>${children}</div>
       </div>
     `;

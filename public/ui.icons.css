@@ -1,0 +1,185 @@
+/* Functional icons only. Product marks and user document graphics keep their own styles. */
+svg.app-icon {
+  display: inline-block;
+}
+
+:root svg.app-icon {
+  width: var(--app-icon-context-size, var(--app-icon-size, 18px)) !important;
+  height: var(--app-icon-context-size, var(--app-icon-size, 18px)) !important;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  overflow: visible;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.75 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  pointer-events: none;
+}
+
+:root svg.app-icon > * {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: inherit !important;
+  stroke-linecap: inherit !important;
+  stroke-linejoin: inherit !important;
+}
+
+/* Small controls share the same optical size without changing their hit areas. */
+.ui-control-icon,
+body.desktop-mode .stage-panel-orb .ui-control-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  --app-icon-context-size: 16px;
+}
+
+#restore-left-pane-btn .ui-control-icon,
+#restore-right-pane-btn .ui-control-icon {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
+}
+
+.right-panel-switch-lock-icon,
+.settings-center-nav-icon,
+.agent-queue-actions,
+.canvas2d-rich-btn,
+.canvas2d-image-btn,
+.canvas-table-tool,
+.canvas-table-edge-btn,
+.canvas-mind-node-tool,
+.canvas-mind-node-side-btn,
+.canvas-mind-node-link-anchor,
+.canvas2d-mind-node-link-glyph {
+  --app-icon-context-size: 16px;
+}
+
+.canvas2d-engine-menu-chevron,
+.screen-source-select-chevron,
+.screen-source-display-settings-chevron,
+.settings-center-canvas-lock > span {
+  --app-icon-context-size: 14px;
+}
+
+.settings-center-theme-selected,
+.composer-attachment-chip-remove,
+.agent-attachment-remove {
+  --app-icon-context-size: 12px;
+}
+
+.settings-center-plugin-icon {
+  --app-icon-context-size: 24px;
+}
+
+.desktop-menu-item > svg.app-icon {
+  --app-icon-context-size: 18px;
+}
+
+.canvas-table-tool,
+.canvas-table-edge-btn,
+.canvas2d-mind-node-link-glyph,
+.canvas-image-lightbox-close,
+.agent-history-delete,
+.composer-attachment-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Remove the old letter badges and CSS-drawn symbols after SVG migration. */
+.desktop-menu-item::before,
+.stage-panel-orb::before,
+.stage-panel-orb::after,
+.canvas2d-rich-btn.is-align-icon::before,
+.canvas2d-rich-btn.is-align-icon::after,
+.canvas-table-tool::before,
+.canvas-table-tool::after,
+.canvas-table-edge-btn::before,
+.canvas-table-edge-btn::after,
+.canvas-mind-node-tool::before,
+.canvas-mind-node-tool::after,
+.canvas-mind-node-side-btn::before,
+.canvas-mind-node-side-btn::after,
+.canvas-mind-node-link-anchor::before,
+.canvas-mind-node-link-anchor::after,
+.canvas2d-mind-node-link-glyph::before,
+.canvas2d-mind-node-link-glyph::after,
+.canvas2d-navigator-drag-icon::after,
+.canvas2d-context-submenu-trigger::after,
+.canvas2d-webgl-context-submenu > .canvas2d-context-submenu-trigger::after,
+.canvas2d-context-menu.is-compact-menu > .is-open > .canvas2d-context-submenu-trigger::after {
+  content: none !important;
+  display: none !important;
+}
+
+.canvas2d-navigator-drag-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+}
+
+.canvas2d-context-submenu-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: inherit;
+  --app-icon-context-size: 14px;
+}
+
+.canvas2d-context-submenu-indicator::before {
+  content: "返回";
+  display: none;
+  font-size: 12px;
+}
+
+.canvas2d-context-menu.is-compact-menu > .is-open > .canvas2d-context-submenu-trigger .canvas2d-context-submenu-indicator::before {
+  display: inline;
+}
+
+.canvas2d-context-menu.is-compact-menu > .is-open > .canvas2d-context-submenu-trigger .app-icon {
+  transform: rotate(180deg);
+}
+
+.canvas-mind-node-tool .canvas-mind-collapse-collapsed,
+.canvas-mind-node-tool.is-collapsed .canvas-mind-collapse-expanded {
+  display: none;
+}
+
+.canvas-mind-node-tool.is-collapsed .canvas-mind-collapse-collapsed {
+  display: inline-block;
+}
+
+summary.app-icon-disclosure {
+  list-style: none;
+}
+
+summary.app-icon-disclosure::-webkit-details-marker {
+  display: none;
+}
+
+.settings-center-disclosure > summary.app-icon-disclosure {
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.settings-center-agent-policy > summary.app-icon-disclosure > .app-disclosure-chevron + span {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-center-agent-policy > summary.app-icon-disclosure > span:last-child {
+  margin-left: auto;
+}
+
+summary.app-icon-disclosure > .app-disclosure-chevron {
+  margin-right: 5px;
+  --app-icon-context-size: 14px;
+}
+
+details[open] > summary.app-icon-disclosure > .app-disclosure-chevron {
+  transform: rotate(90deg);
+}

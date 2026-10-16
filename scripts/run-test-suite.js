@@ -7,6 +7,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const TEST_PORT = Number(process.env.FREEFLOW_TEST_PORT || 3217);
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 const CHECKS = [
+  "scripts/check-app-icons.js",
   "scripts/check-assistant-plugin-packaging.js",
   "scripts/check-assistant-plugin-manager.js",
   "scripts/check-assistant-plugin-routes.js",

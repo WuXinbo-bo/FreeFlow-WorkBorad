@@ -1,5 +1,6 @@
 import { dispatchTutorialUiEvent } from "../../tutorial-core/tutorialEventBus.js";
 import { TUTORIAL_EVENT_TYPES } from "../../tutorial-core/tutorialTypes.js";
+import { renderAppIcon } from "../../ui/icons/appIcons.mjs";
 
 export function createConversationAssistantChrome({
   state,
@@ -154,8 +155,8 @@ export function createConversationAssistantChrome({
         title: "本地模型",
         items: localItems,
         actions: `
-          <button class="conversation-model-group-icon" type="button" data-model-group-action="refresh-local" title="刷新本地模型">
-            ↻
+          <button class="conversation-model-group-icon" type="button" data-model-group-action="refresh-local" title="刷新本地模型" aria-label="刷新本地模型">
+            ${renderAppIcon("rotate-cw", { size: 16 })}
           </button>
         `,
       },
@@ -164,11 +165,11 @@ export function createConversationAssistantChrome({
         title: "云端模型",
         items: cloudItems,
         actions: `
-          <button class="conversation-model-group-icon" type="button" data-model-group-action="toggle-cloud-config" title="云端模型配置">
-            ⚙
+          <button class="conversation-model-group-icon" type="button" data-model-group-action="toggle-cloud-config" title="云端模型配置" aria-label="云端模型配置">
+            ${renderAppIcon("settings", { size: 16 })}
           </button>
-          <button class="conversation-model-group-icon" type="button" data-model-group-action="refresh-cloud" title="刷新云端模型">
-            ↻
+          <button class="conversation-model-group-icon" type="button" data-model-group-action="refresh-cloud" title="刷新云端模型" aria-label="刷新云端模型">
+            ${renderAppIcon("rotate-cw", { size: 16 })}
           </button>
         `,
       },
@@ -240,8 +241,9 @@ export function createConversationAssistantChrome({
                 type="button"
                 data-model-group-action="toggle-cloud-api-key-visibility"
                 title="${cloudConfigApiKeyVisible ? "隐藏 API Key" : "显示 API Key"}"
+                aria-label="${cloudConfigApiKeyVisible ? "隐藏 API Key" : "显示 API Key"}"
               >
-                ${cloudConfigApiKeyVisible ? "🙈" : "👁"}
+                ${renderAppIcon(cloudConfigApiKeyVisible ? "eye-off" : "eye", { size: 16 })}
               </button>
             </span>
           </label>
