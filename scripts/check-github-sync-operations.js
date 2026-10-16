@@ -19,7 +19,7 @@ async function main() {
     const actions = {
       sync: async () => { calls++; await new Promise((resolve) => { release = resolve; }); return { commitSha: "confirmed", bundle: { boardText: "large private contents", files: [{ path: "board" }] } }; },
       "workspace-plan": async () => ({ items: [] }),
-      pull: async () => { throw Object.assign(new Error("fixture conflict"), { code: "SYNC_CONFLICT", status: 409, conflicts: [{ path: "items[one].text" }] }); },
+      pull: async () => { throw Object.assign(new Error("fixture conflict"), { code: "SYNC_CONFLICT", status: 409, conflicts: [{ path: "items[one].text", reason: "both-changed", local: "private conflicting card", remote: "private remote card" }] }); },
     };
     const filePath = path.join(directory, "operations.json");
     const service = createGitHubOperationService({ filePath, actions, now: () => now });
@@ -41,6 +41,8 @@ async function main() {
     await waitUntil(async () => (await restored.get("failed")).phase === "failed");
     assert.equal((await restored.get("failed")).error.code, "SYNC_CONFLICT");
     await waitUntil(async () => JSON.parse(await fs.readFile(filePath, "utf8")).operations.some((entry) => entry.id === "failed" && entry.phase === "failed"));
+    assert(!String(await fs.readFile(filePath)).includes("private conflicting card"), "conflict bodies must not enter the operation journal");
+    assert.equal((await restored.get("failed")).error.conflicts[0].path, "items[one].text");
 
     await fs.writeFile(path.join(directory, "interrupted.json"), JSON.stringify({ schemaVersion: 1, operations: [{ id: "old", action: "sync", phase: "running", startedAt: 1 }] }));
     const interrupted = createGitHubOperationService({ filePath: path.join(directory, "interrupted.json"), actions });

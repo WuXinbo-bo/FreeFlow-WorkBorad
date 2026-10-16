@@ -10,7 +10,9 @@ function publicError(error) {
     code: String(error?.code || ""),
     status: Number(error?.status) || 500,
     retryAfterMs: Number(error?.retryAfterMs) || 0,
-    conflicts: error?.conflicts,
+    // Conflict artifacts keep full versions separately; the task journal only
+    // needs locations/reasons, never copies of the user's card contents.
+    conflicts: Array.isArray(error?.conflicts) ? error.conflicts.map((entry) => ({ path: String(entry?.path || ""), reason: String(entry?.reason || "") })) : undefined,
     artifacts: error?.artifacts,
     state: error?.state,
     commitSha: error?.commitSha,
