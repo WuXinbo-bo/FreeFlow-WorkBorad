@@ -39,6 +39,31 @@ ipcRenderer.on("desktop-shell:bootstrap-timeout", (_event, payload) => {
 contextBridge.exposeInMainWorld("desktopShell", {
   isDesktop: true,
   platform: process.platform,
+  presentMirrorOverlay: (payload) => ipcRenderer.invoke("desktop-shell:present-mirror-overlay", payload),
+  dismissMirrorOverlay: (payload) => ipcRenderer.invoke("desktop-shell:dismiss-mirror-overlay", payload),
+  syncMirrorOverlayBounds: (payload) => ipcRenderer.invoke("desktop-shell:sync-mirror-overlay-bounds", payload),
+  notifyMirrorOverlay: (payload) => ipcRenderer.invoke("desktop-shell:notify-mirror-overlay", payload),
+  onMirrorOverlayRequest: (listener) => {
+    const handler = async (_event, payload) => {
+      try {
+        const result = await listener(payload.method, payload.args || []);
+        ipcRenderer.send("desktop-shell:mirror-overlay-response", { id: payload.id, result });
+      } catch (error) {
+        const details = { message: String(error?.message || error) };
+        for (const key of ["code", "status", "operationId", "conflicts", "state", "retryAfterMs", "artifacts", "localChanged", "filePath", "boardId", "merged"]) {
+          if (error?.[key] !== undefined) details[key] = error[key];
+        }
+        ipcRenderer.send("desktop-shell:mirror-overlay-response", { id: payload.id, error: details });
+      }
+    };
+    ipcRenderer.on("desktop-shell:mirror-overlay-request", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:mirror-overlay-request", handler);
+  },
+  onMirrorOverlayEvent: (listener) => {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on("desktop-shell:mirror-overlay-event", handler);
+    return () => ipcRenderer.removeListener("desktop-shell:mirror-overlay-event", handler);
+  },
   readClipboardText: () => ipcRenderer.invoke("desktop-shell:read-clipboard-text"),
   readClipboardFiles: () => ipcRenderer.invoke("desktop-shell:read-clipboard-files"),
   readClipboardImageDataUrl: () => ipcRenderer.invoke("desktop-shell:read-clipboard-image-data-url"),
@@ -178,16 +203,16 @@ contextBridge.exposeInMainWorld("desktopShell", {
   setWindowShape: (rects) => ipcRenderer.invoke("desktop-shell:set-window-shape", rects),
   embedExternalWindow: (payload) => ipcRenderer.invoke("desktop-shell:embed-external-window", payload),
   syncExternalWindowBounds: (payload) => ipcRenderer.invoke("desktop-shell:sync-external-window-bounds", payload),
-  setExternalWindowVisibility: (visible) => ipcRenderer.invoke("desktop-shell:set-external-window-visibility", visible),
+  setExternalWindowVisibility: (visible, identity) => ipcRenderer.invoke("desktop-shell:set-external-window-visibility", visible, identity),
   clearExternalWindow: (payload) => ipcRenderer.invoke("desktop-shell:clear-external-window", payload),
   focusEmbeddedWindow: (payload) => ipcRenderer.invoke("desktop-shell:focus-embedded-window", payload),
   setEmbeddedWindowInteractive: (payload) => ipcRenderer.invoke("desktop-shell:set-embedded-window-interactive", payload),
   attachAiMirrorWebContentsView: (payload) => ipcRenderer.invoke("desktop-shell:attach-ai-mirror-webcontents-view", payload),
   syncAiMirrorWebContentsViewBounds: (payload) =>
     ipcRenderer.invoke("desktop-shell:sync-ai-mirror-webcontents-view-bounds", payload),
-  setAiMirrorWebContentsViewVisibility: (visible) =>
-    ipcRenderer.invoke("desktop-shell:set-ai-mirror-webcontents-view-visibility", visible),
-  clearAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:clear-ai-mirror-webcontents-view"),
+  setAiMirrorWebContentsViewVisibility: (visible, identity) =>
+    ipcRenderer.invoke("desktop-shell:set-ai-mirror-webcontents-view-visibility", visible, identity),
+  clearAiMirrorWebContentsView: (identity) => ipcRenderer.invoke("desktop-shell:clear-ai-mirror-webcontents-view", identity),
   focusAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:focus-ai-mirror-webcontents-view"),
   blurAiMirrorWebContentsView: () => ipcRenderer.invoke("desktop-shell:blur-ai-mirror-webcontents-view"),
   onStateChange: (listener) => {

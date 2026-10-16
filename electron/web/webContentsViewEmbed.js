@@ -12,11 +12,12 @@ function createUnsupportedManager() {
 
   return {
     isSupported: () => false,
-    getState: () => ({ active: false, targetId: "", visible: false }),
+    getState: () => ({ active: false, targetId: "", visible: false, webContentsId: null, syncSessionId: "" }),
     attachTarget: error,
     syncBounds: error,
     setVisibility: () => ({ ok: true, active: false, visible: false }),
     focusTarget: () => ({ ok: true, active: false }),
+    blurTarget: () => ({ ok: true, active: false }),
     clearTarget: () => ({ ok: true, active: false }),
   };
 }
@@ -36,10 +37,37 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
   }
 
   let activeEntry = null;
+  let attachGeneration = 0;
   const notifyFocusChanged =
     typeof options?.onFocusChanged === "function"
       ? options.onFocusChanged
       : () => {};
+  const notifyAttached =
+    typeof options?.onAttached === "function" ? options.onAttached : () => {};
+
+  function isCurrentEntry(entry) {
+    return Boolean(entry && entry === activeEntry && entry.view?.webContents && !entry.view.webContents.isDestroyed());
+  }
+
+  function matchesIdentity(entry, { targetId = "", syncSessionId = "" } = {}) {
+    const requestedTargetId = String(targetId || "").trim();
+    const requestedSessionId = String(syncSessionId || "").trim();
+    return (!requestedTargetId || requestedTargetId === entry.targetId) &&
+      (!requestedSessionId || requestedSessionId === entry.syncSessionId);
+  }
+
+  function updateFocus(entry, focused) {
+    if (!entry || entry !== activeEntry || entry.focused === focused) return;
+    if (focused && (!isCurrentEntry(entry) || entry.hidden || !entry.attached || entry.loading)) return;
+    entry.focused = focused;
+    notifyFocusChanged({
+      owner: focused ? "ai-mirror" : "",
+      targetId: entry.targetId,
+      sourceId: entry.sourceId,
+      webContentsId: entry.webContentsId,
+      syncSessionId: entry.syncSessionId,
+    });
+  }
 
   function getMainWindow() {
     const window = typeof mainWindowGetter === "function" ? mainWindowGetter() : null;
@@ -57,47 +85,48 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
     return targets.find((item) => item.id === cleanTargetId) || null;
   }
 
-  function detachActiveEntry() {
-    if (!activeEntry?.view) {
+  function detachEntry(entry) {
+    if (!entry?.view) {
       return;
     }
 
     try {
-      const mainWindow = getMainWindow();
-      if (typeof mainWindow.contentView.removeChildView === "function") {
-        mainWindow.contentView.removeChildView(activeEntry.view);
+      const mainWindow = entry.parentWindow;
+      if (mainWindow && !mainWindow.isDestroyed() && typeof mainWindow.contentView.removeChildView === "function") {
+        mainWindow.contentView.removeChildView(entry.view);
       }
     } catch {
       // Ignore detach failures during shutdown or view replacement.
     }
 
-    activeEntry.attached = false;
+    entry.attached = false;
+    entry.parentWindow = null;
   }
 
-  function destroyActiveEntry() {
-    if (!activeEntry) {
+  function destroyEntry(entry = activeEntry) {
+    if (!entry) {
       return;
     }
 
-    detachActiveEntry();
+    updateFocus(entry, false);
+    if (activeEntry === entry) activeEntry = null;
+    detachEntry(entry);
 
     try {
-      if (activeEntry.view?.webContents && !activeEntry.view.webContents.isDestroyed()) {
-        activeEntry.view.webContents.close({ waitForBeforeUnload: false });
+      if (entry.view?.webContents && !entry.view.webContents.isDestroyed()) {
+        entry.view.webContents.close({ waitForBeforeUnload: false });
       }
     } catch {
       // Ignore close failures and continue cleanup.
     }
 
     try {
-      if (activeEntry.view?.webContents && !activeEntry.view.webContents.isDestroyed()) {
-        activeEntry.view.webContents.destroy();
+      if (entry.view?.webContents && !entry.view.webContents.isDestroyed()) {
+        entry.view.webContents.destroy();
       }
     } catch {
       // Ignore final destroy failures.
     }
-
-    activeEntry = null;
   }
 
   function getState() {
@@ -107,6 +136,10 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
         targetId: "",
         sourceId: "",
         visible: false,
+        attached: false,
+        loading: false,
+        webContentsId: null,
+        syncSessionId: "",
       };
     }
 
@@ -114,14 +147,17 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
       active: true,
       targetId: activeEntry.targetId,
       sourceId: activeEntry.sourceId,
-      visible: !activeEntry.hidden,
+      visible: !activeEntry.hidden && Boolean(activeEntry.attached),
       attached: Boolean(activeEntry.attached),
+      loading: Boolean(activeEntry.loading),
+      webContentsId: activeEntry.view.webContents.id,
+      syncSessionId: activeEntry.syncSessionId,
       bounds: { ...activeEntry.bounds },
       url: activeEntry.view.webContents.getURL(),
     };
   }
 
-  async function ensureViewForTarget(meta) {
+  function ensureViewForTarget(meta) {
     if (
       activeEntry?.targetId === meta.id &&
       activeEntry?.view?.webContents &&
@@ -130,7 +166,7 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
       return activeEntry;
     }
 
-    destroyActiveEntry();
+    destroyEntry();
 
     const view = new WebContentsView({
       webPreferences: {
@@ -151,52 +187,63 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
       event.preventDefault();
     });
 
-    view.webContents.on("focus", () => {
-      notifyFocusChanged({
-        owner: "ai-mirror",
-        targetId: meta.id,
-        sourceId: `webcontentsview:${meta.id}`,
-      });
-    });
-
-    view.webContents.on("blur", () => {
-      notifyFocusChanged({
-        owner: "",
-        targetId: meta.id,
-        sourceId: `webcontentsview:${meta.id}`,
-      });
-    });
-
-    activeEntry = {
+    const entry = {
       targetId: meta.id,
       sourceId: `webcontentsview:${meta.id}`,
       view,
+      webContentsId: view.webContents.id,
       hidden: false,
       attached: false,
+      parentWindow: null,
+      focused: false,
+      loading: true,
+      syncSessionId: "",
+      lastSyncRevision: 0,
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     };
+    activeEntry = entry;
+    view.webContents.on("focus", () => updateFocus(entry, true));
+    view.webContents.on("blur", () => updateFocus(entry, false));
+    view.webContents.once("destroyed", () => {
+      if (activeEntry !== entry) return;
+      attachGeneration += 1;
+      destroyEntry(entry);
+    });
 
-    const currentUrl = String(view.webContents.getURL() || "").trim();
-    if (!currentUrl || !currentUrl.startsWith(meta.webUrl)) {
-      await view.webContents.loadURL(meta.webUrl);
+    try {
+      const currentUrl = String(view.webContents.getURL() || "").trim();
+      const load = !currentUrl || !currentUrl.startsWith(meta.webUrl)
+        ? view.webContents.loadURL(meta.webUrl)
+        : Promise.resolve();
+      entry.loadPromise = Promise.resolve(load).then(
+        () => { entry.loading = false; },
+        (error) => { entry.loading = false; throw error; }
+      );
+    } catch (error) {
+      destroyEntry(entry);
+      throw error;
     }
 
-    return activeEntry;
+    return entry;
   }
 
   function attachEntry(entry, bounds) {
+    if (!isCurrentEntry(entry) || entry.hidden || entry.loading) return;
     const mainWindow = getMainWindow();
     const nextBounds = normalizeBounds(bounds);
+    if (entry.attached && entry.parentWindow !== mainWindow) detachEntry(entry);
     if (!entry.attached) {
       mainWindow.contentView.addChildView(entry.view);
       entry.attached = true;
+      entry.parentWindow = mainWindow;
     }
     entry.view.setBounds(nextBounds);
     entry.bounds = nextBounds;
+    entry.view.webContents.setBackgroundThrottling?.(false);
     if (typeof entry.view.setVisible === "function") {
       entry.view.setVisible(true);
     }
-    entry.hidden = false;
+    notifyAttached(entry);
   }
 
   async function attachTarget({ targetId = "", bounds = null, syncSessionId = "" } = {}) {
@@ -205,15 +252,39 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
       throw new Error("不支持的 AI 镜像目标");
     }
 
-    const entry = await ensureViewForTarget(meta);
-    entry.syncSessionId = String(syncSessionId || "").trim();
-    entry.lastSyncRevision = 0;
-    attachEntry(entry, bounds || {});
+    const generation = ++attachGeneration;
+    let entry;
+    try {
+      getMainWindow();
+      entry = ensureViewForTarget(meta);
+      const requestedSessionId = String(syncSessionId || "").trim();
+      if (requestedSessionId !== entry.syncSessionId) entry.lastSyncRevision = 0;
+      entry.syncSessionId = requestedSessionId;
+      entry.hidden = false;
+      entry.bounds = normalizeBounds(bounds || entry.bounds);
+      await entry.loadPromise;
+      if (!isCurrentEntry(entry) || generation !== attachGeneration) {
+        return { ok: true, active: false, stale: true };
+      }
+      attachEntry(entry, entry.bounds);
+      if (!isCurrentEntry(entry) || generation !== attachGeneration) {
+        return { ok: true, active: false, stale: true };
+      }
+    } catch (error) {
+      if (generation !== attachGeneration || (entry && activeEntry !== entry)) {
+        return { ok: true, active: false, stale: true };
+      }
+      destroyEntry(entry);
+      throw error;
+    }
 
     return {
       ok: true,
       active: true,
       mode: "webcontentsview",
+      webContentsId: entry.view.webContents.id,
+      syncSessionId: entry.syncSessionId,
+      visible: !entry.hidden && entry.attached,
       target: {
         id: meta.id,
         label: meta.label,
@@ -228,121 +299,127 @@ function createWebContentsViewEmbedManager(mainWindowGetter, targets = [], optio
   }
 
   function syncBounds({ bounds = null, targetId = "", syncSessionId = "", syncRevision = 0 } = {}) {
-    if (!activeEntry) {
+    if (!isCurrentEntry(activeEntry)) {
       return {
         ok: true,
         active: false,
       };
     }
+    const entry = activeEntry;
 
     const requestedTargetId = String(targetId || "").trim();
     const requestedSessionId = String(syncSessionId || "").trim();
     const requestedRevision = Math.max(0, Number(syncRevision) || 0);
     if (
-      (requestedTargetId && requestedTargetId !== activeEntry.targetId) ||
-      (requestedSessionId && activeEntry.syncSessionId && requestedSessionId !== activeEntry.syncSessionId) ||
-      (requestedSessionId && requestedRevision <= Number(activeEntry.lastSyncRevision || 0))
+      (requestedTargetId && requestedTargetId !== entry.targetId) ||
+      (requestedSessionId && entry.syncSessionId && requestedSessionId !== entry.syncSessionId) ||
+      (requestedSessionId && requestedRevision <= Number(entry.lastSyncRevision || 0))
     ) {
-      return { ok: true, active: true, stale: true, bounds: { ...activeEntry.bounds } };
+      return { ok: true, active: true, stale: true, bounds: { ...entry.bounds } };
     }
     if (requestedSessionId) {
-      activeEntry.syncSessionId = requestedSessionId;
-      activeEntry.lastSyncRevision = requestedRevision;
+      entry.syncSessionId = requestedSessionId;
+      entry.lastSyncRevision = requestedRevision;
     }
 
-    const nextBounds = normalizeBounds(bounds || activeEntry.bounds);
-    activeEntry.bounds = nextBounds;
+    const nextBounds = normalizeBounds(bounds || entry.bounds);
+    entry.bounds = nextBounds;
 
-    if (activeEntry.hidden) {
-      if (activeEntry.attached && activeEntry.view) {
-        activeEntry.view.setBounds(nextBounds);
+    if (entry.hidden) {
+      if (entry.attached && entry.view) {
+        entry.view.setBounds(nextBounds);
       }
-    } else {
-      attachEntry(activeEntry, nextBounds);
+    } else if (!entry.loading) {
+      attachEntry(entry, nextBounds);
     }
 
     return {
       ok: true,
-      active: true,
-      sourceId: activeEntry.sourceId,
-      bounds: { ...activeEntry.bounds },
+      ...getState(),
     };
   }
 
-  function setVisibility(visible) {
-    if (!activeEntry) {
+  function setVisibility(visible, identity = {}) {
+    if (!isCurrentEntry(activeEntry)) {
       return {
         ok: true,
         active: false,
         visible: false,
       };
     }
+    if (!matchesIdentity(activeEntry, identity)) {
+      return { ok: true, ...getState(), stale: true };
+    }
 
+    const entry = activeEntry;
     const nextVisible = Boolean(visible);
-    activeEntry.view.webContents.setBackgroundThrottling?.(!nextVisible);
+    entry.hidden = !nextVisible;
+    entry.view.webContents.setBackgroundThrottling?.(!nextVisible);
     if (nextVisible) {
-      attachEntry(activeEntry, activeEntry.bounds);
+      attachEntry(entry, entry.bounds);
     } else {
-      if (typeof activeEntry.view.setVisible === "function") {
-        activeEntry.view.setVisible(false);
+      updateFocus(entry, false);
+      if (typeof entry.view.setVisible === "function") {
+        entry.view.setVisible(false);
       }
-      detachActiveEntry();
-      activeEntry.hidden = true;
+      detachEntry(entry);
     }
 
     return {
       ok: true,
-      active: true,
-      visible: nextVisible,
-      sourceId: activeEntry.sourceId,
+      ...getState(),
     };
   }
 
   function focusTarget() {
-    if (!activeEntry?.view?.webContents || activeEntry.view.webContents.isDestroyed()) {
+    if (!isCurrentEntry(activeEntry)) {
       return {
         ok: true,
         active: false,
       };
     }
+    const entry = activeEntry;
+    if (entry.hidden || !entry.attached || entry.loading) {
+      return { ok: true, active: true, focused: false, sourceId: entry.sourceId };
+    }
 
-    activeEntry.view.webContents.focus();
+    entry.view.webContents.focus();
 
     return {
       ok: true,
-      active: true,
-      sourceId: activeEntry.sourceId,
+      ...getState(),
+      focused: isCurrentEntry(entry) && !entry.hidden && entry.attached,
     };
   }
 
   function blurTarget() {
-    if (!activeEntry?.view?.webContents || activeEntry.view.webContents.isDestroyed()) {
+    if (!isCurrentEntry(activeEntry)) {
       return {
         ok: true,
         active: false,
       };
     }
 
-    if (typeof activeEntry.view.webContents.blur === "function") {
-      activeEntry.view.webContents.blur();
+    const entry = activeEntry;
+    if (typeof entry.view.webContents.blur === "function") {
+      entry.view.webContents.blur();
     }
 
-    notifyFocusChanged({
-      owner: "",
-      targetId: activeEntry.targetId,
-      sourceId: activeEntry.sourceId,
-    });
+    updateFocus(entry, false);
 
     return {
       ok: true,
-      active: true,
-      sourceId: activeEntry.sourceId,
+      ...getState(),
     };
   }
 
-  function clearTarget() {
+  function clearTarget(identity = {}) {
+    if (isCurrentEntry(activeEntry) && !matchesIdentity(activeEntry, identity)) {
+      return { ok: true, ...getState(), stale: true };
+    }
     const previousSourceId = activeEntry?.sourceId || "";
-    destroyActiveEntry();
+    attachGeneration += 1;
+    destroyEntry();
     return {
       ok: true,
       active: false,

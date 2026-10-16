@@ -2343,6 +2343,7 @@ function Canvas2DControls({ engine }) {
       {activeTool === "select" && !captureModeActive && shapeStylePosition ? createPortal(
         <div
           className="canvas2d-shape-style-popover"
+          data-shape-include="true"
           role="toolbar"
           aria-label="图形样式"
           data-canvas-ui-focus-scope="shape-style"
@@ -2409,7 +2410,7 @@ function Canvas2DControls({ engine }) {
             </>
           ) : null}
         </div>,
-        document.body
+        document.getElementById("global-overlay-layer") || document.body
       ) : null}
 
       {searchHighlightStyle && bridge.getSceneFeedbackPortalHost() ? createPortal(

@@ -16,6 +16,8 @@ import { createCanvasFeature } from "../features/canvas/index.js";
 import { createCanvasItemInteractionController } from "../features/canvas/interactions/canvasItemInteractions.js";
 import { attachShortcutRecorder } from "../components/settings/shortcutRecorder.js";
 import { mountSettingsCenter } from "../components/settings/settingsCenter.js";
+import { createMirrorOverlayHost } from "./mirrorOverlay/mirrorOverlayHost.js";
+import { createMirrorVisibilityController } from "./mirrorOverlay/mirrorVisibilityController.js";
 import { normalizeThemeSettings } from "../theme/themeSettings.js";
 import { applyThemeCssVariables } from "../theme/themeCssVariables.js";
 import { API_ROUTES, readJsonResponse } from "../api/http.js";
@@ -1604,6 +1606,10 @@ let screenSourceHeaderMenuOpen = false;
 let screenSourceTargetRefreshGeneration = 0;
 let activeClipboardZone = "";
 let embeddedWindowOverlayHidden = false;
+let screenSourceCaptureGeneration = 0;
+let screenSourcePendingEmbed = null;
+let mirrorOverlayHost = null;
+let nativeSettingsClosing = false;
 let screenSourceActivationOverlayEl = null;
 
 function createScreenSourceEmbedSession() {
@@ -1659,10 +1665,6 @@ function syncScreenSourceActivationOverlay() {
   overlay.setAttribute("aria-hidden", String(!shouldShow));
 }
 let embeddedWindowOverlaySyncPromise = Promise.resolve();
-let drawerResumeScreenSourceTargetId = "";
-let shellMenuResumeScreenSourceTargetId = "";
-let clickThroughResumeScreenSourceTargetId = "";
-let clickThroughResumeScreenSourceEnabled = false;
 let canvasTitleRenameInFlight = false;
 let canvasPointerAnchorPoint = null;
 let canvasContextMenuAnchorPoint = null;
@@ -1679,6 +1681,7 @@ const desktopWindowShapeScheduler = createWindowShapeSyncScheduler({
       return;
     }
     syncDesktopWindowShape();
+    void syncEmbeddedWindowOverlayVisibility();
     scheduleEmbeddedScreenSourceSync();
   },
 });
@@ -1855,7 +1858,7 @@ const globalTutorialHost = mountGlobalTutorialHost({
 bindDesktopWindowShapeAutoSync();
 
 const screenSourceEmptyLoader = mountLemniscateBloomLoader(screenSourceLoaderHostEl);
-const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
+const settingsCenterOptions = {
   apiRoutes: API_ROUTES,
   readJsonResponse,
   desktopShell: DESKTOP_SHELL,
@@ -1893,6 +1896,70 @@ const settingsCenter = mountSettingsCenter(settingsCenterHostEl, {
     if (!(await engine.saveBoard({ silent: true, exactPath: true }))) throw new Error("当前画布保存失败，已停止工作区同步");
     const boardPath = engine.getSnapshot().boardFilePath;
     return { boardPath, workspaceRoot: await engine.getCanvasBoardWorkspace() || boardPath.replace(/[\\/][^\\/]+$/, "") };
+  },
+};
+const settingsCenter = mountSettingsCenter(settingsCenterHostEl, settingsCenterOptions);
+function menuButtonItems(element) {
+  return Array.from(element?.querySelectorAll("button[id]") || []).filter(button => !button.hidden).map(button => ({
+    id: button.id,
+    label: button.querySelector(".conversation-shell-menu-label, .desktop-menu-label")?.textContent.trim() || button.getAttribute("aria-label") || button.textContent.trim(),
+    icon: button.querySelector("[data-ui-icon]")?.getAttribute("data-ui-icon") || "",
+    disabled: button.disabled,
+    active: button.classList.contains("is-active"),
+  }));
+}
+mirrorOverlayHost = createMirrorOverlayHost({
+  shell: DESKTOP_SHELL,
+  settingsOptions: settingsCenterOptions,
+  drawer: insightDrawerEl,
+  menus: [
+    { id: "shell-more", title: "更多", element: conversationShellMenuEl, trigger: conversationShellMoreBtn,
+      isOpen: () => !conversationShellMenuEl?.classList.contains("is-hidden"),
+      items: () => menuButtonItems(conversationShellMenuEl),
+      activate: id => { const button = document.getElementById(id); if (conversationShellMenuEl?.contains(button) && !button.disabled) button.click(); },
+      close: () => setConversationShellMenuOpen(false) },
+    { id: "desktop-more", title: "窗口控制", element: desktopMenuPanel, trigger: desktopMenuBtn,
+      isOpen: () => !desktopMenuPanel?.classList.contains("is-hidden"),
+      items: () => menuButtonItems(desktopMenuPanel),
+      activate: id => { const button = document.getElementById(id); if (desktopMenuPanel?.contains(button) && !button.disabled) button.click(); },
+      close: () => setDesktopMenuOpen(false) },
+    { id: "mirror-controls", title: "AI 镜像", element: screenSourceHeaderPanelEl, trigger: screenSourceHeaderMenuSummaryEl,
+      isOpen: () => screenSourceHeaderMenuOpen,
+      items: () => [
+        ...state.screenSource.availableSources.map(source => ({ id: `target:${source.id}`, label: source.label || source.name, active: source.id === state.screenSource.selectedSourceId, icon: "globe" })),
+        { separator: true },
+        ...menuButtonItems(screenSourceHeaderPanelEl),
+        { separator: true },
+        ...Array.from(screenSourceRenderModeSelectEl?.options || []).filter(option => !option.disabled).map(option => ({ id: `mode:${option.value}`, label: option.textContent, active: option.value === state.screenSource.renderMode, disabled: screenSourceRenderModeSelectEl.disabled })),
+      ],
+      activate: id => {
+        if (id.startsWith("target:")) {
+          const option = screenSourceSelectPanelEl?.querySelector(`[data-screen-source-option="${CSS.escape(id.slice(7))}"]`);
+          option?.click();
+        } else if (id.startsWith("mode:")) {
+          screenSourceRenderModeSelectEl.value = id.slice(5);
+          screenSourceRenderModeSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          const button = document.getElementById(id);
+          if (screenSourceHeaderPanelEl?.contains(button) && !button.disabled) button.click();
+        }
+      },
+      close: () => setScreenSourceHeaderMenuOpen(false, { restoreFocus: true }) },
+  ],
+  onClosed: () => {
+    nativeSettingsClosing = true;
+    setDrawerOpen(false);
+    nativeSettingsClosing = false;
+    void resumeScreenSourceAfterDrawerClose();
+    void DESKTOP_SHELL?.focusRendererSurface?.({ owner: "screen", sourceId: "renderer:settings-closed" });
+  },
+  onChanged: () => { void syncEmbeddedWindowOverlayVisibility(); scheduleDesktopWindowShapeSync(); },
+  onUnavailable: () => {
+    if (state.drawerOpen) {
+      const reload = settingsCenter.isDirty() || settingsCenter.isSaving() ? Promise.resolve() : settingsCenter.reload();
+      void reload.then(() => settingsCenter.open()).catch(error => setStatus(`设置读取失败：${error.message}`, "warning"));
+      setStatus("设置浮层不可用，已切回本地面板；未保存的设置请重新检查", "warning");
+    }
   },
 });
 const githubRemoteMonitor = createGitHubRemoteMonitor({ client: DESKTOP_SHELL?.githubSync });
@@ -2225,39 +2292,55 @@ function isScreenSourcePreviewAvailable() {
   return conversationRect.width > 0 && conversationRect.height > 0 && previewRect.width > 0 && previewRect.height > 0;
 }
 
-function setEmbeddedProjectionVisibility(visible) {
-  if (!IS_DESKTOP_APP || !isEmbeddedScreenSourceActive()) {
-    return Promise.resolve({ ok: true, active: false });
-  }
+function getEmbeddedProjectionIdentity() {
+  if (!isEmbeddedScreenSourceActive()) return null;
+  return { targetId: state.screenSource.activeTargetId, syncSessionId: screenSourceEmbedSessionId, mode: state.screenSource.activeMode };
+}
 
-  if (isWin32EmbeddedScreenSourceActive() && typeof DESKTOP_SHELL?.setExternalWindowVisibility === "function") {
-    return DESKTOP_SHELL.setExternalWindowVisibility(visible);
-  }
+function setEmbeddedProjectionVisibility(visible, identity = getEmbeddedProjectionIdentity()) {
+  if (!IS_DESKTOP_APP || !identity || JSON.stringify(identity) !== JSON.stringify(getEmbeddedProjectionIdentity())) return Promise.resolve({ ok: true, stale: true });
+  if (identity.mode === "embedded-win32") return DESKTOP_SHELL.setExternalWindowVisibility(visible, identity);
+  return DESKTOP_SHELL.setAiMirrorWebContentsViewVisibility(visible, identity);
+}
 
-  if (
-    isWebContentsViewScreenSourceActive() &&
-    typeof DESKTOP_SHELL?.setAiMirrorWebContentsViewVisibility === "function"
-  ) {
-    return DESKTOP_SHELL.setAiMirrorWebContentsViewVisibility(visible);
-  }
+const mirrorVisibilityController = createMirrorVisibilityController({
+  getIdentity: getEmbeddedProjectionIdentity,
+  apply: setEmbeddedProjectionVisibility,
+  onVisible: () => scheduleEmbeddedScreenSourceSync(),
+  onError: () => { embeddedWindowOverlayHidden = false; },
+});
 
-  return Promise.resolve({ ok: true, active: false });
+function hasOccludingApplicationOverlay() {
+  const preview = screenSourcePreviewShellEl?.getBoundingClientRect();
+  if (!preview?.width || !preview.height) return false;
+  const candidates = globalOverlayLayerEl?.querySelectorAll('[data-shape-include="true"], [role="dialog"], [role="menu"], [role="alertdialog"]') || [];
+  for (const element of candidates) {
+    if (element.closest('[data-native-overlay="true"], #insight-drawer, #conversation-shell-menu, #desktop-menu-panel, #screen-source-header-panel')) continue;
+    const style = getComputedStyle(element);
+    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
+    const rect = element.getBoundingClientRect();
+    const left = Math.max(rect.left, preview.left), right = Math.min(rect.right, preview.right);
+    const top = Math.max(rect.top, preview.top), bottom = Math.min(rect.bottom, preview.bottom);
+    if (right <= left || bottom <= top) continue;
+    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+    if (hit && element.contains(hit)) return true;
+  }
+  return false;
 }
 
 function shouldHideEmbeddedWindowForOverlay() {
-  if (!isEmbeddedScreenSourceActive() || state.desktopShellState.fullClickThrough) {
-    return false;
-  }
-
+  if (!isEmbeddedScreenSourceActive()) return false;
+  const nativeId = mirrorOverlayHost?.active?.id;
   return Boolean(
+    state.desktopShellState.fullClickThrough ||
+    state.activeRightPanelView !== "screen" ||
     !isScreenSourcePreviewAvailable() ||
-      state.drawerOpen ||
-      !desktopMenuPanel?.classList.contains("is-hidden") ||
-      !conversationShellMenuEl?.classList.contains("is-hidden") ||
-      screenSourceHeaderMenuOpen ||
-      screenSourceOverflowMenuEl?.hasAttribute("open") ||
-      isLeftStageOccludingRightPanel() ||
-      isLeftStageOccludingEmbeddedPreview()
+    (state.drawerOpen && nativeId !== "settings") ||
+    (!desktopMenuPanel?.classList.contains("is-hidden") && nativeId !== "desktop-more") ||
+    (!conversationShellMenuEl?.classList.contains("is-hidden") && nativeId !== "shell-more") ||
+    (screenSourceHeaderMenuOpen && nativeId !== "mirror-controls") ||
+    hasOccludingApplicationOverlay() ||
+    isLeftStageOccludingRightPanel() || isLeftStageOccludingEmbeddedPreview()
   );
 }
 
@@ -2277,7 +2360,7 @@ function isLeftStageOccludingRightPanel() {
 
   const overlapWidth = Math.min(leftRect.right, rightRect.right) - Math.max(leftRect.left, rightRect.left);
   const overlapHeight = Math.min(leftRect.bottom, rightRect.bottom) - Math.max(leftRect.top, rightRect.top);
-  return overlapWidth > 24 && overlapHeight > 64;
+  return overlapWidth > 0 && overlapHeight > 0;
 }
 
 function isLeftStageOccludingEmbeddedPreview() {
@@ -2297,188 +2380,33 @@ function isLeftStageOccludingEmbeddedPreview() {
 
   const overlapWidth = Math.min(leftRect.right, previewRect.right) - Math.max(leftRect.left, previewRect.left);
   const overlapHeight = Math.min(leftRect.bottom, previewRect.bottom) - Math.max(leftRect.top, previewRect.top);
-  return overlapWidth > 24 && overlapHeight > 64;
+  return overlapWidth > 0 && overlapHeight > 0;
 }
 
 function syncEmbeddedWindowOverlayVisibility() {
-  if (!IS_DESKTOP_APP) {
-    return Promise.resolve();
-  }
-
-  if (state.desktopShellState.fullClickThrough) {
-    embeddedWindowOverlayHidden = true;
-    embeddedWindowOverlaySyncPromise = embeddedWindowOverlaySyncPromise
-      .catch(() => {})
-      .then(() => setEmbeddedProjectionVisibility(false))
-      .catch(() => {});
-    return embeddedWindowOverlaySyncPromise;
-  }
-
+  if (!IS_DESKTOP_APP) return Promise.resolve();
+  mirrorOverlayHost?.sync({
+    settingsOpen: state.drawerOpen,
+    mirrorActive: isWebContentsViewScreenSourceActive(),
+    blocked: state.desktopShellState.fullClickThrough || hasOccludingApplicationOverlay(),
+  });
   const shouldHide = shouldHideEmbeddedWindowForOverlay();
-  if (!isEmbeddedScreenSourceActive()) {
-    embeddedWindowOverlayHidden = false;
-    return Promise.resolve();
-  }
-
-  if (embeddedWindowOverlayHidden === shouldHide) {
-    return embeddedWindowOverlaySyncPromise;
-  }
-
-  embeddedWindowOverlayHidden = shouldHide;
-  embeddedWindowOverlaySyncPromise = embeddedWindowOverlaySyncPromise
-    .catch(() => {})
-    .then(() => setEmbeddedProjectionVisibility(!shouldHide))
-    .then(() => {
-      if (!shouldHide) {
-        scheduleEmbeddedScreenSourceSync();
-      }
-    })
-    .catch(() => {});
-
+  embeddedWindowOverlayHidden = Boolean(isEmbeddedScreenSourceActive() && shouldHide);
+  embeddedWindowOverlaySyncPromise = mirrorVisibilityController.sync(!shouldHide);
   return embeddedWindowOverlaySyncPromise;
 }
 
-function prepareEmbeddedWindowForDrawerOpen() {
-  if (
-    !IS_DESKTOP_APP ||
-    !isEmbeddedScreenSourceActive() ||
-    (!isWin32EmbeddedScreenSourceActive() && !isWebContentsViewScreenSourceActive())
-  ) {
-    return;
-  }
-
-  embeddedWindowOverlayHidden = true;
-  embeddedWindowOverlaySyncPromise = embeddedWindowOverlaySyncPromise
-    .catch(() => {})
-    .then(() => setEmbeddedProjectionVisibility(false))
-    .catch(() => {});
-}
-
+// UI occlusion retains the live session. Only stop/switch destroys it.
 async function suspendScreenSourceForDrawer() {
-  if (
-    !IS_DESKTOP_APP ||
-    state.drawerOpen ||
-    state.activeRightPanelView !== "screen" ||
-    (!isEmbeddedScreenSourceActive() && !state.screenSource.stream)
-  ) {
-    return;
-  }
-
-  drawerResumeScreenSourceTargetId = String(
-    state.screenSource.activeTargetId || state.screenSource.selectedSourceId || ""
-  ).trim();
-
-  await stopScreenSourceCapture({
-    announce: false,
-    statusText: "AI 镜像已临时关闭",
-  });
+  await DESKTOP_SHELL?.focusRendererSurface?.({ owner: "screen", sourceId: "renderer:settings" });
 }
-
-async function resumeScreenSourceAfterDrawerClose() {
-  const targetId = String(drawerResumeScreenSourceTargetId || "").trim();
-  drawerResumeScreenSourceTargetId = "";
-
-  if (!targetId || state.activeRightPanelView !== "screen") {
-    return;
-  }
-
-  state.screenSource.selectedSourceId = targetId;
-  const selected = state.screenSource.availableSources.find((item) => item.id === targetId) || null;
-  state.screenSource.selectedSourceLabel = selected?.label || selected?.name || "";
-
-  try {
-    await ensureScreenSourceCapture();
-  } catch {
-    // Keep drawer closing resilient; status will be updated by ensureScreenSourceCapture.
-  }
-}
-
+function resumeScreenSourceAfterDrawerClose() { return syncEmbeddedWindowOverlayVisibility(); }
 async function suspendScreenSourceForShellMenu() {
-  if (
-    !IS_DESKTOP_APP ||
-    state.drawerOpen ||
-    !conversationShellMenuEl?.classList.contains("is-hidden") ||
-    state.activeRightPanelView !== "screen" ||
-    (!isEmbeddedScreenSourceActive() && !state.screenSource.stream)
-  ) {
-    return;
-  }
-
-  shellMenuResumeScreenSourceTargetId = String(
-    state.screenSource.activeTargetId || state.screenSource.selectedSourceId || ""
-  ).trim();
-
-  await stopScreenSourceCapture({
-    announce: false,
-    statusText: "AI 镜像已临时关闭",
-  });
+  await DESKTOP_SHELL?.focusRendererSurface?.({ owner: "screen", sourceId: "renderer:shell-menu" });
 }
-
-async function resumeScreenSourceAfterShellMenuClose() {
-  const targetId = String(shellMenuResumeScreenSourceTargetId || "").trim();
-  shellMenuResumeScreenSourceTargetId = "";
-
-  if (!targetId || state.drawerOpen || state.activeRightPanelView !== "screen") {
-    return;
-  }
-
-  state.screenSource.selectedSourceId = targetId;
-  const selected = state.screenSource.availableSources.find((item) => item.id === targetId) || null;
-  state.screenSource.selectedSourceLabel = selected?.label || selected?.name || "";
-
-  try {
-    await ensureScreenSourceCapture();
-  } catch {
-    // Keep shell menu closing resilient; status will be updated by ensureScreenSourceCapture.
-  }
-}
-
-async function suspendScreenSourceForClickThrough() {
-  if (!IS_DESKTOP_APP || state.desktopShellState.fullClickThrough) {
-    return;
-  }
-  if (state.activeRightPanelView !== "screen") {
-    clickThroughResumeScreenSourceTargetId = "";
-    clickThroughResumeScreenSourceEnabled = false;
-    return;
-  }
-  if (!isEmbeddedScreenSourceActive() && !state.screenSource.stream) {
-    clickThroughResumeScreenSourceTargetId = "";
-    clickThroughResumeScreenSourceEnabled = false;
-    return;
-  }
-
-  clickThroughResumeScreenSourceTargetId = String(
-    state.screenSource.activeTargetId || state.screenSource.selectedSourceId || ""
-  ).trim();
-  clickThroughResumeScreenSourceEnabled = Boolean(clickThroughResumeScreenSourceTargetId);
-
-  await stopScreenSourceCapture({
-    announce: false,
-    statusText: "AI 镜像已因完全穿透临时关闭",
-  });
-}
-
-async function resumeScreenSourceAfterClickThrough() {
-  const targetId = String(clickThroughResumeScreenSourceTargetId || "").trim();
-  const shouldResume = Boolean(clickThroughResumeScreenSourceEnabled && targetId);
-  clickThroughResumeScreenSourceTargetId = "";
-  clickThroughResumeScreenSourceEnabled = false;
-
-  if (!shouldResume || state.activeRightPanelView !== "screen" || state.drawerOpen) {
-    return;
-  }
-
-  state.screenSource.selectedSourceId = targetId;
-  const selected = state.screenSource.availableSources.find((item) => item.id === targetId) || null;
-  state.screenSource.selectedSourceLabel = selected?.label || selected?.name || "";
-
-  try {
-    await ensureScreenSourceCapture();
-  } catch {
-    // Keep full-click-through recovery resilient; status will be updated by ensureScreenSourceCapture.
-  }
-}
+function resumeScreenSourceAfterShellMenuClose() { return syncEmbeddedWindowOverlayVisibility(); }
+function suspendScreenSourceForClickThrough() { return setEmbeddedProjectionVisibility(false); }
+function resumeScreenSourceAfterClickThrough() { return syncEmbeddedWindowOverlayVisibility(); }
 
 function setScreenSourceActionButtonsState(action, { text, disabled, busy } = {}) {
   const buttons = screenSourceActionButtonEls[action] || [];
@@ -3152,45 +3080,14 @@ function scheduleEmbeddedScreenSourceSync({ immediate = false } = {}) {
 }
 
 async function stopScreenSourceCapture({ announce = true, statusText = "画面映射已停止" } = {}) {
+  ++screenSourceCaptureGeneration;
   const stream = state.screenSource.stream;
-  const activeTargetId = String(state.screenSource.activeTargetId || state.screenSource.selectedSourceId || "").trim();
+  const mode = state.screenSource.activeMode || screenSourcePendingEmbed?.mode;
+  const targetId = state.screenSource.activeTargetId || screenSourcePendingEmbed?.targetId;
+  const syncSessionId = screenSourceEmbedSessionId;
+  screenSourcePendingEmbed = null;
   clearScreenSourceEmbedSession();
-  if (stream) {
-    for (const track of stream.getTracks()) {
-      try {
-        track.stop();
-      } catch {
-        // Ignore track shutdown failures.
-      }
-    }
-  }
-
-  if (isWin32EmbeddedScreenSourceActive() && IS_DESKTOP_APP && typeof DESKTOP_SHELL?.clearExternalWindow === "function") {
-    try {
-      await DESKTOP_SHELL.clearExternalWindow({ restoreVisible: false });
-    } catch {
-      // Keep renderer state consistent even if native cleanup fails.
-    }
-  } else if (
-    isWebContentsViewScreenSourceActive() &&
-    IS_DESKTOP_APP &&
-    typeof DESKTOP_SHELL?.clearAiMirrorWebContentsView === "function"
-  ) {
-    try {
-      await DESKTOP_SHELL.clearAiMirrorWebContentsView();
-    } catch {
-      // Keep renderer state consistent even if native cleanup fails.
-    }
-  }
-
-  if (activeTargetId && state.screenSource.activeMode === "embedded-win32") {
-    try {
-      await stopAiMirrorTarget(activeTargetId);
-    } catch {
-      // Ignore managed target shutdown failures during cleanup.
-    }
-  }
-
+  mirrorVisibilityController.reset();
   state.screenSource.stream = null;
   state.screenSource.startPromise = null;
   state.screenSource.activeMode = "";
@@ -3199,13 +3096,22 @@ async function stopScreenSourceCapture({ announce = true, statusText = "画面�
   state.screenSource.embeddedSourceLabel = "";
   embeddedWindowOverlayHidden = false;
   state.screenSource.statusText = statusText;
-  if (screenSourceVideoEl && screenSourceVideoEl.srcObject) {
-    screenSourceVideoEl.srcObject = null;
-  }
+  if (screenSourceVideoEl?.srcObject) screenSourceVideoEl.srcObject = null;
+  for (const track of stream?.getTracks() || []) { try { track.stop(); } catch {} }
   renderScreenSourceState();
-  if (announce) {
-    setStatus(statusText, "success");
+  try {
+    if (IS_DESKTOP_APP && mode === "embedded-webcontentsview") {
+      await DESKTOP_SHELL?.clearAiMirrorWebContentsView?.({ targetId, syncSessionId });
+    }
+    if (IS_DESKTOP_APP && mode === "embedded-win32") {
+      await DESKTOP_SHELL?.clearExternalWindow?.({ targetId, syncSessionId, restoreVisible: false });
+      if (targetId) await stopAiMirrorTarget(targetId, { syncSessionId });
+    }
+  } catch (error) {
+    setStatus(`镜像资源释放未完成：${error.message}`, "warning");
   }
+  void syncEmbeddedWindowOverlayVisibility();
+  if (announce) setStatus(statusText, "success");
 }
 
 function normalizeScreenSourceEntries(entries = []) {
@@ -3296,7 +3202,7 @@ async function ensureScreenSourcePreviewWorkspaceReady() {
 }
 
 async function ensureScreenSourceCapture({ force = false } = {}) {
-  if (force && (state.screenSource.stream || isEmbeddedScreenSourceActive())) {
+  if (force && (state.screenSource.startPromise || state.screenSource.stream || isEmbeddedScreenSourceActive())) {
     await stopScreenSourceCapture({ announce: false, statusText: "正在重新建立画面映射" });
   }
 
@@ -3321,37 +3227,42 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
     state.screenSource.availableSources[0] ||
     null;
 
-  if (IS_DESKTOP_APP) {
-    await ensureScreenSourcePreviewWorkspaceReady();
-  }
-
   state.screenSource.statusText = initialSource ? `正在准备 ${initialSource.label || initialSource.name}` : "正在准备 AI 镜像";
   renderScreenSourceState();
 
+  const generation = ++screenSourceCaptureGeneration;
+  function assertCurrent() {
+    if (generation !== screenSourceCaptureGeneration) throw Object.assign(new Error("镜像启动已取消"), { code: "MIRROR_START_CANCELLED" });
+  }
   state.screenSource.startPromise = (async () => {
-    const source =
-      state.screenSource.availableSources.find((item) => item.id === state.screenSource.selectedSourceId) ||
-      state.screenSource.availableSources[0] ||
-      null;
+    if (IS_DESKTOP_APP) await ensureScreenSourcePreviewWorkspaceReady();
+    assertCurrent();
+    const source = initialSource;
 
     const renderMode = normalizeScreenSourceRenderMode(state.screenSource.renderMode);
 
     if (IS_DESKTOP_APP && renderMode === "webcontentsview" && canUseWebContentsViewScreenSource() && source?.id) {
       await waitForScreenSourceLayoutStability();
+      assertCurrent();
       const syncSessionId = createScreenSourceEmbedSession();
+      screenSourcePendingEmbed = { mode: "embedded-webcontentsview", targetId: source.id, syncSessionId };
       const response = await DESKTOP_SHELL.attachAiMirrorWebContentsView({
         targetId: source.id,
         syncSessionId,
         bounds: getScreenSourcePreviewBounds(),
         layout: getCurrentScreenSourceEmbedLayout(source.id),
       });
-      if (!response?.ok) {
-        throw new Error(response?.error || "WebContentsView 嵌入失败");
+      if (generation !== screenSourceCaptureGeneration || response?.stale) {
+        await DESKTOP_SHELL.clearAiMirrorWebContentsView({ targetId: source.id, syncSessionId });
+        assertCurrent();
+        throw Object.assign(new Error("镜像启动已失效"), { code: "MIRROR_START_CANCELLED" });
       }
+      if (!response?.ok) throw new Error(response?.error || "WebContentsView 嵌入失败");
 
       state.screenSource.stream = null;
       state.screenSource.activeTargetId = source.id;
       state.screenSource.activeMode = "embedded-webcontentsview";
+      screenSourcePendingEmbed = null;
       state.screenSource.embeddedSourceId = String(response?.projection?.sourceId || `webcontentsview:${source.id}`).trim();
       state.screenSource.embeddedSourceLabel = response?.target?.label || source.label || source.name || "";
       state.screenSource.statusText = `已嵌入：${state.screenSource.embeddedSourceLabel || "当前网页"}（WebContentsView）`;
@@ -3372,9 +3283,15 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       typeof DESKTOP_SHELL?.prepareAiMirrorTarget === "function" &&
       source?.id
     ) {
-      const preparedTarget = await prepareAiMirrorTarget(source.id);
-      await waitForScreenSourceLayoutStability();
       const syncSessionId = createScreenSourceEmbedSession();
+      screenSourcePendingEmbed = { mode: "embedded-win32", targetId: source.id, syncSessionId };
+      const preparedTarget = await prepareAiMirrorTarget(source.id, { syncSessionId });
+      if (generation !== screenSourceCaptureGeneration || preparedTarget?.stale) {
+        await stopAiMirrorTarget(source.id, { syncSessionId });
+        throw Object.assign(new Error("镜像启动已取消"), { code: "MIRROR_START_CANCELLED" });
+      }
+      await waitForScreenSourceLayoutStability();
+      assertCurrent();
       const response = await DESKTOP_SHELL.embedExternalWindow({
         sourceId: preparedTarget?.projection?.sourceId,
         targetId: source.id,
@@ -3382,13 +3299,17 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
         bounds: getScreenSourcePreviewBounds(),
         layout: getCurrentScreenSourceEmbedLayout(source.id),
       });
-      if (!response?.ok) {
-        throw new Error(response?.error || "窗口嵌入失败");
+      if (generation !== screenSourceCaptureGeneration || response?.stale) {
+        await DESKTOP_SHELL.clearExternalWindow({ targetId: source.id, syncSessionId, restoreVisible: false });
+        await stopAiMirrorTarget(source.id, { syncSessionId });
+        throw Object.assign(new Error("镜像启动已取消"), { code: "MIRROR_START_CANCELLED" });
       }
+      if (!response?.ok) throw new Error(response?.error || "窗口嵌入失败");
 
       state.screenSource.stream = null;
       state.screenSource.activeTargetId = source.id;
       state.screenSource.activeMode = "embedded-win32";
+      screenSourcePendingEmbed = null;
       state.screenSource.embeddedSourceId = String(preparedTarget?.projection?.sourceId || "").trim();
       state.screenSource.embeddedSourceLabel = preparedTarget?.target?.label || source.label || source.name || "";
       state.screenSource.statusText = `已嵌入：${state.screenSource.embeddedSourceLabel || "当前窗口"}（Win32）`;
@@ -3453,6 +3374,10 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
     };
   })()
     .then((result) => {
+      if (generation !== screenSourceCaptureGeneration) {
+        for (const track of result?.stream?.getTracks() || []) track.stop();
+        assertCurrent();
+      }
       if (result?.mode === "embedded") {
         return result.result;
       }
@@ -3466,7 +3391,7 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       videoTrack.addEventListener(
         "ended",
         () => {
-          stopScreenSourceCapture({ announce: false, statusText: "画面映射已结束" });
+          if (generation === screenSourceCaptureGeneration) void stopScreenSourceCapture({ announce: false, statusText: "画面映射已结束" });
         },
         { once: true }
       );
@@ -3486,7 +3411,14 @@ async function ensureScreenSourceCapture({ force = false } = {}) {
       syncScreenSourceVideo();
       return stream;
     })
-    .catch((error) => {
+    .catch(async (error) => {
+      if (generation !== screenSourceCaptureGeneration) throw error;
+      const pending = screenSourcePendingEmbed;
+      screenSourcePendingEmbed = null;
+      if (pending?.mode === "embedded-win32") {
+        await DESKTOP_SHELL.clearExternalWindow({ ...pending, restoreVisible: false }).catch(() => {});
+        await stopAiMirrorTarget(pending.targetId, pending).catch(() => {});
+      }
       clearScreenSourceEmbedSession();
       state.screenSource.startPromise = null;
       state.screenSource.statusText = `映射失败：${error.message}`;
@@ -3869,6 +3801,7 @@ function requestSettingsDrawerClose() {
 
 async function openSettingsCenterSection(section = "ai") {
   settingsCenter.openSection(section);
+  mirrorOverlayHost?.openSection(section);
   if (!state.drawerOpen) {
     await suspendScreenSourceForDrawer();
     setDrawerOpen(true);
@@ -4323,7 +4256,7 @@ function setActiveClipboardZone(zone = "") {
 
 function normalizeDesktopKeyboardFocusOwner(owner = "") {
   const value = String(owner || "").trim().toLowerCase();
-  return ["", "canvas", "assistant", "screen", "ai-mirror"].includes(value) ? value : "";
+  return ["", "canvas", "assistant", "screen", "ai-mirror", "overlay"].includes(value) ? value : "";
 }
 
 function publishDesktopKeyboardFocusOwner(owner = "", meta = {}) {
@@ -5691,13 +5624,18 @@ async function bootstrap() {
 function setDrawerOpen(open) {
   const wasOpen = state.drawerOpen;
   const nextOpen = Boolean(open);
-  if (!nextOpen && wasOpen && settingsCenter.close() === false) {
+  if (!nextOpen && wasOpen && !nativeSettingsClosing && mirrorOverlayHost?.ownsSettings() && mirrorOverlayHost.active?.id === "settings") {
+    mirrorOverlayHost.requestClose();
     return false;
   }
+  if (!nextOpen && wasOpen && !nativeSettingsClosing && settingsCenter.close() === false) return false;
   state.drawerOpen = nextOpen;
   if (state.drawerOpen) {
     void setDesktopClickThrough(false);
-    if (!wasOpen) void settingsCenter.open();
+    if (!wasOpen) {
+      if (isWebContentsViewScreenSourceActive() && !settingsCenter.isDirty()) mirrorOverlayHost?.enableSettings();
+      if (!mirrorOverlayHost?.ownsSettings()) void settingsCenter.open();
+    }
   }
   unmarkElementForWindowShape(drawerBackdropEl);
   insightDrawerEl?.classList.toggle("is-open", state.drawerOpen);
@@ -7710,6 +7648,7 @@ function collectDesktopWindowShapeRects() {
     overlayRoot: globalOverlayLayerEl,
     getElementShapeRect,
   });
+  rects.push(...(mirrorOverlayHost?.getShapeRects() || []));
   const drawerRect = getOpenDrawerShapeRect();
   if (drawerRect) {
     rects.push(drawerRect);
@@ -8195,8 +8134,6 @@ desktopClickThroughBtn?.addEventListener("click", async () => {
       "success"
     );
   } catch (error) {
-    clickThroughResumeScreenSourceTargetId = "";
-    clickThroughResumeScreenSourceEnabled = false;
     await refreshDesktopShellState().catch(() => {});
     setStatus(`切换穿透模式失败：${error.message}`, "warning");
   }
@@ -9689,7 +9626,7 @@ screenSourceRenderModeSelectEl?.addEventListener("change", async () => {
   persistScreenSourceRenderMode();
   renderScreenSourceState();
 
-  if (state.screenSource.stream || isEmbeddedScreenSourceActive()) {
+  if (state.screenSource.startPromise || state.screenSource.stream || isEmbeddedScreenSourceActive()) {
     try {
       await ensureScreenSourceCapture({ force: true });
       setStatus(`已切换 AI 镜像渲染方式：${nextMode === "webcontentsview" ? "WebContentsView" : "Win32 原生嵌入"}`, "success");

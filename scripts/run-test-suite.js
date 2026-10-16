@@ -27,6 +27,13 @@ const CHECKS = [
   "scripts/check-desktop-atomic-save.js",
   "scripts/check-tutorial-board-refresh.js",
   "scripts/check-electron-ipc-security.js",
+  "scripts/check-webcontents-view-embed.js",
+  "scripts/check-ai-mirror-target-lifecycle.js",
+  "scripts/check-mirror-runtime-lifecycle.js",
+  "scripts/check-mirror-visibility.js",
+  "scripts/check-mirror-overlay-manager.js",
+  "scripts/check-mirror-overlay-ui.js",
+  "scripts/check-mirror-overlay-host.js",
   "scripts/check-file-access-registry.js",
   "scripts/check-image-thumbnails.js",
   "scripts/check-github-sync-core.js",
@@ -255,6 +262,7 @@ async function main() {
   }
   await runNodeScript("scripts/check-canvas-math-links-desktop.js");
   await runNodeScript("scripts/check-canvas-options-desktop.js");
+  await runNodeScript("scripts/check-mirror-overlay-desktop.js");
   console.log("[test] all checks passed");
 }
 
