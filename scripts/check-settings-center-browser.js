@@ -1,6 +1,7 @@
 "use strict";
 
 const { chromium } = require("playwright");
+const { mockAssistantPlugin } = require("./fixtures/assistant-plugin");
 
 const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 
@@ -35,6 +36,7 @@ async function openSection(page, section) {
     (name) => document.querySelector(`[data-settings-section="${name}"]`)?.classList.contains("is-active"),
     section
   );
+  if (section === "ai") await page.waitForSelector("[data-ai-section]");
 }
 
 async function saveSettings(page) {
@@ -87,7 +89,7 @@ async function main() {
   };
   snapshot.sections.ai = {
     agent: {
-      ...snapshot.sections.ai.agent,
+      ...snapshot.sections.ai?.agent,
       schemaVersion: 3,
       activeProvider: "codex",
       workspaceRoot: "D:\\FreeFlow-WorkBoard",
@@ -170,7 +172,11 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(() => localStorage.setItem("freeflow_canvas2d_tutorial_state_v1", JSON.stringify({ dontAutoShowAgain: true })));
   const page = await context.newPage();
+  await mockAssistantPlugin(page);
+
+  await page.route("**/api/agent/bootstrap", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
@@ -306,9 +312,11 @@ async function main() {
   await page.route("**/api/agent/sessions/settings-agent-session", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, session: agentSession }) });
   });
-  await page.route("**/api/settings-center", async (route) => {
+  await page.route("**/api/settings-center*", async (route) => {
     if (route.request().method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(snapshot) });
+      const result = clone(snapshot);
+      if (!new URL(route.request().url()).searchParams.has("includeAi")) delete result.sections.ai;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(result) });
       return;
     }
     const payload = route.request().postDataJSON();
@@ -323,16 +331,19 @@ async function main() {
       return;
     }
     successfulPosts.push(clone(payload));
-    snapshot.sections = clone(payload.sections);
+    snapshot.sections = { ...snapshot.sections, ...clone(payload.sections) };
     snapshot.sections.general.productName = "FreeFlow";
     snapshot.revision = `browser-${++revision}`;
     agentWorkspaceValid = true;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(snapshot) });
+    const result = clone(snapshot);
+    if (!payload.sections.ai) delete result.sections.ai;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(result) });
   });
 
   try {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.body.classList.contains("app-booting"), null, { timeout: 15_000 });
+    await page.locator('[data-right-panel-view="assistant"]').first().evaluate((button) => button.click());
     await page.waitForFunction(() => document.querySelector(".agent-runtime-notice strong")?.textContent.includes("完成 AI 助手设置"));
     assert(agentSessionCreates === 0 && (await page.locator("#clear-btn").isDisabled()), "incomplete AI setup created a session before provider validation");
 
@@ -374,8 +385,8 @@ async function main() {
     });
     assert(
       settingsVisualContract.headerText === "系统设置" &&
-        settingsVisualContract.navCount === 6 &&
-        settingsVisualContract.navIconCount === 6 &&
+        settingsVisualContract.navCount === 7 &&
+        settingsVisualContract.navIconCount === 7 &&
         settingsVisualContract.navDescriptions === 0 &&
         settingsVisualContract.backdropFilter.includes("blur") &&
         settingsVisualContract.frame.left >= 1440 * 0.45 &&
@@ -387,7 +398,7 @@ async function main() {
       "settings visual hierarchy regressed",
       settingsVisualContract
     );
-    assert(JSON.stringify(await page.locator('.settings-center-nav-label').allTextContents()) === JSON.stringify(["AI 模型", "外观", "工作台习惯", "画布设置", "GitHub 同步", "应用更新"]), "settings navigation order is incorrect");
+    assert(JSON.stringify(await page.locator('.settings-center-nav-label').allTextContents()) === JSON.stringify(["AI 模型", "外观", "工作台习惯", "画布设置", "GitHub 同步", "画布插件", "应用更新"]), "settings navigation order is incorrect");
     await openSection(page, "updates");
     await page.locator('[data-settings-path="general.updateCheckEnabled"]').uncheck();
     await page.locator('[data-settings-action="reset-section"]').click();

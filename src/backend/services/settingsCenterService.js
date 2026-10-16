@@ -33,14 +33,15 @@ function createSettingsCenterService(deps) {
     uiSettingsService,
     permissionsService,
     agentSettingsService,
+    assistantAvailable = () => Boolean(agentSettingsService),
   } = deps;
   let transactionQueue = Promise.resolve();
 
-  async function readSourceStores() {
+  async function readSourceStores(includeAi = true) {
     const [uiSettings, permissionStore, agentSettings] = await Promise.all([
       uiSettingsService.readUiSettingsStore(),
       permissionsService.readPermissionsStore(),
-      agentSettingsService.readAgentSettings(),
+      includeAi && assistantAvailable() ? agentSettingsService.readAgentSettings() : Promise.resolve(null),
     ]);
     return { uiSettings, permissionStore, agentSettings };
   }
@@ -57,9 +58,7 @@ function createSettingsCenterService(deps) {
           assistantName: uiSettings.assistantName || PRODUCT_NAME,
           updateCheckEnabled: uiSettings.updateCheckEnabled !== false,
         },
-        ai: {
-          agent: { ...agentSettings },
-        },
+        ...(agentSettings ? { ai: { agent: { ...agentSettings } } } : {}),
         appearance: pickThemeSettings(uiSettings),
         workbench: pickWorkbenchPreferences(uiSettings),
         canvas: {
@@ -82,8 +81,8 @@ function createSettingsCenterService(deps) {
     };
   }
 
-  async function readSettingsSnapshot() {
-    return toSnapshot(await readSourceStores());
+  async function readSettingsSnapshot({ includeAi = true } = {}) {
+    return toSnapshot(await readSourceStores(includeAi));
   }
 
   function buildPatches(sections = {}, stores) {
@@ -117,6 +116,9 @@ function createSettingsCenterService(deps) {
     }
 
     if (sections.ai) {
+      if (!assistantAvailable()) {
+        throw createSettingsError("AI 助手插件尚未启用", { statusCode: 409, code: "ASSISTANT_PLUGIN_DISABLED" });
+      }
       if (sections.ai.agent && typeof sections.ai.agent === "object") {
         const agent = sections.ai.agent;
         if (agent.providers && typeof agent.providers === "object") {
@@ -184,7 +186,8 @@ function createSettingsCenterService(deps) {
 
   function saveSettingsSnapshot(payload = {}) {
     const operation = transactionQueue.catch(() => {}).then(async () => {
-      const stores = await readSourceStores();
+      const includeAi = Boolean(payload.sections?.ai);
+      const stores = await readSourceStores(includeAi);
       const currentSnapshot = toSnapshot(stores);
       if (payload.revision && payload.revision !== currentSnapshot.revision) {
         throw createSettingsError("设置已在其他位置更新，请重新载入后再保存", {
@@ -214,7 +217,7 @@ function createSettingsCenterService(deps) {
         if (changed.includes("ui")) await uiSettingsService.writeUiSettingsStore(stores.uiSettings).catch(() => {});
         throw error;
       }
-      return readSettingsSnapshot();
+      return readSettingsSnapshot({ includeAi });
     });
     transactionQueue = operation;
     return operation;

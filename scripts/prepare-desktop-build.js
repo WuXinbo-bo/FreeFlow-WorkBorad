@@ -27,5 +27,6 @@ runNodeScript(path.join("scripts", "build-markdown-parser.js"));
 runNodeScript(path.join("scripts", "build-canvas2d-ui.js"));
 runNodeScript(path.join("scripts", "build-canvas-office.js"));
 runNodeScript(path.join("scripts", "generate-app-icons.js"));
+runNodeScript(path.join("scripts", "check-assistant-plugin-packaging.js"));
 
 warnIfMissing(path.join("build", "icon.ico"), "Windows 图标生成失败");

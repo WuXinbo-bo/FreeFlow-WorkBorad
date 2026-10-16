@@ -16,9 +16,9 @@ function createPersistenceController(deps) {
   } = deps;
 
   return {
-    async getSettingsCenter(_req, res) {
+    async getSettingsCenter(req, res) {
       try {
-        res.json(await settingsCenterService.readSettingsSnapshot());
+        res.json(await settingsCenterService.readSettingsSnapshot({ includeAi: req.query?.includeAi === "1" }));
       } catch (error) {
         res.status(error.statusCode || 500).json({
           ok: false,

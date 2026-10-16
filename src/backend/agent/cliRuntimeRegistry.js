@@ -22,17 +22,24 @@ function uniqueCandidates(items) {
 }
 
 function wrapperCommand(candidate) {
-  if (/\.(?:m?js)$/i.test(candidate)) return { command: process.execPath, args: [candidate] };
+  const nodeWrapper = (file) => ({ command: process.execPath, args: [file], env: { ELECTRON_RUN_AS_NODE: "1" } });
+  if (/\.(?:m?js)$/i.test(candidate)) return nodeWrapper(candidate);
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(candidate)) {
     const commandName = path.basename(candidate, path.extname(candidate));
     const nearby = [
       path.join(path.dirname(candidate), "node_modules", "@openai", "codex", "bin", `${commandName}.js`),
       path.join(path.dirname(candidate), "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
     ].find((item) => fs.existsSync(item));
-    if (nearby) return { command: process.execPath, args: [nearby] };
+    if (nearby) return nodeWrapper(nearby);
     return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", candidate] };
   }
   return { command: candidate, args: [] };
+}
+
+function cliProcessEnv(launch = {}) {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return { ...env, ...launch.env };
 }
 
 function execFileResult(command, args, options = {}) {
@@ -48,7 +55,7 @@ async function probeExecutable(candidate) {
   if (!fs.existsSync(candidate)) return { ok: false, version: "", error: "文件不存在" };
   const resolved = wrapperCommand(candidate);
   try {
-    const version = await execFileResult(resolved.command, [...resolved.args, "--version"]);
+    const version = await execFileResult(resolved.command, [...resolved.args, "--version"], { env: cliProcessEnv(resolved) });
     return { ok: true, version: version || "可用", launch: resolved };
   } catch (error) {
     return { ok: false, version: "", error: String(error?.message || error).slice(0, 300), launch: resolved };
@@ -161,4 +168,5 @@ module.exports = {
   defaultCandidateResolver,
   probeExecutable,
   wrapperCommand,
+  cliProcessEnv,
 };
