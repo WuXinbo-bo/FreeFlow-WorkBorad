@@ -1,6 +1,7 @@
 const { EventEmitter } = require("events");
 const { execFile, spawn } = require("child_process");
 const readline = require("readline");
+const { wrapperCommand, cliProcessEnv } = require("./cliRuntimeRegistry");
 
 function execFileText(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -20,7 +21,8 @@ async function discoverCodexExecutable(configuredPath = "") {
   let lastError = null;
   for (const candidate of candidates) {
     try {
-      const version = await execFileText(candidate, ["--version"]);
+      const launch = wrapperCommand(candidate);
+      const version = await execFileText(launch.command, [...launch.args, "--version"], { env: cliProcessEnv(launch) });
       return { available: true, command: candidate, version };
     } catch (error) {
       lastError = error;

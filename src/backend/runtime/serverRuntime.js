@@ -20,11 +20,10 @@ const clipboardStoreService = require("../services/clipboardStoreService");
 const sessionService = require("../services/sessionService");
 const canvasBoardService = require("../services/canvasBoardService");
 const { createSettingsCenterService } = require("../services/settingsCenterService");
-const { AgentRuntime } = require("../agent/agentRuntime");
-const agentSettingsService = require("../agent/agentSettingsService");
-const { createAgentApiSecurity } = require("../agent/agentApiSecurity");
-const { createAgentRouter } = require("../agent/agentRoutes");
-const { createAgentConnectionService } = require("../agent/agentConnectionService");
+const { createAssistantPluginManager } = require("../plugins/assistantPluginManager");
+const { createAssistantProcessHost } = require("../plugins/assistantProcessHost");
+const { createAssistantPluginRouter } = require("../plugins/assistantPluginRoutes");
+const secretStorageService = require("../services/secretStorageService");
 const { registerAppRoutes } = require("../routes");
 const { createGitHubSyncRouter } = require("../routes/githubSyncRoutes");
 const packageInfo = require("../../../package.json");
@@ -37,11 +36,6 @@ const {
   DESKTOP_DIR,
   WORKSPACE_DIR,
   AGENT_SCREENSHOT_FILE,
-  AGENT_DATABASE_FILE,
-  AGENT_ATTACHMENTS_DIR,
-  AGENT_PROFILES_DIR,
-  AGENT_BACKUPS_DIR,
-  AGENT_WORKSPACES_DIR,
 } = paths;
 const {
   PORT,
@@ -117,21 +111,38 @@ loadEnvFileSync(path.join(ROOT_DIR, ".env"));
 
 const app = express();
 let modelProviderSettingsCache = null;
-const agentRuntime = new AgentRuntime({
-  databaseFile: AGENT_DATABASE_FILE,
-  attachmentsDir: AGENT_ATTACHMENTS_DIR,
-  profilesDir: AGENT_PROFILES_DIR,
-  backupsDir: AGENT_BACKUPS_DIR,
-  workspacesDir: AGENT_WORKSPACES_DIR,
+let assistantPlugins;
+const assistantProcess = createAssistantProcessHost({
+  paths,
   appVersion: packageInfo.version,
-  settingsService: agentSettingsService,
-  permissionsService,
-  legacySessionService: sessionService,
+  services: {
+    permissionsService: {
+      readPermissionsStore: permissionsService.readPermissionsStore,
+      resolveAllowedExistingPath: permissionsService.resolveAllowedExistingPath,
+    },
+    sessionService: {
+      readSessionStore: sessionService.readSessionStore,
+      writeSessionStore: sessionService.writeSessionStore,
+    },
+    secretStorageService: {
+      readSecret: secretStorageService.readSecret,
+      writeSecret: secretStorageService.writeSecret,
+      clearSecret: secretStorageService.clearSecret,
+    },
+  },
+  getInstallation: () => assistantPlugins.getInstallation(),
+  isEnabled: () => assistantPlugins.getStatus().activeEnabled,
 });
-const agentConnectionService = createAgentConnectionService({
-  settingsService: agentSettingsService,
-  validateRuntime: (provider) => agentRuntime.validateProviderRuntime(provider),
+assistantPlugins = createAssistantPluginManager({
+  dataDir: DATA_DIR,
+  appVersion: packageInfo.version,
+  ...(process.env.FREEFLOW_ASSISTANT_CATALOG_URL ? { catalogUrl: process.env.FREEFLOW_ASSISTANT_CATALOG_URL } : {}),
+  allowLoopback: process.env.FREEFLOW_PLUGIN_TEST_LOOPBACK === "1"
+    && (!process.versions.electron || !require("electron").app.isPackaged),
+  selfCheck: assistantProcess.selfCheck,
+  onDisable: assistantProcess.shutdown,
 });
+const agentSettingsService = assistantProcess.settingsService;
 
 let desktopBridge = {
   chatWithDoubao: null,
@@ -144,7 +155,8 @@ function setStaticValidationHeaders(res) {
 
 app.use(requireLoopbackRequest);
 app.use(express.json({ limit: "1mb" }));
-app.use("/api/agent", createAgentRouter({ runtime: agentRuntime, security: createAgentApiSecurity(), connections: agentConnectionService }));
+app.use("/api/plugins/assistant", createAssistantPluginRouter({ manager: assistantPlugins, processHost: assistantProcess }));
+app.use("/api/agent", (req, res) => assistantProcess.proxy(req, res));
 app.use("/api/github-sync", createGitHubSyncRouter({ clientId: FREEFLOW_GITHUB_CLIENT_ID }));
 app.use(
   "/vendor",
@@ -165,6 +177,11 @@ const settingsCenterService = createSettingsCenterService({
   uiSettingsService,
   permissionsService,
   agentSettingsService,
+  assistantAvailable: () => assistantPlugins.getStatus().activeEnabled,
+});
+app.use(["/api/model-profiles", "/api/model-provider-settings"], (_req, res, next) => {
+  if (!assistantPlugins.getStatus().activeEnabled) return res.status(409).json({ ok: false, error: "AI 助手插件尚未启用", code: "ASSISTANT_PLUGIN_DISABLED" });
+  next();
 });
 registerAppRoutes(app, {
   permissionsService,
@@ -2151,6 +2168,18 @@ async function executeControlAction(permissionStore, action, args = {}) {
   }
 }
 
+const assistantOnlyRoutes = new Set([
+  "/api/meta", "/api/chat", "/api/chat-once", "/api/control/execute",
+  "/api/doubao-web/chat", "/api/doubao-web/cancel", "/api/agent/execute",
+  "/api/model-profiles", "/api/model-provider-settings",
+]);
+app.use((req, res, next) => {
+  if (assistantOnlyRoutes.has(req.path) && !assistantPlugins.getStatus().activeEnabled) {
+    return res.status(409).json({ ok: false, error: "AI 助手插件尚未启用", code: "ASSISTANT_PLUGIN_DISABLED" });
+  }
+  next();
+});
+
 app.get("/api/meta", async (_req, res) => {
   try {
     await ensureModelProviderSettingsLoaded();
@@ -2503,6 +2532,10 @@ let serverStartup = null;
 
 function logStartup(port) {
   console.log(`FreeFlow UI running at http://localhost:${port}`);
+  if (!assistantPlugins.getStatus().activeEnabled) {
+    console.log("AI assistant: optional plugin is disabled; canvas and AI mirror are ready");
+    return;
+  }
   console.log(
     `AI provider: ${getProviderLabel()} (${AI_PROVIDER === "bigmodel" ? getConfiguredCloudProviderKind() : AI_PROVIDER})`
   );
@@ -2525,7 +2558,7 @@ function startServer(port = PORT) {
   }
 
   if (!serverStartup) {
-    serverStartup = Promise.all([ensureModelProviderSettingsLoaded(), agentRuntime.initialize()])
+    serverStartup = assistantPlugins.initialize()
       .then(() => listenOnLoopback(http.createServer(app), Number(port)))
       .then((server) => {
         serverInstance = server;
@@ -2550,7 +2583,8 @@ async function stopServer() {
       resolve();
     });
   }) : Promise.resolve();
-  await agentRuntime.shutdown().catch(() => {});
+  assistantPlugins.cancel();
+  await assistantProcess.shutdown().catch(() => {});
   await closePromise;
 }
 
@@ -2566,7 +2600,8 @@ module.exports = {
   startServer,
   stopServer,
   registerDesktopBridge,
-  agentRuntime,
+  assistantPlugins,
+  assistantProcess,
 };
 
 if (require.main === module) {

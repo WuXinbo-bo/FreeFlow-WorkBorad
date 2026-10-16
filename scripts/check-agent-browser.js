@@ -1,6 +1,7 @@
 "use strict";
 
 const { chromium } = require("playwright");
+const { mockAssistantPlugin } = require("./fixtures/assistant-plugin");
 
 const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 
@@ -151,7 +152,10 @@ async function main() {
     };
   });
 
+  await context.addInitScript(() => localStorage.setItem("freeflow_canvas2d_tutorial_state_v1", JSON.stringify({ dontAutoShowAgain: true })));
   const page = await context.newPage();
+  await mockAssistantPlugin(page);
+
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("dialog", (dialog) => dialog.accept(dialog.message().includes("编辑排队消息") ? "编辑后的排队消息" : undefined));
@@ -331,11 +335,11 @@ async function main() {
   try {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.body.classList.contains("app-booting"), null, { timeout: 15_000 });
-    await page.waitForFunction(() => document.querySelector("#agent-runtime-status")?.textContent.includes("就绪"));
     await page.locator("#restore-right-pane-btn").evaluate((button) => {
       if (!button.classList.contains("is-hidden")) button.click();
     });
     await page.locator('[data-right-panel-view="assistant"]').first().evaluate((button) => button.click());
+    await page.waitForFunction(() => document.querySelector("#agent-runtime-status")?.textContent.includes("就绪"));
     await page.locator("#prompt-input").waitFor({ state: "visible" });
     assert(state.sessions.length === 1, "empty Agent store did not create a replacement session", state.sessions);
     const initial = state.sessions[0];

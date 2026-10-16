@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const readline = require("readline");
 const { spawn } = require("child_process");
-const { wrapperCommand } = require("./cliRuntimeRegistry");
+const { wrapperCommand, cliProcessEnv } = require("./cliRuntimeRegistry");
 
 function permissionMode(session) {
   if (session.sandboxMode === "read-only") return "plan";
@@ -26,7 +26,7 @@ function buildClaudeArgs(commandPath, session, requestedSessionId) {
   if (session.reasoningEffort) args.push("--effort", session.reasoningEffort);
   if (session.providerThreadId) args.push("--resume", session.providerThreadId);
   else args.push("--session-id", requestedSessionId);
-  return { command: launch.command, args };
+  return { command: launch.command, args, env: launch.env };
 }
 
 function stopProcess(child) {
@@ -53,7 +53,7 @@ function createClaudeCliRunner(options = {}) {
       const requestedSessionId = input.session.providerThreadId || crypto.randomUUID();
       const launch = buildClaudeArgs(input.commandPath, input.session, requestedSessionId);
       const env = {
-        ...process.env,
+        ...cliProcessEnv(launch),
         CLAUDE_CONFIG_DIR: input.profileDir,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         ANTHROPIC_MAX_RETRIES: "2",

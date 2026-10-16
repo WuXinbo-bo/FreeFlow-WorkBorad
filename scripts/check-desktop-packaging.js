@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { assertCorePackaging } = require("./check-assistant-plugin-packaging");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
@@ -157,6 +158,13 @@ const packageJson = loadPackageJson();
 const buildConfig = packageJson.build || {};
 const buildFiles = Array.isArray(buildConfig.files) ? buildConfig.files.map((item) => String(item || "")) : [];
 const extraResources = Array.isArray(buildConfig.extraResources) ? buildConfig.extraResources : [];
+
+try {
+  assertCorePackaging();
+} catch (error) {
+  console.error(`[check-desktop-packaging] ${error.message}`);
+  hasError = true;
+}
 
 if (!buildFiles.includes("!data/**/*")) {
   console.error("[check-desktop-packaging] package.json 未显式排除 data/**/*，存在把本机数据误打进安装包的风险");

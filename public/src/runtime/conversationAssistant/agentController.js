@@ -93,12 +93,14 @@ export function createAgentController(options = {}) {
   const doc = options.document || document;
   const client = options.client;
   const desktopShell = options.desktopShell || null;
-  const setStatus = options.setStatus || (() => {});
+  const reportStatus = options.setStatus || (() => {});
   const setRichContent = options.setRichContent || ((element, content) => { element.textContent = content; });
   const onOpenSettings = options.onOpenSettings || (() => {});
   const onRuntime = options.onRuntime || (() => {});
   const refs = getElements(doc);
   let initialized = false;
+  let lifecycleGeneration = 0;
+  let eventAbortController = null;
   let runtime = null;
   let sessions = [];
   let session = null;
@@ -111,7 +113,16 @@ export function createAgentController(options = {}) {
   let disconnected = false;
   let followThread = true;
 
+  function isCurrentLifecycle(generation) {
+    return initialized && generation === lifecycleGeneration;
+  }
+
+  function setStatus(...args) {
+    if (initialized) reportStatus(...args);
+  }
+
   async function handleDataRestored() {
+    const lifecycle = lifecycleGeneration;
     if (!initialized) return;
     ++selectionGeneration;
     unsubscribe?.();
@@ -119,6 +130,7 @@ export function createAgentController(options = {}) {
     session = null;
     localStorage.removeItem(CURRENT_SESSION_KEY);
     await refreshRuntime();
+    if (!isCurrentLifecycle(lifecycle)) return;
     setStatus("AI 会话备份已恢复", "success");
   }
 
@@ -134,6 +146,7 @@ export function createAgentController(options = {}) {
   }
 
   function renderHistory() {
+    if (!initialized) return;
     if (!refs.historyList) return;
     const query = String(refs.historySearch?.value || "").trim().toLowerCase();
     const filtered = sessions.filter((item) => !query || `${item.title} ${item.preview}`.toLowerCase().includes(query));
@@ -150,6 +163,7 @@ export function createAgentController(options = {}) {
   }
 
   function renderHeader() {
+    if (!initialized) return;
     if (refs.title) refs.title.textContent = session?.title || "新会话";
     if (refs.mode) {
       const provider = session?.provider || runtime?.activeProvider || "codex";
@@ -182,6 +196,7 @@ export function createAgentController(options = {}) {
   }
 
   function renderAttachments() {
+    if (!initialized) return;
     if (!refs.attachments) return;
     const attachments = (session?.attachments || []).filter((item) => selectedAttachmentIds.includes(item.id));
     refs.attachments.classList.toggle("is-hidden", attachments.length === 0 && action !== "attachment");
@@ -292,6 +307,7 @@ export function createAgentController(options = {}) {
   }
 
   function renderQueueTray() {
+    if (!initialized) return;
     if (!refs.queueTray) return;
     const pendingInputs = [...(session?.pendingInputs || [])].sort((left, right) => {
       const modeOrder = Number(left.mode !== "steer") - Number(right.mode !== "steer");
@@ -310,12 +326,14 @@ export function createAgentController(options = {}) {
   }
 
   function updateScrollFollowing() {
+    if (!initialized) return;
     if (!refs.threadViewport) return;
     followThread = refs.threadViewport.scrollHeight - refs.threadViewport.scrollTop - refs.threadViewport.clientHeight < 96;
     refs.scrollBottom?.classList.toggle("is-hidden", followThread);
   }
 
   function renderChat() {
+    if (!initialized) return;
     if (!refs.chatLog) return;
     const expanded = new Set(Array.from(refs.chatLog.querySelectorAll("[data-agent-disclosure][open]"), (element) => element.dataset.agentDisclosure));
     const previousScrollTop = refs.threadViewport?.scrollTop || 0;
@@ -353,6 +371,7 @@ export function createAgentController(options = {}) {
   }
 
   function renderComposer() {
+    if (!initialized) return;
     const busy = isBusy();
     if (refs.send) refs.send.disabled = !session || Boolean(action) || runtime?.ready !== true;
     if (refs.stop) refs.stop.disabled = !busy || action === "stop";
@@ -371,6 +390,7 @@ export function createAgentController(options = {}) {
   }
 
   function render() {
+    if (!initialized) return;
     renderHeader();
     renderChat();
     renderQueueTray();
@@ -379,9 +399,14 @@ export function createAgentController(options = {}) {
   }
 
   async function loadRuntime({ refresh = false } = {}) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     try {
-      runtime = (await client.getRuntime({ start: true, refresh })).runtime;
+      const nextRuntime = (await client.getRuntime({ start: true, refresh })).runtime;
+      if (!isCurrentLifecycle(lifecycle)) return;
+      runtime = nextRuntime;
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       runtime = {
         activeProvider: "codex",
         providers: { codex: { available: false, ready: false, error: error.message } },
@@ -395,7 +420,11 @@ export function createAgentController(options = {}) {
   }
 
   async function loadSessions() {
-    sessions = (await client.listSessions()).sessions || [];
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
+    const nextSessions = (await client.listSessions()).sessions || [];
+    if (!isCurrentLifecycle(lifecycle)) return;
+    sessions = nextSessions;
     return sessions;
   }
 
@@ -452,6 +481,8 @@ export function createAgentController(options = {}) {
   }
 
   async function selectSession(sessionId, { closeHistory = true } = {}) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     const id = String(sessionId || "").trim();
     if (!id) return;
     const generation = ++selectionGeneration;
@@ -464,6 +495,7 @@ export function createAgentController(options = {}) {
     renderComposer();
     try {
       const next = (await client.getSession(id)).session;
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (generation !== selectionGeneration) return;
       session = next;
       followThread = true;
@@ -472,6 +504,7 @@ export function createAgentController(options = {}) {
       subscribeToSession(id, next.revision, generation);
       render();
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (generation === selectionGeneration) {
         action = "";
         renderComposer();
@@ -480,25 +513,33 @@ export function createAgentController(options = {}) {
   }
 
   async function newSession() {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (action || runtime?.ready !== true) return;
     action = "new";
     render();
     try {
       const created = (await client.createSession()).session;
+      if (!isCurrentLifecycle(lifecycle)) return;
       sessions.unshift(created);
       await selectSession(created.id);
+      if (!isCurrentLifecycle(lifecycle)) return;
       refs.prompt?.focus();
       setStatus("已创建新会话", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`新建会话失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function submit() {
-    if (!initialized || action || !session || runtime?.ready !== true) return;
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
+    if (action || !session || runtime?.ready !== true) return;
     const text = String(refs.prompt?.value || "").trim() || (selectedAttachmentIds.length ? "请阅读附件并根据其中内容继续。" : "");
     if (!text) return;
     const mode = isBusy() && refs.submitMode?.value === "steer" && !selectedAttachmentIds.length ? "steer" : "queue";
@@ -507,82 +548,109 @@ export function createAgentController(options = {}) {
     renderComposer();
     try {
       const result = await client.startTurn(session.id, input);
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (refs.prompt) refs.prompt.value = "";
       selectedAttachmentIds = [];
       if (result.queued) setStatus("消息已加入队列", "success");
       else if (result.steered) setStatus("已更新当前任务方向", "success");
       else setStatus(`${session.provider === "claude" ? "Claude" : "Codex"} 已开始处理`, "success");
       await scheduleImmediateRefresh();
+      if (!isCurrentLifecycle(lifecycle)) return;
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`发送失败：${error.message}`, "warning");
       await loadRuntime({ refresh: true });
+      if (!isCurrentLifecycle(lifecycle)) return;
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function scheduleImmediateRefresh() {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session?.id) return;
     const generation = selectionGeneration;
     const next = (await client.getSession(session.id)).session;
+    if (!isCurrentLifecycle(lifecycle)) return;
     if (generation !== selectionGeneration) return;
     session = next;
   }
 
   async function stop() {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || !isBusy() || action) return;
     action = "stop";
     renderComposer();
     try {
       await client.interruptTurn(session.id);
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus("正在停止当前任务", "warning");
       await scheduleImmediateRefresh();
+      if (!isCurrentLifecycle(lifecycle)) return;
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`停止失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function renameSession() {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || action) return;
     const title = window.prompt("会话名称", session.title || "新会话");
     if (title == null || !title.trim() || title.trim() === session.title) return;
     action = "rename";
     try {
       const next = (await client.renameSession(session.id, title.trim())).session;
+      if (!isCurrentLifecycle(lifecycle)) return;
       session = { ...session, ...next };
       const index = sessions.findIndex((item) => item.id === session.id);
       if (index >= 0) sessions[index] = { ...sessions[index], ...next };
       setStatus("会话名称已更新", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`重命名失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function forkSession() {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || isBusy() || action || runtime?.workspaceValid === false) return;
     action = "fork";
     render();
     try {
       const created = (await client.forkSession(session.id)).session;
+      if (!isCurrentLifecycle(lifecycle)) return;
       sessions.unshift(created);
       await selectSession(created.id);
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus("已创建会话分支", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`创建分支失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function deleteSession(sessionId) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     const target = sessions.find((item) => item.id === sessionId);
     const managedNotice = target?.runtimeBinding?.workspaceKind === "managed"
       ? "\n\n此会话在 FreeFlow 独立空间中的文件也会一并删除。"
@@ -591,26 +659,34 @@ export function createAgentController(options = {}) {
     action = "delete";
     try {
       await client.deleteSession(sessionId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       sessions = sessions.filter((item) => item.id !== sessionId);
       if (session?.id === sessionId) {
         session = null;
         localStorage.removeItem(CURRENT_SESSION_KEY);
-        if (sessions.length) await selectSession(sessions[0].id, { closeHistory: false });
-        else if (runtime?.ready === true) {
+        if (sessions.length) {
+          await selectSession(sessions[0].id, { closeHistory: false });
+          if (!isCurrentLifecycle(lifecycle)) return;
+        } else if (runtime?.ready === true) {
           action = "";
           await newSession();
+          if (!isCurrentLifecycle(lifecycle)) return;
         }
       }
       setStatus("会话已删除", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`删除失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function addFiles(fileList) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || action || runtime?.workspaceValid === false) return;
     const files = Array.from(fileList || []).slice(0, 8);
     if (!files.length) return;
@@ -621,13 +697,16 @@ export function createAgentController(options = {}) {
         const filePath = desktopShell?.getPathForFile?.(file) || "";
         if (!filePath) throw new Error("当前环境无法读取所选文件路径");
         const attachment = (await client.addAttachment(session.id, { filePath, name: file.name, mimeType: file.type })).attachment;
+        if (!isCurrentLifecycle(lifecycle)) return;
         session.attachments = [...(session.attachments || []), attachment];
         selectedAttachmentIds.push(attachment.id);
       }
       setStatus(`已添加 ${files.length} 个附件`, "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`附件添加失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       if (refs.fileInput) refs.fileInput.value = "";
       render();
@@ -635,22 +714,29 @@ export function createAgentController(options = {}) {
   }
 
   async function removeAttachment(attachmentId) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || action) return;
     action = "attachment";
     renderComposer();
     try {
       await client.removeAttachment(session.id, attachmentId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       selectedAttachmentIds = selectedAttachmentIds.filter((id) => id !== attachmentId);
       session.attachments = (session.attachments || []).filter((item) => item.id !== attachmentId);
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`移除附件失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function resolveApproval(container, decision) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     const approvalId = container?.dataset.agentApproval;
     if (!approvalId || action) return;
     const answers = Object.fromEntries(Array.from(container.querySelectorAll("[data-agent-approval-answer]"), (input) => [input.dataset.agentApprovalAnswer, input.value]));
@@ -658,17 +744,23 @@ export function createAgentController(options = {}) {
     renderComposer();
     try {
       await client.resolveApproval(approvalId, { decision, answers });
+      if (!isCurrentLifecycle(lifecycle)) return;
       await scheduleImmediateRefresh();
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(decision.startsWith("accept") ? "已允许继续" : "已拒绝操作", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`审批处理失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function handleQueueAction(container, queueAction) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || action || !container) return;
     const pendingId = container.dataset.agentQueue;
     const pending = session.pendingInputs?.find((item) => item.id === pendingId);
@@ -677,25 +769,35 @@ export function createAgentController(options = {}) {
     renderComposer();
     try {
       if (queueAction === "remove") await client.removePendingInput(session.id, pendingId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (queueAction === "retry") await client.retryPendingInput(session.id, pendingId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (queueAction === "promote") await client.promotePendingInput(session.id, pendingId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (queueAction === "up" || queueAction === "down") await client.movePendingInput(session.id, pendingId, queueAction);
+      if (!isCurrentLifecycle(lifecycle)) return;
       if (queueAction === "edit") {
         const text = window.prompt("编辑排队消息", pending.input || "");
         if (text == null) return;
         await client.updatePendingInput(session.id, pendingId, { text, revision: Number(pending.revision || 0) });
+        if (!isCurrentLifecycle(lifecycle)) return;
       }
       await scheduleImmediateRefresh();
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(queueAction === "retry" ? "已重新加入队列" : queueAction === "promote" ? "已提升为即时引导" : "队列已更新", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`队列更新失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function retryTurn(turnId) {
+    const lifecycle = lifecycleGeneration;
+    if (!initialized) return;
     if (!session || action || !turnId) return;
     const turn = session.turns?.find((item) => item.id === turnId && item.status === "failed");
     if (!turn) return;
@@ -705,24 +807,30 @@ export function createAgentController(options = {}) {
     render();
     try {
       await client.retryTurn(session.id, turnId);
+      if (!isCurrentLifecycle(lifecycle)) return;
       await scheduleImmediateRefresh();
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus("任务已重新开始", "success");
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`重试失败：${error.message}`, "warning");
       await scheduleImmediateRefresh().catch(() => {});
+      if (!isCurrentLifecycle(lifecycle)) return;
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   function bindEvents() {
-    refs.historyToggle?.addEventListener("click", () => setHistoryOpen(!historyOpen));
-    refs.historyClose?.addEventListener("click", () => setHistoryOpen(false));
-    refs.historySearch?.addEventListener("input", renderHistory);
-    refs.rename?.addEventListener("click", renameSession);
-    refs.fork?.addEventListener("click", forkSession);
-    refs.panel?.addEventListener("click", (event) => {
+    const listen = (target, type, listener, options = {}) => target?.addEventListener(type, listener, { ...options, signal: eventAbortController.signal });
+    listen(refs.historyToggle, "click", () => setHistoryOpen(!historyOpen));
+    listen(refs.historyClose, "click", () => setHistoryOpen(false));
+    listen(refs.historySearch, "input", renderHistory);
+    listen(refs.rename, "click", renameSession);
+    listen(refs.fork, "click", forkSession);
+    listen(refs.panel, "click", (event) => {
       const sessionAction = event.target.closest("[data-agent-session-action]");
       if (sessionAction) {
         refs.sessionMore?.removeAttribute("open");
@@ -730,10 +838,10 @@ export function createAgentController(options = {}) {
         if (sessionAction.dataset.agentSessionAction === "fork") void forkSession();
       }
     });
-    refs.attach?.addEventListener("click", () => refs.fileInput?.click());
-    refs.fileInput?.addEventListener("change", () => void addFiles(refs.fileInput.files));
-    refs.submitMode?.addEventListener("change", renderComposer);
-    refs.historyList?.addEventListener("click", (event) => {
+    listen(refs.attach, "click", () => refs.fileInput?.click());
+    listen(refs.fileInput, "change", () => void addFiles(refs.fileInput.files));
+    listen(refs.submitMode, "change", renderComposer);
+    listen(refs.historyList, "click", (event) => {
       const deleteTarget = event.target.closest("[data-agent-delete-session]");
       if (deleteTarget) {
         event.preventDefault();
@@ -744,33 +852,35 @@ export function createAgentController(options = {}) {
       const target = event.target.closest("[data-agent-session]");
       if (target) void selectSession(target.dataset.agentSession);
     });
-    refs.attachments?.addEventListener("click", (event) => {
+    listen(refs.attachments, "click", (event) => {
       const target = event.target.closest("[data-agent-remove-attachment]");
       if (target) void removeAttachment(target.dataset.agentRemoveAttachment);
     });
-    refs.chatLog?.addEventListener("click", (event) => {
+    listen(refs.chatLog, "click", (event) => {
       if (event.target.closest("[data-agent-open-settings]")) onOpenSettings("ai");
       const retryTarget = event.target.closest("[data-agent-retry-turn]");
       if (retryTarget) void retryTurn(retryTarget.dataset.agentRetryTurn);
       const decisionTarget = event.target.closest("[data-agent-approval-decision]");
       if (decisionTarget) void resolveApproval(decisionTarget.closest("[data-agent-approval]"), decisionTarget.dataset.agentApprovalDecision);
     });
-    refs.queueTray?.addEventListener("click", (event) => {
+    listen(refs.queueTray, "click", (event) => {
       const queueTarget = event.target.closest("[data-agent-queue-action]");
       if (queueTarget) void handleQueueAction(queueTarget.closest("[data-agent-queue]"), queueTarget.dataset.agentQueueAction);
     });
-    refs.threadViewport?.addEventListener("scroll", updateScrollFollowing, { passive: true });
-    refs.scrollBottom?.addEventListener("click", () => {
+    listen(refs.threadViewport, "scroll", updateScrollFollowing, { passive: true });
+    listen(refs.scrollBottom, "click", () => {
       followThread = true;
       if (refs.threadViewport) refs.threadViewport.scrollTop = refs.threadViewport.scrollHeight;
       updateScrollFollowing();
     });
-    window.addEventListener("freeflow:agent-data-restored", handleDataRestored);
+    listen(window, "freeflow:agent-data-restored", handleDataRestored);
   }
 
   async function initialize() {
     if (initialized) return;
     initialized = true;
+    const lifecycle = ++lifecycleGeneration;
+    eventAbortController = new (doc.defaultView?.AbortController || AbortController)();
     LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     bindEvents();
     refs.chatLog?.classList.add("agent-chat-log");
@@ -778,57 +888,81 @@ export function createAgentController(options = {}) {
     render();
     try {
       await Promise.all([loadRuntime(), loadSessions()]);
+      if (!isCurrentLifecycle(lifecycle)) return;
       const preferred = localStorage.getItem(CURRENT_SESSION_KEY);
       const target = sessions.find((item) => item.id === preferred) || sessions[0];
-      if (target) await selectSession(target.id);
-      else if (runtime?.ready !== true) {
+      if (target) {
+        await selectSession(target.id);
+        if (!isCurrentLifecycle(lifecycle)) return;
+      } else if (runtime?.ready !== true) {
         session = null;
         localStorage.removeItem(CURRENT_SESSION_KEY);
       }
       else {
         action = "";
         await newSession();
+        if (!isCurrentLifecycle(lifecycle)) return;
       }
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`AI 助手初始化失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   async function refreshRuntime() {
+    const lifecycle = lifecycleGeneration;
     if (!initialized) return;
     action = "load";
     render();
     try {
       await loadRuntime({ refresh: true });
+      if (!isCurrentLifecycle(lifecycle)) return;
       await loadSessions();
+      if (!isCurrentLifecycle(lifecycle)) return;
       const target = sessions.find((item) => item.id === session?.id) || sessions[0];
       if (target) {
         await selectSession(target.id);
+        if (!isCurrentLifecycle(lifecycle)) return;
       } else if (runtime?.ready === true) {
         action = "";
         await newSession();
+        if (!isCurrentLifecycle(lifecycle)) return;
       } else {
         session = null;
       }
     } catch (error) {
+      if (!isCurrentLifecycle(lifecycle)) return;
       setStatus(`AI 助手恢复失败：${error.message}`, "warning");
     } finally {
+      if (!isCurrentLifecycle(lifecycle)) return;
       action = "";
       render();
     }
   }
 
   function destroy() {
+    setHistoryOpen(false);
+    initialized = false;
+    ++lifecycleGeneration;
     ++selectionGeneration;
+    eventAbortController?.abort();
+    eventAbortController = null;
     unsubscribe?.();
     unsubscribe = null;
     if (refreshTimer) window.clearTimeout(refreshTimer);
     refreshTimer = 0;
-    window.removeEventListener("freeflow:agent-data-restored", handleDataRestored);
-    initialized = false;
+    action = "";
+    session = null;
+    runtime = null;
+    sessions = [];
+    selectedAttachmentIds = [];
+    disconnected = false;
+    followThread = true;
+    refs.chatLog?.classList.remove("agent-chat-log");
   }
 
   return {
