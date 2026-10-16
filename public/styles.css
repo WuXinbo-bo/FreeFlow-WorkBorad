@@ -14443,7 +14443,7 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 .canvas2d-tutorial-center.is-intro {
   width: min(880px, calc(100vw - 40px));
   height: min(660px, calc(100dvh - 40px));
-  grid-template-rows: minmax(180px, 1fr) auto auto auto;
+  grid-template-rows: minmax(254px, 1fr) auto auto;
   gap: 28px;
   padding: 54px 64px 40px;
   text-align: center;
@@ -14533,9 +14533,16 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 20px;
   min-width: 0;
   transform-origin: center;
+}
+
+.tutorial-intro-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
 .is-intro[data-welcome-state="playing"] {
@@ -14543,11 +14550,10 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 }
 
 .tutorial-intro-logo {
-  width: 88px;
-  height: 88px;
+  width: 64px;
+  height: 64px;
   flex: 0 0 auto;
   object-fit: contain;
-  margin-bottom: 8px;
   filter: drop-shadow(0 8px 12px rgb(0 151 158 / 0.1));
 }
 
@@ -14558,8 +14564,8 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 
 .tutorial-intro-wordmark {
   display: block;
-  width: 242px;
-  height: 65px;
+  width: 280px;
+  height: 72px;
   max-width: 100%;
   overflow: visible;
   fill: none;
@@ -14600,8 +14606,10 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 }
 
 .tutorial-intro-copy {
-  gap: 14px;
+  justify-items: center;
+  gap: 12px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .tutorial-intro-copy h2,
@@ -14614,8 +14622,10 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 }
 
 .tutorial-intro-copy h2 {
-  font-size: 34px;
-  font-weight: 650;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 100%;
   line-height: 1.25;
   overflow-wrap: break-word;
   text-wrap: balance;
@@ -14623,7 +14633,6 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 
 .tutorial-intro-copy h2 > span {
   display: block;
-  margin-bottom: 10px;
   color: rgb(var(--theme-panel-text-rgb) / 0.66);
   font-size: 18px;
   font-weight: 450;
@@ -14988,7 +14997,6 @@ iframe.canvas2d-file-preview-react-content.is-docx {
 }
 
 @media (max-width: 560px) {
-  .tutorial-intro-copy h2 { font-size: 26px; }
   .tutorial-intro-copy h2 > span { font-size: 16px; }
   .tutorial-intro-copy p { font-size: 13px; }
   .tutorial-intro-steps { gap: 8px; }
@@ -15003,21 +15011,31 @@ iframe.canvas2d-file-preview-react-content.is-docx {
   .canvas2d-tutorial-center.is-intro {
     height: min(660px, calc(100dvh - 24px));
     max-height: calc(100dvh - 24px);
-    grid-template-rows: minmax(150px, 1fr) auto auto auto;
+    grid-template-rows: minmax(230px, 1fr) auto auto;
     gap: 20px;
     padding: 52px 24px 26px;
   }
-  .tutorial-intro-logo { width: 68px; height: 68px; margin-bottom: 4px; }
-  .tutorial-intro-wordmark { width: 210px; height: 56px; }
+  .tutorial-intro-brand { gap: 16px; }
+  .tutorial-intro-logo { width: 56px; height: 56px; }
+  .tutorial-intro-wordmark { width: 252px; height: 65px; }
 }
 
 @media (max-height: 580px) {
   .canvas2d-tutorial-center.is-intro {
-    grid-template-rows: 120px auto auto auto;
-    gap: 16px;
+    grid-template-rows: minmax(138px, 1fr) auto auto;
+    gap: 12px;
+    padding-block: 44px 18px;
   }
-  .tutorial-intro-logo { width: 48px; height: 48px; }
-  .tutorial-intro-wordmark { width: 170px; height: 45px; }
+  .tutorial-intro-brand { gap: 10px; }
+  .tutorial-intro-identity { flex-direction: row; gap: 8px; }
+  .tutorial-intro-logo { width: 36px; height: 36px; }
+  .tutorial-intro-product { font-size: 13px; }
+  .tutorial-intro-copy { gap: 8px; }
+  .tutorial-intro-copy h2 { gap: 4px; }
+  .tutorial-intro-copy h2 > span { font-size: 14px; }
+  .tutorial-intro-copy p { font-size: 12px; }
+  .tutorial-intro-wordmark { width: 170px; height: 44px; }
+  .tutorial-intro-steps { padding-top: 12px; }
 }
 
 .canvas2d-navigator-drag-indicator {

@@ -2221,8 +2221,8 @@ function closeConversationModelMenu() {
   conversationAssistantChrome?.closeModelMenu();
 }
 
-function setConversationShellMenuOpen(open) {
-  conversationAssistantChrome?.setShellMenuOpen(open);
+function setConversationShellMenuOpen(open, options) {
+  return conversationAssistantChrome?.setShellMenuOpen(open, options);
 }
 
 function renderConversationShellMenuState() {
@@ -2489,8 +2489,8 @@ function syncConversationShellMenuLayout() {
   const viewportPadding = 12;
   const verticalGap = 10;
   const buttonRect = conversationShellMoreBtn.getBoundingClientRect();
-  const maxWidth = Math.max(220, window.innerWidth - viewportPadding * 2);
-  const maxHeight = Math.max(220, window.innerHeight - viewportPadding * 2);
+  const maxWidth = Math.max(1, window.innerWidth - viewportPadding * 2);
+  const maxHeight = Math.max(1, window.innerHeight - viewportPadding * 2);
 
   conversationShellMenuEl.style.setProperty("max-width", `${maxWidth}px`);
   conversationShellMenuEl.style.setProperty("max-height", `${maxHeight}px`);
@@ -2910,20 +2910,17 @@ function getScreenSourcePreviewBounds() {
   }
 
   const rect = screenSourcePreviewShellEl.getBoundingClientRect();
-  const embeddedInset = isEmbeddedScreenSourceActive() ? 14 : 0;
-  const safeInset = Math.max(
-    0,
-    Math.min(
-      embeddedInset,
-      Math.floor(Math.max(0, rect.width - 2) / 2),
-      Math.floor(Math.max(0, rect.height - 2) / 2)
-    )
-  );
+  const style = getComputedStyle(screenSourcePreviewShellEl);
+  const inset = (border, padding) => (parseFloat(style[border]) || 0) + (parseFloat(style[padding]) || 0);
+  const scaleX = rect.width / (screenSourcePreviewShellEl.offsetWidth || rect.width || 1);
+  const scaleY = rect.height / (screenSourcePreviewShellEl.offsetHeight || rect.height || 1);
+  const insetX = Math.max(0, Math.min(inset("borderLeftWidth", "paddingLeft") * scaleX, Math.max(0, rect.width - 1) / 2));
+  const insetY = Math.max(0, Math.min(inset("borderTopWidth", "paddingTop") * scaleY, Math.max(0, rect.height - 1) / 2));
   return {
-    x: Math.max(0, Math.floor(rect.left + safeInset)),
-    y: Math.max(0, Math.floor(rect.top + safeInset)),
-    width: Math.max(1, Math.ceil(rect.width - safeInset * 2)),
-    height: Math.max(1, Math.ceil(rect.height - safeInset * 2)),
+    x: Math.max(0, Math.floor(rect.left + insetX)),
+    y: Math.max(0, Math.floor(rect.top + insetY)),
+    width: Math.max(1, Math.ceil(rect.width - insetX * 2)),
+    height: Math.max(1, Math.ceil(rect.height - insetY * 2)),
   };
 }
 

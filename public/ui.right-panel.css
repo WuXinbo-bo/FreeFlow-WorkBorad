@@ -63,3 +63,133 @@ body.is-pane-resizing .conversation-panel *::after {
 .assistant-plugin-slot { display: contents; }
 body:not(.assistant-plugin-enabled) #right-panel-tab-assistant,
 body:not(.assistant-plugin-enabled) #right-panel-switch-lock-btn { display: none !important; }
+
+/* A single available workspace is a title, rather than an empty two-way switch. */
+.conversation-panel.mirror-only .right-panel-window-strip {
+  display: flex !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.conversation-panel.mirror-only .right-panel-window-strip::before,
+.conversation-panel.mirror-only .right-panel-window-slider {
+  display: none !important;
+}
+
+.conversation-panel.mirror-only #right-panel-tab-screen {
+  width: auto !important;
+  min-width: 0 !important;
+  padding-inline: 6px !important;
+  color: rgb(var(--theme-panel-text-rgb)) !important;
+  background: transparent !important;
+}
+
+.conversation-panel.mirror-only .right-panel-tab-label { display: inline !important; }
+.conversation-panel.mirror-only .right-panel-tab-label-short { display: none !important; }
+
+/* Keep the DOM menu and its native mirror counterpart equally compact. */
+#conversation-shell-menu {
+  --mirror-menu-width: 232px;
+  --chrome-ink: rgb(var(--theme-panel-text-rgb));
+  --chrome-ink-muted: rgb(var(--theme-panel-text-rgb) / 0.7);
+  --chrome-active: rgb(var(--app-accent-rgb) / 0.12);
+  width: min(var(--mirror-menu-width), calc(100vw - 24px));
+  min-width: 0 !important;
+  gap: 2px !important;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#conversation-shell-menu .conversation-shell-menu-item {
+  min-height: 32px !important;
+  gap: 8px !important;
+  padding: 5px 8px !important;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+#conversation-shell-menu .conversation-shell-menu-icon,
+#conversation-shell-menu .conversation-shell-menu-icon svg {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+}
+
+#conversation-shell-menu .conversation-shell-menu-note {
+  margin-inline: 3px !important;
+  padding: 5px 3px 1px !important;
+  font-size: 11px;
+}
+
+#conversation-shell-menu .conversation-shell-menu-item:focus-visible {
+  outline: 2px solid rgb(var(--app-button-strong-rgb)) !important;
+  outline-offset: -2px;
+}
+
+/* The picker is portalled outside the panel, so it needs its own theme scope. */
+.screen-source-header-panel,
+.screen-source-select-panel {
+  --chrome-accent: rgb(var(--app-button-strong-rgb));
+  --chrome-active: rgb(var(--app-accent-rgb) / 0.12);
+  --chrome-ink: rgb(var(--theme-panel-text-rgb));
+  --chrome-ink-muted: rgb(var(--theme-panel-text-rgb) / 0.7);
+  --chrome-right-text-secondary: rgb(var(--theme-panel-text-rgb) / 0.76);
+  --chrome-line: rgb(var(--app-pattern-rgb) / 0.18);
+  --chrome-line-strong: rgb(var(--app-pattern-rgb) / 0.3);
+}
+
+.screen-source-header-panel.ui-chrome-popover {
+  --mirror-menu-width: 280px;
+  width: min(304px, calc(100vw - 24px));
+  max-width: min(304px, calc(100vw - 24px));
+  padding: 8px !important;
+}
+
+.screen-source-picker.ui-chrome-content {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.screen-source-select-trigger.ui-chrome-inline-field {
+  min-height: 34px !important;
+  padding: 6px 8px !important;
+}
+
+.screen-source-icon-action {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+}
+
+.screen-source-primary-action {
+  min-height: 34px;
+  border-color: rgb(var(--app-button-strong-rgb) / 0.36) !important;
+  color: rgb(var(--app-button-text-rgb)) !important;
+  background: rgb(var(--app-button-rgb)) !important;
+  box-shadow: none !important;
+}
+
+.screen-source-primary-action:hover,
+.screen-source-primary-action:focus-visible {
+  background: rgb(var(--app-button-strong-rgb)) !important;
+}
+
+/* Video and native content use this same padded content box. */
+.conversation-panel.screen-view-active > .pane-resize-viewport {
+  inset: 6px 8px 8px !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame {
+  --screen-source-content-inset: 3px;
+  box-sizing: border-box;
+  padding: var(--screen-source-content-inset) !important;
+}
+
+.screen-source-preview-shell.ui-embedded-frame .screen-source-video {
+  border-radius: max(0px, calc(var(--chrome-radius) - var(--screen-source-content-inset) - 1px));
+}

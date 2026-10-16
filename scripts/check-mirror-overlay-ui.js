@@ -173,6 +173,34 @@ async function main() {
     assert.deepEqual(await page.evaluate(() => window.overlayEvents.at(-1)), { event: "action", payload: { surfaceId: "shell-more", id: "two" } });
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#overlay-menu").isVisible(), false);
+    const longTargetLabel = "很长的 AI 镜像目标名称：".repeat(12);
+    const compactItems = [...Array.from({ length: 8 }, (_, index) => ({ id: `compact-${index}`, label: index ? `操作 ${index + 1}` : longTargetLabel, active: index === 0 })), { separator: true }, { id: "last", label: "最后一项" }];
+    for (const themePreset of ["minimalist-slate", "midnight-slate-glow", "spruce-green"]) {
+      await page.setViewportSize({ width: 232, height: 160 });
+      await page.evaluate(async ({ items, themePreset }) => {
+        const { buildThemeCssVariables } = await import("/src/theme/themeCssVariables.js");
+        await window.presentOverlay({ surfaceId: "shell-more", kind: "menu", payload: { items, theme: { variables: buildThemeCssVariables({ themePreset }) } } });
+      }, { items: compactItems, themePreset });
+      const styles = await page.evaluate(() => {
+        const first = document.querySelector(".mirror-overlay-menu-item"), menu = document.querySelector("#overlay-menu");
+        return { height: first.getBoundingClientRect().height, color: getComputedStyle(first).color, expectedText: getComputedStyle(menu).color, overflowing: menu.scrollHeight > menu.clientHeight };
+      });
+      assert.equal(styles.height, 32);
+      assert.equal(styles.color, styles.expectedText, "native target selection must retain readable theme text");
+      assert(styles.overflowing);
+      assert.equal(await page.locator('[data-action-id="compact-0"]').getAttribute("title"), longTargetLabel, "ellipsized target names must remain available in full");
+      assert.equal(await page.locator("#overlay-menu").evaluate(element => element.scrollWidth <= element.clientWidth), true, "long target labels must not widen the compact menu");
+      await page.keyboard.press("End");
+      const endFocus = await page.evaluate(() => {
+        const item = document.activeElement.getBoundingClientRect(), menu = document.querySelector("#overlay-menu").getBoundingClientRect();
+        return { id: document.activeElement.dataset.actionId, visible: item.top >= menu.top && item.bottom <= menu.bottom };
+      });
+      assert.equal(endFocus.id, "last");
+      assert(endFocus.visible, "native keyboard selection must scroll into a short viewport");
+      await page.keyboard.press("Escape");
+      assert.equal(await page.locator("#overlay-menu").isVisible(), false);
+    }
+    await page.setViewportSize({ width: 560, height: 760 });
     await page.evaluate(() => window.presentOverlay({ surfaceId: "shell-more", kind: "menu", payload: { items: [{ id: "safe", label: "<img src=x onerror=alert(1)>" }, null, { id: "bad", label: 5 }, { id: "safe", label: "duplicate" }] } }));
     assert.equal(await page.locator(".mirror-overlay-menu-item").count(), 1);
     assert.equal(await page.locator("#overlay-menu img").count(), 0);

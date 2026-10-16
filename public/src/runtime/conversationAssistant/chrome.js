@@ -47,6 +47,8 @@ export function createConversationAssistantChrome({
   let cloudConfigOpen = false;
   let cloudConfigApiKeyVisible = false;
   let cloudConfigDraft = null;
+  let shellMenuRevision = 0;
+  let shellMenuRequestedOpen = false;
 
   function buildCloudConfigDraft() {
     const cloudSettings = state.modelProviderSettings?.cloud || {};
@@ -86,19 +88,24 @@ export function createConversationAssistantChrome({
   }
 
   async function setShellMenuOpen(open, options = {}) {
-    const { skipScreenSourceResume = false } = options || {};
+    const { skipScreenSourceResume = false, restoreFocus = false } = options || {};
     const shouldOpen = Boolean(open);
+    const revision = ++shellMenuRevision;
+    shellMenuRequestedOpen = shouldOpen;
     if (shouldOpen) {
       await suspendScreenSourceForShellMenu?.();
+      if (revision !== shellMenuRevision) return false;
       conversationShellMenuEl?.classList.toggle("is-hidden", false);
       conversationShellMoreBtn?.setAttribute("aria-expanded", "true");
       scheduleShellMenuLayout?.();
     } else {
       conversationShellMenuEl?.classList.toggle("is-hidden", true);
       conversationShellMoreBtn?.setAttribute("aria-expanded", "false");
+      if (restoreFocus) conversationShellMoreBtn?.focus({ preventScroll: true });
       if (!skipScreenSourceResume) {
         await resumeScreenSourceAfterShellMenuClose?.();
       }
+      if (revision !== shellMenuRevision) return false;
     }
     dispatchTutorialUiEvent({
       type: shouldOpen ? TUTORIAL_EVENT_TYPES.MENU_OPENED : TUTORIAL_EVENT_TYPES.MENU_CLOSED,
@@ -106,6 +113,7 @@ export function createConversationAssistantChrome({
     });
     scheduleWindowShapeSync?.();
     syncEmbeddedWindowOverlayVisibility();
+    return shouldOpen;
   }
 
   function renderShellMenuState() {
@@ -387,8 +395,42 @@ export function createConversationAssistantChrome({
   function bindEvents() {
     conversationShellMoreBtn?.addEventListener("click", async (event) => {
       event.preventDefault();
-      const willOpen = conversationShellMenuEl?.classList.contains("is-hidden");
+      const willOpen = !shellMenuRequestedOpen;
       await setShellMenuOpen(Boolean(willOpen));
+    });
+
+    const shellMenuButtons = () => [...(conversationShellMenuEl?.querySelectorAll("button:not(:disabled)") || [])]
+      .filter(button => button.getClientRects().length);
+    const focusShellMenuButton = button => {
+      button?.focus({ preventScroll: true });
+      button?.scrollIntoView({ block: "nearest" });
+    };
+    conversationShellMoreBtn?.addEventListener("keydown", async event => {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      const opened = await setShellMenuOpen(true);
+      if (!opened || document.activeElement !== conversationShellMoreBtn || conversationShellMenuEl?.classList.contains("is-hidden")) return;
+      const buttons = shellMenuButtons();
+      focusShellMenuButton(event.key === "ArrowUp" ? buttons.at(-1) : buttons[0]);
+    });
+    conversationShellMenuEl?.addEventListener("keydown", event => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        void setShellMenuOpen(false, { restoreFocus: true });
+        return;
+      }
+      const buttons = shellMenuButtons();
+      const index = buttons.indexOf(document.activeElement);
+      let next;
+      if (event.key === "ArrowDown") next = buttons[(index + 1) % buttons.length];
+      else if (event.key === "ArrowUp") next = buttons[index < 0 ? buttons.length - 1 : (index - 1 + buttons.length) % buttons.length];
+      else if (event.key === "Home") next = buttons[0];
+      else if (event.key === "End") next = buttons.at(-1);
+      else return;
+      event.preventDefault();
+      focusShellMenuButton(next);
     });
 
     conversationSettingsBtn?.addEventListener("click", async (event) => {

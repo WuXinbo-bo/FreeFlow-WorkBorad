@@ -97,8 +97,10 @@ export function createMirrorOverlayHost({ shell, settingsOptions, drawer, menus,
 
   function boundsForMenu(menu, items) {
     const anchor = menu.trigger.getBoundingClientRect();
-    const width = Math.min(320, innerWidth - 16);
-    const height = Math.min(innerHeight - 16, items.length * 38 + 50);
+    const preferredWidth = parseFloat(getComputedStyle(menu.element).getPropertyValue("--mirror-menu-width")) || 280;
+    const width = Math.max(1, Math.min(preferredWidth, innerWidth - 16));
+    const contentHeight = items.reduce((height, item) => height + (item?.separator || item?.divider || item?.type === "separator" || item?.type === "divider" ? 9 : 32), 0);
+    const height = Math.max(1, Math.min(innerHeight - 16, contentHeight + Math.max(0, items.length - 1) * 2 + 14));
     return { x: Math.max(8, Math.min(innerWidth - width - 8, anchor.right - width)), y: Math.max(8, Math.min(anchor.bottom + 6, innerHeight - height - 8)), width, height };
   }
 
