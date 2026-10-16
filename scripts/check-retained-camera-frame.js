@@ -106,9 +106,14 @@ async function main() {
     height: 700,
     dpr: 1,
     key: "scene-1",
+    beforeContent: () => target.calls.push(["background"]),
   });
   assert.strictEqual(presented.presented, true, "covered camera view did not reuse the retained frame");
   assert(target.calls.some((entry) => entry[0] === "drawImage"), "retained frame did not composite its surface");
+  const clearIndex = target.calls.findIndex((entry) => entry[0] === "clearRect");
+  const backgroundIndex = target.calls.findIndex((entry) => entry[0] === "background");
+  const contentIndex = target.calls.findIndex((entry) => entry[0] === "drawImage");
+  assert(clearIndex < backgroundIndex && backgroundIndex < contentIndex, "background must paint after clear and beneath retained content");
   const missed = runtime.present({
     ctx: target.getContext("2d"),
     view: { scale: 1, offsetX: -400, offsetY: 40 },

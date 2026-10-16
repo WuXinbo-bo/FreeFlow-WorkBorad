@@ -2274,6 +2274,106 @@
   justify-content: flex-end;
 }
 
+.settings-center-path-row {
+  gap: 0;
+}
+
+.settings-center-path-row + .settings-center-path-row {
+  padding-top: 10px;
+}
+
+.settings-center-path-row > .settings-center-path-header {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+}
+
+.settings-center-path-copy {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-center-path-copy strong {
+  color: var(--settings-text);
+  font-size: 0.74rem;
+  font-weight: 620;
+}
+
+.settings-center-path-copy small {
+  overflow: hidden;
+  color: var(--settings-muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-center-path-header > .settings-center-path-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
+.settings-center-path-row .settings-center-path-actions button {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 0.7rem;
+  font-weight: 550;
+}
+
+.settings-center-path-row .settings-center-path-more {
+  border-color: transparent;
+  color: var(--settings-muted);
+  background: transparent;
+}
+
+.settings-center-path-row .settings-center-path-actions button:hover:not(:disabled) {
+  color: var(--settings-text);
+  background: var(--settings-active);
+}
+
+.settings-center-path-row button:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 2px;
+}
+
+.settings-center-path-row > .settings-center-path-details {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--settings-border);
+  border-radius: 9px;
+  background: var(--settings-control);
+}
+
+.settings-center-path-details[hidden] {
+  display: none !important;
+}
+
+.settings-center-path-details > p,
+.settings-center-path-details > code {
+  margin: 0;
+  color: var(--settings-muted);
+  font-size: 0.68rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.settings-center-path-details > code {
+  max-height: 88px;
+  overflow: auto;
+  color: var(--settings-text);
+  user-select: text;
+}
+
 .settings-center-github-summary {
   display: grid;
   gap: 0;

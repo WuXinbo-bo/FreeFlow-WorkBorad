@@ -407,6 +407,7 @@ async function main() {
     assert(await page.locator('[data-settings-path="general.updateCheckEnabled"]').isChecked() === snapshot.sections.general.updateCheckEnabled, "update page reset did not restore update policy");
     assert(await page.locator('[data-settings-path^="general.workspace"]').count() === 0, "removed general controls leaked into updates");
     await openSection(page, "canvas");
+    await page.locator('[data-settings-action="toggle-path-details"][data-path-target="canvas.workspaceDirectory"]').click();
     await page.locator('[data-settings-path="canvas.workspaceDirectory"]').fill("/tmp/freeflow-draft");
     await page.locator("#drawer-backdrop").evaluate((element) => element.click());
     const persistentDrawer = await page.evaluate(() => ({

@@ -195,7 +195,7 @@ export function createRetainedCameraFrame({
     return true;
   }
 
-  function present({ ctx, view, width, height, dpr = 1, key = "" } = {}) {
+  function present({ ctx, view, width, height, dpr = 1, key = "", beforeContent = null } = {}) {
     const readiness = getReadiness({ view, width, height, dpr, key });
     if (!ctx || !readiness.ready) {
       coverageMissCount += 1;
@@ -205,6 +205,7 @@ export function createRetainedCameraFrame({
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
+    beforeContent?.();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "low";
     ctx.translate(transform.translateX, transform.translateY);
