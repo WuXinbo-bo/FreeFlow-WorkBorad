@@ -6,7 +6,7 @@ const path = require("path");
 
 const BASE_URL = process.env.AIR_CANVAS_TEST_URL || "http://127.0.0.1:53127/?desktop=1";
 const TUTORIAL_EVENT = "freeflow:tutorial-ui-event";
-const ARTIFACT_DIR = path.resolve(__dirname, "../tmp/welcome-check");
+const ARTIFACT_DIR = process.env.FREEFLOW_SCREENSHOT_DIR || path.resolve(__dirname, "../tmp/welcome-check");
 
 function assert(condition, message, detail) {
   if (!condition) throw new Error(`${message}${detail ? `: ${JSON.stringify(detail)}` : ""}`);
@@ -59,12 +59,45 @@ async function assertWelcomeReady(page) {
   const state = await page.locator(".is-intro").evaluate((dialog) => ({
     animations: dialog.getAnimations({ subtree: true }).length,
     inert: dialog.querySelectorAll("[inert]").length,
-    contentVisible: [...dialog.querySelectorAll("[data-welcome-reveal]")].every((element) => getComputedStyle(element).opacity === "1"),
+    contentVisible: [...dialog.querySelectorAll("[data-welcome-reveal], [data-welcome-caption]")].every((element) => getComputedStyle(element).opacity === "1"),
     logoLoaded: dialog.querySelector("img").naturalWidth > 0,
-    title: dialog.querySelector("h2").textContent,
+    title: dialog.querySelector("h2").getAttribute("aria-label"),
+    welcome: dialog.querySelector('[data-welcome-caption="welcome"]').textContent,
+    slogan: dialog.querySelector('[data-welcome-caption="slogan"]').textContent,
+    product: dialog.querySelector(".tutorial-intro-product").textContent,
   }));
-  assert(state.animations === 0 && state.inert === 0 && state.contentVisible && state.logoLoaded && state.title === "欢迎使用全新FreeFlow Air Canvas",
+  assert(state.animations === 0 && state.inert === 0 && state.contentVisible && state.logoLoaded && state.title === "欢迎使用全新的 FreeFlow" &&
+    state.welcome === "欢迎使用全新的" && state.slogan === "为知识与工作落地而生" && state.product === "Air Canvas",
     "welcome did not settle into a usable final state", state);
+}
+
+async function assertWelcomeBrand(page) {
+  const branding = await page.locator(".is-intro").evaluate((dialog) => {
+    const bounds = (selector) => dialog.querySelector(selector).getBoundingClientRect();
+    const identity = bounds(".tutorial-intro-identity");
+    const welcome = bounds('[data-welcome-caption="welcome"]');
+    const wordmark = bounds(".tutorial-intro-wordmark");
+    const slogan = bounds('[data-welcome-caption="slogan"]');
+    const paths = [...dialog.querySelectorAll(".tutorial-intro-wordmark path")];
+    const ends = (path) => ({ start: path.getPointAtLength(0), end: path.getPointAtLength(path.getTotalLength()) });
+    const capitalFs = [0, 6].map((offset) => {
+      const stem = ends(paths[offset]);
+      const top = ends(paths[offset + 1]);
+      const middle = ends(paths[offset + 2]);
+      return stem.start.y < stem.end.y && top.start.x < top.end.x && middle.start.x < middle.end.x;
+    });
+    const lTop = Array.from({ length: 101 }, (_, index) => paths[9].getPointAtLength(paths[9].getTotalLength() * index / 100))
+      .filter((point) => point.y <= 20);
+    const fTopRight = Math.max(...Array.from({ length: 21 }, (_, index) => paths[7].getPointAtLength(paths[7].getTotalLength() * index / 20).x));
+    return {
+      ordered: identity.bottom <= welcome.top && welcome.bottom <= wordmark.top && wordmark.bottom <= slogan.top,
+      capitalFs,
+      topLetterGap: Math.min(...lTop.map((point) => point.x)) - fTopRight,
+      duplicateName: dialog.querySelector("h2").textContent.includes("FreeFlow Air Canvas"),
+    };
+  });
+  assert(branding.ordered && branding.capitalFs.every(Boolean) && branding.topLetterGap >= 5 && !branding.duplicateName,
+    "welcome brand layout or readable F stroke direction regressed", branding);
 }
 
 async function assertWelcomeContentFits(page) {
@@ -81,6 +114,7 @@ async function assertWelcomeContentFits(page) {
   });
   assert(!layout.overlap && !layout.clipped, "welcome content overlapped or clipped", layout);
   if (page.viewportSize().height >= 640) assert(!layout.verticalOverflow, "welcome required scrolling on a regular viewport", layout);
+  await assertWelcomeBrand(page);
 }
 
 async function checkAutomaticIntroLifecycle(browser, reducedMotion) {
@@ -185,7 +219,7 @@ async function checkAutomaticIntroLifecycle(browser, reducedMotion) {
       const strokeState = await page.locator(".tutorial-intro-wordmark path").evaluateAll((paths) => paths.map((element) => ({
         opacity: Number(getComputedStyle(element).opacity), offset: parseFloat(getComputedStyle(element).strokeDashoffset),
       })));
-      assert(strokeState.some((stroke) => stroke.opacity === 1 && stroke.offset === 0) && strokeState.filter((stroke) => stroke.opacity > 0 && stroke.offset > 0).length <= 1,
+      assert(strokeState.some((stroke) => stroke.opacity === 1 && stroke.offset < 0.00001) && strokeState.filter((stroke) => stroke.opacity > 0 && stroke.offset > 0.00001).length <= 1,
         "handwriting drew multiple strokes simultaneously", strokeState);
       await page.waitForTimeout(2900);
       await page.screenshot({ path: path.join(ARTIFACT_DIR, "desktop-brand-hold.png") });
