@@ -19,4 +19,9 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run prepare:desktop-build
-      - run: npm test
+      - name: Test with a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm test
+      - name: Test on the native desktop
+        if: runner.os != 'Linux'
+        run: npm test
