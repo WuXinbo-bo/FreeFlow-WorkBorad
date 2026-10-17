@@ -228,6 +228,7 @@
       "!node_modules/mathjax/MathJax.js",
       "!node_modules/mathjax/latest.js"
     ],
+    "beforePack": "scripts/prepare-macos-package.js",
     "asar": true,
     "asarUnpack": [
       "node_modules/koffi/**/*"
