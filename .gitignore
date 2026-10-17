@@ -1,0 +1,4 @@
+.DS_Store
+*.ffplugin
+*.pem
+node_modules/

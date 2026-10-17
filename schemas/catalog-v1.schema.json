@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FreeFlow official plugin package catalog v1",
+  "type": "object",
+  "required": ["schemaVersion", "id", "packages"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "const": "freeflow.ai-assistant" },
+    "packages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "hostApiVersion", "minAppVersion", "platform", "arch", "url", "size", "sha256", "manifest", "signature"],
+        "properties": {
+          "id": { "const": "freeflow.ai-assistant" },
+          "version": { "type": "string" },
+          "hostApiVersion": { "const": 1 },
+          "minAppVersion": { "type": "string" },
+          "maxAppVersion": { "type": "string" },
+          "platform": { "enum": ["darwin", "win32", "any"] },
+          "arch": { "enum": ["arm64", "x64", "any"] },
+          "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "size": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "manifest": { "type": "object" },
+          "signature": { "type": "string" }
+        }
+      }
+    }
+  }
+}

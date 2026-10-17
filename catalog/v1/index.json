@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "id": "freeflow.ai-assistant",
+      "name": "AI 助手",
+      "description": "可选的模型与 CLI 对话助手；AI 镜像不依赖此插件。",
+      "catalog": "freeflow.ai-assistant.json"
+    }
+  ]
+}

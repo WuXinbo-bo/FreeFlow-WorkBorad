@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "freeflow.ai-assistant",
+  "packages": [
+    {
+      "id": "freeflow.ai-assistant",
+      "version": "2.0.2",
+      "hostApiVersion": 1,
+      "minAppVersion": "2.0.2",
+      "platform": "darwin",
+      "arch": "any",
+      "url": "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/plugin-ai-assistant-v2.0.2/freeflow-ai-assistant-2.0.2-darwin.ffplugin",
+      "size": 424800,
+      "sha256": "d4d73202bedd2afe87a16969888ad170763fc885cf3a491c3bed96e09fc85616",
+      "manifest": {
+        "id": "freeflow.ai-assistant",
+        "version": "2.0.2",
+        "hostApiVersion": 1,
+        "minAppVersion": "2.0.2",
+        "platform": "darwin",
+        "arch": "any",
+        "files": {
+          "backend.cjs": {
+            "size": 923371,
+            "sha256": "e69856b9019945611c93a6b5b0cbf352e96b6456ae790c7209337633a37416a1"
+          },
+          "assistant.js": {
+            "size": 65769,
+            "sha256": "5c55337dc3f0e5baf35c35e27e5bdabd264e0b36f9b0ea418a344433aef15385"
+          },
+          "assistant.css": {
+            "size": 26789,
+            "sha256": "ac9cd54254a2c1dd33b659c6105ad8e3ea754cd2c648e5b6f87e6873662d663c"
+          },
+          "assistant.html": {
+            "size": 10312,
+            "sha256": "55f8b9a1944410c8ae15f4374b48228d9d5ddb2cd4d24f153103f3f94bde58a8"
+          }
+        }
+      },
+      "signature": "gCQ/gpU3JD8zqSdeYbil68IJhxYTFqhG0Sl6To76/ZSAv1pQBVeU3g1KX9JnQnij0A5zvP3wHbjBSRVG9sq3BA=="
+    },
+    {
+      "id": "freeflow.ai-assistant",
+      "version": "2.0.2",
+      "hostApiVersion": 1,
+      "minAppVersion": "2.0.2",
+      "platform": "win32",
+      "arch": "any",
+      "url": "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/plugin-ai-assistant-v2.0.2/freeflow-ai-assistant-2.0.2-win32.ffplugin",
+      "size": 424582,
+      "sha256": "de9eb1305086b3e16ab04ee7a5f41abc2656858dbbf84eeea5cdffe3e9c98e13",
+      "manifest": {
+        "id": "freeflow.ai-assistant",
+        "version": "2.0.2",
+        "hostApiVersion": 1,
+        "minAppVersion": "2.0.2",
+        "platform": "win32",
+        "arch": "any",
+        "files": {
+          "backend.cjs": {
+            "size": 922588,
+            "sha256": "233e208a930df0962dcfd09af279b1019ab91878a37a5b86a332184426325531"
+          },
+          "assistant.js": {
+            "size": 65769,
+            "sha256": "5c55337dc3f0e5baf35c35e27e5bdabd264e0b36f9b0ea418a344433aef15385"
+          },
+          "assistant.css": {
+            "size": 26789,
+            "sha256": "ac9cd54254a2c1dd33b659c6105ad8e3ea754cd2c648e5b6f87e6873662d663c"
+          },
+          "assistant.html": {
+            "size": 10312,
+            "sha256": "55f8b9a1944410c8ae15f4374b48228d9d5ddb2cd4d24f153103f3f94bde58a8"
+          }
+        }
+      },
+      "signature": "znK+TpGF1uN63gfKwNm9LV/yOLyJGBrUfG++zeRT7oqmXzx0fBQabsPHaooZ6Y+LCbGmRyU0x1R0g6FSs7PHCQ=="
+    }
+  ]
+}
