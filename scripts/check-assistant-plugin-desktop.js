@@ -68,6 +68,17 @@ async function main() {
   async function status() {
     return page.evaluate(async () => (await (await fetch("/api/plugins/assistant/status")).json()).plugin);
   }
+  async function waitStatus(predicate, timeout = 45000) {
+    const deadline = Date.now() + timeout;
+    let plugin;
+    do {
+      plugin = await status();
+      if (plugin.error) throw new Error(plugin.error.message);
+      if (predicate(plugin)) return plugin;
+      await page.waitForTimeout(100);
+    } while (Date.now() < deadline);
+    throw new Error(`Plugin did not reach the expected state: ${JSON.stringify(plugin)}`);
+  }
   async function settings(section = "plugins") {
     await page.locator("#conversation-settings-btn").evaluate((button) => button.click());
     await page.locator(".settings-center-layout").waitFor({ state: "visible" });
@@ -86,11 +97,7 @@ async function main() {
     assert.equal(requests.some((url) => url.startsWith("/api/agent/") || url.includes("/assets/assistant.")), false);
     await assert.rejects(fs.stat(path.join(data, "agent-sessions.sqlite")), { code: "ENOENT" });
     await page.locator('[data-settings-action="plugin-install"]').click();
-    await page.waitForFunction(async () => {
-      const plugin = (await (await fetch("/api/plugins/assistant/status")).json()).plugin;
-      if (plugin.error) throw new Error(plugin.error.message);
-      return plugin.installed && plugin.selfCheck?.ok && plugin.restartRequired;
-    }, null, { timeout: online ? 150000 : 45000 });
+    await waitStatus((plugin) => plugin.installed && plugin.selfCheck?.ok && plugin.restartRequired, online ? 150000 : 45000);
     assert.equal((await status()).activeEnabled, false, "successful installation cannot activate mid-session");
     assert.equal((await status()).running, false, "self-check process must exit after install");
     if (!online) assert.equal(downloads, 1, "desktop install must download the actual signed package");
@@ -137,7 +144,7 @@ async function main() {
     assert.equal((await status()).activeEnabled, false);
     await settings();
     await page.locator('[data-settings-action="plugin-enable"]').click();
-    await page.waitForFunction(async () => (await (await fetch("/api/plugins/assistant/status")).json()).plugin.restartRequired);
+    await waitStatus((plugin) => plugin.restartRequired);
     assert.equal((await status()).activeEnabled, false);
     await close();
 
