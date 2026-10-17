@@ -4,9 +4,9 @@ const path = require("path");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 
-function runNodeScript(relativePath) {
+function runNodeScript(relativePath, args = []) {
   const target = path.join(ROOT_DIR, relativePath);
-  const result = spawnSync(process.execPath, [target], {
+  const result = spawnSync(process.execPath, [target, ...args], {
     cwd: ROOT_DIR,
     stdio: "inherit",
   });
@@ -28,6 +28,7 @@ runNodeScript(path.join("scripts", "sync-app-icons.js"));
 runNodeScript(path.join("scripts", "build-markdown-parser.js"));
 runNodeScript(path.join("scripts", "build-canvas2d-ui.js"));
 runNodeScript(path.join("scripts", "build-canvas-office.js"));
+runNodeScript(path.join("scripts", "check-desktop-runtime-assets.js"), ["--prepare"]);
 runNodeScript(path.join("scripts", "generate-app-icons.js"));
 runNodeScript(path.join("scripts", "check-macos-icons.js"));
 runNodeScript(path.join("scripts", "check-assistant-plugin-packaging.js"));
