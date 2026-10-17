@@ -18,7 +18,7 @@ async function checkAssistantPluginRelease({ catalogPath = path.resolve(__dirnam
   assertPluginPackage(packagePath);
   const bytes = await fs.readFile(packagePath);
   const envelope = JSON.parse(zlib.gunzipSync(bytes, { maxOutputLength: 96 * 1024 * 1024 }));
-  for (const key of ["id", "version", "hostApiVersion", "minAppVersion"]) assert.equal(catalog[key], envelope.manifest[key], `Catalog ${key} differs from the signed package`);
+  for (const key of ["id", "version", "hostApiVersion", "minAppVersion", "maxAppVersion", "platform", "arch"]) assert.equal(catalog[key], envelope.manifest[key], `Catalog ${key} differs from the signed package`);
   assert.equal(catalog.size, bytes.length, "Catalog size differs from the package");
   assert.equal(catalog.sha256, crypto.createHash("sha256").update(bytes).digest("hex"), "Catalog hash differs from the package");
   assert.deepEqual(catalog.manifest, envelope.manifest, "Catalog manifest differs from the signed package");

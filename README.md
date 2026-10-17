@@ -1,137 +1,142 @@
-# FreeFlow
-
 <p align="center">
-  <img src="public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow Logo" width="96" />
+  <img src="public/assets/brand/FreeFlow_app_icon.png" alt="FreeFlow" width="96" />
 </p>
 
-<h3 align="center">本地桌面型结构化内容工作画布</h3>
+<h1 align="center">FreeFlow</h1>
+
+<p align="center"><strong>为知识与工作落地而生。</strong></p>
 
 <p align="center">
-  把外部内容接入、画布结构化编辑、本地文件管理和办公文档输出连接成一条完整工作流。
-</p>
-
-<p align="center">
-  <img alt="Electron Desktop" src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&amp;logoColor=white" />
-  <img alt="Node.js Runtime" src="https://img.shields.io/badge/Node.js-Runtime-339933?logo=node.js&amp;logoColor=white" />
-  <img alt="Canvas2D Core" src="https://img.shields.io/badge/Canvas2D-Core-2563EB" />
-  <img alt="License Non-Commercial" src="https://img.shields.io/badge/License-Non--Commercial-orange" />
+  将文字、图片、文件、表格、代码与公式放在同一张画布中，<br />
+  收集资料，整理思路，继续编辑，输出成果。
 </p>
 
 <p align="center">
-  <a href="https://wuxinbo-bo.github.io/"><strong>Live Demo / 演示网站</strong></a>
-  ·
-  <a href="https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/tag/v2.0.0"><strong>Download / 安装包下载</strong></a>
+  <a href="https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases"><strong>下载应用</strong></a> ·
+  <a href="docs/getting-started.md">开始使用</a> ·
+  <a href="docs/github-sync.md">多设备同步</a> ·
+  <a href="docs/assistant-plugin.md">可选插件</a> ·
+  <a href="https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/issues">反馈问题</a>
 </p>
 
-## FreeFlow 是什么
+<p align="center">
+  <img alt="Desktop" src="https://img.shields.io/badge/Desktop-Windows%20%7C%20macOS-475569" />
+  <img alt="Local first" src="https://img.shields.io/badge/Data-Local%20first-36755b" />
+  <a href="LICENSE.md"><img alt="License: non-commercial" src="https://img.shields.io/badge/License-Non--Commercial-a16b32" /></a>
+</p>
 
-FreeFlow 是一个以 Windows 本地桌面端为核心的知识工作画布，面向知识整理、资料归档、结构化编辑和正式交付。你可以在同一工作区整理素材、组织思路，并结合 AI 助手完成内容加工。
+## 一个可以继续工作的画布
 
-它的核心目标是打通这条主链路：
+FreeFlow 是本地优先的桌面画布工作台。把资料放在一起，用可编辑的内容表达关系，再将整理结果导出为文档。日常画布操作无需登录，也无需配置 AI。
 
-```text
-外部内容接入 -> 画布结构化编辑 -> 本地工作区沉淀 -> 多格式办公输出
-```
+它适合个人研究、学习笔记、方案梳理和非商业项目整理。使用范围以 [许可证](LICENSE.md) 为准。
 
-在 FreeFlow 中，文本、图片、文件、表格、代码、公式、链接和节点对象可以被放入同一张画布中组织，并参与搜索、复制、导出、保存和后续编辑。
+![FreeFlow 工作台](screenshots/freeflow-workspace.png)
 
-## 界面展示
+<p align="center"><sub>当前 mac 分支的示例画布：带格式文本、文件卡片、表格与思维导图。</sub></p>
 
-![FreeFlow 2.0 工作区](screenshots/freeflow-v2-workspace.png)
+## 从材料到成果
 
-## 2.0 更新
-
-- **全新 UI 交互**：重新设计画布与 AI 工作区，支持自由切换、拖动和调整布局，让工具操作、内容编辑与工作区切换更加自然。
-- **全新画布性能体验**：优化画布拖动、缩放与复杂内容呈现，兼顾大画布浏览、精细编辑和缩放后的内容清晰度。
-- **全新 AI 交互**：整合 AI 助手与 AI 镜像，结合模型连接、会话管理和附件输入，让内容整理与 AI 协作在同一工作区完成。
-- **全新内容创作体验**：将文字、图片、文件、表格、代码、公式和思维导图自由组合，串联资料收集、结构化编辑与多格式文档导出。
-- **全新个性化工作台**：集中管理主题外观、工作区布局和快捷键，打造贴合个人习惯的桌面工作环境。
-
-## 可以做什么
-
-| 工作内容 | FreeFlow 中的操作 |
+| 你想做的事 | FreeFlow 提供的能力 |
 | --- | --- |
-| 整理资料 | 粘贴文字、Markdown 和图片，拖入本地文件，放入同一画布 |
-| 组织思路 | 使用文本、连线、分组和思维导图表达关系 |
-| 编辑结构化内容 | 编辑表格、代码块、公式和文档预览等元素 |
-| 查找与管理 | 搜索画布内容，切换本地画布与目录，管理图片和附件 |
-| AI 辅助 | 配置模型连接，在 AI 工作区中辅助整理和生成内容 |
-| 交付成果 | 按内容类型导出 Word、Excel、Markdown、PNG、PDF 等格式 |
+| 收集资料 | 粘贴带格式文本、Markdown 和图片，拖入本地文件，在画布中自由摆放 |
+| 继续编辑 | 编辑富文本、表格、代码与公式；使用图形、连线、分组和思维导图组织内容 |
+| 阅读与加工文件 | 预览 PDF、DOCX、文本和表格，查找与摘取内容，将页面或区域生成图片 |
+| 管理工作内容 | 工作区与画布目录、跨画布搜索、最近画布、回收站和本地历史恢复 |
+| 输出成果 | 按所选内容导出 Word、Markdown、图片、PDF 等；Word 支持预览和调整阅读顺序 |
+| 跨设备接续 | 授权自己的 GitHub 私有仓库，同步工作区内多个画布及符合规则的附件 |
 
-画布以 `.freeflow` 文件保存。导出可用格式取决于所选内容；AI 功能需要自行配置支持的模型服务或本地工具。
+画布以 `.freeflow` 文件保存。预览、编辑和转换的支持范围不同，不能把所有文件都当作完整 Office 文档编辑；具体能力见 [使用指南](docs/getting-started.md#文件预览与转换)。
 
-![2.0 设置中心](screenshots/freeflow-v2-settings.png)
+## 下载与平台
 
-![关于画布 v2.0.0](screenshots/freeflow-v2-about.png)
+从 [GitHub Releases](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases) 查看已发布附件。当前公开应用版本为 **v2.0.2，提供 Windows 安装包与免安装包；Mac 应用暂未公开上传**。源码版本与已公开安装包可能不同，以发布页的附件及验证说明为准。
 
-## 安装与升级
+| 平台 | 版本与状态 |
+| --- | --- |
+| Windows 10/11 x64 | 支持安装版与免安装版；发布包通常为 `.exe` |
+| macOS · Apple Silicon | M 系列本地测试版已打包实测，暂无公开下载；可从 `mac` 分支自行构建 `.app`，ZIP／DMG 分发仍以发布页为准 |
+| macOS · Intel | 构建配置已保留，尚未完成 Intel 真机验收，不作为已验证版本推荐 |
 
-支持 Windows 10/11 x64。
+当前 Mac 测试包使用本地 ad-hoc 签名，尚未完成 Developer ID 签名及 Apple 公证。仅从本仓库取得测试包，遇到系统阻止时按 [Apple 官方说明](https://support.apple.com/102445) 核对并处理；不要关闭系统安全保护。
 
-1. 在 [Releases](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/latest) 下载 `FreeFlow-v2.0.0-x64.exe`。
-2. 运行安装程序。已有旧版时，关闭旧版后覆盖安装到原目录。
-3. 启动 FreeFlow，选择画布目录，并按需配置 AI 连接。
+应用内“应用更新”提供新版下载入口，运行新版安装包完成升级。已有数据与自定义工作区保存在安装目录之外；升级前仍建议备份重要画布和附件。
 
-免安装体验可使用 `FreeFlow-v2.0.0-x64-portable.exe`。免安装版仍会在本机保存设置和业务数据。
+## 数据由你管理
 
-默认业务数据位于 `%USERPROFILE%\FreeFlow`，自定义画布目录按设置使用。升级和卸载不会主动删除业务数据；重要画布建议单独备份。发布页同时提供 `SHA256SUMS.txt`，可用于核对下载文件。
+FreeFlow 先将内容保存到本机。默认目录如下，也可以在设置中选择工作区：
 
-### 检查更新
+| 内容 | Windows | macOS |
+| --- | --- | --- |
+| 画布 | `%USERPROFILE%\FreeFlow\CanvasBoards` | `~/Library/Application Support/FreeFlow/CanvasBoards` |
+| 设置与应用数据 | `%USERPROFILE%\FreeFlow\AppData` | `~/Library/Application Support/FreeFlow/AppData` |
 
-应用内“检查更新”从本仓库的 GitHub Releases 获取最新正式版本，比较当前版本后提供安装包下载入口。升级通过运行新版安装包完成。
+关联的外部文件可能仍位于原路径。备份或迁移时，请同时保留所需附件；本地历史与回收站不能代替完整资源备份。
 
-发布标签采用 `v2.0.0` 形式，安装包必须保持 `FreeFlow-v<版本>-x64.exe` 命名。便携版不能替代这个安装包文件。网络不可用或 GitHub 接口限流时可以稍后重试。
+**GitHub 同步是可选项。** 每位用户授权自己的私有仓库，FreeFlow 不把用户画布集中存放在开发者仓库。另一台设备连接同一仓库后，可将远程画布拉取到当前工作区，再继续编辑与同步。
+
+默认同步图片上限为 5 MiB，普通文件为 10 MiB，视频不上传；超限或不可用附件保留占位信息。本机保存成功与远端同步成功分别显示。同步服务面向个人多设备接续，采用检查、拉取与冲突处理流程，不提供多人实时共同编辑。完整步骤及限制见 [GitHub 同步指南](docs/github-sync.md)。
+
+## AI 镜像与可选助手
+
+- **AI 镜像**属于主程序，可独立使用；具体镜像来源与交互方式受操作系统及来源应用限制。
+- **AI 助手**是可选的官方插件。不安装时，画布与镜像照常使用，不加载助手界面和后台。
+- 在“系统设置 → 画布插件”中查看安装、更新与导入入口。安装通过签名校验和自检后，下次启动启用；可停用、重新开启或卸载。
+- 助手需要用户自行配置支持的模型服务或 CLI；FreeFlow 不附送模型账号、API 额度或本地大模型。
+
+官方插件通过本仓库的 [`plugins` 分支](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/plugins) 维护版本目录，签名安装包存放在 GitHub Releases。可安装版本以设置页实际检查结果为准；网络不可用时可导入官方 `.ffplugin` 包。插件下载不使用用户的画布同步 Token。
+
+开发、兼容范围、签名与安装恢复见 [插件说明](docs/assistant-plugin.md)。目前面向官方插件，不承诺运行任意第三方代码。
 
 ## 从源码运行
 
-建议使用 Node.js 24 LTS 与 npm。Windows 桌面能力以 Electron 运行结果为准。
+需要 **Node.js 24 LTS 或更高版本**与 npm；构建依赖请使用完整 `npm ci` 安装。选择对应平台分支：
 
-```powershell
-git clone https://github.com/WuXinbo-bo/FreeFlow-WorkBorad.git
+```sh
+# macOS
+git clone --branch mac https://github.com/WuXinbo-bo/FreeFlow-WorkBorad.git
+```
+
+```sh
+# Windows
+git clone --branch win https://github.com/WuXinbo-bo/FreeFlow-WorkBorad.git
+```
+
+```sh
+# 克隆后，在项目根目录执行
 cd FreeFlow-WorkBorad
 npm ci
 npm run prepare:desktop-build
 npm run start:desktop
 ```
 
-仅启动网页开发服务：
+依赖与构建就绪后，也可使用仓库根目录的启动脚本：Mac 为 `Start-FreeFlow.command`，Windows 为 `start-desktop.cmd`。启动脚本运行当前本地源码，不负责更新源码或安装依赖。
 
-```powershell
-npm start
-```
+`npm start` 启动网页开发服务，默认监听 `http://127.0.0.1:53127`，以终端实际地址为准。网页模式不包含全部桌面文件、窗口和同步能力；日常使用请选择桌面应用。
 
-默认地址为 `http://127.0.0.1:53127`。若端口被占用，请使用终端打印的实际地址。网页模式不具备全部桌面文件与窗口能力。
+## 开发与贡献
 
-需要指定端口时，设置 `FREEFLOW_PORT`；设置为 `0` 可始终由系统分配。桌面端不再继承其他开发项目设置的通用 `PORT` 环境变量。
+| 分支 | 职责 |
+| --- | --- |
+| [`main`](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/main) | 通用开发基线，保留 Windows 桌面能力 |
+| [`mac`](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/mac) | macOS 适配、原生验证与打包 |
+| [`win`](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/win) | Windows 验证与发布版本 |
+| [`plugins`](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/plugins) | 官方插件目录、兼容信息与分发规范 |
 
-```powershell
-$env:FREEFLOW_PORT = "53128"
-npm run start:desktop
-```
-
-模型服务配置可参考 `.env.example` 或应用设置中心。不要将真实令牌、账号配置和个人业务数据提交到仓库。
-
-## 测试与打包
-
-```powershell
-npm ci
+```sh
 npx playwright install chromium
 npm run prepare:desktop-build
 npm test
 npm run check:release-version
-npm run check:desktop-upgrade
 npm run check:desktop-packaging
-npm run dist:win
 ```
 
-`npm test` 包含后端、桌面通信、画布编辑、启动恢复、设置、教程及浏览器交互检查。正式打包会重新生成资源并执行版本、打包与升级检查，产物位于 `release/`。
+通用修改应同步到应用分支，平台适配保留各自边界。Windows 原生能力需要在 Windows 验证；Mac 原生能力需要在 Mac 验证。打包命令、分支维护、发布命名及插件发布隔离见 [分支与发布指南](docs/branch-and-release.md)。
 
-发布流程和产物命名见 [打包说明](build/README.md)。2.0 发布前的远程 `main` 保存在 [备份分支](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/backup/main-before-v2.0.0-20260905)。
+欢迎提交可以复现的 [Issue](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/issues) 或范围清晰的 Pull Request。请附版本、系统、操作步骤和必要截图，移除账号、访问令牌、个人文件路径及业务内容。
 
-## 反馈与许可
+## 许可
 
-提交 Issue 时请提供软件版本、复现步骤和必要截图，并移除个人文件、账号和密钥信息。
+FreeFlow 使用自定义非商业许可证，允许符合条款的非商业使用、修改与分发。**企业内部使用、付费服务和其他商业用途需要事先取得书面授权。** 本仓库可公开阅读源码，不代表采用 MIT 等允许自由商用的许可证。
 
-本项目允许非商业使用；商业使用需要作者授权。具体范围以 [LICENSE.md](LICENSE.md) 为准。
-
-作者：Wu Xinbo · 联系邮箱：180695828@qq.com
+完整条款与商业授权联系方式以 [LICENSE.md](LICENSE.md) 为准。

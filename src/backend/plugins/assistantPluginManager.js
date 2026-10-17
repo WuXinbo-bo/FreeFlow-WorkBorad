@@ -140,7 +140,7 @@ function createAssistantPluginManager(options = {}) {
     registry = next;
   }
 
-  function validateManifest(manifest, signature) {
+  function validateCompatibility(manifest) {
     if (!manifest || manifest.id !== ASSISTANT_PLUGIN_ID || manifest.hostApiVersion !== ASSISTANT_HOST_API_VERSION) {
       throw pluginError("PLUGIN_INCOMPATIBLE", "组件与当前 FreeFlow 接口不兼容");
     }
@@ -150,6 +150,20 @@ function createAssistantPluginManager(options = {}) {
       || (manifest.platform && manifest.platform !== "any" && manifest.platform !== process.platform)
       || (manifest.arch && manifest.arch !== "any" && manifest.arch !== process.arch)) {
       throw pluginError("PLUGIN_INCOMPATIBLE", "组件不支持当前应用版本或系统");
+    }
+  }
+
+  function validateManifest(manifest, signature, { compatible = true } = {}) {
+    if (compatible) validateCompatibility(manifest);
+    else {
+      if (!manifest || manifest.id !== ASSISTANT_PLUGIN_ID) throw pluginError("PLUGIN_CATALOG", "组件目录标识无效");
+      parseVersion(manifest.version);
+      parseVersion(manifest.minAppVersion);
+      if (manifest.maxAppVersion) parseVersion(manifest.maxAppVersion);
+    }
+    if ((manifest.platform && !["darwin", "win32", "linux", "any"].includes(manifest.platform))
+      || (manifest.arch && !["arm64", "x64", "any"].includes(manifest.arch))) {
+      throw pluginError("PLUGIN_INCOMPATIBLE", "组件目标系统或架构无效");
     }
     const names = Object.keys(manifest.files || {});
     if (names.length !== FILE_NAMES.length || names.some((name) => !FILE_NAMES.includes(name))) {
@@ -326,16 +340,33 @@ function createAssistantPluginManager(options = {}) {
     const bytes = await fetchBytes(catalogUrl, operation, 64 * 1024, false);
     let catalog;
     try { catalog = JSON.parse(bytes.toString("utf8")); } catch { throw pluginError("PLUGIN_CATALOG", "组件目录信息无效"); }
-    if (catalog.id !== ASSISTANT_PLUGIN_ID || catalog.hostApiVersion !== ASSISTANT_HOST_API_VERSION
-      || compareVersion(appVersion, catalog.minAppVersion) < 0) {
-      throw pluginError("PLUGIN_INCOMPATIBLE", "没有适用于当前 FreeFlow 版本的组件");
+    const multiple = Object.prototype.hasOwnProperty.call(catalog || {}, "packages");
+    if (multiple && (catalog.schemaVersion !== 1 || catalog.id !== ASSISTANT_PLUGIN_ID || !Array.isArray(catalog.packages) || !catalog.packages.length)) {
+      throw pluginError("PLUGIN_CATALOG", "组件目录协议无效");
     }
-    parseVersion(catalog.version);
-    const url = checkedUrl(new URL(catalog.url, catalogUrl).href, allowLoopback).href;
-    if (!Number.isSafeInteger(catalog.size) || catalog.size <= 0 || catalog.size > MAX_PACKAGE_BYTES || !/^[a-f0-9]{64}$/.test(catalog.sha256)) {
-      throw pluginError("PLUGIN_CATALOG", "组件目录大小或校验信息无效");
+    const candidates = [];
+    for (const entry of multiple ? catalog.packages : [catalog]) {
+      if (entry?.manifest) {
+        if (!multiple) validateCompatibility(entry.manifest);
+        validateManifest(entry.manifest, entry.signature, { compatible: false });
+        for (const key of ["id", "version", "hostApiVersion", "minAppVersion", "maxAppVersion", "platform", "arch"]) {
+          if (entry[key] !== entry.manifest[key]) throw pluginError("PLUGIN_CATALOG", "组件目录与签名信息不一致");
+        }
+      } else if (multiple) throw pluginError("PLUGIN_SIGNATURE", "组件目录缺少签名信息");
+      try { validateCompatibility(entry); }
+      catch (cause) { if (multiple && cause.code === "PLUGIN_INCOMPATIBLE") continue; throw cause; }
+      if (typeof entry.url !== "string" || !entry.url.trim()) throw pluginError("PLUGIN_CATALOG", "组件下载地址无效");
+      const url = checkedUrl(new URL(entry.url, catalogUrl).href, allowLoopback).href;
+      if (!Number.isSafeInteger(entry.size) || entry.size <= 0 || entry.size > MAX_PACKAGE_BYTES || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+        throw pluginError("PLUGIN_CATALOG", "组件目录大小或校验信息无效");
+      }
+      candidates.push({ version: entry.version, size: entry.size, sha256: entry.sha256, url,
+        specificity: Number(entry.platform === process.platform) + Number(entry.arch === process.arch) });
     }
-    return { version: catalog.version, size: catalog.size, sha256: catalog.sha256, url };
+    candidates.sort((a, b) => compareVersion(b.version, a.version) || b.specificity - a.specificity);
+    if (!candidates.length) throw pluginError("PLUGIN_INCOMPATIBLE", "暂无支持当前应用版本与系统的组件");
+    const { specificity, ...selected } = candidates[0];
+    return selected;
   }
 
   async function checkForUpdate() {
@@ -346,6 +377,7 @@ function createAssistantPluginManager(options = {}) {
       currentOperation = operation;
       const timer = operationTimeout(operation);
       try {
+        update = null;
         update = await readCatalog(operation);
         error = null;
         return { ...update, available: !registry.installed || integrity?.valid !== true || compareVersion(update.version, registry.installed.manifest.version) > 0 };
