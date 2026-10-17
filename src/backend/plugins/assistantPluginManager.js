@@ -304,11 +304,15 @@ function createAssistantPluginManager(options = {}) {
         throw pluginError("PLUGIN_DOWNLOAD", response.status === 404 ? "官方组件尚未发布，可导入经过验证的离线组件包" : `组件下载失败（HTTP ${response.status}）`);
       }
       const headerLength = response.headers.get("content-length");
-      const totalBytes = headerLength == null ? null : Number(headerLength);
-      if (totalBytes != null && (!Number.isSafeInteger(totalBytes) || totalBytes < 0 || totalBytes > limit)) {
+      const declaredBytes = headerLength == null ? null : Number(headerLength);
+      if (declaredBytes != null && (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > limit)) {
         await response.body?.cancel();
         throw pluginError("PLUGIN_SIZE", "组件下载大小超过限制");
       }
+      // Fetch decodes HTTP content encoding, while Content-Length describes
+      // the encoded transport bytes. Enforce the decoded stream budget below.
+      const encoding = response.headers.get("content-encoding");
+      const totalBytes = encoding && encoding.trim().toLowerCase() !== "identity" ? null : declaredBytes;
       const chunks = [];
       let receivedBytes = 0;
       if (showProgress) progress = { receivedBytes, totalBytes, percent: totalBytes ? 0 : null };
