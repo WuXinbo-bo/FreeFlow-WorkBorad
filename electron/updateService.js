@@ -6,7 +6,7 @@ const DEFAULT_UPDATE_CONFIG = Object.freeze({
   websiteUrl: "https://wuxinbo-bo.github.io/",
   releasesPageUrl: "https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/",
   apiBaseUrl: "https://api.github.com",
-  assetNameTemplate: "FreeFlow-v{version}-x64.exe",
+  assetNameTemplate: "FreeFlow-v{version}-{arch}.exe",
 });
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 7000;
@@ -82,12 +82,18 @@ function buildLatestReleaseUrl(config) {
   return `${String(config.apiBaseUrl || DEFAULT_UPDATE_CONFIG.apiBaseUrl).replace(/\/+$/, "")}/repos/${config.owner}/${config.repo}/releases/latest`;
 }
 
-function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_UPDATE_CONFIG) {
+function isApplicationRelease(release) {
+  const tag = String(release?.tag_name || "").trim();
+  return !release?.draft && !release?.prerelease && /^v?\d+(?:\.\d+){1,3}(?:\+[\w.-]+)?$/i.test(tag);
+}
+
+function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_UPDATE_CONFIG, options = {}) {
+  const arch = String(options.arch || "x64").toLowerCase();
   const escapedVersion = String(remoteVersion || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const expectedName = String(config.assetNameTemplate || DEFAULT_UPDATE_CONFIG.assetNameTemplate).replace(
     "{version}",
     remoteVersion
-  );
+  ).replace("{arch}", arch);
   const list = Array.isArray(assets) ? assets : [];
   const exact = list.find((asset) => String(asset?.name || "").trim() === expectedName);
   if (exact?.browser_download_url) {
@@ -98,7 +104,7 @@ function resolveDownloadAsset(assets = [], remoteVersion = "", config = DEFAULT_
     };
   }
   const installerPattern = escapedVersion
-    ? new RegExp(`freeflow-v${escapedVersion}(?:[-\\w.]*)?-x64\\.exe$`, "i")
+    ? new RegExp(`freeflow-v${escapedVersion}(?:[-\\w.]*)?-${arch}\\.exe$`, "i")
     : /freeflow-v[\d.]+(?:[-\w.]*)?-x64\.exe$/i;
   const fallback = list.find((asset) => installerPattern.test(String(asset?.name || "").trim()));
   if (fallback?.browser_download_url) {
@@ -120,22 +126,39 @@ async function fetchLatestRelease(config, options = {}) {
   const timeoutMs = Math.max(1000, Number(options.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS) || DEFAULT_REQUEST_TIMEOUT_MS);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(buildLatestReleaseUrl(config), {
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const status = Number(response.status || 0) || 0;
-      const error = new Error(String(payload?.message || `GitHub API 请求失败：HTTP ${status}`));
-      error.code = status === 404 ? "NO_RELEASE_FOUND" : status === 403 ? "RATE_LIMITED" : "NETWORK_ERROR";
-      throw error;
+    async function request(url) {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const status = Number(response.status || 0) || 0;
+        const error = new Error(String(payload?.message || `GitHub API 请求失败：HTTP ${status}`));
+        error.code = status === 404 ? "NO_RELEASE_FOUND" : status === 403 ? "RATE_LIMITED" : "NETWORK_ERROR";
+        throw error;
+      }
+      return payload;
     }
-    return payload;
+    const latestUrl = buildLatestReleaseUrl(config);
+    let latest;
+    try { latest = await request(latestUrl); }
+    catch (error) { if (error.code !== "NO_RELEASE_FOUND") throw error; }
+    if (isApplicationRelease(latest)) return latest;
+    // Plugin packages share the repository's Releases. A plugin accidentally marked
+    // Latest must not hide the stable application release or become an app update.
+    for (let page = 1; ; page += 1) {
+      const releases = await request(`${latestUrl.replace(/\/latest$/, "")}?per_page=100&page=${page}`);
+      const applicationReleases = (Array.isArray(releases) ? releases : []).filter(isApplicationRelease);
+      applicationReleases.sort((left, right) => compareVersions(right.tag_name, left.tag_name));
+      if (applicationReleases.length) return applicationReleases[0];
+      if (!Array.isArray(releases) || releases.length < 100) break;
+    }
+    throw Object.assign(new Error("尚未找到正式的 FreeFlow 应用版本"), { code: "NO_RELEASE_FOUND" });
   } catch (error) {
     if (error?.name === "AbortError") {
       const timeoutError = new Error("请求 GitHub 更新接口超时");
@@ -158,12 +181,13 @@ async function checkForAppUpdate(options = {}) {
     options.mockRelease && typeof options.mockRelease === "object"
       ? options.mockRelease
       : await fetchLatestRelease(config, options);
+  if (!isApplicationRelease(payload)) throw Object.assign(new Error("尚未找到正式的 FreeFlow 应用版本"), { code: "NO_RELEASE_FOUND" });
   const latestVersionRaw = String(payload?.tag_name || "").trim();
   const latestVersion = normalizeVersion(latestVersionRaw);
   const comparison = compareVersions(currentVersion, latestVersion);
   const versionValid = comparison !== null;
   const hasUpdate = versionValid ? comparison < 0 : false;
-  const asset = resolveDownloadAsset(payload?.assets, latestVersion, config);
+  const asset = resolveDownloadAsset(payload?.assets, latestVersion, config, { arch: options.arch });
   return {
     ok: true,
     source: options.mockRelease ? "mock" : "github",

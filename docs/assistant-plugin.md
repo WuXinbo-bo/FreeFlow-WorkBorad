@@ -80,6 +80,8 @@ manifest = {
   version,
   hostApiVersion: 1,
   minAppVersion,
+  platform: "darwin" | "win32" | "any",
+  arch: "arm64" | "x64" | "any",
   files: { 文件名: { size, sha256 } }
 }
 signature = Ed25519(JSON.stringify(manifest)) 的 Base64
@@ -107,11 +109,11 @@ npm run check:assistant-plugin-packaging -- --package-file release/plugins/freef
 
 ```sh
 FREEFLOW_PLUGIN_SIGNING_KEY_FILE=/受控路径/plugin-signing-ed25519.pem npm run build:assistant-plugin -- \
-  --plugin-version 2.0.3 --min-app-version 2.0.2 \
-  --base-url https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/assistant-v2.0.3/
+  --plugin-version 2.0.3 --min-app-version 2.0.2 --platform darwin --arch any \
+  --base-url https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/plugin-ai-assistant-v2.0.3/
 ```
 
-Windows PowerShell 可先设置 `$env:FREEFLOW_PLUGIN_SIGNING_KEY_FILE` 再执行相同 npm 命令。未指定时，组件版本与最低应用版本默认使用 `package.json` 的版本。可选 `--out-dir`、`--key-file` 分别覆盖产物目录和私钥文件。
+Windows PowerShell 可先设置 `$env:FREEFLOW_PLUGIN_SIGNING_KEY_FILE`，从 Windows 源码分支构建时改用 `--platform win32`。平台与架构写入签名清单，平台包名称带 `-darwin` 或 `-win32`；不含原生二进制的插件使用 `--arch any`。未指定目标时保留旧的通用包命名，仅用于确实通用的代码，不能将含平台适配的源码声明为通用。组件版本与最低应用版本默认使用 `package.json` 的版本。可选 `--out-dir`、`--key-file` 分别覆盖产物目录和私钥文件。
 
 输出包括 `.ffplugin`、`assistant-plugin-catalog.json` 和用于本地审计的 `build-inputs.json`。后者不需要上传；私钥永远不是输出文件。主程序的 `start:desktop`、`prepare:desktop-build` 和生成物一致性检查不会构建或下载助手组件。
 
@@ -119,23 +121,27 @@ Windows PowerShell 可先设置 `$env:FREEFLOW_PLUGIN_SIGNING_KEY_FILE` 再执�
 
 ## 下载目录与正式发布
 
-当前默认不配置公网下载目录，设置页会明确提示可导入签名插件包，不显示可用下载的假象。发布后可通过 `FREEFLOW_ASSISTANT_CATALOG_URL` 指定真实 HTTPS 目录，或在下一次主程序发行时设置固定默认目录，例如：
+正式默认目录为：
 
 ```text
-https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/latest/download/assistant-plugin-catalog.json
+https://raw.githubusercontent.com/WuXinbo-bo/FreeFlow-WorkBorad/plugins/catalog/v1/freeflow.ai-assistant.json
 ```
 
-构建时设置 `FREEFLOW_ASSISTANT_RELEASE_CATALOG_URL` 后，`prepare:desktop-build` 会将 HTTPS 目录写入 `assistantPluginRelease.json` 随主程序打包；不设置则恢复空目录，避免遗留开发地址。正式发布前执行 `npm run check:assistant-release -- --require-online`，验证默认目录、签名包和 catalog 一致性。此命令不代替公网下载验证，也不会上传文件。
+`plugins` 是独立历史的官方分发分支，保存目录、版本快照、签名公钥、协议和验证工具；助手源码与构建仍在应用代码分支。安装包放在固定版本的 GitHub Release 附件中，不提交构建包或依赖到 Git 历史。
 
-**本轮只完成本地真实下载、安装和桌面测试，没有发布 GitHub Release，也没有推送远程。线上目录和包尚未上传，不能把本地 HTTP 测试描述为公网发布已可用。** 在正式发布前，可使用经过签名的离线包完成安装。
+目录采用 `{ schemaVersion: 1, id, packages: [...] }`，每条记录沿用原来的单包目录字段，另含签名清单中的平台与架构。客户端先按应用版本、宿主 API、平台和架构筛选，再选择最高兼容版本；原单条目录仍可读取。Mac 与 Windows 的平台适配分别从各自源码构建，不把 Mac 包发送给 Windows。`any` 架构表示插件不内置架构相关二进制，不扩大主程序支持范围。
 
-发布操作需要仓库维护者在准备好发布时执行：
+普通 `prepare:desktop-build` 保留仓库内的默认目录。设置 `FREEFLOW_ASSISTANT_RELEASE_CATALOG_URL` 可以覆盖目录；显式设为空字符串则构建仅支持离线导入的版本。运行时可通过 `FREEFLOW_ASSISTANT_CATALOG_URL` 覆盖。正式构建执行 `npm run check:assistant-release -- --require-online`，检查目录和本地签名包；再执行 `npm run check:assistant-online`，实际匿名访问公网目录并完成下载、自检、隔离进程启停、重启启用、卸载与重装。测试使用临时用户目录，不接触真实会话和凭据。
 
-1. 保持受信公钥不变，使用对应私钥构建；使用版本固定的 Release URL 作为 `--base-url`，避免目录指向另一个 Release 的包。
-2. 执行下面的组件完整测试，以及目标系统的桌面测试、主程序打包检查。确认本次构建的 SHA-256 与目录一致。
-3. 向对应 GitHub Release 上传 `.ffplugin` 与 `assistant-plugin-catalog.json`。目录中的 `id/version/hostApiVersion/minAppVersion/url/size/sha256` 都必须对应实际包。
-4. 确认默认 `releases/latest` 实际指向包含该目录的 Release。GitHub 的预发布和后续主程序发布会影响 `latest`；后续 Release 也需要附带适配的目录，或在主程序中显式更换稳定目录地址。不要假设任意新建一个 Release 就一定能被默认地址找到。
-5. 从另一台设备访问实际 HTTPS 地址，完成目录读取、下载、自检、重启启用和卸载，之后才宣布公网安装可用。
+发布顺序：
+
+1. 保持受信公钥不变，使用对应私钥分别构建 `--platform darwin --arch any` 与 `--platform win32 --arch any`。使用 `--plugin-version`、`--min-app-version` 声明独立插件版本及最低宿主版本。
+2. 固定下载前缀为 `https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/releases/download/plugin-ai-assistant-v<版本>/`。发布说明记录各平台源码提交与测试范围。
+3. 上传 `.ffplugin` 到插件 Release，明确 `make_latest=false`。应用标签仍为 `v<版本>`，不能让插件占用主程序 Latest。主程序更新也会过滤插件、草稿与预发布。
+4. 匿名验证所有包的 HTTPS 下载、大小、SHA-256、签名和目标平台。先包后目录，再更新 `plugins/catalog/v1/` 及 `manifests/` 的版本快照。
+5. 在全新临时用户环境完成实际桌面安装、自检、重启启用、停用、卸载与重装。Mac 验证不替代 Windows 原生验证。
+
+插件入口不依赖 `releases/latest`，因此后续主程序发布不会改变目录指向。签名密钥只保存在受控环境，客户端信任根不从公网目录更新。完整分发规则和验证工具见 [plugins 分支](https://github.com/WuXinbo-bo/FreeFlow-WorkBorad/tree/plugins)。
 
 生产下载只接受 HTTPS。测试可通过 `FREEFLOW_ASSISTANT_CATALOG_URL` 指向目录；HTTP 回环地址只在 Node 或未打包的 Electron 开发环境明确设置 `FREEFLOW_PLUGIN_TEST_LOOPBACK=1` 时允许。打包后的桌面端不放开 HTTP 下载。官方组件下载不使用用户的 GitHub 画布同步 Token，也不访问其私有同步仓库。
 
@@ -202,4 +208,4 @@ Mac 与 Windows 共享组件逻辑和 UI，各自保留平台适配。当前 Mac
 - 已安装的后端包通过本地协议 CLI fixture 验证流式回复、请求幂等、队列、停止和恢复；真实 Electron utility 另测 npm/JS CLI 的探测、Codex 启停及 Claude 退出。当前本机没有完整的模型连接配置，未把这些测试描述为真实云端模型联网对话。
 - 本机现用配置已备份、清除旧插件初始化，并完成安装、自检、重启、停用及再启用验证。未安装启动和安装自检前后的原助手数据库 SHA-256 一致。
 - 已修正实测发现的安装受理状态轮询遗漏、共享面板样式层叠、临时文件清理失败锁定安装及独立进程 CLI 包装器启动问题。
-- 本轮不推送远程、不发布 Release。正式公网下载安装仍需按上面的发布流程上传签名包与目录，再完成 HTTPS 实测。
+- 以上记录为 2026-10-16 的本地验收；后续正式公网发布与验证记录见发布说明。

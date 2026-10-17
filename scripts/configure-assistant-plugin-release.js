@@ -17,7 +17,13 @@ function validateCatalogUrl(value, requireOnline = false) {
   return url.href;
 }
 
-async function configureAssistantPluginRelease({ catalogUrl = process.env.FREEFLOW_ASSISTANT_RELEASE_CATALOG_URL || "", outputPath = CONFIG_PATH, requireOnline = false } = {}) {
+async function configureAssistantPluginRelease({ catalogUrl = process.env.FREEFLOW_ASSISTANT_RELEASE_CATALOG_URL, outputPath = CONFIG_PATH, requireOnline = false } = {}) {
+  // Keep the committed release source unless an explicit override (including an
+  // empty string for offline builds) was supplied by the release workflow.
+  if (catalogUrl === undefined) {
+    try { catalogUrl = JSON.parse(await fs.readFile(outputPath, "utf8")).catalogUrl; }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
   const config = { catalogUrl: validateCatalogUrl(catalogUrl, requireOnline) };
   const text = `${JSON.stringify(config, null, 2)}\n`;
   if (await fs.readFile(outputPath, "utf8").catch(() => "") !== text) await fs.writeFile(outputPath, text);

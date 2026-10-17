@@ -46,16 +46,21 @@ async function main() {
   const dataDir = path.join(temp, "data");
   const payloads = new Map();
   let catalogVersion = "2.0.2";
+  let catalogOverrides = {};
+  let catalogDocument = null;
+  let packageDownloads = 0;
   let disableCount = 0;
   let checkCount = 0;
   const server = http.createServer((request, response) => {
     if (request.url === "/catalog.json") {
+      if (catalogDocument) { response.end(JSON.stringify(catalogDocument)); return; }
       const body = payloads.get(`/assistant-${catalogVersion}.ffplugin`);
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({
         id: pluginId, version: catalogVersion, hostApiVersion: 1, minAppVersion: "2.0.2",
         url: `assistant-${catalogVersion}.ffplugin`, size: body.length,
         sha256: crypto.createHash("sha256").update(body).digest("hex"),
+        ...catalogOverrides,
       }));
       return;
     }
@@ -66,6 +71,7 @@ async function main() {
     }
     const body = payloads.get(request.url);
     if (!body) { response.writeHead(404); response.end(); return; }
+    if (request.url.endsWith(".ffplugin")) packageDownloads += 1;
     response.setHeader("Content-Length", body.length);
     if (request.url === "/slow") {
       response.write(body.subarray(0, 20));
@@ -127,6 +133,79 @@ async function main() {
     await running.setEnabled(true);
     await running.initialize();
     assert.equal(running.getStatus().activeEnabled, false);
+
+    catalogVersion = "2.0.3";
+    await running.checkForUpdate();
+    assert.equal(running.getStatus().updateAvailable, true);
+    const signedCatalog = JSON.parse(zlib.gunzipSync(makePackage("2.0.3")).toString("utf8"));
+    const incompatibleManifest = JSON.parse(zlib.gunzipSync(makePackage("2.0.3", (envelope, sign) => {
+      envelope.manifest.platform = process.platform === "win32" ? "darwin" : "win32";
+      sign();
+    })).toString("utf8"));
+    const badCatalogs = [
+      [{ minAppVersion: "3.0.0" }, "PLUGIN_INCOMPATIBLE"],
+      [{ maxAppVersion: "2.0.1" }, "PLUGIN_INCOMPATIBLE"],
+      [{ platform: process.platform === "win32" ? "darwin" : "win32" }, "PLUGIN_INCOMPATIBLE"],
+      [{ arch: process.arch === "arm64" ? "x64" : "arm64" }, "PLUGIN_INCOMPATIBLE"],
+      [{ manifest: incompatibleManifest.manifest, signature: incompatibleManifest.signature }, "PLUGIN_INCOMPATIBLE"],
+      [{ manifest: signedCatalog.manifest, signature: Buffer.alloc(64, 42).toString("base64") }, "PLUGIN_SIGNATURE"],
+      [{ version: "2.0.4", manifest: signedCatalog.manifest, signature: signedCatalog.signature }, "PLUGIN_CATALOG"],
+      [{ url: "" }, "PLUGIN_CATALOG"],
+    ];
+    for (const [overrides, code] of badCatalogs) {
+      catalogOverrides = overrides;
+      const downloadsBefore = packageDownloads;
+      await assert.rejects(running.checkForUpdate(), { code });
+      assert.equal(running.getStatus().updateAvailable, false, "failed catalog checks must clear stale updates");
+      assert.equal(running.getStatus().update, null);
+      await assert.rejects(running.install(), { code });
+      assert.equal(packageDownloads, downloadsBefore, "incompatible catalog must fail before downloading a package");
+      assert.equal(running.getStatus().version, "2.0.2");
+    }
+    catalogOverrides = { manifest: signedCatalog.manifest, signature: signedCatalog.signature };
+    await running.checkForUpdate();
+    assert.equal(running.getStatus().updateAvailable, true, "a valid catalog must recover after failed checks");
+    assert.equal(running.getStatus().error, null);
+    const catalogManager = create({ dataDir: path.join(temp, "platform-catalog") });
+    const entryFor = (version, changes = {}) => {
+      const bytes = makePackage(version, (envelope, sign) => { Object.assign(envelope.manifest, changes); sign(); });
+      const envelope = JSON.parse(zlib.gunzipSync(bytes));
+      const { files, ...metadata } = envelope.manifest;
+      const url = `/target-${version}-${changes.platform || "any"}.ffplugin`;
+      payloads.set(url, bytes);
+      return { ...metadata, url, size: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex"), manifest: envelope.manifest, signature: envelope.signature };
+    };
+    const matching = entryFor("2.0.3", { platform: process.platform, arch: "any" });
+    const otherPlatform = entryFor("2.0.9", { platform: process.platform === "win32" ? "darwin" : "win32", arch: "any" });
+    const futureHost = entryFor("2.0.8", { platform: process.platform, minAppVersion: "3.0.0" });
+    const otherArch = entryFor("2.0.7", { platform: process.platform, arch: process.arch === "arm64" ? "x64" : "arm64" });
+    const universal = entryFor("2.0.2", { platform: "any", arch: "any" });
+    catalogDocument = { schemaVersion: 1, id: pluginId, packages: [otherPlatform, futureHost, otherArch, universal, matching] };
+    assert.equal((await catalogManager.checkForUpdate()).version, "2.0.3", "select highest compatible signed package rather than another OS or newer host");
+    await catalogManager.install();
+    assert.equal(catalogManager.getInstallation().manifest.platform, process.platform);
+    const selectedVersion = catalogManager.getStatus().version;
+    for (const [document, code] of [
+      [{ ...catalogDocument, packages: [otherPlatform, futureHost, otherArch] }, "PLUGIN_INCOMPATIBLE"],
+      [{ ...catalogDocument, schemaVersion: 2 }, "PLUGIN_CATALOG"],
+      [{ ...catalogDocument, packages: [{ ...matching, platform: "any" }] }, "PLUGIN_CATALOG"],
+      [{ ...catalogDocument, packages: [{ ...matching, signature: Buffer.alloc(64).toString("base64") }] }, "PLUGIN_SIGNATURE"],
+    ]) {
+      catalogDocument = document;
+      const downloadsBefore = packageDownloads;
+      await assert.rejects(catalogManager.checkForUpdate(), { code });
+      await assert.rejects(catalogManager.install(), { code });
+      assert.equal(packageDownloads, downloadsBefore);
+      assert.equal(catalogManager.getStatus().version, selectedVersion);
+      assert.equal(catalogManager.getStatus().update, null);
+    }
+    catalogDocument = { schemaVersion: 1, id: pluginId, packages: [matching] };
+    await catalogManager.checkForUpdate();
+    assert.equal(catalogManager.getStatus().error, null, "valid signed catalog recovers after rejection");
+    catalogDocument = null;
+    await catalogManager.uninstall();
+    catalogOverrides = {};
+    catalogVersion = "2.0.2";
 
     const attacks = [
       ["bad-signature", makePackage("2.0.4", (envelope) => { envelope.signature = Buffer.alloc(64, 42).toString("base64"); }), "PLUGIN_SIGNATURE"],

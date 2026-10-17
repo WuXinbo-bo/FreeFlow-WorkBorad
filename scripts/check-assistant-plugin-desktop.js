@@ -11,6 +11,7 @@ const ROOT = path.resolve(__dirname, "..");
 const VERSION = require("../package.json").version;
 
 async function main() {
+  const online = process.argv.includes("--online");
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "freeflow-plugin-desktop-"));
   const data = path.join(directory, "AppData");
   const profile = path.join(directory, "Profile");
@@ -26,7 +27,7 @@ async function main() {
     else if (req.url === "/assistant.ffplugin") { downloads += 1; res.setHeader("Content-Length", packageBytes.length); res.end(packageBytes); }
     else { res.statusCode = 404; res.end(); }
   });
-  await new Promise((resolve) => downloadServer.listen(0, "127.0.0.1", resolve));
+  if (!online) await new Promise((resolve) => downloadServer.listen(0, "127.0.0.1", resolve));
   await fs.mkdir(data);
   await fs.mkdir(profile);
   await fs.writeFile(path.join(data, "ui-settings.json"), JSON.stringify({
@@ -40,8 +41,8 @@ async function main() {
     ...process.env, FREEFLOW_HOME_DIR: directory, FREEFLOW_USER_DATA_DIR: data,
     FREEFLOW_CANVAS_BOARD_DIR: path.join(directory, "Boards"),
     FREEFLOW_LEGACY_PROJECT_DATA_DIR: path.join(directory, "Legacy"), FREEFLOW_PORT: "0",
-    FREEFLOW_ASSISTANT_CATALOG_URL: `http://127.0.0.1:${downloadServer.address().port}/catalog.json`,
-    FREEFLOW_PLUGIN_TEST_LOOPBACK: "1",
+    FREEFLOW_ASSISTANT_CATALOG_URL: online ? require("../src/backend/plugins/assistantPluginRelease.json").catalogUrl : `http://127.0.0.1:${downloadServer.address().port}/catalog.json`,
+    FREEFLOW_PLUGIN_TEST_LOOPBACK: online ? "0" : "1",
   };
   delete env.ELECTRON_RUN_AS_NODE;
   let application;
@@ -89,10 +90,11 @@ async function main() {
       const plugin = (await (await fetch("/api/plugins/assistant/status")).json()).plugin;
       if (plugin.error) throw new Error(plugin.error.message);
       return plugin.installed && plugin.selfCheck?.ok && plugin.restartRequired;
-    }, null, { timeout: 45000 });
+    }, null, { timeout: online ? 150000 : 45000 });
     assert.equal((await status()).activeEnabled, false, "successful installation cannot activate mid-session");
     assert.equal((await status()).running, false, "self-check process must exit after install");
-    assert.equal(downloads, 1, "desktop install must download the actual signed package");
+    if (!online) assert.equal(downloads, 1, "desktop install must download the actual signed package");
+    assert.equal((await status()).version, manifest.version);
     await page.locator(".settings-center-plugin-state").filter({ hasText: "等待重启" }).waitFor();
     await assert.rejects(fs.stat(path.join(data, "agent-sessions.sqlite")), { code: "ENOENT" });
     await page.screenshot({ path: path.join(directory, "installed-restart.png") });
@@ -160,10 +162,10 @@ async function main() {
     assert.equal((await status()).activeEnabled, false);
     await fs.access(path.join(data, "agent-sessions.sqlite"));
     await close();
-    console.log(`[check-assistant-plugin-desktop] real Electron HTTP download/offline import/self-check, four boots, lazy worker, AI settings, disable/re-enable/uninstall and history preservation passed; screenshots: ${directory}`);
+    console.log(`[check-assistant-plugin-desktop] real Electron ${online ? "public HTTPS" : "HTTP fixture"} download/offline import/self-check, four boots, lazy worker, AI settings, disable/re-enable/uninstall and history preservation passed; screenshots: ${directory}`);
   } finally {
     await application?.close().catch(() => {});
-    await new Promise((resolve) => downloadServer.close(resolve));
+    if (!online) await new Promise((resolve) => downloadServer.close(resolve));
   }
 }
 
