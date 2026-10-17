@@ -12,7 +12,10 @@ output/
 .deploy/
 .vscode/
 Images/
-docs/
+docs/*
+!docs/getting-started.md
+!docs/github-sync.md
+!docs/branch-and-release.md
 github-promo-web/
 _archive/
 .archive/

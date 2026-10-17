@@ -30,6 +30,7 @@
     "test:assistant-plugin-desktop": "node scripts/check-assistant-plugin-desktop.js",
     "test:assistant-plugin": "node scripts/run-assistant-plugin-tests.js",
     "check:assistant-release": "node scripts/check-assistant-plugin-release.js",
+    "check:assistant-online": "node scripts/check-assistant-plugin-online.js",
     "test:github-sync-operations": "node scripts/check-github-sync-operations.js",
     "test:github-sync-http": "node scripts/check-github-sync-http.js",
     "test:github-sync-multidevice-safety": "node scripts/check-github-sync-multidevice-safety.js",

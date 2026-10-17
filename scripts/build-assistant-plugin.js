@@ -57,6 +57,10 @@ async function buildAssistantPlugin(options = {}) {
   const outputDir = path.resolve(options.outputDir || path.join(ROOT_DIR, "release/plugins"));
   const version = options.version || packageInfo.version;
   const minAppVersion = options.minAppVersion || packageInfo.version;
+  const platform = options.platform || "any";
+  const arch = options.arch || "any";
+  if (!["darwin", "win32", "any"].includes(platform)) throw new Error("--platform must be darwin, win32 or any");
+  if (!["arm64", "x64", "any"].includes(arch)) throw new Error("--arch must be arm64, x64 or any");
   const { compareVersion } = require("../src/backend/plugins/assistantPluginManager");
   compareVersion(version, version);
   compareVersion(minAppVersion, minAppVersion);
@@ -108,13 +112,14 @@ async function buildAssistantPlugin(options = {}) {
       files[file] = bytes.toString("base64");
       descriptors[file] = { size: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
     }
-    const manifest = { id: PLUGIN_ID, version, hostApiVersion: 1, minAppVersion, files: descriptors };
+    const manifest = { id: PLUGIN_ID, version, hostApiVersion: 1, minAppVersion, platform, arch, files: descriptors };
     const signature = crypto.sign(null, Buffer.from(JSON.stringify(manifest)), privateKey).toString("base64");
     const bytes = zlib.gzipSync(Buffer.from(JSON.stringify({ manifest, signature, files })), { level: 9 });
-    const fileName = `freeflow-ai-assistant-${manifest.version}.ffplugin`;
+    const targetSuffix = `${platform === "any" ? "" : `-${platform}`}${arch === "any" ? "" : `-${arch}`}`;
+    const fileName = `freeflow-ai-assistant-${manifest.version}${targetSuffix}.ffplugin`;
     const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
     const baseUrl = options.baseUrl || "";
-    const catalog = { id: PLUGIN_ID, version: manifest.version, hostApiVersion: 1, minAppVersion: manifest.minAppVersion, url: baseUrl ? new URL(fileName, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href : fileName, size: bytes.length, sha256, manifest, signature };
+    const catalog = { id: PLUGIN_ID, version: manifest.version, hostApiVersion: 1, minAppVersion: manifest.minAppVersion, platform, arch, url: baseUrl ? new URL(fileName, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href : fileName, size: bytes.length, sha256, manifest, signature };
     await fs.mkdir(outputDir, { recursive: true });
     const packagePath = path.join(outputDir, fileName);
     await fs.writeFile(packagePath, bytes);
@@ -133,6 +138,8 @@ if (require.main === module) {
     baseUrl: argument("--base-url"),
     version: argument("--plugin-version"),
     minAppVersion: argument("--min-app-version"),
+    platform: argument("--platform"),
+    arch: argument("--arch"),
     initializeSigningKey: process.argv.includes("--init-signing-key"),
   }).then((result) => console.log(`[build-assistant-plugin] ${result.packagePath} (${result.catalog.size} bytes, installed ${result.uncompressedBytes} bytes)`)).catch((error) => {
     console.error(`[build-assistant-plugin] ${error.message}`);
