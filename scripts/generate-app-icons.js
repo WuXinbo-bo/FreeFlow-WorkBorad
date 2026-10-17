@@ -11,6 +11,9 @@ const PNG_ICON = path.join(BUILD_DIR, "icon.png");
 const ICO_ICON = path.join(BUILD_DIR, "icon.ico");
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 const PNG_BLACK_ALPHA_THRESHOLD = 18;
+const DESKTOP_ICON_SIZE = 512;
+const DESKTOP_ICON_PADDING = 58;
+const DESKTOP_ICON_RADIUS = 112;
 
 async function ensureDir(targetPath) {
   await fs.mkdir(targetPath, { recursive: true });
@@ -93,28 +96,47 @@ async function main() {
     .png()
     .toBuffer();
 
-  const base = sharp(trimmedBuffer);
+  // Keep the source Logo transparent for in-app UI usage. Desktop assets use
+  // a centered Logo on a white rounded tile so the mark has stable padding in
+  // the macOS Dock and in Windows shortcuts.
+  const logoSource = sharp(trimmedBuffer);
 
-  await base
-    .clone()
-    .resize(512, 512, {
-      fit: "contain",
-      background: "#00000000",
-    })
-    .png()
-    .toFile(PNG_ICON);
-
-  const pngBuffers = [];
-  for (const size of ICO_SIZES) {
-    const buffer = await base
+  async function renderDesktopIcon(size) {
+    const padding = Math.max(2, Math.round((DESKTOP_ICON_PADDING / DESKTOP_ICON_SIZE) * size));
+    const radius = Math.max(2, Math.round((DESKTOP_ICON_RADIUS / DESKTOP_ICON_SIZE) * size));
+    const innerSize = Math.max(1, size - padding * 2);
+    const backgroundSvg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${radius}" fill="#ffffff"/></svg>`
+    );
+    const logoBuffer = await logoSource
       .clone()
-      .resize(size, size, {
+      .resize(innerSize, innerSize, {
         fit: "contain",
-        background: "#00000000",
+        background: { r: 255, g: 255, b: 255, alpha: 0 },
       })
       .png()
       .toBuffer();
-    pngBuffers.push(buffer);
+    return sharp({
+      create: {
+        width: size,
+        height: size,
+        channels: 4,
+        background: { r: 255, g: 255, b: 255, alpha: 0 },
+      },
+    })
+      .composite([
+        { input: backgroundSvg, left: 0, top: 0 },
+        { input: logoBuffer, left: padding, top: padding },
+      ])
+      .png()
+      .toBuffer();
+  }
+
+  await fs.writeFile(PNG_ICON, await renderDesktopIcon(DESKTOP_ICON_SIZE));
+
+  const pngBuffers = [];
+  for (const size of ICO_SIZES) {
+    pngBuffers.push(await renderDesktopIcon(size));
   }
 
   const icoBuffer = await pngToIco(pngBuffers);
