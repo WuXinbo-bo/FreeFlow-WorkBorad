@@ -48,20 +48,26 @@ async function main() {
   let catalogVersion = "2.0.2";
   let catalogOverrides = {};
   let catalogDocument = null;
+  let catalogEncoding = null;
   let packageDownloads = 0;
   let disableCount = 0;
   let checkCount = 0;
   const server = http.createServer((request, response) => {
     if (request.url === "/catalog.json") {
-      if (catalogDocument) { response.end(JSON.stringify(catalogDocument)); return; }
       const body = payloads.get(`/assistant-${catalogVersion}.ffplugin`);
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({
+      let bytes = Buffer.from(JSON.stringify(catalogDocument || {
         id: pluginId, version: catalogVersion, hostApiVersion: 1, minAppVersion: "2.0.2",
         url: `assistant-${catalogVersion}.ffplugin`, size: body.length,
         sha256: crypto.createHash("sha256").update(body).digest("hex"),
         ...catalogOverrides,
       }));
+      if (catalogEncoding) {
+        bytes = catalogEncoding === "gzip" ? zlib.gzipSync(bytes) : zlib.brotliCompressSync(bytes);
+        response.setHeader("Content-Encoding", catalogEncoding);
+      }
+      response.setHeader("Content-Length", bytes.length);
+      response.end(bytes);
       return;
     }
     if (request.url === "/redirect") {
@@ -206,6 +212,16 @@ async function main() {
     catalogDocument = { schemaVersion: 1, id: pluginId, packages: [matching] };
     await catalogManager.checkForUpdate();
     assert.equal(catalogManager.getStatus().error, null, "valid signed catalog recovers after rejection");
+    for (const encoding of ["gzip", "br"]) {
+      catalogEncoding = encoding;
+      assert.equal((await catalogManager.checkForUpdate()).version, "2.0.3");
+      await catalogManager.install();
+      assert.equal(catalogManager.getStatus().version, "2.0.3", "compressed HTTP catalogs must install using decoded bytes");
+    }
+    catalogDocument = { ...catalogDocument, padding: "x".repeat(70 * 1024) };
+    await assert.rejects(catalogManager.checkForUpdate(), { code: "PLUGIN_SIZE" });
+    assert.equal(catalogManager.getStatus().version, "2.0.3", "decoded response limit still protects the installed version");
+    catalogEncoding = null;
     catalogDocument = null;
     await catalogManager.uninstall();
     catalogOverrides = {};
