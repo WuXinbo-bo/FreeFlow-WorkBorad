@@ -422,6 +422,7 @@ function createAssistantPluginManager(options = {}) {
           progress = { receivedBytes: bytes.length, totalBytes: bytes.length, percent: 100 };
         } else {
           if (!input.url) {
+            update = null;
             catalog = await readCatalog(operation);
             update = catalog;
           }

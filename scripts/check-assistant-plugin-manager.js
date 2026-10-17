@@ -153,8 +153,12 @@ async function main() {
       [{ url: "" }, "PLUGIN_CATALOG"],
     ];
     for (const [overrides, code] of badCatalogs) {
+      catalogOverrides = {};
+      await running.checkForUpdate();
       catalogOverrides = overrides;
       const downloadsBefore = packageDownloads;
+      await assert.rejects(running.install(), { code });
+      assert.equal(running.getStatus().update, null, "a direct install must not retain a stale catalog on failure");
       await assert.rejects(running.checkForUpdate(), { code });
       assert.equal(running.getStatus().updateAvailable, false, "failed catalog checks must clear stale updates");
       assert.equal(running.getStatus().update, null);
